@@ -1,0 +1,154 @@
+   1 """Independently authored v7 audit. Does not import or execute supplied source.
+   2 Uses direct global chirp matrices for exhaustive probabilistic checks,
+   3 and an independently written modular-arithmetic recurrence test.
+   4 """
+   5 import itertools, json, math
+   6 from pathlib import Path
+   7 import numpy as np
+   8 
+   9 OUT=Path(__file__).parent
+  10 
+  11 def literal_coefficients(N,M,a,beta,outputs):
+  12     z=np.exp(2j*np.pi/N)
+  13     indices=np.arange(N)
+  14     # Modulo reduction avoids giant trigonometric arguments.
+  15     g=z**((a*indices*indices+beta*indices)%N)
+  16     coeff=[]
+  17     for m in outputs:
+  18         fourier=z**((-m*indices)%N)/math.sqrt(N)
+  19         row=np.empty(N,complex)
+  20         for block in range(N//M):
+  21             sl=slice(block*M,(block+1)*M)
+  22             row[sl]=g[sl]*np.dot(fourier[sl],np.conj(g[sl]))
+  23         coeff.append(row-fourier)
+  24     return np.asarray(coeff)
+  25 
+  26 def predicted_covariance(N,M,m):
+  27     # Character average computed by divisibility directly from paired positions.
+  28     Q=np.zeros((N,N),complex)
+  29     for n in range(N):
+  30         for p in range(N):
+  31             total=0
+  32             for t in range(M):
+  33                 d=n%M-t
+  34                 if d==0: continue
+  35                 tp=p%M-d
+  36                 if not 0<=tp<M: continue
+  37                 c=2*d*(p-n)
+  38                 if (2*c)%N==0:
+  39                     total+=1 if c%N==0 else -1
+  40             Q[n,p]=total*np.exp(2j*np.pi*m*(n-p)/N)/N
+  41     return Q
+  42 
+  43 def exhaustive(N,M,outputs):
+  44     Q=np.zeros((len(outputs),N,N),complex)
+  45     means=np.zeros((len(outputs),N),complex)
+  46     states=0
+  47     for a in range(1,N,2):
+  48         for beta in range(N):
+  49             H=literal_coefficients(N,M,a,beta,outputs)
+  50             means+=H
+  51             for j in range(len(outputs)):
+  52                 Q[j]+=np.outer(H[j].conj(),H[j])
+  53             states+=1
+  54     Q/=states; means/=states
+  55     discrepancies=[]; idempotencies=[]; ranks=[]; norms=[]
+  56     for j,m in enumerate(outputs):
+  57         prediction=predicted_covariance(N,M,m)
+  58         discrepancies.append(float(np.max(np.abs(Q[j]-prediction))))
+  59         norms.append(float(np.linalg.eigvalsh(Q[j])[-1]))
+  60         if M>=2 and N//M>=2*M:
+  61             alpha=2*M/N
+  62             idempotencies.append(float(np.max(np.abs(Q[j]@Q[j]-alpha*Q[j]))))
+  63             ranks.append(int(np.sum(np.linalg.eigvalsh(Q[j])>1e-9)))
+  64             assert abs(norms[-1]-alpha)<1e-10
+  65             assert ranks[-1]==(N//M)*(M-1)//2
+  66     assert max(discrepancies)<1e-10
+  67     assert np.max(np.abs(means))<1e-10
+  68     return dict(N=N,M=M,outputs=outputs,states=states,max_covariance_error=max(discrepancies),
+  69         max_mean_error=float(np.max(np.abs(means))),norms=norms,
+  70         scalar_projector_defect=max(idempotencies,default=None),ranks=ranks)
+  71 
+  72 P=998244353
+  73 
+  74 def exact_modular_decoder(N,M,a,beta):
+  75     # Work with unnormalized DFT so no square root is needed in the field.
+  76     root=pow(3,(P-1)//N,P)
+  77     powers=[pow(root,j,P) for j in range(N)]
+  78     K=N//M
+  79     x=[(j*j+17*j+31)%P for j in range(N)]
+  80     g=[powers[(a*j*j+beta*j)%N] for j in range(N)]
+  81     # Form global-gauge summaries and reconstruct the projection literally.
+  82     y=[]
+  83     for r in range(K):
+  84         d=sum(g[r*M+t]*x[r*M+t] for t in range(M))%P
+  85         y.extend(d*pow(g[r*M+t],P-2,P)%P for t in range(M))
+  86     direct=[sum(y[j]*powers[(-m*j)%N] for j in range(N))%P for m in range(N)]
+  87     # Separate local-gauge summaries for the derived recurrence.
+  88     d=[sum(x[r*M+t]*powers[(a*t*t+(2*a*M*r+beta)*t)%N] for t in range(M))%P for r in range(K)]
+  89     D=[sum(d[r]*powers[(-s*r*M)%N] for r in range(K))%P for s in range(K)]
+  90     got=[None]*N
+  91     for seed in [0,1]:
+  92         # Seed directly from compressed summaries, without using direct[] values.
+  93         got[seed]=sum(d[r]*powers[(-seed*r*M)%N]*sum(powers[(-a*t*t-(seed+2*a*M*r+beta)*t)%N] for t in range(M)) for r in range(K))%P
+  94         m=seed
+  95         for _ in range(N//2-1):
+  96             nxt=(m+2*a)%N
+  97             leading=powers[(-a-m-beta)%N]
+  98             boundary=powers[(-a*M*M-m*M-beta*M)%N]
+  99             forcing=(D[m%K]-boundary*D[(m+2*a*M)%K])%P
+ 100             got[nxt]=(got[m]-forcing)*pow(leading,P-2,P)%P
+ 101             m=nxt
+ 102     assert got==direct
+ 103     return dict(N=N,M=M,a=a,beta=beta,exact_match=True)
+ 104 
+ 105 def spectral_checks():
+ 106     rows=[]
+ 107     for N,M in [(8,2),(16,2),(32,4),(64,4),(128,8),(256,8),(512,16)]:
+ 108         Q=predicted_covariance(N,M,0)
+ 109         alpha=2*M/N
+ 110         # Stronger exact count: independent enumeration of displacement sets.
+ 111         for u in range(M):
+ 112             ds=[u-t for t in range(M) if t!=u]
+ 113             for v in range(M.bit_length()-1):
+ 114                 c=sum(abs(d)&-abs(d)==2**v for d in ds)
+ 115                 assert c==M//(2**(v+1))
+ 116         vals=np.linalg.eigvalsh(Q)
+ 117         err=float(np.max(np.minimum(np.abs(vals),np.abs(vals-alpha))))
+ 118         assert err<1e-10
+ 119         x=np.array([complex(j%7-3,j%5-2) for j in range(N)])
+ 120         A=np.fft.fft(x.reshape(N//M,M),axis=0)/math.sqrt(N//M)
+ 121         selected=np.array([ell for ell in range(N//M) if ell%2==0 and ell%(2*M)!=0])
+ 122         energy_errors=[]
+ 123         for output in [0,1,3]:
+ 124             rayleigh=float(np.vdot(x,predicted_covariance(N,M,output)@x).real)
+ 125             spectral=alpha*float(np.sum(np.abs(A[(selected+output)%(N//M),:])**2))
+ 126             energy_errors.append(abs(rayleigh-spectral))
+ 127         assert max(energy_errors)<1e-10
+ 128         rows.append(dict(N=N,M=M,norm=float(vals[-1]),rank=int(np.sum(vals>1e-9)),expected_rank=(N//M)*(M-1)//2,spectral_two_level_error=err,max_spectral_energy_identity_error=max(energy_errors)))
+ 129     return rows
+ 130 
+ 131 def median_enumeration():
+ 132     # Exact-integer pointwise product-subset inequality: no source theorem needed.
+ 133     rows=[]
+ 134     for R in [1,3,5,7]:
+ 135         s=(R+1)//2
+ 136         count=0
+ 137         for xs in itertools.product([-2,-1,0,1,3],repeat=R):
+ 138             lhs=abs(sorted(xs)[s-1])**(2*s)
+ 139             rhs=sum(math.prod(xs[j]**2 for j in subset) for subset in itertools.combinations(range(R),s))
+ 140             assert lhs<=rhs
+ 141             count+=1
+ 142         rows.append(dict(rows=R,pointwise_cases=count,all_pass=True))
+ 143     return rows
+ 144 
+ 145 if __name__=='__main__':
+ 146     result={
+ 147       'provenance':'Independent code authored for this audit; no uploaded code imported or executed.',
+ 148       'exhaustive_covariances':[exhaustive(8,2,list(range(8))),exhaustive(16,2,[0,3,9]),exhaustive(32,4,[0,3,17]),exhaustive(16,1,[0,3])],
+ 149       'exact_finite_field_decoders':[exact_modular_decoder(N,M,a,b) for N,M in [(8,2),(32,4),(64,8),(128,8),(512,16)] for a,b in [(1,0),(3,7),(N-1,N-3)]],
+ 150       'spectrum_checks':spectral_checks(),
+ 151       'median_checks':median_enumeration(),
+ 152     }
+ 153     (OUT/'independent_results.json').write_text(json.dumps(result,indent=2)+'\n')
+ 154     print(json.dumps(result,indent=2))

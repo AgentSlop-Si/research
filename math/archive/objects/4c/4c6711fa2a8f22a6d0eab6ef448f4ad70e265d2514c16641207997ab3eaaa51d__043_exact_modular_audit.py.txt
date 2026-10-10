@@ -1,0 +1,62 @@
+"""Independent, finite-field verification of the symbolic convolution formula."""
+import random
+
+
+def roll(x,s):
+    n=len(x)
+    return [x[(j-s)%n] for j in range(n)]
+
+
+def conv(x,y,p):
+    n=len(x)
+    return [sum(x[j]*y[(t-j)%n] for j in range(n))%p for t in range(n)]
+
+
+def terms_to_vector(n,bases,terms,edits,p):
+    v=[0]*n
+    for basis,shift,coefficient in terms:
+        for j in range(n):
+            v[j]=(v[j]+coefficient*bases[basis][(j-shift)%n])%p
+    for j,delta in edits.items():
+        v[j]=(v[j]+delta)%p
+    return v
+
+
+def compressed_product(n,bases,ta,ea,tb,eb,p):
+    c=[0]*n
+    cores={(min(a,b),max(a,b)):conv(bases[a],bases[b],p) for a,_,_ in ta for b,_,_ in tb}
+    def add_rolled(v,shift,coeff):
+        for j in range(n):
+            c[j]=(c[j]+coeff*v[(j-shift)%n])%p
+    for a,s,ca in ta:
+        for b,t,cb in tb:
+            add_rolled(cores[min(a,b),max(a,b)],s+t,ca*cb)
+    for a,s,ca in ta:
+        for t,db in eb.items():add_rolled(bases[a],s+t,ca*db)
+    for t,da in ea.items():
+        for b,s,cb in tb:add_rolled(bases[b],s+t,da*cb)
+    for t,da in ea.items():
+        for u,db in eb.items(): c[(t+u)%n]=(c[(t+u)%n]+da*db)%p
+    return c
+
+
+def main():
+    rng=random.Random(20261009)
+    checks=0
+    for p in [3,5,97,65521]:
+        for n in [1,2,3,4,8,9,16,31]:
+            for _ in range(50):
+                bases=[[rng.randrange(p) for j in range(n)] for b in range(4)]
+                ta=[(rng.randrange(4),rng.randrange(n),rng.randrange(p)) for _ in range(2)]
+                tb=[(rng.randrange(4),rng.randrange(n),rng.randrange(p)) for _ in range(2)]
+                ea={rng.randrange(n):rng.randrange(p) for _ in range(3)}
+                eb={rng.randrange(n):rng.randrange(p) for _ in range(3)}
+                a=terms_to_vector(n,bases,ta,ea,p)
+                b=terms_to_vector(n,bases,tb,eb,p)
+                expected=conv(a,b,p)
+                result=compressed_product(n,bases,ta,ea,tb,eb,p)
+                assert result==expected, (p,n,result,expected)
+                checks+=1
+    print(f'Exact modular convolution identity verified: {checks} randomized cases, fields 3/5/97/65521')
+    return checks
+if __name__=='__main__':main()

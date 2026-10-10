@@ -1,0 +1,244 @@
+   1 #!/usr/bin/env python3
+   2 """Independent marked-cycle and first-Schur review. No submitted code imports."""
+   3 import json,math,random,sys
+   4 from pathlib import Path
+   5 import independent_math as M
+   6 rng=random.Random(100310)
+   7 def eye(n):return [[int(i==j)for j in range(n)]for i in range(n)]
+   8 def mm(A,B,p):return [[sum(x*y for x,y in zip(r,c))%p for c in zip(*B)]for r in A]
+   9 def mv(A,x,p):return [sum(a*b for a,b in zip(r,x))%p for r in A]
+  10 def add(A,B,p,c=1):return [[(a+c*b)%p for a,b in zip(r,s)]for r,s in zip(A,B)]
+  11 def scale(A,c,p):return [[v*c%p for v in r]for r in A]
+  12 def inv(A,p):
+  13  n=len(A);cols=[M.solve(A,[int(i==j)for i in range(n)],p)for j in range(n)]
+  14  if any(c is None for c in cols):return None
+  15  return [list(r)for r in zip(*cols)]
+  16 def qdata(N,p,w):
+  17  A0=[[0]*N for _ in range(N)];A1=[[0]*N for _ in range(N)]
+  18  for j in range(N):A0[2*j%N][j]=1;A1[(2*j+1)%N][j]=pow(w,j,p)
+  19  C=[[pow(w,i,p)*(int(j==i)-int(j==i+N//2))%p for j in range(N)]for i in range(N//2)]
+  20  J=[[int(i==2*j+1)for j in range(N//2)]for i in range(N)]
+  21  return A0,A1,add(A0,A1,p),C,J
+  22 def phi(r):
+  23  s=0;prefix=0
+  24  for b in bin(r)[2:]:s+=int(b)*prefix;prefix=2*prefix+int(b)
+  25  return s
+  26 def rev(r,n):return int(format(r,'0'+str(n)+'b')[::-1],2)if n else 0
+  27 def Kmatrix(A0,n,z,p):
+  28  N=len(A0);E=[[int(i==0)for _ in range(N)]for i in range(N)];A=eye(N);K=[[0]*N for _ in range(N)]
+  29  for t in range(n):K=add(K,scale(add(A,E,p,-1),pow(z,t,p),p),p);A=mm(A0,A,p)
+  30  assert A==E
+  31  return K,E
+  32 def Kjet(x,p):
+  33  N=len(x);n=N.bit_length()-1;rows=[]
+  34  for j in range(N):rows.append([0]*(n if j==0 else (j&-j).bit_length()))
+  35  for j in range(1,N):rows[j][0]=x[j]
+  36  for h in range(n):
+  37   for j in range(1<<h,N,1<<(h+1)):
+  38    dest=2*j%N
+  39    if dest:
+  40     for k,v in enumerate(rows[j]):rows[dest][k+1]=(rows[dest][k+1]+v)%p
+  41  for j in range(1,N):
+  42   for k,v in enumerate(rows[j]):rows[0][k]=(rows[0][k]-v)%p
+  43  assert sum(map(len,rows))==2*N-2
+  44  return rows
+  45 def evaluate(rows,z,p):return [M.peval(r,z,p)for r in rows]
+  46 def state_step(state,bit,W,p):
+  47  stride,c,vals=state;N=len(W);ns=min(2*stride,N);nc=(2*c+bit)%ns;out=[0]*(N//ns)
+  48  for j,v in enumerate(vals):
+  49   node=c+stride*j;dest=(2*node+bit)%N;idx=(dest-nc)//ns
+  50   out[idx]=(out[idx]+v*(W[node]if bit else 1))%p
+  51  return ns,nc,out
+  52 def slot_budget(N):
+  53  n=N.bit_length()-1;sizes=[]
+  54  for r in range(N):
+  55   if r==0:sizes.append(2*n);continue
+  56   t=(r&-r).bit_length()-1;v=r>>t;h=0
+  57   while v&1:h+=1;v>>=1
+  58   sizes.append(n+t+1 if r==N-(1<<t)else t+h+2)
+  59  bound=5*N+(n*n-3*n-10)//2
+  60  assert sum(sizes)==bound and bound<=6*N
+  61  return sizes
+  62 def two_run(x,w,p):
+  63  N=len(x);n=N.bit_length()-1;W=[pow(w,j,p)for j in range(N)];lam=pow(w,-1,p)
+  64  out=[[0]*s for s in slot_budget(N)];series=[[0]*min(s,n+1)for s in slot_budget(N)];v=(1,0,x[:]);visits=0
+  65  def put(rows,j,k,value):assert k<len(rows[j]);rows[j][k]=(rows[j][k]+value)%p
+  66  for a in range(n+1):
+  67   mass=sum(v[2])%p;y=v
+  68   for b in range(n):
+  69    stride,c,vals=y;visits+=len(vals);assert len(vals)==max(N//2**(a+b),1)
+  70    for j,value in enumerate(vals):
+  71     node=c+stride*j;put(out,node,a+b,value)
+  72     if a<n:put(out,node,a+b+1,-lam*value)
+  73     if a+b<=n:put(series,node,a+b,value)
+  74    put(out,0,a+b,-mass)
+  75    if a<n:put(out,0,a+b+1,lam*mass)
+  76    if a+b<=n:put(series,0,a+b,-mass)
+  77    y=state_step(y,0,W,p)
+  78   v=state_step(v,1,W,p)
+  79  assert visits==sum(max(N//2**(a+b),1)for a in range(n+1)for b in range(n)) and visits<4*N+n*n<=6*N
+  80  # Independent full-length vector-power convolution oracle, intentionally uncompressed.
+  81  aa=[x[:]]
+  82  for a in range(1,n+1):
+  83   v=[0]*N
+  84   for j,z in enumerate(aa[-1]):v[(2*j+1)%N]=(v[(2*j+1)%N]+pow(w,j,p)*z)%p
+  85   aa.append(v)
+  86  expected=[[0]*(2*n)for _ in range(N)];truncated=[[0]*(n+1)for _ in range(N)]
+  87  for a in range(n+1):
+  88   numerator=[(aa[a][i]-(lam*aa[a-1][i]if a else 0))%p for i in range(N)]
+  89   vals=numerator;orig=aa[a];mass=sum(vals)%p;omass=sum(orig)%p
+  90   for b in range(n):
+  91    for i in range(N):expected[i][a+b]=(expected[i][a+b]+vals[i]-mass*int(i==0))%p
+  92    if a+b<=n:
+  93     for i in range(N):truncated[i][a+b]=(truncated[i][a+b]+orig[i]-omass*int(i==0))%p
+  94    vals=[sum(vals[j]for j in range(N)if 2*j%N==i)%p for i in range(N)]
+  95    orig=[sum(orig[j]for j in range(N)if 2*j%N==i)%p for i in range(N)]
+  96  for i in range(N):
+  97   assert out[i]+[0]*(2*n-len(out[i]))==expected[i]
+  98   assert series[i]+[0]*(n+1-len(series[i]))==truncated[i]
+  99   for d in range(n+1):assert expected[i][d]==(truncated[i][d]-(lam*truncated[i][d-1]if d else 0))%p
+ 100  h=[rng.randrange(p)for _ in x];contract=[sum(h[i]*expected[i][d]for i in range(N))%p for d in range(2*n)]
+ 101  assert contract==[sum(h[i]*(out[i][d]if d<len(out[i])else 0)for i in range(N))%p for d in range(2*n)]
+ 102  return out,series,{'N':N,'p':p,'state_visits':visits,'full_numerator_slots':sum(map(len,out)),'series_slots':sum(map(len,series)),'degree_bound':2*n-1}
+ 103 def haar(v,w,N,z,p):
+ 104  if len(v)==1:return [(2*z-1)*pow(1-z,-1,p)*v[0]%p]
+ 105  h=len(v)//2;child=haar([(v[j]+v[j+h])%p for j in range(h)],w*w%p,N//2,z,p);out=[0]*len(v)
+ 106  for j in range(h):out[2*j]=z*child[j]%p;out[2*j+1]=pow(w,2*j+1,p)*(v[j]-v[j+h])%p
+ 107  return out
+ 108 def full_source_controls():
+ 109  cases=[];partial=traces=marks=jets=0;phasefails=0
+ 110  for N in [2,4,8,16,32]:
+ 111   p=65537;w=pow(3,(p-1)//N,p);n=N.bit_length()-1;A0,A1,Q,C,J=qdata(N,p,w);power=eye(N)
+ 112   for t in range(n+1):
+ 113    L=2**t;m=N//L
+ 114    expected=[[0]*N for _ in range(N)]
+ 115    for r in range(N):
+ 116     prefix,v=divmod(r,L)
+ 117     for a in range(L):s=a*m+prefix;expected[r][s]=pow(w,s*rev(v,t)+phi(v),p)
+ 118    assert power==expected;partial+=1
+ 119    if t==n:Qn=power
+ 120    power=mm(Q,power,p)
+ 121   F=[[pow(w,i*j,p)for j in range(N)]for i in range(N)]
+ 122   assert [[Qn[rev(k,n)][j]*pow(w,-phi(rev(k,n)),p)%p for j in range(N)]for k in range(N)]==F
+ 123   assert sum(phi(i)==0 for i in range(N))==n+1 and all(phi(i)<N for i in range(N))
+ 124   if N>=4:assert [Qn[rev(k,n)]for k in range(N)]!=F;phasefails+=1
+ 125   x=[rng.randrange(p)for _ in range(N)];v=[rng.randrange(p)for _ in range(N//2)];z=3
+ 126   G0=inv(add(eye(N),A0,p,-z),p);H=mm(mm(C,G0,p),J,p);assert mv(H,v,p)==haar(v,w,N,z,p)
+ 127   assert inv(H,p) is not None
+ 128   trace=[];power=eye(N)
+ 129   for k in range(1,n+3):
+ 130    power=mm(Q,power,p);truth=sum(power[j][j]for j in range(N))%p;acc=0
+ 131    for a in range(2**k):
+ 132     word=format(a,'0'+str(k)+'b');window=(word*((n+k-1)//k+2))[:n];s=int(window,2)
+ 133     emit=(word+word)[n%k:n%k+k];u=int(emit,2);acc+=pow(w,s*rev(u,k)+phi(u),p)
+ 134    assert acc%p==truth;trace.append(truth);traces+=1
+ 135   if N<=16:
+ 136    d=M.interp(list(range(N+1)),[M.determinant(add(eye(N),Q,p,-z),p)for z in range(N+1)],p);d+= [0]*(n+3-len(d))
+ 137    newton=[1]
+ 138    for j in range(1,n+3):newton.append(-sum(newton[j-k]*trace[k-1]for k in range(1,j+1))*pow(j,-1,p)%p)
+ 139    assert newton==d[:n+3];jets+=1
+ 140    h=[rng.randrange(p)for _ in range(N)];W=[r[:]+[x[i]]for i,r in enumerate(Q)]+[h+[0]]
+ 141    e=M.interp(list(range(N+2)),[M.determinant(add(eye(N+1),W,p,-z),p)for z in range(N+2)],p);e+=[0]*(n+3-len(e));quot=[]
+ 142    for j in range(n+3):quot.append((e[j]-sum(d[k]*quot[j-k]for k in range(1,j+1)))%p)
+ 143    target=sum(a*b for a,b in zip(h,mv(Qn,x,p)))%p;assert -quot[n+2]%p==target
+ 144    W0=[r[:]+[x[i]]for i,r in enumerate(Q)]+[[0]*(N+1)];W1=[[0]*(N+1)for _ in range(N)]+[h+[0]];base=eye(N+1);tan=[[0]*(N+1)for _ in range(N+1)]
+ 145    for _ in range(n+2):tan=add(mm(tan,W0,p),mm(base,W1,p),p);base=mm(base,W0,p)
+ 146    assert sum(tan[i][i]for i in range(N+1))*pow(n+2,-1,p)%p==target;marks+=1
+ 147   cases.append({'N':N,'online_additions':N*n,'online_multiplications':n*(N//2-1)+N-n-1})
+ 148  return {'stationary_cases':cases,'partial_matrix_identities':partial,'trace_identities':traces,'determinant_jets':jets,'marked_determinant_and_dual_trace_cases':marks,'omitted_phase_failures':phasefails}
+ 149 def stage_case(N,p,w,z):
+ 150  n=N.bit_length()-1;m=N//2;A0,A1,Q,C,J=qdata(N,p,w);K,E=Kmatrix(A0,n,z,p)
+ 151  assert mm(add(eye(N),A0,p,-z),K,p)==add(eye(N),E,p,-1)
+ 152  assert all(K[i][0]==0 for i in range(N))and all(sum(K[i][j]for i in range(N))%p==0 for j in range(N))
+ 153  x=[rng.randrange(p)for _ in range(N)];kj=Kjet(x,p);assert evaluate(kj,z,p)==mv(K,x,p)
+ 154  H=mm(mm(C,K,p),J,p);B=[[(int(i==j)-z*H[i][j])%p for j in range(m)]+[-int(i==0)%p]for i in range(m)]+[[-z%p]*m+[(1-z)%p]]
+ 155  F=add(eye(N),Q,p,-z);det=M.determinant(F,p);assert M.determinant(B,p)==det
+ 156  record={'N':N,'p':p,'z':z,'full_determinant':det,'K_slots':sum(map(len,kj))}
+ 157  if det:
+ 158   f=mv(C,mv(K,x,p),p);rhs=f+[sum(x)%p];sol=M.solve(B,rhs,p);u,t=sol[:-1],sol[-1]
+ 159   y=[(a+z*b+t*int(i==0))%p for i,(a,b)in enumerate(zip(mv(K,x,p),mv(mm(K,J,p),u,p)))]
+ 160   assert y==M.solve(F,x,p)
+ 161   h=[rng.randrange(p)for _ in range(N)];ah=[z*sum(h[i]*K[i][2*j+1]for i in range(N))%p for j in range(m)]+[h[0]]
+ 162   assert sum(a*b for a,b in zip(h,y))%p==(sum(a*b for a,b in zip(h,mv(K,x,p)))+sum(a*b for a,b in zip(ah,sol)))%p
+ 163  if N<8:return record
+ 164  l=N//4;ev=list(range(0,m,2));od=list(range(1,m,2));blocks=lambda R,S:[[H[i][j]for j in S]for i in R]
+ 165  EE,EO,OE,OO=blocks(ev,ev),blocks(ev,od),blocks(od,ev),blocks(od,od)
+ 166  expectedOO=[[0]*l for _ in range(l)];expectedOE=[[0]*l for _ in range(l)]
+ 167  for j in range(l):expectedOO[(2*j+1)%l][j]=pow(w,4*j+3,p);expectedOE[2*j%l][j]=pow(w,4*j+1,p)
+ 168  assert OO==expectedOO and OE==expectedOE
+ 169  D=add(eye(l),OO,p,-z);q=(1-z*pow(w,-1,p))%p;assert M.determinant(D,p)==q;record['pivot_q']=q
+ 170  if not q:record['new_chart_declined']=True;return record
+ 171  Di=inv(D,p);fb=mm(mm(EO,Di,p),OE,p);S=add(add(eye(l),EE,p,-z),fb,p,-z*z)
+ 172  onesDi=[sum(Di[i][j]for i in range(l))%p for j in range(l)]
+ 173  red=[S[i]+[-int(i==0)%p]for i in range(l)]+[[(-z-z*z*sum(onesDi[k]*OE[k][j]for k in range(l)))%p for j in range(l)]+[(1-z)%p]]
+ 174  assert q*M.determinant(red,p)%p==det
+ 175  if det:
+ 176   fo=[f[i]for i in od];fe=[f[i]for i in ev];g=mv(Di,fo,p);rr=[(a+z*b)%p for a,b in zip(fe,mv(EO,g,p))]+[(sum(x)+z*sum(g))%p]
+ 177   ss=M.solve(red,rr,p);ee,tt=ss[:-1],ss[-1];oo=mv(Di,[(a+z*b)%p for a,b in zip(fo,mv(OE,ee,p))],p)
+ 178   assert [u[i]for i in ev]==ee and [u[i]for i in od]==oo and t==tt
+ 179   assert fo==[pow(w,2*j+1,p)*(x[2*j+1]-x[2*j+1+m])%p for j in range(l)]
+ 180  L=[[int(i==4*j+3)for j in range(l)]for i in range(N)];assert mm(A1,L,p)==mm(L,OO,p)
+ 181  if N==32 and p==65537 and z==1:
+ 182   odd2=list(range(1,l,2));control=[[S[i][j]for j in odd2]for i in odd2]
+ 183   assert control==[[1,0,0,0],[65535,513,2,65025],[16384,49153,16385,49153],[30151,50827,35386,14711]]
+ 184   record['next_pivot']=control;record['first_column_offdiagonal_nonzeros']=3
+ 185  return record
+ 186 def additional_source_guards():
+ 187  controls=[]
+ 188  for N in [4,8,16]:
+ 189   p=65537;w=pow(3,(p-1)//N,p);n=N.bit_length()-1;A0,A1,Q,C,J=qdata(N,p,w)
+ 190   Qadj=list(map(list,zip(*qdata(N,p,pow(w,-1,p))[2])))
+ 191   assert mm(Qadj,Q,p)==scale(eye(N),2,p)
+ 192   for A,start,rows in [(A0,1,[2**j for j in range(n)]+[0]),(A1,0,[2**j-1 for j in range(n+1)]),(Q,0,[2**j-1 for j in range(n+1)])]:
+ 193    x=[int(i==start)for i in range(N)];cols=[]
+ 194    for j in range(n+1):cols.append(x);x=mv(A,x,p)
+ 195    minor=[[cols[j][i]for j in range(n+1)]for i in rows];assert M.determinant(minor,p)
+ 196   b=1<<n.bit_length();xi=pow(3,(p-1)//b,p);a=7;total=[[0]*N for _ in range(N)]
+ 197   for j in range(b):
+ 198    G=inv(add(eye(N),Q,p,-a*pow(xi,j,p)),p);assert G is not None
+ 199    total=add(total,scale(G,pow(xi,-j*n,p)*pow(b,-1,p)%p,p),p)
+ 200   Qn=eye(N);Qb=eye(N)
+ 201   for _ in range(n):Qn=mm(Qn,Q,p)
+ 202   for _ in range(b):Qb=mm(Qb,Q,p)
+ 203   rhs=scale(mm(Qn,inv(add(eye(N),Qb,p,-pow(a,b,p)),p),p),pow(a,n,p),p)
+ 204   assert total==rhs and total!=scale(Qn,pow(a,n,p),p)
+ 205   controls.append({'N':N,'alias_packet_size':b,'alias_denominator_required':True,'weighted_unitarity_identity':True,'three_Krylov_minors_nonzero':True})
+ 206  return controls
+ 207 def main():
+ 208  source=full_source_controls();stages=[];two=[]
+ 209  for N in [2,4,8,16,32]:
+ 210   p=65537;w=pow(3,(p-1)//N,p)
+ 211   for z in [0,1,2,3]:stages.append(stage_case(N,p,w,z))
+ 212   if N>=8:stages.append(stage_case(N,p,w,w))
+ 213  for N in [8,16,32]:
+ 214   p=97;w=pow(5,(p-1)//N,p)
+ 215   for z in [0,1,3]:stages.append(stage_case(N,p,w,z))
+ 216  special=stage_case(2,3,2,1);assert special['full_determinant']==2
+ 217  # At the root pole the upper block M can be singular while the full border is invertible.
+ 218  _,_,_,C,J=qdata(2,3,2);K,_=Kmatrix(qdata(2,3,2)[0],1,1,3);assert add(eye(1),mm(mm(C,K,3),J,3),3,-1)==[[0]]
+ 219  for N in [2,4,8,16,32,64,128]:
+ 220   p=65537;w=pow(3,(p-1)//N,p)
+ 221   for kind in ['dense','lifted']:
+ 222    x=[rng.randrange(p)if kind=='dense'or i%4==3 else 0 for i in range(N)];out,ser,record=two_run(x,w,p);record['input_type']=kind;two.append(record)
+ 223    if N<=32:
+ 224     A0,A1,Q,C,J=qdata(N,p,w);z=3;K,_=Kmatrix(A0,N.bit_length()-1,z,p);y=M.solve(add(eye(N),A1,p,-z),x,p);q=(1-z*pow(w,-1,p))%p
+ 225     assert evaluate(out,z,p)==[q*a%p for a in mv(K,y,p)]
+ 226  simple=[]
+ 227  for n in range(1,7):
+ 228   N=2**n;count=0
+ 229   for a in range(N):
+ 230    for v in range(N):
+ 231     s=a;seen={s};ok=True
+ 232     for bit in format(v,'0'+str(n)+'b'):
+ 233      s=(2*s+int(bit))%N
+ 234      if s in seen:ok=False
+ 235      seen.add(s)
+ 236     count+=ok
+ 237   lower=max(0,N*N-math.comb(n+1,2)*N);assert count>=lower;simple.append({'N':N,'simple_paths':count,'proved_lower_bound':lower})
+ 238  for n in range(1,21):
+ 239   N=2**n;assert sum(max(N//2**(a+b),1)for a in range(n+1)for b in range(n))<4*N+n*n<=6*N
+ 240   formula=sum(k*(k+2)*2**(n-k-1)for k in range(1,n))+sum(n+t+1 for t in range(n))+2*n
+ 241   assert formula==5*N+(n*n-3*n-10)//2<=6*N
+ 242  result={'status':'PASS','uploaded_code_executed':False,'constructor_code_executed':False,'source_identity_controls':source,'additional_source_guards':additional_source_guards(),'pole_free_and_first_schur_cases':stages,'singular_M_invertible_border':special,'two_run_complete_numerators':two,'all_size_integer_bounds_checked_through_n':20,'simple_paths':simple,'source_haar_inverse_z1_guard':'static missing explicit guard; theorem domain excludes z=1','unresolved':'inverse of reduced border and polynomial-unknown feedback costs'}
+ 243  path=Path(sys.argv[1]if len(sys.argv)>1 else 'INDEPENDENT_RESULTS.json');path.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n');print('PASS',len(stages),'pole/Schur cases;',len(two),'complete two-run numerator controls')
+ 244 if __name__=='__main__':main()

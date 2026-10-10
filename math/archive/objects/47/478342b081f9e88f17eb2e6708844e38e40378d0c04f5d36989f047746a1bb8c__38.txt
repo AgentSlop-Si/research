@@ -1,0 +1,69 @@
+1: import json,random,sys
+2: from math import isqrt
+3: sys.path.insert(0,'fft_dyadic_green_20261010')
+4: from heterogeneous_fibers import *
+5: 
+6: 
+7: def order_root(p,N):
+8:     # all selected p prime and N power-of-2 or divides p-1
+9:     from verify import primitive_root
+10:     return pow(primitive_root(p),(p-1)//N,p)
+11: 
+12: rng=random.Random(20261010)
+13: result={'heterogeneous_cases':0,'heterogeneous_heavy_cases':0,'random_rejections':0,'independent_exact_DFT_bins':0}
+14: for N,p,Q in ((32,97,4),(64,257,8),(128,257,8),(144,577,12),(256,65537,16),(512,7681,16),(1024,65537,32)):
+15:     assert (p-1)%N==0
+16:     omega=order_root(p,N)
+17:     M=N//Q
+18:     for trial in range(11):
+19:         budget=Q
+20:         rows=[]
+21:         # Important heavy case: first fiber uses all M modes, if M<=budget.
+22:         if trial==0 and M<=budget:
+23:             s=rng.sample(range(M),M)
+24:             rows.append(tuple((h,rng.randrange(1,p)) for h in s))
+25:             budget-=M
+26:             result['heterogeneous_heavy_cases']+=1
+27:         else:rows.append(())
+28:         for t in range(1,Q):
+29:             size=min(budget, rng.randrange(4) if trial%3 else rng.randrange(6))
+30:             s=rng.sample(range(M),size)
+31:             rows.append(tuple((h,rng.randrange(1,p)) for h in s))
+32:             budget-=size
+33:         raw=build_input(rows,p,omega,N)
+34:         found=recognize_total_budget(raw,p,omega,Q,Q)
+35:         assert found is not None,(N,trial,'rejected valid signal')
+36:         z=transform_modes(found,p,omega,N)
+37:         # independent direct DFT, not FFT
+38:         direct=direct_dft(raw,p,omega)
+39:         assert z==direct,(N,trial)
+40:         result['heterogeneous_cases']+=1
+41:         result['independent_exact_DFT_bins']+=N
+42:     for trial in range(7):
+43:         x=[rng.randrange(p) for _ in range(N)]
+44:         found=recognize_total_budget(x,p,omega,Q,Q)
+45:         assert found is None,(N,trial,'accepted random dense vector')
+46:         result['random_rejections']+=1
+47: print(json.dumps(result,indent=2))
+48: with open('fft_dyadic_green_20261010/HETEROGENEOUS_RESULTS.json','w') as f:json.dump(result,f,indent=2)
+49: # Positive extension not covered by the old uniform per-fiber r=O(1) theorem:
+50: # one full-M-mode fiber, Q-1 one-mode fibers, total <=2Q.
+51: from verify import rank_mod
+52: for N,p,Q in ((64,257,8),(256,65537,16),(1024,65537,32)):
+53:     M=N//Q
+54:     assert M==Q
+55:     omega=order_root(p,N)
+56:     rows=[tuple((h,rng.randrange(1,p)) for h in range(M))]
+57:     rows += [((t-1,rng.randrange(1,p)),) for t in range(1,Q)]
+58:     x=build_input(rows,p,omega,N)
+59:     found=recognize_total_budget(x,p,omega,Q,2*Q)
+60:     assert found is not None and sum(map(len,found))==2*Q-1
+61:     assert transform_modes(found,p,omega,N)==direct_dft(x,p,omega)
+62:     matrix=[[x[t+Q*u] for u in range(M)] for t in range(Q)]
+63:     assert rank_mod(matrix,p)==Q
+64:     result.setdefault('heavy_and_max_rank_cases',0)
+65:     result['heavy_and_max_rank_cases']+=1
+66:     result['heterogeneous_cases']+=1
+67:     result['independent_exact_DFT_bins']+=N
+68: print('EXTENDED',json.dumps(result,indent=2))
+69: with open('fft_dyadic_green_20261010/HETEROGENEOUS_RESULTS.json','w') as f:json.dump(result,f,indent=2)

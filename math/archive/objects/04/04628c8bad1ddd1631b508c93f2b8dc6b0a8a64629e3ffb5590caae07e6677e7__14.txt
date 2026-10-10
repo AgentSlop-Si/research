@@ -1,0 +1,95 @@
+   1 """Independent exact structural certificates for rank-one bidirectional stages.
+   2 
+   3 In characteristic zero the simple induction in RESEARCH.md proves that a
+   4 polynomial supported on <=3 powers has at most N/2 zeros at Nth roots of
+   5 unity, for N a power of 2. This file independently checks its N=8
+   6 consequence using two finite fields, and verifies the tight upper witness
+   7 by determinants in the exact cyclotomic ring Z[z]/(z^4+1).
+   8 """
+   9 from __future__ import annotations
+  10 from itertools import combinations, permutations
+  11 from collections import Counter
+  12 import json
+  13 
+  14 
+  15 def rank_mod(a, prime):
+  16     if not a: return 0
+  17     v=[[z%prime for z in row] for row in a]
+  18     n=len(v);m=len(v[0]);r=0
+  19     for j in range(m):
+  20         pivot=next((i for i in range(r,n) if v[i][j]),None)
+  21         if pivot is None: continue
+  22         v[pivot],v[r]=v[r],v[pivot]
+  23         inv=pow(v[r][j],prime-2,prime)
+  24         for k in range(j,m):v[r][k]=v[r][k]*inv%prime
+  25         for i in range(r+1,n):
+  26             scale=v[i][j]
+  27             if scale:
+  28                 for k in range(j,m):v[i][k]=(v[i][k]-scale*v[r][k])%prime
+  29         r+=1
+  30         if r==n:break
+  31     return r
+  32 
+  33 
+  34 def root8(p,g):
+  35     assert (p-1)%8==0
+  36     w=pow(g,(p-1)//8,p)
+  37     assert pow(w,4,p)==p-1
+  38     return w
+  39 
+  40 
+  41 def det_over_cyclotomic_8(row_indices,col_indices):
+  42     """Returns exact coefficient vector in Z[z]/(z^4+1), NOT floats."""
+  43     r=len(row_indices)
+  44     assert r==len(col_indices)
+  45     accum=[0,0,0,0]
+  46     for perm in permutations(range(r)):
+  47         inversions=sum(perm[i]>perm[j] for i in range(r) for j in range(i+1,r))
+  48         sign=(-1)**inversions
+  49         exp=sum(row_indices[i]*col_indices[perm[i]] for i in range(r))%8
+  50         sign*= -1 if exp>=4 else 1
+  51         accum[exp%4]+=sign
+  52     return tuple(accum)
+  53 
+  54 
+  55 def run():
+  56     report={'primes':[],'complex_balanced_determinants':{},'dyadic_3_term_example_n':[]}
+  57     for p,g in ((998244353,3),(2013265921,31)):
+  58         w=root8(p,g)
+  59         f=[[pow(w,(i*j)%8,p) for j in range(8)] for i in range(8)]
+  60         c=Counter()
+  61         for rows in combinations(range(8),3):
+  62             for cols in combinations(range(8),5):
+  63                 r=rank_mod([[f[i][j] for j in cols] for i in rows],p)
+  64                 c[r]+=1
+  65         assert c==Counter({3:56*56}),c
+  66         order=(0,2,4,6,1,3,5,7)
+  67         for cut in range(1,8):
+  68             up=rank_mod([[f[i][j] for j in order[cut:]] for i in order[:cut]],p)
+  69             down=rank_mod([[f[i][j] for j in order[:cut]] for i in order[cut:]],p)
+  70             assert up<=3 and down<=3
+  71             if cut==3:assert (up,down)==(3,3)
+  72         report['primes'].append({'modulus':p,'root8':w,'rank3_3x5_matrices':c[3],
+  73                                   'parity_qsep_order':3})
+  74     order=(0,2,4,6,1,3,5,7)
+  75     detup=det_over_cyclotomic_8(order[:4],order[4:])
+  76     detdown=det_over_cyclotomic_8(order[4:],order[:4])
+  77     assert detup==(0,0,0,0) and detdown==(0,0,0,0)
+  78     report['complex_balanced_determinants']={'upper':detup,'lower':detdown}
+  79     # Explicit induction sanity checks on trinomials with small coefficients.
+  80     for n,p,g in ((2,998244353,3),(4,998244353,3),(8,998244353,3),
+  81                   (16,998244353,3),(32,998244353,3)):
+  82         w=pow(g,(p-1)//n,p)
+  83         tested=0
+  84         for positions in combinations(range(n),min(3,n)):
+  85             if n>16 and tested>=100:break
+  86             for signs in ((1,1,1),(1,-1,1),(-1,1,1)) if len(positions)==3 else ((1,1),):
+  87                 coeffs=list(zip(positions,signs))
+  88                 vals=[sum(a*pow(w,(j*k)%n,p) for j,a in coeffs)%p for k in range(n)]
+  89                 assert sum(z!=0 for z in vals)>=n//2,(n,positions,signs)
+  90                 tested+=1
+  91         report['dyadic_3_term_example_n'].append({'n':n,'tested':tested})
+  92     return report
+  93 
+  94 if __name__=='__main__':
+  95     print(json.dumps(run(),indent=2))

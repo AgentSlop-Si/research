@@ -1,0 +1,216 @@
+0001 #!/usr/bin/env python3
+0002 """Full graph/profile replay and an independent dense-support/count audit.
+0003 
+0004 Inherited generators: icekylinx PR18/32/36; profiler: PR32 and Dominik
+0005 Scholz PR35. This audit uses direct global bitsets rather than compressed
+0006 producer provenance and replays every exported matching use independently.
+0007 """
+0008 from collections import Counter
+0009 from itertools import combinations
+0010 from pathlib import Path
+0011 import argparse
+0012 import gc
+0013 import json
+0014 import os
+0015 import shlex
+0016 import struct
+0017 import subprocess
+0018 import sys
+0019 import tempfile
+0020 
+0021 from verify import ROOT, HERE, require, read, check_sources, exactness
+0022 from partial_swap.graph import export
+0023 from pair_graph import graph
+0024 import original_timeline as timeline
+0025 
+0026 
+0027 def dense_audit(c):
+0028     h = c.h
+0029     triples = list(combinations(range(h),3))
+0030     require(triples == c.inputs, 'Wrong input enumeration')
+0031     masks = [sum(1<<i for i in t) for t in triples]
+0032     supports = [0]*len(c.args)
+0033     degree = [0]*len(c.args)
+0034     ranks = [0]*len(c.args)
+0035     additions = 0
+0036     for x in sorted(c.active):
+0037         args = c.args[x]
+0038         require(c.core[x] and not c.core[x] & ~c.union[x], 'Invalid envelope')
+0039         if args is None:
+0040             require(1<=x<=len(triples) and c.core[x] == c.union[x] == masks[x-1], 'Source label')
+0041             supports[x] = 1<<(x-1)
+0042             ranks[x] = 1
+0043         else:
+0044             left,right = args
+0045             require(left<x and right<x and left in c.active and right in c.active, 'DAG order')
+0046             require(not supports[left]&supports[right], 'Overlapping exact source supports')
+0047             supports[x] = supports[left]|supports[right]
+0048             require(c.core[x] == c.core[left]&c.core[right], 'Wrong core')
+0049             require(c.union[x] == c.union[left]|c.union[right], 'Wrong cover')
+0050             require(c.core[x].bit_count() in (1,2), 'Invalid common core')
+0051             ranks[x] = c.union[x].bit_count()-c.core[x].bit_count()
+0052             for y in args:
+0053                 require(not c.core[x]&~c.core[y] and not c.union[y]&~c.union[x], 'Envelope inclusion')
+0054                 degree[y] += 1
+0055             additions += 1
+0056     outputs = list(c.outputs.items())
+0057     totals = 0
+0058     for ((common,target),node) in outputs:
+0059         omitted = set(target)-{common}
+0060         expected = sum(1<<j for j,t in enumerate(triples)
+0061                        if common in t and not omitted.intersection(t))
+0062         require(supports[node] == expected, 'Wrong exact global output')
+0063         require(c.core[node] == 1<<common, 'Output common point')
+0064         require(c.union[node] == ((1<<h)-1)-sum(1<<i for i in omitted), 'Output envelope')
+0065         totals += not omitted
+0066         degree[node] += 1
+0067     require(totals == h, 'Missing or duplicate centers')
+0068     return degree,ranks,outputs,dict(exact_global_additions=additions,
+0069         exact_global_outputs=len(outputs),envelope_inclusions=2*additions,
+0070         retained_centers=totals,source_lines=len(triples))
+0071 
+0072 
+0073 def recount(c, degree, ranks, outputs, link_path):
+0074     h,n = c.h,len(c.args)
+0075     hist = Counter()
+0076     for x in c.active:
+0077         r = ranks[x]
+0078         require(degree[x]>0, 'Dead node')
+0079         if c.args[x] is None:
+0080             hist[1] += degree[x]
+0081         else:
+0082             hist[r] += degree[x]-1
+0083             hist[h-r] += 1
+0084             for y in c.args[x]:
+0085                 hist[r-ranks[y]] += 1
+0086     for ((common,target),node) in outputs:
+0087         r = ranks[node]
+0088         if len(target) == 1:
+0089             hist[r] += 1
+0090             hist[h] += 1
+0091         else:
+0092             hist[h-1-r] += 1
+0093             hist[1] += 1
+0094     raw = link_path.read_bytes()
+0095     nn,nlinks = struct.unpack_from('<2I',raw)
+0096     require(nn == n and len(raw) == 8+8*nlinks, 'Matching record format')
+0097     donors,uses = set(),set()
+0098     orientation_changes = 0
+0099     for i in range(nlinks):
+0100         donor,use = struct.unpack_from('<2I',raw,8+8*i)
+0101         require(donor not in donors and use not in uses, 'Matching collision')
+0102         donors.add(donor)
+0103         uses.add(use)
+0104         require(donor in c.active and c.args[donor] is not None, 'Invalid donor')
+0105         if use>>31:
+0106             j = use&0x7fffffff
+0107             require(j<len(outputs), 'Invalid terminal use')
+0108             target = outputs[j][1]
+0109             value,event = target,n+j
+0110         else:
+0111             target = use//2
+0112             require(target in c.active and c.args[target] is not None, 'Invalid consumer')
+0113             value,event = c.args[target][use%2],target
+0114         require(value in c.args[donor], 'Carrier does not preserve operand')
+0115         require((ranks[donor],donor)<(ranks[target],event), 'Noncausal carrier')
+0116         require(not c.core[target]&~c.core[donor] and not c.union[donor]&~c.union[target],
+0117                 'Carrier frames not nested')
+0118         ru,rv,rt = ranks[donor],ranks[value],ranks[target]
+0119         require(rv<=ru<=rt, 'Carrier rank order')
+0120         hist[h-ru] -= 1
+0121         hist[rv] -= 1
+0122         hist[rt-rv] -= 1
+0123         hist[rt-ru] += 1
+0124         orientation_changes += value == c.args[donor][0]
+0125     require(all(n>=0 for n in hist.values()), 'Negative physical multiplicity')
+0126     R = c.additions+len(outputs)-nlinks
+0127     mass = sum(t*n for t,n in hist.items())
+0128     require(mass == h*R+2*h*(h-1), 'Independent old rank accounting')
+0129     return dict(h=h,v=len(c.inputs),c=c.additions,q=len(outputs),baseline_R=c.additions+len(outputs),
+0130                 matched=nlinks,R=R,orientation_changes=orientation_changes,
+0131                 rank_sum=mass,loss=h*(h-1),histogram=[hist[r] for r in range(h+1)])
+0132 
+0133 
+0134 RECORD = False
+0135 
+0136 
+0137 def expect(name, value, message):
+0138     """Compare with the recorded JSON; in --record mode write it first."""
+0139     path = HERE/name
+0140     if RECORD:
+0141         path.write_text(json.dumps(value, indent=2, sort_keys=True)+'\n')
+0142     require(value == read(path), message)
+0143 
+0144 
+0145 def run(work):
+0146     require(not sys.flags.optimize, 'Assertions must remain enabled')
+0147     check_sources()
+0148     exe = work/'profiles'
+0149     subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-O3','-std=c++17',
+0150                     '-I',str(ROOT/'scripts/partial_swap'),str(HERE/'profiles.cpp'),'-o',str(exe)],check=True)
+0151     receipt = {}
+0152     for h in (23,25):
+0153         print('Rebuilding scalar graph, original labels and fixed profiles, h='+str(h),flush=True)
+0154         c = graph(h)
+0155         scalar = c.verify()
+0156         expect(f'scalar-{h}.json', scalar, 'Scalar provenance mismatch')
+0157         degree,ranks,outputs,audit = dense_audit(c)
+0158         dag,links = work/f'h{h}.bin',work/f'h{h}.uses'
+0159         export(c,dag)
+0160         original = json.loads(subprocess.check_output([str(exe),str(dag),str(links)],text=True,
+0161                     env=dict(os.environ,LINKS_IN=str(HERE/f'links-{h}.uses'))))
+0162         require(sorted(struct.iter_unpack('<2I',links.read_bytes()[8:])) ==
+0163                 sorted(struct.iter_unpack('<2I',(HERE/f'links-{h}.uses').read_bytes()[8:])),
+0164                 'Pinned matching changed')
+0165         independent = recount(c,degree,ranks,outputs,links)
+0166         require(original == independent, 'Independent physical recount failed')
+0167         expect(f'original-{h}.json', original, 'Recorded physical recount mismatch')
+0168         actual = read(Path(str(dag)+'.round3_rankone_certified_profiles.json'))
+0169         expect(f'profiles-{h}.json', actual, 'Fixed profile rebuild mismatch')
+0170         exactness(h)
+0171         raw=links.read_bytes()
+0172         nodes,count=struct.unpack_from('<2I',raw)
+0173         selected=[list(struct.unpack_from('<2I',raw,8+8*i)) for i in range(count)]
+0174         row=dict(original,dag_path=str(dag))
+0175         timeline.basis.cache_clear();timeline.contained.cache_clear()
+0176         compiled=timeline.check({'producer':row,'selected_links':{'links':selected}},True)
+0177         expect(f'timeline-{h}.json', compiled, 'Independent full timeline mismatch')
+0178         timeline.basis.cache_clear();timeline.contained.cache_clear()
+0179         print('PASS complete physical timeline and every dirty basis vector, both orientations h='+str(h),flush=True)
+0180         receipt[str(h)] = dict(scalar=scalar,dense_audit=audit,independent_recount=independent,
+0181                           fixed_profile=actual,full_timeline=compiled)
+0182         c.support_in.cache_clear()
+0183         del c
+0184         gc.collect()
+0185         print('PASS complete h='+str(h)+' supports, all matching uses, rank count and CRT profiles',flush=True)
+0186     data_exe = work/'data-corners'
+0187     subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-O3','-std=c++17',
+0188                     str(HERE/'data_corners.cpp'),'-o',str(data_exe)],check=True)
+0189     print('Checking all 4,073,300 actual fixed-basis data pairs',flush=True)
+0190     actual_data=json.loads(subprocess.check_output([str(data_exe)],text=True))
+0191     require(actual_data==read(HERE/'data-corners.json'),'Full data-corner replay mismatch')
+0192     receipt['data_corners']=dict(pairs=actual_data['pairs'],good=actual_data['good'],
+0193                                 fallback=actual_data['fallback'],nonzero_pivots=actual_data['nonzero_pivots'])
+0194     from verify import data_corners
+0195     recovered=data_corners()
+0196     require(recovered['good']==4073300 and recovered['fallback']==0,'Incomplete recovery')
+0197     receipt['exact_recovery']=recovered['exact_recovery']
+0198     print('PASS all data pairs; ten primary-prime failures recovered over Q',flush=True)
+0199     return receipt
+0200 
+0201 
+0202 if __name__ == '__main__':
+0203     parser = argparse.ArgumentParser()
+0204     parser.add_argument('--work-dir',type=Path)
+0205     parser.add_argument('--output',type=Path)
+0206     parser.add_argument('--record',action='store_true',help='write the scalar/original/profile/timeline JSON records')
+0207     args = parser.parse_args()
+0208     RECORD = args.record
+0209     if args.work_dir:
+0210         args.work_dir.mkdir(parents=True,exist_ok=True)
+0211         result = run(args.work_dir)
+0212     else:
+0213         with tempfile.TemporaryDirectory(prefix='pair-assembly-') as directory:
+0214             result = run(Path(directory))
+0215     if args.output:
+0216         args.output.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')

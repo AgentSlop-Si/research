@@ -1,0 +1,58 @@
+   1	"""Exact tests of multicut rank accounting with free vs nonfree permutations.
+   2	All rank operations are exact over 998244353.
+   3	"""
+   4	from __future__ import annotations
+   5	import random
+   6	from wide_scan import (dft, bit_reverse_order, parity_order, gray_order,
+   7	                       forward, backward, diag, rank, offdiag_ranks,
+   8	                       matmul, permutation_matrix, permute,
+   9	                       cut_rank_potential, footrule, crossing_count, P)
+  10	
+  11	
+  12	def cut_budget_experiment(n:int=16,trials:int=36,seed:int=101)->dict:
+  13	    rng=random.Random(seed)
+  14	    cut = n//2
+  15	    bad=0; checked=0
+  16	    for _ in range(trials):
+  17	        a=diag([1]*n)
+  18	        budget_up=budget_lo=0
+  19	        for i in range(8):
+  20	            kind=rng.choice(('forward','backward','permutation','diagonal'))
+  21	            if kind=='forward':
+  22	                op=forward([rng.randrange(1,20) for _ in range(n)],[rng.randrange(1,20) for _ in range(n)])
+  23	                budget_lo+=1
+  24	            elif kind=='backward':
+  25	                op=backward([rng.randrange(1,20) for _ in range(n)],[rng.randrange(1,20) for _ in range(n)])
+  26	                budget_up+=1
+  27	            elif kind=='permutation':
+  28	                order=list(range(n));rng.shuffle(order)
+  29	                op=permutation_matrix(order)
+  30	                budget_up+=crossing_count(order,cut)
+  31	                budget_lo+=crossing_count(order,cut)
+  32	            else:
+  33	                op=diag([rng.randrange(1,20) for _ in range(n)])
+  34	            a=matmul(op,a)
+  35	            up,lo=offdiag_ranks(a,cut)
+  36	            if up>budget_up or lo>budget_lo:bad+=1
+  37	            checked+=1
+  38	    assert bad==0
+  39	    rows=[]
+  40	    for n in (8,16,32,64):
+  41	        f=dft(n)
+  42	        row={'n':n,'fourier_potential':cut_rank_potential(f),'one_scan_max_potential':n-1}
+  43	        for label,order in [('bit_reverse',bit_reverse_order(n)),('parity',parity_order(n)),('gray',gray_order(n)),('reverse',list(reversed(range(n))))]:
+  44	            row[label+'_footrule']=footrule(order)
+  45	            row[label+'_balanced_crossings']=crossing_count(order,n//2)
+  46	        rows.append(row)
+  47	    return {'randomized_factorizations_checked':checked,'violations':bad,
+  48	            'balanced_cut_budget_example':{
+  49	            'N':n,
+  50	            'fixed_order_no_permutations_min_scan_passes':n,
+  51	            'with_one_bit_reverse_min_scan_passes_by_cut_rank':n//2,
+  52	            'important':'Necessary rank budgets, not sufficiency or universal gate-count bounds'},
+  53	            'multicut':rows}
+  54	
+  55	
+  56	if __name__=='__main__':
+  57	    import json
+  58	    print(json.dumps(cut_budget_experiment(),indent=2))

@@ -1,0 +1,39 @@
+"""Validate new Phase 21 and all embedded prior phases from a fresh archive."""
+from __future__ import annotations
+import pathlib,tempfile,subprocess,sys,os,zipfile,hashlib
+
+def main(path):
+    path=pathlib.Path(path).resolve()
+    with tempfile.TemporaryDirectory(prefix='phase21_fresh_') as tmp:
+        root=pathlib.Path(tmp)
+        with zipfile.ZipFile(path) as z:
+            assert z.testzip() is None,'corrupted Phase21 zip'
+            z.extractall(root)
+        here=root/'fft_green_phase21_weyl_resolvent'
+        for line in (here/'SHA256SUMS.txt').read_text().splitlines():
+            checksum, rel=line.split('  ',1)
+            f=here/rel
+            assert f.exists() and hashlib.sha256(f.read_bytes()).hexdigest()==checksum,rel
+        env=os.environ.copy();env['OPENBLAS_NUM_THREADS']='1';env['PYTHONPATH']=str(here)
+        r=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'],
+                         cwd=here,env=env,capture_output=True,text=True,timeout=240)
+        print('PHASE21 RUN:',r.returncode)
+        print('\n'.join((r.stdout+r.stderr).splitlines()[-5:]))
+        if r.returncode:raise RuntimeError('Phase 21 tests failed')
+        prev=here/'previous_full_phase20_checkpoint.zip'
+        with zipfile.ZipFile(prev) as z:
+            assert z.testzip() is None,'corrupted previous archive'
+            z.extractall(root/'previous')
+        runner=root/'previous'/'fft_green_phase20_weyl_shared_state'/'verify_full_lineage.py'
+        if not runner.is_file():raise RuntimeError('missing Phase20 validator')
+        p=subprocess.run([sys.executable,str(runner),str(prev)],
+                         env=env,capture_output=True,text=True,timeout=240)
+        print(p.stdout)
+        if p.returncode:
+            print(p.stderr)
+            raise RuntimeError('Phase 12-20 validation failed')
+        print('TOTAL VERIFIED: 20 NEW + 202 PRIOR = 222 TESTS, PHASES 12 THROUGH 21')
+
+if __name__=='__main__':
+    if len(sys.argv)!=2:raise SystemExit('Usage: python verify_full_lineage.py /path/to/archive.zip')
+    main(sys.argv[1])

@@ -1,0 +1,26 @@
+"""Independent complex numerical sanity audit, not an all-cut certificate."""
+import json
+from random import Random
+import numpy as np
+from haar_adapter import HaarEscapeMixer
+
+
+def check(n):
+    s=HaarEscapeMixer(n,seed=20261009+n)
+    a=np.array(s.dense(),dtype=complex)
+    err=np.linalg.norm(a.conj().T@a-np.eye(n),ord=2)
+    cuts=[]
+    rng=Random(1208+n)
+    for z in range(12):
+        if z==0:ids=list(range(n//2))
+        else:ids=sorted(rng.sample(range(n),n//2))
+        cut=set(ids);other=[j for j in range(n) if j not in cut]
+        singular=np.linalg.svd(a[np.ix_(ids,other)],compute_uv=False)
+        cuts.append(int((singular>=1/64).sum()))
+    return dict(n=n,unitarity_2norm_error=float(err),sampled_balanced_cuts=len(cuts),
+                min_significant_crosscut_singulars=min(cuts),
+                max_significant_crosscut_singulars=max(cuts),
+                required_floor_fraction=n/512,
+                notes='sampled numerical cuts, not an exhaustive all-cut proof')
+
+if __name__=='__main__':print(json.dumps([check(n) for n in (32,64,128)],indent=2))

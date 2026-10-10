@@ -1,0 +1,346 @@
+===== SOURCE 52 fft_new_material_fusion_checkpoint_20261009/fft_green_independent_review/verify_review.py SHA256 42d1db6d9d3aa5715403b671e35434d3568fe4875a21e0c38bb5b89b5783803a =====
+   1 """Bounded independent audit of Green mixers and the Fourier path bridge.
+   2 
+   3 Uses independent dense rational/modular references and field-call probes.
+   4 No candidate audit helpers, matrix generators, or expected answers imported.
+   5 """
+   6 from collections import Counter
+   7 from fractions import Fraction as Q
+   8 from pathlib import Path
+   9 import hashlib
+  10 import importlib.util
+  11 import json
+  12 import sys
+  13 
+  14 ROOT=Path(__file__).resolve().parent.parent
+  15 
+  16 
+  17 def module(name,path):
+  18     spec=importlib.util.spec_from_file_location(name,path)
+  19     obj=importlib.util.module_from_spec(spec)
+  20     sys.modules[name]=obj
+  21     spec.loader.exec_module(obj)
+  22     return obj
+  23 
+  24 
+  25 ESCAPE=module('reviewed_green_escape',ROOT/'fft_green_fusion_research/resolvent_escape.py')
+  26 BRIDGE=module('reviewed_path_bridge',ROOT/'fft_green_conditioned_bridge_research/green_bridge.py')
+  27 
+  28 
+  29 class Probe:
+  30     def __init__(self,p=None):
+  31         self.p=p;self.zero=0 if p else Q(0);self.one=1 if p else Q(1)
+  32         self.calls=Counter()
+  33     def reduce(self,x):return x%self.p if self.p else Q(x)
+  34     def add(self,a,b):self.calls['add']+=1;return self.reduce(a+b)
+  35     def sub(self,a,b):self.calls['sub']+=1;return self.reduce(a-b)
+  36     def mul(self,a,b):self.calls['mul']+=1;return self.reduce(a*b)
+  37     def inv(self,a):
+  38         self.calls['inverse']+=1
+  39         return pow(a,-1,self.p) if self.p else 1/Q(a)
+  40     def integer(self,a):self.calls['integer_embed']+=1;return self.reduce(a)
+  41 
+  42 
+  43 def eye(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+  44 def reduce(x,p):return x%p if p else Q(x)
+  45 def mm(a,b,p=None):
+  46     return [[reduce(sum(x*y for x,y in zip(row,col)),p) for col in zip(*b)] for row in a]
+  47 def mv(a,x,p=None):return [reduce(sum(u*v for u,v in zip(row,x)),p) for row in a]
+  48 def add(a,b,p=None):return [[reduce(x+y,p) for x,y in zip(ar,br)] for ar,br in zip(a,b)]
+  49 def sub(a,b,p=None):return [[reduce(x-y,p) for x,y in zip(ar,br)] for ar,br in zip(a,b)]
+  50 
+  51 
+  52 def inverse(a,p=None):
+  53     n=len(a);a=[[reduce(x,p) for x in row]+[reduce(int(i==j),p) for j in range(n)] for i,row in enumerate(a)]
+  54     for j in range(n):
+  55         pivot=next((i for i in range(j,n) if a[i][j]),None)
+  56         if pivot is None:raise ValueError('singular matrix')
+  57         a[j],a[pivot]=a[pivot],a[j]
+  58         factor=pow(a[j][j],-1,p) if p else 1/a[j][j]
+  59         a[j]=[reduce(x*factor,p) for x in a[j]]
+  60         for i in range(n):
+  61             if i!=j:
+  62                 factor=a[i][j]
+  63                 a[i]=[reduce(x-factor*y,p) for x,y in zip(a[i],a[j])]
+  64     return [row[n:] for row in a]
+  65 
+  66 
+  67 def norm1(a):return max(sum(abs(x) for x in col) for col in zip(*a))
+  68 
+  69 
+  70 def root(n,p):
+  71     for a in range(2,p):
+  72         q=pow(a,(p-1)//n,p)
+  73         if pow(q,n,p)==1 and pow(q,n//2,p)!=1:return q
+  74     raise ValueError('root unavailable')
+  75 
+  76 
+  77 def fourier(n,q,p):return [[pow(q,i*j,p) for j in range(n)] for i in range(n)]
+  78 
+  79 
+  80 def signed_norm_checks():
+  81     records=[]
+  82     for n in (1,2,3,4,8,12):
+  83         c=[[0]*n for _ in range(n)]
+  84         for i in range(n-1):c[i][i+1]=1
+  85         c[-1][0]=-1
+  86         k=add(eye(n),inverse(sub(eye(n),c)))
+  87         ki=inverse(k)
+  88         assert all(v for row in k for v in row)
+  89         assert all(v for row in ki for v in row)
+  90         assert norm1(k)==Q(n+2,2)
+  91         assert norm1(ki)==Q(2**n,2**n+1)
+  92         condition=norm1(k)*norm1(ki)
+  93         assert condition==Q((n+2)*2**(n-1),2**n+1)
+  94         for j in range(n):
+  95             x=[Q(int(i==j)) for i in range(n)]
+  96             probe=Probe()
+  97             out,counts,setup=ESCAPE.signed_cycle_forward(probe,x)
+  98             assert out==mv(k,x)
+  99             assert counts==dict(probe.calls)
+ 100             assert sum(setup.values())==2 and sum(counts.values())==3*n+1
+ 101         if n==2:
+ 102             gram=mm([list(row) for row in zip(*k)],k)
+ 103             assert gram==[[Q(5,2),0],[0,Q(5,2)]]
+ 104         records.append({'N':n,'norm1_K':str(norm1(k)),'norm1_inverse':str(norm1(ki)),
+ 105                         'kappa1':str(condition),'cold_signed_application_gates':3*n+1})
+ 106     return records
+ 107 
+ 108 
+ 109 def affine_checks():
+ 110     records=[]
+ 111     for p,n in ((3,2),(17,2),(97,2),(97,4),(97,8)):
+ 112         q=root(n,p)
+ 113         f=fourier(n,q,p);fi=inverse(f,p)
+ 114         for a,b,h in ((5,1,1),(1,-1,-3),(9,3,5)):
+ 115             probe=Probe(p)
+ 116             plan=ESCAPE.prepare_affine(probe,n,q,a,b,h)
+ 117             assert plan.preparation_counts==dict(probe.calls)
+ 118             assert sum(probe.calls.values())==2*n+(n.bit_length()-1)+4
+ 119             m=[[0]*n for _ in range(n)]
+ 120             for i in range(n):m[i][(a*i+h)%n]=pow(q,b*i%n,p)
+ 121             k=add(eye(n),inverse(sub(eye(n),m,p),p),p)
+ 122             ki=inverse(k,p)
+ 123             target=mm(mm(f,k,p),fi,p);target_inv=inverse(target,p)
+ 124             for j in range(n):
+ 125                 x=[int(i==j) for i in range(n)]
+ 126                 for is_target,is_inverse,reference in ((False,False,k),(False,True,ki),
+ 127                                                        (True,False,target),(True,True,target_inv)):
+ 128                     before=Counter(probe.calls)
+ 129                     out,counts=plan.apply(probe,x,target=is_target,inverse=is_inverse)
+ 130                     assert out==mv(reference,x,p)
+ 131                     assert counts==dict(probe.calls-before)
+ 132                     assert sum(counts.values())==(6 if is_inverse else 5)*n+1
+ 133             records.append({'p':p,'N':n,'descriptor':[a,b,h],
+ 134                             'matrix_K_nonzeros':sum(bool(v) for row in k for v in row)})
+ 135     invalid=0
+ 136     for p,n in ((5,2),(17,4),(257,8),(65537,16)):
+ 137         try:ESCAPE.prepare_affine(Probe(p),n,root(n,p))
+ 138         except ValueError as e:assert 'singular numerator' in str(e);invalid+=1
+ 139         else:raise AssertionError('singular modular numerator accepted')
+ 140     for permutation in ([],[0,1],[1,1],[2,0]):
+ 141         try:ESCAPE.cycle_order(permutation)
+ 142         except ValueError:invalid+=1
+ 143         else:raise AssertionError('invalid cycle accepted')
+ 144     return {'cases':records,'invalid_cases':invalid}
+ 145 
+ 146 
+ 147 def bridge_checks():
+ 148     records=[]
+ 149     p=65537
+ 150     for n in (4,8):
+ 151         q=root(n,p);probe=Probe(p);plan=BRIDGE.FourierPathGreen(probe,n,q)
+ 152         assert plan.preparation_operations==dict(probe.calls)
+ 153         t=[[3 if i==j else -1 if abs(i-j)==1 else 0 for j in range(n)] for i in range(n)]
+ 154         t=[[v%p for v in row] for row in t]
+ 155         f=fourier(n,q,p);fi=inverse(f,p);h=mm(mm(f,t,p),fi,p)
+ 156         s=add(inverse(t,p),inverse(add(t,eye(n),p),p),p)
+ 157         si=inverse(s,p);fsfi=mm(mm(f,s,p),fi,p);fsifi=mm(mm(f,si,p),fi,p)
+ 158         for k in range(n):
+ 159             for l in range(n):
+ 160                 expected=((3-pow(q,k,p)-pow(q,-k,p))*(k==l)
+ 161                           +pow(n,-1,p)*(pow(q,l,p)+pow(q,-k,p)))%p
+ 162                 assert h[k][l]==expected
+ 163         x=[(i+1)**2%p for i in range(n)];y=mv(f,x,p)
+ 164         checks=[(plan.source_t,x,t),(plan.target_h,y,h),(plan.source_s,x,s),
+ 165                 (plan.source_s_inverse,x,si),(plan.target_s,y,fsfi),
+ 166                 (plan.target_s_inverse,y,fsifi)]
+ 167         for fn,values,reference in checks:assert fn(values)==mv(reference,values,p)
+ 168         assert dict(plan.c.count)==dict(probe.calls)
+ 169         for fn in (plan.source_t,plan.target_h,plan.source_solve,plan.target_solve):
+ 170             for length in (n-1,n+1):
+ 171                 try:fn([0]*length)
+ 172                 except ValueError:pass
+ 173                 else:raise AssertionError('invalid input length accepted')
+ 174         records.append({'N':n,'entrywise_rank2_identity_checks':n*n,
+ 175                         'direct_dense_operator_comparisons':len(checks)})
+ 176     return records
+ 177 
+ 178 
+ 179 def main():
+ 180     signed=signed_norm_checks()
+ 181     affine=affine_checks()
+ 182     bridge=bridge_checks()
+ 183     n=32;denominator=2**n+1
+ 184     fractions=[Q(2**j,denominator) for j in range(n-1)]
+ 185     assert all(v.denominator==denominator for v in fractions)
+ 186     result={'status':'PASS','signed_exact_norm_cases':signed,'affine_checks':affine,
+ 187             'path_bridge_checks':bridge,
+ 188             'inverse_basis_output_bit_example':{'N':n,'offdiagonal_fraction_count':n-1,
+ 189                 'bits_per_reduced_denominator':denominator.bit_length(),
+ 190                 'denominator_bits_when_materialized_separately':sum(v.denominator.bit_length() for v in fractions)},
+ 191             'source_sha256':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()
+ 192                 for p in (ROOT/'fft_green_fusion_research/resolvent_escape.py',
+ 193                           ROOT/'fft_green_conditioned_bridge_research/green_bridge.py',Path(__file__))}}
+ 194     Path(__file__).with_name('results.json').write_text(json.dumps(result,indent=2)+'\n')
+ 195     print(json.dumps(result,indent=2))
+ 196 
+ 197 
+ 198 if __name__=='__main__':main()
+===== END SOURCE 52; 8534 bytes; 198 lines =====
+===== SOURCE 53 fft_new_material_fusion_checkpoint_20261009/fft_shrinking_certified_fusion_research/parameter_schedule.py SHA256 580a25587f3e65edd939b3ecf25e02d19d46f2a320372718200c83863804b0a8 =====
+   1 """Integer/rational shrinking-error planner without constructing N=2**L.
+   2 
+   3 All quantities below are polynomial in L except the first-table row count,
+   4 which is represented by its binary exponent. No input vector or table is
+   5 allocated. The existing certified decoder implements the resulting schedule.
+   6 """
+   7 from fractions import Fraction
+   8 from math import factorial, isqrt
+   9 from pathlib import Path
+  10 import sys
+  11 
+  12 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "fft_wordram_decoder_research"))
+  13 from guarded_decoder import _trig_parameters
+  14 
+  15 
+  16 def ceil_div(a, b):
+  17     return (a + b - 1) // b
+  18 
+  19 
+  20 def ceil_sqrt(a):
+  21     root = isqrt(a)
+  22     return root if root * root == a else root + 1
+  23 
+  24 
+  25 def ceil_log2(a):
+  26     return (max(1, a) - 1).bit_length()
+  27 
+  28 
+  29 def power_two_ceiling_ratio(a, b=1):
+  30     return 1 << ceil_log2(ceil_div(a, b))
+  31 
+  32 
+  33 def encode_fraction(value):
+  34     value = Fraction(value)
+  35     return {"numerator": value.numerator, "denominator": value.denominator}
+  36 
+  37 
+  38 def plan(log2_N, *, failure_power=1, gamma=Fraction(1, 2), mode="linear", tau=None):
+  39     """Validated explicit schedule from L=ceil(log2 N), represented symbolically.
+  40 
+  41     ``linear``: eta=Theta(log L/sqrt L), work O(N).
+  42     ``subfft``: eta=Theta((log L)**1.5/L), work O(N L/log L).
+  43     ``frontier`` with 1<=tau<=L: eta=Theta(log L/sqrt(tau L)), work O(N tau).
+  44     The base regime is explicitly reported instead of forcing g>=1.
+  45     """
+  46     L, c, gamma = log2_N, failure_power, Fraction(gamma)
+  47     if type(L) is not int or L < 2 or type(c) is not int or c < 0 or not 0 < gamma < 1:
+  48         raise ValueError("L>=2, integer c>=0 and rational gamma in (0,1) required")
+  49     ell = ceil_log2(L)
+  50     if mode == "linear":
+  51         time_factor = Fraction(1)
+  52     elif mode == "subfft":
+  53         time_factor = Fraction(L, ell)
+  54     elif mode == "frontier" and tau is not None:
+  55         time_factor = Fraction(tau)
+  56     else:
+  57         raise ValueError("unknown cost/error regime")
+  58     if not 1 <= time_factor <= L:
+  59         raise ValueError("frontier requires 1<=tau<=L")
+  60     eta = Fraction(ell, ceil_sqrt(ceil_div(time_factor.numerator * L, time_factor.denominator)))
+  61     # With delta_sample=N^-c/2, ln(4N/delta_sample)
+  62     # <= log2(8N**(c+1))=3+(c+1)L. Sampling budget is eta/4.
+  63     logarithm_upper = 3 + (c + 1) * L
+  64     K0 = ceil_div(64 * logarithm_upper * eta.denominator ** 2, eta.numerator ** 2)
+  65     B = K0
+  66     Q0 = max(4, power_two_ceiling_ratio(64 * eta.denominator, eta.numerator))
+  67     Q1 = power_two_ceiling_ratio(B * Q0)
+  68     H = power_two_ceiling_ratio(32 * eta.denominator, eta.numerator)
+  69     b = max(8, ceil_log2(ceil_div(32 * eta.denominator, eta.numerator)))
+  70     p = Q0.bit_length() + Q1.bit_length() - 2
+  71     # L-1 <= log2 N for every N with this ceiling; no dyadic padding or
+  72     # unjustified replacement of N**gamma by 2**(gamma*L) is necessary.
+  73     g = gamma.numerator * (L - 1) // (gamma.denominator * p)
+  74     d, P = _trig_parameters(b)
+  75     result = {"log2_N": L, "log2_log2_N_ceiling": ell, "mode": mode,
+  76               "failure_power": c, "gamma": encode_fraction(gamma),
+  77               "time_factor_tau": encode_fraction(time_factor),
+  78               "N_representation": "L=ceil(log2 N); N itself is not constructed",
+  79               "high_probability_regime": c >= 1,
+  80               "target_error_factor": encode_fraction(eta),
+  81               "sampling_error_budget": encode_fraction(eta / 4),
+  82               "sampling_logarithm_upper": logarithm_upper,
+  83               "minimum_sample_count": K0, "block_size": B,
+  84               "phase_grid": Q0, "slope_grid": Q1,
+  85               "lane_step_bits": H.bit_length() - 1, "trig_bits": b,
+  86               "trig_degree": d, "trig_working_precision": P,
+  87               "descriptor_bits": p, "group_size": g,
+  88               "trig_parameter_max_integer_bits": max(factorial(d + 1).bit_length(),
+  89                                                      2 * (d + 1) + b + 5),
+  90               "table_allocation_performed": False}
+  91     if g < 1:
+  92         result["status"] = "finite_base_regime_g_zero"
+  93         return result
+  94     G = ceil_div(K0, g)
+  95     K = G * g
+  96     key_bits = p * g
+  97     # r-bit fields hold each complete sum with no inter-field carries.
+  98     r = (2 * H * G).bit_length()
+  99     # Includes sampling cap/exponent arithmetic; a larger fixed constant may
+ 100     # be needed for the stated input component width in the fused pipeline.
+ 101     w = max(4 * (L + 1) + 4 * P + 64, (c + 4) * L + 64, key_bits + 1, r + 1)
+ 102     lanes = w // r
+ 103     words = ceil_div(B, lanes)
+ 104     # Coarse scalar word-operation bounds for complete cold construction.
+ 105     # Store log2 bounds, never the exponential number of table rows.
+ 106     first_per_row = 512 * (g + 1) * (B + 1)
+ 107     phase_work = 128 * (P + 1) ** 2 * (Q1 + 1)
+ 108     cold_log_upper = max(key_bits + ceil_log2(first_per_row), ceil_log2(phase_work)) + 1
+ 109     memory_per_row = 2 * words + 4  # both coordinates and bounded row metadata
+ 110     memory_log_upper = max(key_bits + ceil_log2(memory_per_row), ceil_log2(2 * Q1 + 8)) + 1
+ 111     # pi<4, sqrt(2)<3/2 give a rational rigorous decoder-error upper bound.
+ 112     decoder_error_upper = Fraction(4, Q0) + Fraction(4 * (B - 1), Q1) + Fraction(1, 1 << b) + Fraction(3, 4 * H)
+ 113     assert decoder_error_upper <= eta / 4
+ 114     assert 4 * logarithm_upper <= K * (eta / 4) ** 2
+ 115     assert key_bits * gamma.denominator <= gamma.numerator * (L - 1)
+ 116     assert r * lanes <= w and 2 * H * G < 1 << r
+ 117     assert result["trig_parameter_max_integer_bits"] < w
+ 118     # R=ceil(N/B). If B<=N, R<=2N/B; this includes the final partial block.
+ 119     descriptor_ratio_bound = Fraction(2 * K, B)
+ 120     packed_add_ratio_bound = Fraction(4 * G * words, B)
+ 121     lookup_ratio_bound = Fraction(2 * G, B)
+ 122     # Check B<=N by bit length, without creating 2**L.
+ 123     block_fits = B.bit_length() <= L - 1  # B<2**(L-1)<=N, conservatively
+ 124     result.update({"status": "valid_growing_schedule" if block_fits else "finite_base_regime_B_gt_N",
+ 125                    "sample_count": K, "groups": G, "key_bits": key_bits,
+ 126                    "table_rows_log2": key_bits, "guarded_lane_bits": r,
+ 127                    "word_bits": w, "lanes_per_word": lanes, "words_per_row_per_coordinate": words,
+ 128                    "deterministic_error_upper": encode_fraction(decoder_error_upper),
+ 129                    "total_error_upper": encode_fraction(eta / 4 + decoder_error_upper),
+ 130                    "descriptor_operations_over_N_upper": encode_fraction(descriptor_ratio_bound),
+ 131                    "packed_adds_over_N_upper": encode_fraction(packed_add_ratio_bound),
+ 132                    "packed_adds_over_N_tau_upper": encode_fraction(packed_add_ratio_bound / time_factor),
+ 133                    "row_lookups_over_N_upper": encode_fraction(lookup_ratio_bound),
+ 134                    "cold_construction_log2_work_upper": cold_log_upper,
+ 135                    "cold_memory_log2_words_upper": memory_log_upper,
+ 136                    "cold_work_below_N_certified": cold_log_upper <= L - 1,
+ 137                    "cold_memory_below_N_certified": memory_log_upper <= L - 1,
+ 138                    "fusion": "same schedule applies to integer residual rho; multiply error scale by L_box(rho)/(n*sqrt(N))"})
+ 139     return result
+ 140 
+ 141 
+ 142 if __name__ == "__main__":
+ 143     import json
+ 144     print(json.dumps([plan(L) for L in (32, 64, 128, 256, 1024, 65536)], indent=2))
+===== END SOURCE 53; 7220 bytes; 144 lines =====

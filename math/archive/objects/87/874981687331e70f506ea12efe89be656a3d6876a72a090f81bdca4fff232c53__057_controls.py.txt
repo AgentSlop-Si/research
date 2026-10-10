@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Explicit baseline and published cancellation controls, not discoveries."""
+from anchor_search import Circuit
+from smt_search import TARGET
+from pathlib import Path
+import json
+
+def plus(c,a,b):return c.gate('add',[a,b])
+def minus(c,a,b):return c.gate('add',[a,[b[0],-b[1]]])
+def H(n):return [[1 if (i&j).bit_count()%2==0 else -1 for j in range(n)]for i in range(n)]
+def save(cert):Path('results',cert['name']+'_certificate.json').write_text(json.dumps(cert,indent=2))
+def main():
+ c=Circuit(8);x=[[i,1]for i in range(8)]
+ sp=[plus(c,x[i],x[i+4])for i in range(4)];df=[minus(c,x[i],x[i+4])for i in range(4)]
+ y=[plus(c,sp[0],sp[2]),plus(c,sp[1],sp[3]),minus(c,sp[0],sp[2]),minus(c,sp[1],sp[3]),plus(c,df[0],df[3]),minus(c,df[1],df[2]),minus(c,df[0],df[3]),plus(c,df[1],df[2])]
+ save(c.payload(y,TARGET,'synthetic_staged_baseline'))
+ c=Circuit(4);a,b,d,e=[[i,1]for i in range(4)]
+ s=c.sum([b,d,e]);f=minus(c,a,s)
+ y=[plus(c,a,s)]+[plus(c,f,c.gate('double',[v]))for v in[d,b,e]]
+ save(c.payload(y,H(4),'h4_known_cancellation'))
+ c=Circuit(8);a=[0,1];b,d,e,f,g,h,j=[c.gate('double',[[i,1]])for i in range(1,8)]
+ B1=plus(c,b,d);B2=plus(c,e,j);B3=plus(c,g,h)
+ tot=c.gate('half',[c.sum([B1,B2,B3,f])]);diff=minus(c,a,tot)
+ D=plus(c,diff,e);E=plus(c,diff,f);J=plus(c,diff,j)
+ y=[plus(c,a,tot),c.sum([E,d,h]),c.sum([E,b,g]),plus(c,E,B2),plus(c,D,B1),c.sum([J,d,g]),c.sum([J,b,h]),plus(c,D,B3)]
+ cert=c.payload(y,H(8),'h8_alman_rao_algorithm5');cert['source']='https://arxiv.org/html/2211.06459v2#S2.SS2';save(cert)
+if __name__=='__main__':main()

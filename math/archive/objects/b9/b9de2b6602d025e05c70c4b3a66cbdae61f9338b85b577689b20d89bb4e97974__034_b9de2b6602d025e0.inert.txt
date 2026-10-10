@@ -1,0 +1,115 @@
+# Uniform shrinking-error extension of the guarded decoder
+
+9 October 2026. Independent completion and audit of the construction in the user's `fft_wordram_shrinking_error_v4(2).zip`. The key idea of increasing block width with sample count belongs to that uploaded v4 continuation. This proof supplies explicit model, grouping, randomness, uniform arithmetic, and output details; it is not a novelty or practical-speed claim.
+
+## Precise result
+
+Fix c>=1, C>=0, and 0<gamma<1. Inputs are N complex values whose real and imaginary components are signed integers of magnitude at most N^C, optionally multiplied by a common bounded-word dyadic or rational scale. Let M=sum_j(|Re x_j|+|Im x_j|), and let U_N be the unitary complex DFT. Use a randomized word RAM with word width w=K ceil(log2(N+2)) for a sufficiently large fixed K, ordinary arithmetic/Boolean/shift operations, and uniform random words. Intermediate products may use a fixed number of words and incur their actual constant cost. Quotients by fixed word-sized divisors can use precomputed reciprocal multiplication with correction.
+
+There are uniform, fully charged algorithms writing N explicit approximate coefficients, with failure probability at most N^(-c), having the following bounds as N grows:
+
+1. Time O(N), error max_m |output_m-(U_N x)_m| <= O(loglog N/sqrt(log N)) M/sqrt(N).
+2. Time O(N log N/loglog N), error max_m |output_m-(U_N x)_m| <= O((loglog N)^(3/2)/log N) M/sqrt(N).
+
+Both use O(N) words. Input-independent preprocessing is N^gamma polylog(N)=o(N), and is included in these total times. Constants depend only on the fixed model parameters. All logarithmic statements concern sufficiently large N; finite smaller ranges can be covered by charged direct approximation with a parameter-dependent constant.
+
+The broader phrase 'every finite-precision input represented in O(1) words' needs an additional representation/normalization argument if exponents vary freely. Merely fitting each floating-point input in one word does not make an exact common-denominator mass sum fit a constant number of words. The theorem here deliberately retains the already established bounded/common-scale input model.
+
+## Shared parameter calculation
+
+Write L=log2 N and ell=log2 L. Choose a=2 for the first result, a=3 for the second. Let
+
+    B = ceil(L^a/ell^a),
+    rho = ell^(a/2)/L^((a-1)/2).
+
+Take the phase and component quantization resolutions to be sufficiently small constant multiples of rho. Power-of-two phase-grid sizes can be chosen with
+
+    Q0 = Theta(1/rho),  Q1 = Theta(B/rho),
+
+so that the two circular nearest-grid errors cause complex trajectory error at every t<B at most pi/Q0+pi*t/Q1=O(rho). The atom's quadrant sign may be folded into Q0 since Q0 is a multiple of four. One descriptor then has
+
+    p = log2 Q0 + log2 Q1 = Theta(ell)
+
+bits. Set
+
+    g = floor(gamma L/p),
+    G = ceil(B/g),
+    k = gG.
+
+For sufficiently large N, g>=1, g=Theta(L/ell), k=B+O(g)=Theta(B), and
+
+    G = Theta(L^(a-1)/ell^(a-1)).
+
+Draw k actual independent atoms rather than padding a final incomplete group with artificial samples. Every group has exactly g entries.
+
+## Sampling is fully charged
+
+The integer masses can be summed in O(N) word operations. Generate k independent uniform integer thresholds in [0,M), sort them, and make a second pass over cumulative masses. Sorting costs O(k log k), while the second pass costs O(N+k). Sorting preserves the sampled multiset; independence can be understood by retaining original threshold indices, although the empirical mean does not depend on their order.
+
+Generate each threshold by rejection from the next power-of-two interval. Cap its attempts at T=ceil(log2(2kN^c)). Every attempt succeeds with probability at least 1/2. The probability that any draw exhausts its cap is at most N^(-c)/2; return zeros and count failure in that event. Conditioned on no exhaustion, all accepted draws remain independent and exactly mass-proportional. This costs O(kT)=polylog(N)=o(N) even for a=3.
+
+For the signed real/imaginary atom mean y, the standard complex bounded-variable estimate gives
+
+    Pr[max_m |(U_N y-U_N x)_m| > eta_s M/sqrt(N)]
+      <= 4N exp(-k eta_s^2/4).
+
+Taking eta_s=sqrt(4 ln(8N^(c+1))/k) makes this at most N^(-c)/2 and gives eta_s=O(rho). Sampling plus capped-rejection failure is at most N^(-c).
+
+## Uniform table and its finite arithmetic
+
+There are 2^(pg)<=N^gamma group keys. For every key, decode its g trajectories, average their B lanes, approximate the phasors, quantize real/imaginary values to a dyadic step h=Theta(rho), bias the resulting integers, and store the row already packed. No input-dependent lazy phasor construction or online re-packing is part of this evaluator.
+
+Both phase grids are powers of two, so every phase required in a block lies on the Q1-point circle. Here Q1 is polylog(N). Its phasors need O(log(1/rho))=O(ell) accuracy bits. Uniform fixed-point elementary series suffice: generate pi with the convergent Machin arctangent identity, reduce phases to a bounded interval, and evaluate sine/cosine by Taylor series with guard bits and a rigorously bounded tail and roundoff. The term counts, guard precision, and number of phasors are all polylog(N); elementary bit algorithms therefore take polylog(N) total word work. More conservative exact-rational series also suffice because only a polylogarithmic bound is needed. No free exact trig primitive is required.
+
+Choose approximations and rounding so every quantized group component is a in [-U,U], with U=O(1/rho), and the aggregate phase, phasor-generation, and group-rounding errors are O(rho). Each table entry can be built in polylog(N) work, even by explicit gB scalar evaluation. Hence total table construction is N^gamma polylog(N)=o(N). Storage has the same asymptotic bound.
+
+## Guarded addition and all word widths
+
+Store a+U in each lane and choose
+
+    q = ceil(log2(2UG+1)) = Theta(ell),
+    r = floor(w/q),
+    P = ceil(2B/r) = O(1+Bq/w).
+
+The two complex components count as 2B scalar lanes. Each table entry is already a P-word vector. All partial biased lane sums lie in [0,2UG], strictly below 2^q. Thus ordinary unsigned word addition adds lanes without cross-lane carries. Packing no more than r fields also guarantees the entire accumulated word is at most 2^(rq)-1<2^w. This is a physical fixed-width operation, not a giant-integer shortcut.
+
+The lookup key is pg<=gamma L bits. Table addresses and offsets occupy O(log N) bits because the total table is o(N) words. Extracted signed sums and the products used to divide by G and scale outputs are polynomially bounded in N, so they fit the declared constant number of words.
+
+## Online work, including explicit outputs
+
+Maintain sampled-coordinate residues j*m0 mod N and update by B*j mod N at each block. Slope descriptors can be cached. Initial increments, reciprocals, and phase-grid descriptors require only polylog(N) preparation. Every start-phase descriptor, residue update, and concatenation takes O(1) word operations. For R=ceil(N/B) blocks the complete online work is
+
+    O(N + Rk + RG(1+Bq/w)).
+
+The last block may use a full precomputed B-lane row and discard its excess lanes. Since B,k,G are polylogarithmic, ceiling effects contribute only polylogarithmic overhead. Substituting g=Theta(L/p), k=Theta(B), and w=Theta(L) gives
+
+    O(N + Nk/B + Nk p q/L^2).
+
+Consequently:
+
+    a=2: k=B=Theta(L^2/ell^2), so total O(N).
+    a=3: k=B=Theta(L^3/ell^3), so total O(N L/ell).
+
+This counts descriptor generation, every P-word table retrieval/addition, accumulator initialization, unpacking, and every final output write.
+
+For a general inverse-polylogarithmic desired factor eta, the same bookkeeping with B=k=Theta(L/eta^2) gives O(N+N p q/(eta^2 L)), where p=Theta(1+log B+log(1/eta)) and q=Theta(1+log G+log(1/eta)), G=Theta(kp/L). Do not replace p by log(1/eta) alone: fixed accuracy still needs Theta(loglog N) descriptor bits. For fixed eta, q grows only like logloglog N; for the two shrinking polynomial-logarithmic rates, p and q are both Theta(ell).
+
+Within this exact design, when Bq>=w and every selected packed row is fully read and accumulated, that work is Theta(N k p q/L^2). Using the stated sufficient Hoeffding sample schedule k=Theta(L/eta^2), linear time in a regime with p,q=Theta(ell) requires eta=Omega(ell/sqrt(L)). This is saturation of this particular parameter schedule and row-scanning evaluator. It is not a lower bound on Fourier approximation, on all coordinate-sampling methods, or even on every implementation of a related table design.
+
+## Output scaling and error interpretation
+
+After unpacking, the exact average of the quantized groups is h(S-GU)/G. Quantize it on a dyadic grid of step O(rho). Let A=ceil(log2 N/2). Compute 2^A/sqrt(N) in [1,2) to O(rho) accuracy by fixed-point binary search or another charged elementary routine in polylog(N) work. Each output is explicitly stored as two bounded integer numerators multiplied by M, with shared binary scale 2^(-(A+b)), where b=O(log(1/rho))=O(ell). Per-output work is O(1); all numerators still have O(log N) bits. A complete mantissa/exponent record can be emitted per component instead of relying on a shared header.
+
+Sampling, descriptor quantization, finite phasors, group quantization, final mean rounding, and output scaling sum to O(rho) M/sqrt(N). This proves both claimed tradeoff points in the stated model.
+
+Because M/sqrt(N)<=sqrt(2)||x||_2, this is a coordinatewise l_infinity error that vanishes relative to the input l2 norm. It does NOT establish vanishing relative l2 error of the complete output vector. Summing N coordinate errors introduces up to a sqrt(N) factor.
+
+The guarantee remains weak on cancellation-heavy dense inputs. For independent random real signs, M/sqrt(N)=sqrt(N), while max_m |(U_N x)_m|=O(sqrt(log N)) with high probability by a direct Hoeffding union bound. Either displayed allowance rho*sqrt(N) is asymptotically much larger than sqrt(log N). Thus the zero vector still meets either tolerance on that input family with high probability. This is a useful boundary, not a claim that zero output works for every input: coherent inputs retain large Fourier peaks.
+
+## Scope
+
+The shrinking factor is a genuine mathematical improvement over fixed-accuracy v3. It neither yields exact arbitrary-complex Fourier outputs nor resolves coefficient-relative/machine-precision FFT accuracy. The full asymptotic evaluator has not been run here. The uploaded v4 prototype remains a toy algebra/scaling control, while the separate macro checkpoint supplies additional eager-table implementation components. Originality requires a further focused literature review of the strengthened tradeoffs.
+
+The bare rate ell/sqrt(L), before any theorem constants, equals 0.75 at L=64 and 0.3125 at L=1024. These are scale illustrations, not finite-N certified error guarantees. They emphasize the gap between asymptotic decay and ordinary machine-precision Fourier computation.
+
+The second valid parameter point is not a superior general frontier: on power-of-two lengths, the same samples followed by a pruned FFT achieve its error in O(N loglog N), including a bounded-word finite-arithmetic implementation and charged O(N) roots. See `../PRUNED_BASELINE.md`. The first fully charged O(N) point is the meaningful speed comparison against that baseline.

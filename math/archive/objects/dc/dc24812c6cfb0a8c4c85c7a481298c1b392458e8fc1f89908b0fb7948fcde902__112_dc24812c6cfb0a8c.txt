@@ -1,0 +1,60 @@
+Finite-input model and probability ledger
+=======================================
+
+This component supplies the fresh-input part of the approximate construction.
+It is not an exact FFT, and its additive tolerance is substantially weaker
+than coefficient-relative accuracy or conventional FFT roundoff accuracy.
+
+Input: x_j=(a_j+i b_j)/D, with signed integer a_j,b_j of at most C log2(N)
+bits, constant C, and one common known denominator D occupying O(1) words.
+We can take D=1. Fixed accuracy is a finitely encoded dyadic constant;
+the failure parameter is a finite rational with O(log N) bits.
+All inputs are scanned. L=sum(|a_j|+|b_j|) is computed exactly in O(N)
+word operations, with word size w a sufficiently large constant times log N.
+The zero vector is detected and all N zero outputs written in O(N).
+
+Sampling: cumulative positive integer masses are built in O(N). A uniform
+ticket in [0,L) locates a signed real/imaginary atom by binary search in
+O(log N). Tickets are generated from b=ceil(log2 L) unbiased random bits and
+rejected when >=L. Each attempt succeeds with probability >1/2 (or exactly
+1 for powers of two); for L=1 the unique ticket is zero. Each sample is
+independent. Cap each sample at R=ceil(log2(k/delta_cap)) attempts and signal
+failure if the cap is exhausted. A union bound gives failure <=delta_cap.
+Conditional on successful sampling the accepted tickets retain their exact
+uniform distribution. A fixed random seed is only for reproducible tests;
+the probability theorem assumes independent uniform random words.
+
+Let Z_l(m)=i^(phase_l) exp(-2 pi i j_l m/N). Its real and imaginary components
+lie in [-1,1], and E[Z_l(m)]=(F_N x)_m/(L/D). For a>0, Hoeffding on each
+component at threshold a/sqrt(2), followed by a union bound, gives
+
+  P(max_m |k^-1 sum_l Z_l(m) - (F_N x)_m/(L/D)| > a)
+       <= 4 N exp(-k a^2/4).
+
+Therefore k >= 4 a^-2 ln(4N/delta_MC) suffices. Round k UP to a multiple of
+the packed decoder's group size; never duplicate samples to fill a group.
+The decoder supplies normalized sample averages with deterministic complex
+error d. Combined error is (a+d)L/D for unnormalized F, and
+(a+d)L/(D sqrt N) for unitary U. Total failure <=delta_MC+delta_cap.
+
+For fixed requested error epsilon and delta >= N^-c for a fixed constant c,
+k=O(log N), R=O(log N). Even charging capped attempts and binary search,
+sampling after the input scan costs O(log^2 N) word operations. Independent
+random-word generation is a stated unit-cost randomized Word-RAM primitive.
+No sample access, input scan, output write, or table construction is free.
+
+Output representation: each coefficient is an explicit signed fixed-point
+integer pair times a documented common rational scale. All N pairs are
+materialized. The unnormalized transform needs no square-root primitive.
+Unitary output can retain a common 1/sqrt N normalization convention, or
+round it with a separately allocated error budget. The theorem does not
+pretend to exactly represent arbitrary irrational Fourier coefficients in
+finite words.
+
+sampling.py uses Python's Random for repeatable numerical experiments, not
+a cryptographic randomness or mathematical independence certificate.
+sample_count uses ordinary floating logarithms to choose experimental sample
+counts; sample_count_integer supplies a uniform conservative integer bound
+from bit lengths (ln t <= log2 t), using exact rational parameters and dyadic
+fixed epsilon. The capped sampler also accepts exact rational failure bounds.
+All mass, ticket, phase and CDF calculations are integer-exact.

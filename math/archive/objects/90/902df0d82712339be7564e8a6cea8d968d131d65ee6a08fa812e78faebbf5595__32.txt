@@ -1,0 +1,426 @@
+   1 #!/usr/bin/env python3
+   2 """Independently authored Phase22 checks. Does not import or execute source files.
+   3 
+   4 Requirements: Python 3, NumPy, SymPy. Run from any directory.
+   5 Exact matrices use Python integers; floating checks are separately labelled.
+   6 """
+   7 from collections import Counter
+   8 from pathlib import Path
+   9 import hashlib
+  10 import json
+  11 import math
+  12 import random
+  13 import time
+  14 
+  15 import numpy as np
+  16 from sympy import isprime, sqrt_mod
+  17 from linear_rotation_reference import prepare_rotation, apply_rotation
+  18 
+  19 P = 998244353
+  20 HERE = Path(__file__).resolve().parent
+  21 
+  22 
+  23 def tr(a):
+  24     return list(map(list, zip(*a)))
+  25 
+  26 
+  27 def mul(a, b):
+  28     bt = tr(b)
+  29     return [[sum(x*y for x, y in zip(row, col)) % P for col in bt] for row in a]
+  30 
+  31 
+  32 def mv(a, x):
+  33     return [sum(u*v for u, v in zip(row, x)) % P for row in a]
+  34 
+  35 
+  36 def eye(n):
+  37     return [[int(i == j) for j in range(n)] for i in range(n)]
+  38 
+  39 
+  40 def inverse(a):
+  41     n = len(a)
+  42     rows = [list(row) + ident for row, ident in zip(a, eye(n))]
+  43     for col in range(n):
+  44         pivot = next((r for r in range(col, n) if rows[r][col] % P), None)
+  45         if pivot is None:
+  46             raise ValueError('singular')
+  47         rows[col], rows[pivot] = rows[pivot], rows[col]
+  48         scale = pow(rows[col][col], -1, P)
+  49         rows[col] = [v*scale % P for v in rows[col]]
+  50         for r in range(n):
+  51             if r != col:
+  52                 scale = rows[r][col]
+  53                 if scale:
+  54                     rows[r] = [(x-scale*y) % P for x, y in zip(rows[r], rows[col])]
+  55     return [row[n:] for row in rows]
+  56 
+  57 
+  58 def rank(a):
+  59     a = [[x % P for x in row] for row in a]
+  60     count = 0
+  61     for col in range(len(a[0])):
+  62         pivot = next((r for r in range(count, len(a)) if a[r][col]), None)
+  63         if pivot is None:
+  64             continue
+  65         a[count], a[pivot] = a[pivot], a[count]
+  66         scale = pow(a[count][col], -1, P)
+  67         a[count] = [v*scale % P for v in a[count]]
+  68         for r in range(count+1, len(a)):
+  69             scale = a[r][col]
+  70             a[r] = [(x-scale*y) % P for x, y in zip(a[r], a[count])]
+  71         count += 1
+  72         if count == len(a):
+  73             break
+  74     return count
+  75 
+  76 
+  77 def null_vector(rows, n):
+  78     """One nonzero kernel vector, or None. Independent elimination."""
+  79     a = [[v % P for v in row] for row in rows]
+  80     pivots = []
+  81     k = 0
+  82     for col in range(n):
+  83         r = next((r for r in range(k, len(a)) if a[r][col]), None)
+  84         if r is None:
+  85             continue
+  86         a[k], a[r] = a[r], a[k]
+  87         scale = pow(a[k][col], -1, P)
+  88         a[k] = [v*scale % P for v in a[k]]
+  89         for r in range(len(a)):
+  90             if r != k:
+  91                 factor = a[r][col]
+  92                 a[r] = [(x-factor*y) % P for x, y in zip(a[r], a[k])]
+  93         pivots.append(col)
+  94         k += 1
+  95         if k == len(a):
+  96             break
+  97     free = next((j for j in range(n) if j not in pivots), None)
+  98     if free is None:
+  99         return None
+ 100     x = [0]*n
+ 101     x[free] = 1
+ 102     for r, col in enumerate(pivots):
+ 103         x[col] = -a[r][free] % P
+ 104     assert all(sum(u*v for u, v in zip(row, x)) % P == 0 for row in rows)
+ 105     return x
+ 106 
+ 107 
+ 108 def fourier(n):
+ 109     w = pow(3, (P-1)-(P-1)//n, P)
+ 110     assert pow(w, n, P) == 1 and pow(w, n//2, P) != 1
+ 111     scale = pow(int(sqrt_mod(n, P)), -1, P)
+ 112     return [[scale*pow(w, i*j, P) % P for j in range(n)] for i in range(n)], w
+ 113 
+ 114 
+ 115 def sampled_green(n, seed):
+ 116     """Same published parameter stream; different dense path-product evaluator.
+ 117 
+ 118     Each term is formed from the finite geometric inverse formula, not the
+ 119     source's linear recurrence. This is intentionally a dense diagnostic.
+ 120     """
+ 121     rng = random.Random(seed)
+ 122     w = pow(3, (P-1)-(P-1)//n, P)
+ 123     roots = [pow(w, k, P) for k in range(n)]
+ 124     total = [[0]*n for _ in range(n)]
+ 125     term_checks = []
+ 126     for _ in range(2):
+ 127         order = list(range(n))
+ 128         rng.shuffle(order)
+ 129         while True:
+ 130             weights = [rng.choice(roots) for _ in range(n)]
+ 131             product = math.prod(weights) % P
+ 132             if product != 1:
+ 133                 break
+ 134         left = [rng.choice(roots) for _ in range(n)]
+ 135         right = [rng.choice(roots) for _ in range(n)]
+ 136         denominator = pow((1-product) % P, -1, P)
+ 137         unscaled = [[0]*n for _ in range(n)]
+ 138         for source in range(n):
+ 139             path_weight = 1
+ 140             for distance in range(n):
+ 141                 destination = (source+distance) % n
+ 142                 if distance:
+ 143                     path_weight = path_weight*weights[destination] % P
+ 144                 unscaled[destination][source] = path_weight*denominator % P
+ 145                 i, j = order[destination], order[source]
+ 146                 total[i][j] = (total[i][j] + left[destination]*right[source]
+ 147                                *unscaled[destination][source]) % P
+ 148         # Validate every entry of (I-S)G=I using the sparse denominator.
+ 149         assert all((unscaled[i][j]-weights[i]*unscaled[(i-1)%n][j]) % P
+ 150                    == int(i == j) for i in range(n) for j in range(n))
+ 151         term_checks.append(True)
+ 152     return total
+ 153 
+ 154 
+ 155 def gram_pair(a, b):
+ 156     n = len(a)
+ 157     bi = inverse(b)
+ 158     jbi = [bi[(-i) % n] for i in range(n)]
+ 159     return mul(tr(a), a), mul(tr(bi), jbi)
+ 160 
+ 161 
+ 162 def signatures(a):
+ 163     invdiag = [pow(a[i][i], -1, P) for i in range(len(a))]
+ 164     h = [[v*v*invdiag[i]*invdiag[j] % P for j, v in enumerate(row)]
+ 165          for i, row in enumerate(a)]
+ 166     return h, [tuple(sorted(row)) for row in h]
+ 167 
+ 168 
+ 169 def match_grams(k, c):
+ 170     n = len(k)
+ 171     zk = sum(k[i][i] == 0 for i in range(n))
+ 172     zc = sum(c[i][i] == 0 for i in range(n))
+ 173     if zk != zc:
+ 174         return 'excluded', None, 'diagonal-zero-count'
+ 175     if zk:
+ 176         return 'inconclusive', None, 'zero-diagonal'
+ 177     h, hk = signatures(k)
+ 178     g, hc = signatures(c)
+ 179     if Counter(hk) != Counter(hc):
+ 180         return 'excluded', None, 'row-signature-multiset'
+ 181     if len(set(hk)) != n:
+ 182         return 'ambiguous', None, 'repeated-signatures'
+ 183     lookup = {sig: i for i, sig in enumerate(hk)}
+ 184     perm = [lookup[sig] for sig in hc]
+ 185     if any(g[i][j] != h[perm[i]][perm[j]] for i in range(n) for j in range(n)):
+ 186         return 'excluded', None, 'full-invariant-matrix'
+ 187     return 'candidate', perm, 'matched'
+ 188 
+ 189 
+ 190 def reconstruct_mask(k, c, perm):
+ 191     n = len(k)
+ 192     invperm = [perm.index(i) for i in range(n)]
+ 193     target = [[c[invperm[i]][invperm[j]] for j in range(n)] for i in range(n)]
+ 194     if any(v == 0 for row in k for v in row):
+ 195         return None
+ 196     ratio = [[target[i][j]*pow(k[i][j], -1, P) % P for j in range(n)] for i in range(n)]
+ 197     roots = sqrt_mod(ratio[0][0], P, all_roots=True)
+ 198     if not roots or roots[0] == 0:
+ 199         return None
+ 200     q0 = int(roots[0])
+ 201     q = [ratio[i][0]*pow(q0, -1, P) % P for i in range(n)]
+ 202     if any(q[i] == 0 for i in range(n)):
+ 203         return None
+ 204     return q if all(q[i]*k[i][j]*q[j] % P == target[i][j]
+ 205                     for i in range(n) for j in range(n)) else None
+ 206 
+ 207 
+ 208 def sandwich(a, q, perm, b):
+ 209     middle = [[0]*len(a) for _ in a]
+ 210     for j, i in enumerate(perm):
+ 211         middle[i] = [q[i]*x % P for x in b[j]]
+ 212     return mul(a, middle)
+ 213 
+ 214 
+ 215 def make_b(a, q, perm, target):
+ 216     core = mul(inverse(a), target)
+ 217     scaled = [[x*pow(q[i], -1, P) % P for x in row] for i, row in enumerate(core)]
+ 218     return [scaled[i] for i in perm]
+ 219 
+ 220 
+ 221 def parity_objects(n):
+ 222     f, w = fourier(n)
+ 223     h = n//2
+ 224     sq2 = int(sqrt_mod(2, P))
+ 225     invsq2 = pow(sq2, -1, P)
+ 226     scale = f[0][0]
+ 227     imag = pow(w, n//4, P)
+ 228     inv2 = pow(2, -1, P)
+ 229     # (-i)^-1 = i, and (omega^-j - omega^j)/(2i) = sin(theta_j).
+ 230     iunit = pow(imag, -1, P)
+ 231     inv2i = pow(2*iunit, -1, P)
+ 232     hmat = [[0]*n for _ in range(n)]
+ 233     hmat[0][0] = hmat[h][1] = 1
+ 234     for j in range(1, h):
+ 235         hmat[j][j+1] = hmat[n-j][j+1] = invsq2
+ 236         hmat[j][h+j] = invsq2
+ 237         hmat[n-j][h+j] = -invsq2 % P
+ 238     q = [1]*(h+1) + [imag]*(h-1)
+ 239     # Build C directly from algebraic cos/sin entries, not H^T F.
+ 240     c = [[scale]*n, [scale*pow(P-1, k, P) % P for k in range(n)]]
+ 241     cosine, sine = [], []
+ 242     for j in range(1, h):
+ 243         cosine.append([sq2*scale*(pow(w,j*k,P)+pow(w,-j*k,P))*inv2 % P for k in range(n)])
+ 244         sine.append([sq2*scale*(pow(w,-j*k,P)-pow(w,j*k,P))*inv2i % P for k in range(n)])
+ 245     c += cosine+sine
+ 246     # O(N) coefficient preparation by an advancing root and inverse root.
+ 247     r = [[0]*n for _ in range(n)]
+ 248     r[0][0], r[1][1] = 1, P-1
+ 249     wp, wm, wi = 1, 1, pow(w, -1, P)
+ 250     for j in range(1, h):
+ 251         wp, wm = wp*w % P, wm*wi % P
+ 252         co, si = (wp+wm)*inv2 % P, (wm-wp)*inv2i % P
+ 253         a, b = j+1, h+j
+ 254         r[a][a] = r[b][b] = co
+ 255         r[a][b], r[b][a] = -si % P, si
+ 256     return f, hmat, q, c, r
+ 257 
+ 258 
+ 259 def covariance_matrix(c, r):
+ 260     rc = mul(r, c)
+ 261     n = len(c)
+ 262     return [[(c[i][(j+1)%n]-rc[i][j]) % P for j in range(n)] for i in range(n)]
+ 263 
+ 264 
+ 265 def run():
+ 266     started = time.time()
+ 267     result = {'field': {'p': P, 'prime_verified': bool(isprime(P))},
+ 268               'uploaded_code_executed': False, 'negative_pairs': [], 'positive_controls': [],
+ 269               'exact_parity': [], 'numerical_even_lengths': [], 'adversarial_controls': []}
+ 270     assert result['field']['prime_verified']
+ 271     cache = {}
+ 272     for n in (8,16,32,64):
+ 273         f, w = fourier(n)
+ 274         for seed in (11,17,23,29,43,2026):
+ 275             a, b = sampled_green(n, seed), sampled_green(n, seed+701)
+ 276             cache[n,seed] = a
+ 277             assert rank(a) == n and rank(b) == n
+ 278             k, c = gram_pair(a,b)
+ 279             state, perm, reason = match_grams(k,c)
+ 280             assert state == 'excluded' and perm is None
+ 281             result['negative_pairs'].append({'n':n, 'seed':seed, 'result':state, 'reason':reason,
+ 282                                             'zero_diags_K':sum(k[i][i] == 0 for i in range(n)),
+ 283                                             'zero_diags_C':sum(c[i][i] == 0 for i in range(n))})
+ 284         for seed in (17,29,2026):
+ 285             a = cache[n,seed]
+ 286             rng = random.Random(seed)
+ 287             perm = list(range(n)); rng.shuffle(perm)
+ 288             q = [rng.randrange(1,P) for _ in range(n)]
+ 289             b = make_b(a,q,perm,f)
+ 290             assert sandwich(a,q,perm,b) == f
+ 291             k,c = gram_pair(a,b)
+ 292             state, recovered, _ = match_grams(k,c)
+ 293             assert state == 'candidate' and recovered == perm
+ 294             recovered_q = reconstruct_mask(k,c,recovered)
+ 295             assert recovered_q == q or recovered_q == [(-v)%P for v in q]
+ 296             reconstructed = sandwich(a,recovered_q,recovered,b)
+ 297             assert reconstructed == f or reconstructed == [[(-v)%P for v in row] for row in f]
+ 298             result['positive_controls'].append({'n':n,'seed':seed,'result':'recovered',
+ 299                                                 'all_entries_verified':True})
+ 300         signs = [1 if j%2 == 0 else P-1 for j in range(n)]
+ 301         u = [[signs[i]*x % P for x in row] for i,row in enumerate(f)]
+ 302         jmat = [[int(j == (-i)%n) for j in range(n)] for i in range(n)]
+ 303         assert mul(tr(u),u) == jmat and u[0][0] == f[0][0]
+ 304         d1 = sum(u[i][(j+1)%n] != pow(w,i,P)*u[i][j]%P for i in range(n) for j in range(n))
+ 305         d2 = sum(pow(w,j,P)*u[i][j]%P != u[(i+1)%n][j] for i in range(n) for j in range(n))
+ 306         assert d1 == 0 and d2 > 0
+ 307         result['adversarial_controls'].append({'n':n,'sign_twisted_gram_pass':True,
+ 308                                                'first_weyl_defects':d1,'second_weyl_defects':d2})
+ 309         print('Exact fixed samples and mask recovery:', n, flush=True)
+ 310     for n in (4,8,16,32,64,128):
+ 311         f,h,q,c,r = parity_objects(n)
+ 312         assert mul(h,[[q[i]*x%P for x in row] for i,row in enumerate(c)]) == f
+ 313         assert mul(tr(h),h) == eye(n) and mul(tr(c),c) == eye(n)
+ 314         assert all(v == 0 for row in covariance_matrix(c,r) for v in row)
+ 315         seed = [row[0] for row in c]
+ 316         orbit = [seed]
+ 317         for _ in range(n-1):
+ 318             orbit.append(mv(r,orbit[-1]))
+ 319         assert tr(orbit) == c and rank(tr(orbit)) == n
+ 320         prepared = prepare_rotation(n, P, pow(3, (P-1)-(P-1)//n, P))
+ 321         assert all(apply_rotation(prepared, col) == mv(r, col) for col in tr(c))
+ 322         result['exact_parity'].append({'n':n,'factorization':True,'orthogonality':True,
+ 323                                        'all_covariance_entries':True,'complete_seed_orbit':True,
+ 324                                        'rotation_nonzeros':sum(v != 0 for row in r for v in row)})
+ 325     # The real theorems assert every even N, so include non-dyadic controls.
+ 326     for n in (4,6,8,10,12,14,16,18,20,24,30,32,42,64,128,256):
+ 327         h = n//2
+ 328         jk = np.arange(n)
+ 329         f = np.exp(-2j*np.pi*np.outer(jk,jk)/n)/math.sqrt(n)
+ 330         hmat = np.zeros((n,n)); hmat[0,0]=1; hmat[h,1]=1
+ 331         for j in range(1,h):
+ 332             hmat[j,j+1] = hmat[n-j,j+1] = 1/math.sqrt(2)
+ 333             hmat[j,h+j] = 1/math.sqrt(2); hmat[n-j,h+j] = -1/math.sqrt(2)
+ 334         q = np.array([1]*(h+1)+[-1j]*(h-1))
+ 335         c = np.vstack([np.ones(n),(-1.)**jk]
+ 336                       + [math.sqrt(2)*np.cos(2*np.pi*j*jk/n) for j in range(1,h)]
+ 337                       + [math.sqrt(2)*np.sin(2*np.pi*j*jk/n) for j in range(1,h)])/math.sqrt(n)
+ 338         r = np.zeros((n,n)); r[0,0]=1; r[1,1]=-1
+ 339         for j in range(1,h):
+ 340             co,si=math.cos(2*math.pi*j/n),math.sin(2*math.pi*j/n)
+ 341             a,b=j+1,h+j
+ 342             r[a,a]=r[b,b]=co; r[a,b]=-si; r[b,a]=si
+ 343         factor_error = float(np.max(np.abs(hmat@(q[:,None]*c)-f)))
+ 344         orth_error = float(np.max(np.abs(c@c.T-np.eye(n))))
+ 345         covariance_error = float(np.max(np.abs(c[:,np.roll(jk,-1)]-r@c)))
+ 346         assert max(factor_error,orth_error,covariance_error) < 2e-12
+ 347         rank_re,rank_im = int(np.linalg.matrix_rank(f.real,tol=1e-9)),int(np.linalg.matrix_rank(f.imag,tol=1e-9))
+ 348         assert (rank_re,rank_im) == (h+1,h-1)
+ 349         probs = c*c
+ 350         positive = probs[probs > 0]
+ 351         entropy = float(-np.sum(positive*np.log2(positive)))
+ 352         assert entropy >= n*(math.log2(n)-1)+2-1e-9
+ 353         # Stronger one-mask classification: A=H times real block mixers.
+ 354         rng=np.random.default_rng(177+n)
+ 355         t=np.zeros((n,n))
+ 356         t[:h+1,:h+1] = np.eye(h+1)+0.01*rng.normal(size=(h+1,h+1))
+ 357         t[h+1:,h+1:] = np.eye(h-1)+0.01*rng.normal(size=(h-1,h-1))
+ 358         a=hmat@t
+ 359         b=(np.linalg.solve(a,f)/q[:,None])
+ 360         assert np.max(np.abs(b.imag)) < 2e-12
+ 361         assert np.max(np.abs(a@(q[:,None]*b.real)-f)) < 2e-12
+ 362         result['numerical_even_lengths'].append({'n':n,'factor_error':factor_error,
+ 363              'orthogonality_error':orth_error,'covariance_error':covariance_error,
+ 364              'rank_real':rank_re,'rank_imaginary':rank_im,'entropy':entropy,
+ 365              'sharper_entropy_floor':n*(math.log2(n)-1)+2,'real_mask_classification_control':True})
+ 366     # A fixed known seed can be defeated even by a wrong fixed LINEAR map.
+ 367     n=8; trials=2
+ 368     f,h,q,c,r=parity_objects(n)
+ 369     rng=random.Random(22)
+ 370     vectors=[[rng.randrange(P) for _ in range(n)] for _ in range(trials)]
+ 371     e0=[1]+[0]*(n-1)
+ 372     constraints=[e0]+[x for v in vectors for x in (v,[v[-1]]+v[:-1])]
+ 373     b=null_vector(constraints,n)
+ 374     assert b is not None
+ 375     wrong=[row[:] for row in c]
+ 376     wrong[0]=[(x+y)%P for x,y in zip(wrong[0],b)]
+ 377     assert wrong != c and mv(wrong,e0) == mv(c,e0)
+ 378     assert all(mv(wrong,[v[-1]]+v[:-1]) == mv(r,mv(wrong,v)) for v in vectors)
+ 379     d=covariance_matrix(wrong,r)
+ 380     assert rank(d) > 0
+ 381     result['known_seed_linear_false_accept']={'n':n,'seed':22,'trials':trials,
+ 382            'passes_sample':True,'actual_covariance_defect_rank':rank(d),'perturbation_row':b}
+ 383     # Nonlinear oracle T(x)=(sum x) Cx has exact covariance and seed, yet T!=C.
+ 384     def nonlinear(x):
+ 385         return [(sum(x)%P)*v%P for v in mv(c,x)]
+ 386     x=[2]+[0]*(n-1)
+ 387     assert nonlinear(e0) == mv(c,e0) and nonlinear(x) != mv(c,x)
+ 388     assert all(nonlinear([v[-1]]+v[:-1]) == mv(r,nonlinear(v)) for v in vectors+[x])
+ 389     result['nonlinear_false_accept']={'formula':'T(x)=(sum_i x_i) Cx',
+ 390                                       'exact_covariance_and_seed':True,'equals_C':False}
+ 391     # The I Gram has disconnected support, while I's columns fail J-parity.
+ 392     result['gram_connectivity_not_sufficient']={'A':'I_8','gram_offdiagonal_edges':0,
+ 393                                                'column_e1_is_not_reflection_eigenvector':True}
+ 394     # Zero-diagonal and repeated-fingerprint branches are genuinely inconclusive.
+ 395     assert match_grams([[0,1],[1,0]],[[0,2],[2,0]])[0] == 'inconclusive'
+ 396     assert match_grams(eye(4),eye(4))[0] == 'ambiguous'
+ 397     assert match_grams(eye(2),[[0,1],[1,0]])[0] == 'excluded'
+ 398     result['degenerate_gram_controls'] = 'passed'
+ 399     # Nonzero diagonal fingerprints do not recover an inconsistent cycle sign.
+ 400     k=[[1,2,3],[2,1,4],[3,4,1]]
+ 401     bad=[[1,-2%P,3],[-2%P,1,4],[3,4,1]]
+ 402     assert rank(k)==rank(bad)==3
+ 403     state,perm,_=match_grams(k,bad)
+ 404     assert state == 'candidate' and perm == [0,1,2]
+ 405     assert reconstruct_mask(k,bad,perm) is None
+ 406     result['pairwise_square_not_sufficient']={'candidate_fingerprint':True,'mask_reconstruction':False}
+ 407     result['summary']={'negative_excluded':len(result['negative_pairs']),
+ 408                        'positive_recovered':len(result['positive_controls']),
+ 409                        'exact_parity_sizes':len(result['exact_parity']),
+ 410                        'numerical_even_sizes':len(result['numerical_even_lengths'])}
+ 411     reference = json.loads((HERE/'SOURCE_AUDIT_REFERENCE.json').read_text())
+ 412     observed = [{key: row[key] for key in ('n','seed','result','zero_diags_K','zero_diags_C')}
+ 413                 for row in result['negative_pairs']]
+ 414     assert observed == reference['negative_fixed_pairs']
+ 415     observed = [{key: row[key] for key in ('n','seed','result')} for row in result['positive_controls']]
+ 416     assert observed == reference['positive_controls']
+ 417     result['source_audit_json_all_records_match'] = True
+ 418     result['elapsed_seconds']=round(time.time()-started,3)
+ 419     path=HERE/'CHECK_RESULTS.json'
+ 420     path.write_text(json.dumps(result,indent=2)+'\n')
+ 421     print(json.dumps(result['summary'],sort_keys=True),flush=True)
+ 422     print('All independently authored assertions passed.',flush=True)
+ 423 
+ 424 
+ 425 if __name__ == '__main__':
+ 426     run()

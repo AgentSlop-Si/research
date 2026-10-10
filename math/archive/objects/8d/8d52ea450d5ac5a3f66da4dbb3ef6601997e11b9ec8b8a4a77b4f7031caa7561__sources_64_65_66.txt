@@ -1,0 +1,418 @@
+===== SOURCE 64 fft_nonlinear_rank_research_2026-10-10/test_new.py SHA256 ae36a11436410cffccd4bf31707bcbc09cfc89fb5f54514dc34b805edfd49ea8 =====
+   1 """Exact, independent tests for the new nonlinear Fourier-rank research.
+   2 Run: python test_new.py
+   3 Dependencies: numpy, scipy, networkx (only graph-flow test requires latter two).
+   4 """
+   5 from __future__ import annotations
+   6 from pathlib import Path
+   7 import json,random
+   8 import numpy as np
+   9 from nonlinear_fourier_oracle import (rank_periodic_universal,rank_parity_columns,
+  10     parity_columns,transversal_columns,moving_partition_certificate)
+  11 from permutation_edits import (affine_from_columns,mcnot_permutation,
+  12     rank_permutation_difference,gate_edit_rank,robust_rank_limit)
+  13 from exact_field_controls import (fourier_rank_mod,rank_mod,separated_generator_stage)
+  14 
+  15 BASE=Path(__file__).resolve().parent
+  16 REC=json.loads((BASE/'EXACT_CERTIFICATES.json').read_text())
+  17 PRIMES=[12289,65537]
+  18 
+  19 def test_arbitrary_rows():
+  20     # Characteristic-zero formula; exact modular ranks are independent controls.
+  21     rng=random.Random(17332);cases=0
+  22     for k in range(3,7):
+  23         n=1<<k
+  24         for mask in range(1,n):
+  25             for _ in range(5):
+  26                 row_count=rng.randrange(n+1)
+  27                 R=rng.sample(range(n),row_count)
+  28                 C=parity_columns(k,mask)
+  29                 rank=rank_parity_columns(k,mask,R)
+  30                 for p in PRIMES:
+  31                     got=fourier_rank_mod(n,R,C,p)
+  32                     assert got==rank,(k,mask,R,p,got,rank)
+  33                 cases+=1
+  34     print('PASS 1: parity-column / arbitrary-row oracle,',cases,'two-prime cases')
+  35 
+  36 def test_periodic_universal_E():
+  37     rng=random.Random(15889);cases=0
+  38     for k in range(3,7):
+  39         n=1<<k
+  40         for period in (1<<j for j in range(1,k+1)):
+  41             m=period//2
+  42             for _ in range(20):
+  43                 flags=[rng.randrange(2) for _ in range(m)]
+  44                 C=transversal_columns(n,period,flags)
+  45                 R=rng.sample(range(n),rng.randrange(n+1))
+  46                 assert len(C)==n//2 and len(set(C))==len(C)
+  47                 r=rank_periodic_universal(n,period,m,R)
+  48                 for p in PRIMES:
+  49                     assert fourier_rank_mod(n,R,C,p)==r
+  50                 cases+=1
+  51     print('PASS 2: non-parity periodic universal columns,',cases,'two-prime cases')
+  52 
+  53 def test_parity_parity_old_formula():
+  54     cases=0
+  55     for k in range(2,8):
+  56         n=1<<k
+  57         # Spot/exhaust both parity signs using exact integer oracle.
+  58         for mask in range(1,n):
+  59             u=mask.bit_length()-1
+  60             for out in range(1,n):
+  61                 v=out.bit_length()-1
+  62                 want=n//4 if u+v<=k-2 else n//2
+  63                 R=[x for x in range(n) if (x&out).bit_count()%2==1]
+  64                 assert rank_parity_columns(k,mask,R)==want
+  65                 cases+=1
+  66     print('PASS 3: previous parity/parity theorem recovered,',cases,'ordered pairs')
+  67 
+  68 def test_perm_edit_cycle_rank():
+  69     rng=random.Random(798);cases=0
+  70     for k in range(3,8):
+  71         n=1<<k
+  72         for m in range(1,min(k,4)):
+  73             for _ in range(12):
+  74                 controls=rng.sample(range(k),m)
+  75                 target=next(t for t in range(k) if t not in controls)
+  76                 g=mcnot_permutation(k,controls,target)
+  77                 assert rank_permutation_difference(g,np.arange(n))==gate_edit_rank(k,m)
+  78                 if n<=64:
+  79                     # completely separate numerical elimination control
+  80                     M=np.zeros((n,n),dtype=np.int64)
+  81                     M[np.arange(n),g]=1
+  82                     M[np.arange(n),np.arange(n)]-=1
+  83                     assert rank_mod(M,12289)==gate_edit_rank(k,m)
+  84                 cases+=1
+  85     print('PASS 4: exact nonlinear-edit rank via permutation cycles,',cases,'gates')
+  86 
+  87 def rebuild_256():
+  88     x=REC['nonaffine_256'];k=x['k'];cols=x['affine_shuffle_columns']
+  89     shuffles=[affine_from_columns(c) for c in cols]
+  90     for step in x['toffoli_gate_sequence_in_shuffle_2']:
+  91         shuffles[2]=shuffles[2][mcnot_permutation(k,step['controls'],step['target'])]
+  92     return shuffles
+  93 
+  94 def test_256_obstruction():
+  95     x=REC['nonaffine_256'];k=x['k'];n=1<<k
+  96     perms=rebuild_256()
+  97     res=moving_partition_certificate(k,perms,[1]*4,x['witness']['input_mask'])
+  98     assert res==x['witness']
+  99     assert res['stage_channel_budget']==[11,53,43,17]
+ 100     assert res['exact_complex_fourier_rank']==128>124==res['capacity_bound']
+ 101     R=res['output_rows'];C=parity_columns(k,res['input_mask'])
+ 102     assert len(C)==len(R)==128
+ 103     assert sum(y%2==0 for y in R)==64
+ 104     for p in PRIMES:
+ 105         assert fourier_rank_mod(n,R,C,p)==128
+ 106     # This is genuinely non-GF2-affine (not just renamed linear wiring).
+ 107     p=perms[2];offset=int(p[0])
+ 108     linear=affine_from_columns([int(p[1<<j])^offset for j in range(k)],offset)
+ 109     assert int(np.count_nonzero(p!=linear))==160
+ 110     print('PASS 5: N=256 nonlinear exact rank obstruction 128>124; two primes')
+ 111 
+ 112 def test_256_independent_mincut():
+ 113     from scan_network_cut import exact_mincut
+ 114     x=REC['nonaffine_256'];p=rebuild_256()
+ 115     R=x['witness']['output_rows'];C=parity_columns(x['k'],x['witness']['input_mask'])
+ 116     val=exact_mincut(256,[1]*4,p,R,C)
+ 117     assert val==x['directed_scan_network_mincut']==124
+ 118     print('PASS 6: independent 8,176-node exact directed-network min-cut = 124')
+ 119 
+ 120 def test_robust_dense_affine():
+ 121     for n_str, x in REC['edit_robust'].items():
+ 122         k=x['k'];n=1<<k
+ 123         affine=[affine_from_columns(c) for c in x['affine_shuffle_columns']]
+ 124         baseline=moving_partition_certificate(k,affine,[1]*4,x['base_input_mask'])
+ 125         assert baseline['capacity_bound']==x['base_capacity']
+ 126         assert baseline['stage_channel_budget']==x['base_stage_boundaries']
+ 127         assert baseline['exact_complex_fourier_rank']==x['exact_complex_fourier_rank']
+ 128         modified=[v.copy() for v in affine]
+ 129         ds=[]
+ 130         for e in x['nonlinear_edits']:
+ 131             j=e['shuffle_index']
+ 132             modified[j]=modified[j][mcnot_permutation(k,e['controls'],e['target'])]
+ 133             ds.append(rank_permutation_difference(affine[j],modified[j]))
+ 134         assert ds==x['edit_ranks']==[n//8,n//8]
+ 135         cap=robust_rank_limit(x['base_capacity'],ds)
+ 136         assert cap==x['perturbed_network_rank_bound_on_original_endpoint_sets']
+ 137         assert x['exact_complex_fourier_rank']>cap
+ 138         assert x['strict_gap']==x['exact_complex_fourier_rank']-cap
+ 139         print('  robust N',n,'Fourier',x['exact_complex_fourier_rank'],'network <=',cap,'gap',x['strict_gap'])
+ 140     print('PASS 7: two-Toffoli robustness for dense GF2-affine layouts N=2048,4096')
+ 141 
+ 142 def test_actual_QS_matrix_product():
+ 143     # Exact modular matrix products, in unrelated control layouts with
+ 144     # two Toffoli gates; no use of the symbolic rank-certificate implementation.
+ 145     for p in PRIMES:
+ 146         n=64;k=6
+ 147         rng=np.random.default_rng(4219)
+ 148         matrices=[separated_generator_stage(n,p,rng) for _ in range(4)]
+ 149         def prod(with_gates):
+ 150             acc=matrices[0]
+ 151             for j in range(1,4):
+ 152                 if with_gates and j<=2:
+ 153                     cs=(0,2) if j==1 else (1,3)
+ 154                     perm=mcnot_permutation(k,cs,k-1)
+ 155                     acc=acc[perm,:]
+ 156                 acc=(matrices[j]@acc)%p
+ 157             return acc
+ 158         original=prod(False);nonlinear=prod(True)
+ 159         selection=np.s_[n//2:n,0:n//2]
+ 160         base_rank=rank_mod(original[selection],p)
+ 161         observed_rank=rank_mod(nonlinear[selection],p)
+ 162         correction=rank_mod(nonlinear-original,p)
+ 163         assert base_rank==4 and observed_rank==19 and correction==16
+ 164         assert observed_rank <=4+16 <32
+ 165         R=list(range(n//2,n));C=list(range(n//2))
+ 166         assert fourier_rank_mod(n,R,C,p)==32
+ 167     print('PASS 8: direct random four-stage products with two nonlinear edits, two primes')
+ 168 
+ 169 def test_universal_toffoli_corollary():
+ 170     # t=4,r=1,g=1,m=2. For k>t*ceil(log2(8rt))=20,
+ 171     # cap<=t*(N/2**5-1), perturb rank<=N/8.
+ 172     for k in (21,23,29):
+ 173         n=1<<k; t=4; r=1;q=5
+ 174         assert t*q<k
+ 175         assert t*r*(n//(1<<q)-1)+n//8<n//4
+ 176     # General low-rank edit criterion for any H below the remaining margin.
+ 177     print('PASS 9: all-length single-Toffoli impossibility inequality')
+ 178 
+ 179 if __name__=='__main__':
+ 180     test_arbitrary_rows()
+ 181     test_periodic_universal_E()
+ 182     test_parity_parity_old_formula()
+ 183     test_perm_edit_cycle_rank()
+ 184     test_256_obstruction()
+ 185     test_256_independent_mincut()
+ 186     test_robust_dense_affine()
+ 187     test_actual_QS_matrix_product()
+ 188     test_universal_toffoli_corollary()
+ 189     print('ALL 9 NEW TEST GROUPS PASSED')
+===== END SOURCE 64; 8389 bytes; 189 lines =====
+===== SOURCE 65 fft_offset_class_joint_v12/benchmark.py SHA256 5bab77d43312c8ac89502e7ac3f5f328f4b1da24f71aff46bc236d6b66ffdb9a =====
+   1 #!/usr/bin/env python3
+   2 from __future__ import annotations
+   3 
+   4 import csv
+   5 import time
+   6 from pathlib import Path
+   7 
+   8 import numpy as np
+   9 
+  10 import prototype as p
+  11 import unit_step_core as core
+  12 import v11_fused_reference as v11
+  13 
+  14 
+  15 def median_time(fn, repeats: int = 3) -> float:
+  16     values = []
+  17     for _ in range(repeats):
+  18         start = time.perf_counter()
+  19         fn()
+  20         values.append(time.perf_counter() - start)
+  21     return float(np.median(values))
+  22 
+  23 
+  24 def run(output: Path = Path("benchmark_results.csv")) -> None:
+  25     rng = np.random.default_rng(20261009)
+  26     rows = []
+  27     for n in [768, 1280, 3072, 5120, 12288]:
+  28         x = rng.normal(size=n) + 1j * rng.normal(size=n)
+  29         q = p.next_prime_power(n, 2)
+  30         block = p.choose_prime_power_block(q, 2)
+  31         rank = p.bessel_rank_for_tail(n ** (-1.0 / 3.0))
+  32         state = core.draw_state(q, rng)
+  33 
+  34         # Warm-up imports/plans/FFT caches.
+  35         p.offset_class_row(x, 2, state, block)
+  36         p.offset_class_row_batched(x, 2, state, block)
+  37         v11.fused_addition_bessel_chirp_row(x, rank, block, state, 0)
+  38         np.fft.fft(x)
+  39 
+  40         t_class = median_time(lambda: p.offset_class_row(x, 2, state, block))
+  41         t_batch = median_time(lambda: p.offset_class_row_batched(x, 2, state, block))
+  42         t_bessel = median_time(
+  43             lambda: v11.fused_addition_bessel_chirp_row(x, rank, block, state, 0)
+  44         )
+  45         t_fft = median_time(lambda: np.fft.fft(x) / np.sqrt(n))
+  46         rows.append({
+  47             "N": n,
+  48             "Q": q,
+  49             "M": block,
+  50             "classes": p.offset_class_count(n, q),
+  51             "bessel_rank": rank,
+  52             "offset_stream_seconds": t_class,
+  53             "offset_batch_seconds": t_batch,
+  54             "bessel_seconds": t_bessel,
+  55             "numpy_fft_seconds": t_fft,
+  56             "offset_stream_over_bessel": t_class / t_bessel,
+  57             "offset_batch_over_bessel": t_batch / t_bessel,
+  58             "offset_stream_over_numpy_fft": t_class / t_fft,
+  59             "offset_batch_over_numpy_fft": t_batch / t_fft,
+  60             "offset_work_proxy": p.offset_class_work_proxy(n, 2, block),
+  61             "bessel_work_proxy": p.bessel_lift_work_proxy(n, rank),
+  62         })
+  63 
+  64     with output.open("w", newline="", encoding="utf-8") as f:
+  65         writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+  66         writer.writeheader()
+  67         writer.writerows(rows)
+  68 
+  69 
+  70 if __name__ == "__main__":
+  71     run()
+===== END SOURCE 65; 2401 bytes; 71 lines =====
+===== SOURCE 66 fft_offset_class_joint_v12/test_checkpoint.py SHA256 57e65d0f3a9b53e31af6612a6ca31fa1265b2f185fa76c8371425a566f28c9b8 =====
+   1 #!/usr/bin/env python3
+   2 from __future__ import annotations
+   3 
+   4 import math
+   5 import unittest
+   6 
+   7 import numpy as np
+   8 
+   9 import prototype as p
+  10 import unit_step_core as core
+  11 
+  12 
+  13 class OffsetClassJointTests(unittest.TestCase):
+  14     def setUp(self) -> None:
+  15         self.rng = np.random.default_rng(20261009)
+  16 
+  17     def test_class_count_formula(self) -> None:
+  18         for n in range(2, 200):
+  19             for prime in (2, 3, 5, 7):
+  20                 q = p.next_prime_power(n, prime)
+  21                 self.assertEqual(len(p.offset_classes(n, q)), n // math.gcd(n, q))
+  22 
+  23     def test_exact_modulation_identity(self) -> None:
+  24         for n, prime in [(12, 2), (18, 3), (35, 5), (47, 2)]:
+  25             q = p.next_prime_power(n, prime)
+  26             x = self.rng.normal(size=n) + 1j * self.rng.normal(size=n)
+  27             target = p.normalized_dft(x)
+  28             selected, _, _ = p.exact_nearest_grid_map(n, q)
+  29             for num, targets in p.offset_classes(n, q).items():
+  30                 padded = p.phase_modulated_padded_input(x, q, num)
+  31                 lifted = math.sqrt(q / n) * p.normalized_dft(padded)[selected[targets]]
+  32                 self.assertLess(np.max(np.abs(lifted - target[targets])), 2e-12)
+  33 
+  34     def test_exhaustive_unbiasedness_small(self) -> None:
+  35         for n, prime in [(12, 2), (18, 3), (20, 2)]:
+  36             q = p.next_prime_power(n, prime)
+  37             block = p.choose_prime_power_block(q, prime)
+  38             x = self.rng.normal(size=n) + 1j * self.rng.normal(size=n)
+  39             rows = []
+  40             for a in range(1, q):
+  41                 if math.gcd(a, q) != 1:
+  42                     continue
+  43                 for beta in range(q):
+  44                     rows.append(p.offset_class_row(x, prime, core.ChirpState(a, beta), block))
+  45             mean = np.mean(np.asarray(rows), axis=0)
+  46             self.assertLess(np.max(np.abs(mean - p.normalized_dft(x))), 5e-12)
+  47 
+  48     def test_exhaustive_variance_bound_small(self) -> None:
+  49         for n, prime in [(12, 2), (18, 3), (20, 2)]:
+  50             q = p.next_prime_power(n, prime)
+  51             block = p.choose_prime_power_block(q, prime)
+  52             x = self.rng.normal(size=n) + 1j * self.rng.normal(size=n)
+  53             target = p.normalized_dft(x)
+  54             rows = []
+  55             for a in range(1, q):
+  56                 if math.gcd(a, q) != 1:
+  57                     continue
+  58                 for beta in range(q):
+  59                     rows.append(p.offset_class_row(x, prime, core.ChirpState(a, beta), block))
+  60             variance = np.mean(np.abs(np.asarray(rows) - target[None, :]) ** 2, axis=0)
+  61             self.assertLessEqual(
+  62                 np.max(variance),
+  63                 p.offset_class_variance_bound(x, prime, block) * (1 + 5e-12),
+  64             )
+  65 
+  66     def test_batched_small_class_row_matches_streaming(self) -> None:
+  67         for n, prime in [(48, 2), (80, 2), (45, 3)]:
+  68             q = p.next_prime_power(n, prime)
+  69             block = p.choose_prime_power_block(q, prime)
+  70             state = core.draw_state(q, self.rng)
+  71             x = self.rng.normal(size=n) + 1j * self.rng.normal(size=n)
+  72             stream = p.offset_class_row(x, prime, state, block)
+  73             batch = p.offset_class_row_batched(x, prime, state, block)
+  74             self.assertLess(np.max(np.abs(stream - batch)), 3e-12)
+  75 
+  76     def test_reusable_plan_matches_core_for_even_and_odd_prime_powers(self) -> None:
+  77         for q, block in [(64, 4), (81, 3)]:
+  78             state = core.draw_state(q, self.rng)
+  79             x = self.rng.normal(size=q) + 1j * self.rng.normal(size=q)
+  80             plan = p.PrimePowerRowPlan.build(q, block, state)
+  81             got = plan.apply(x)
+  82             ref = core.one_row_estimate(x, block, state)
+  83             self.assertLess(np.max(np.abs(got - ref)), 2e-12)
+  84 
+  85     def test_same_state_across_classes_is_valid(self) -> None:
+  86         n, prime = 48, 2
+  87         q = p.next_prime_power(n, prime)
+  88         block = p.choose_prime_power_block(q, prime)
+  89         x = self.rng.normal(size=n) + 1j * self.rng.normal(size=n)
+  90         state = core.draw_state(q, self.rng)
+  91         got = p.offset_class_row(x, prime, state, block)
+  92         self.assertEqual(got.shape, (n,))
+  93         self.assertTrue(np.all(np.isfinite(got)))
+  94 
+  95     def test_robust_seeded_error_inside_radius(self) -> None:
+  96         n, prime = 48, 2
+  97         q = p.next_prime_power(n, prime)
+  98         block = p.choose_prime_power_block(q, prime)
+  99         x = np.exp(2j * np.pi * self.rng.random(n))
+ 100         g = 3.0
+ 101         got = p.streaming_offset_class_fft(x, prime, 9, g, self.rng, block)
+ 102         err = np.max(np.abs(got - p.normalized_dft(x)))
+ 103         self.assertLess(err, p.robust_uniform_radius(x, block, g))
+ 104 
+ 105     def test_scan_fusion_rank_gate_exact(self) -> None:
+ 106         for n, rank in [(127, 8), (255, 10), (511, 12)]:
+ 107             cert = p.scan_fusion_rank_certificate(n, rank)
+ 108             self.assertEqual(cert["exact_chebyshev_rank"], rank)
+ 109             self.assertEqual(cert["state_dimension_lower_bound"], rank)
+ 110 
+ 111     def test_offset_repetition_caps_effective_rank(self) -> None:
+ 112         n = 3 * (1 << 8)
+ 113         q = p.next_prime_power(n, 2)
+ 114         self.assertEqual(p.offset_class_count(n, q), 3)
+ 115         with self.assertRaises(ValueError):
+ 116             p.scan_fusion_rank_certificate(n, 4, q)
+ 117 
+ 118     def test_adaptive_planner_uses_class_route_when_profitable(self) -> None:
+ 119         plan = p.choose_adaptive_plan(3 * (1 << 20))
+ 120         self.assertEqual(plan.method, "offset_classes")
+ 121         self.assertEqual(plan.prime, 2)
+ 122         self.assertEqual(plan.classes, 3)
+ 123 
+ 124     def test_adaptive_planner_retains_bessel_worst_case(self) -> None:
+ 125         plan = p.choose_adaptive_plan((1 << 24) - 1)
+ 126         self.assertEqual(plan.method, "bessel_rank")
+ 127 
+ 128     def test_linear_family_scaling_for_fixed_cofactor(self) -> None:
+ 129         ratios = []
+ 130         for exponent in [12, 16, 20, 24]:
+ 131             n = 3 * (1 << exponent)
+ 132             work = p.offset_class_work_proxy(n, 2)
+ 133             ratios.append(work / n)
+ 134         # Q/N and the number of classes stay bounded; only the conservative
+ 135         # FFT constant drifts mildly through the selected block size.
+ 136         self.assertLess(max(ratios), 4 * min(ratios))
+ 137 
+ 138     def test_zero_signal(self) -> None:
+ 139         n, prime = 48, 2
+ 140         q = p.next_prime_power(n, prime)
+ 141         block = p.choose_prime_power_block(q, prime)
+ 142         got = p.offset_class_row(
+ 143             np.zeros(n, dtype=np.complex128),
+ 144             prime,
+ 145             core.draw_state(q, self.rng),
+ 146             block,
+ 147         )
+ 148         self.assertTrue(np.all(got == 0))
+ 149 
+ 150 
+ 151 if __name__ == "__main__":
+ 152     unittest.main(verbosity=2)
+===== END SOURCE 66; 6515 bytes; 152 lines =====

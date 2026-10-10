@@ -1,0 +1,53 @@
+"""Exact finite-field recognizer for rank-one gauges hiding ordinary FFT stages.
+
+Auditing tiny stage matrices is deliberately expensive: it is not part of the
+online transform and is not advertised as a faster FFT.
+"""
+from green_stages import P, basis_matrix, inverse_matrix, matmul, rank_mod
+from gauge_fft import GaugeFFT
+
+
+def matrix_equals(A,B,p=P):
+    return len(A)==len(B) and all(len(x)==len(y) and
+        all((a-b)%p==0 for a,b in zip(x,y)) for x,y in zip(A,B))
+
+
+def subtract(A,B,p=P):
+    return [[(x-y)%p for x,y in zip(row,col)] for row,col in zip(A,B)]
+
+
+def eye(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+
+
+def gauge_recognize(base_stages, dressed_stages, p=P):
+    """Find H and certify G_0=H B_0, G_i=H B_i H^-1, G_last=B_last H^-1.
+
+    This exact test rejects a trivial gauge dressing of known FFT factors.
+    It does not prove *no other* faster factorization exists.
+    """
+    if len(base_stages)!=len(dressed_stages) or len(base_stages)<2:
+        raise ValueError('at least 2 matching stages required')
+    n=len(base_stages[0]); I=eye(n)
+    H=matmul(dressed_stages[0],inverse_matrix(base_stages[0],p),p)
+    if rank_mod(subtract(H,I,p),p)!=1:
+        return dict(match=False,reason='gauge is not rank one')
+    Hinv=inverse_matrix(H,p)
+    if not matrix_equals(matmul(H,Hinv,p),I,p):
+        return dict(match=False,reason='gauge not invertible')
+    for index,(B,G) in enumerate(zip(base_stages,dressed_stages)):
+        expect=matmul(H,B,p) if index==0 else (
+          matmul(B,Hinv,p) if index==len(base_stages)-1
+          else matmul(matmul(H,B,p),Hinv,p))
+        if not matrix_equals(expect,G,p):
+            return dict(match=False,reason=f'factor {index} not gauge equivalent')
+    return dict(match=True,stage_count=len(base_stages),
+                rank_of_gauge_minus_identity=1, fully_dressed=True)
+
+
+def plan_audit(plan: GaugeFFT):
+    B=[plan.physical_matrix(i,dressed=False) for i in range(len(plan.stages))]
+    G=[plan.physical_matrix(i,dressed=True) for i in range(len(plan.stages))]
+    r=gauge_recognize(B,G,plan.p)
+    r['dense_entries_per_stage']=[sum(int(bool(a)) for row in X for a in row) for X in G]
+    r['n']=plan.n
+    return r

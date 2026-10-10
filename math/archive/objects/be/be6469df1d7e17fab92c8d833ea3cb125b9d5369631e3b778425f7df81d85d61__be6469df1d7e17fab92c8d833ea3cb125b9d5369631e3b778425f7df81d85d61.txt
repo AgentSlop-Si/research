@@ -1,0 +1,76 @@
+"""Exhaustive GF(17) regular-patch feasibility audit (NOT a char-zero proof).
+
+Parameters h0!=0,h1,h2,hl arbitrary; solve the two adjacent-tail linear
+conditions for t,beta when determinant nonzero. Enforce lower quartic Q,
+then solve upper ratio resultants in gamma1,gamma2. Check FULL 30 B
+rank-one equations and C invertibility. Denominator-zero onion branches
+are explicitly *not* covered by this finite-field audit.
+"""
+import json, itertools, time
+from collections import Counter
+from pathlib import Path
+from adjacent_tail import equations
+from five_parameter_gate import split
+from inverse_quartic import poly_eval,rankmod
+from general_onion import build
+from dual_support import P8,primitive_root,constraints
+
+def go(p=17):
+ st=Counter(); start=time.monotonic(); z=primitive_root(p,8)
+ eq,W,E3,E4,Qcoefs=equations(); gamma_coefs=split()[-1]
+ found=[]
+ for h in itertools.product(range(p),repeat=4):
+  if h[0]==0:continue
+  st['h_checked']+=1
+  vec=[0]+list(h)+[0]
+  a,b,c=[poly_eval(P,vec,p,z) for P in E3]
+  d,e,f=[poly_eval(P,vec,p,z) for P in E4]
+  det=(a*e-b*d)%p
+  if not det:st['tail_linear_exception']+=1;continue
+  t=(-c*e+b*f)*pow(det,-1,p)%p
+  beta=(-a*f+c*d)*pow(det,-1,p)%p
+  if not t:st['t_zero']+=1;continue
+  vec=[t]+list(h)+[beta]
+  if poly_eval(eq[2],vec,p,z):continue
+  st['tail_plus_quartic']+=1
+  rows=[]
+  for row in gamma_coefs:
+   E=[]
+   for entry in row:
+    r0,r1,r2=[poly_eval(P,[t]+list(h),p,z) for P in entry]
+    E.append((r0+beta*r1+beta*beta*r2)%p)
+   rows.append(E)
+  # Iterate all gamma1 but solve gamma2 algebraically from a row
+  sel=next((row for row in rows if row[2]%p),None)
+  pairs=[]
+  if sel:
+   a,b,c=sel
+   for g1 in range(p):
+    g2=-(a+b*g1)*pow(c,-1,p)%p
+    pairs.append((g1,g2))
+  else:
+   sel=next((row for row in rows if row[1]%p),None)
+   if sel:
+    a,b,c=sel;g1=-a*pow(b,-1,p)%p
+    pairs=[(g1,g2) for g2 in range(p)]
+   elif all(row[0]%p==0 for row in rows):
+    pairs=list(itertools.product(range(p),repeat=2))
+  for g1,g2 in pairs:
+   if any((v[0]+g1*v[1]+g2*v[2])%p for v in rows):continue
+   st['upper_necessary_gamma_pairs']+=1
+   try:C,B,diag=build(8,p,z,P8,vec+[g1,g2])
+   except ZeroDivisionError:st['eight_param_exception']+=1;continue
+   rk=rankmod(C,p)
+   st['C_rank_'+str(rk)]+=1
+   if rk==8:
+    st['invertible_candidate']+=1
+    low,up=constraints(B,p)
+    zero=not any(v for _,v in low+up)
+    st['full_B_success']+=bool(zero)
+    if len(found)<8:found.append(dict(param=vec+[g1,g2],B_success=zero,nonzero_constraints=sum(bool(v) for _,v in low+up)))
+ print('p',p,'elapsed',round(time.monotonic()-start,2),'s','statistics:',st,'examples:',found,flush=True)
+ return dict(prime=p,root=z,elapsed_seconds=round(time.monotonic()-start,2),counts=dict(st),examples=found,
+   disclaimer='Finite-field computation only. Omits tail linear determinant zero, h0=0, t=0, and onion denominators zero. No char-zero nonexistence conclusion.')
+if __name__=='__main__':
+ a=go(17)
+ Path(__file__).with_name('exhaustive_GF17_chart.json').write_text(json.dumps(a,indent=2)+'\n')

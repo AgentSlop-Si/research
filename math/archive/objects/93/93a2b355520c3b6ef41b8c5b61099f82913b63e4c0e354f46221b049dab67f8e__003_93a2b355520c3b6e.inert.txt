@@ -1,0 +1,212 @@
+# Fresh exact FFT: dense Green-stage and rank-one gauge audit
+
+**October 9, 2026 — research checkpoint.** The target remains an arbitrary **fresh** input, all `N` exact Fourier outputs, one processor, elementary arithmetic and addressing charged. **Result:** a new scoped test of the previously surviving nonunitary, fully overlapping `O(N)` stage idea. We prove a logarithmic-stage obstruction for one Green solve per layer, construct a bounded-condition two-Green operator that escapes that sparse-inverse proof, establish a second logarithmic-stage obstruction using column-norm growth which **does cover** that two-Green operator, and implement an adversarial, *fully dense* Fourier factorization that is provably just ordinary FFT behind cancelling rank-one gauges. No faster general FFT or lower bound for all nonunitary stages is claimed.
+
+## 1. Sources and do-not-repeat boundary
+
+The immediately preceding `fft_bidirectional_macro_research/{RESEARCH,NEXT_GATE}.md` had ruled out (i) one-way scan only, even with shuffles; and (ii) replacing every large radix block by one multichannel semiseparable stage because the channel count grows at least linearly with block size. The surviving case was **nonunitary full-array overlapping stages** with interleaved O(N)-cost permutations, not another blockwise radix-4 FFT. The canonical research checkpoint had already exhausted collision lookup, partial-output/dynamic methods, growing-precision packed products, short annihilators, chirp recurrence, low-rank output compression, and rank-certificate retuning. We do not restart any of those.
+
+Relevant prior art: tridiagonal inverses are Green/quasiseparable matrices; see Pernet, [Computing with quasiseparable matrices](https://arxiv.org/abs/1602.01246) and [Numerical boundary-value algorithms with quasiseparable representations](https://link.springer.com/article/10.1007/s11075-024-01809-9). Existing FFT butterfly factorizations have O(log N) stages of O(N) nonzeros; see Li et al., [Butterfly Factorization](https://arxiv.org/abs/1502.01379). See also Gader (1988), [Tridiagonal factorizations of Fourier matrices](https://doi.org/10.1016/0024-3795(88)90325-4): we do **not** claim tridiagonal Fourier factorization as a first discovery. Familiar bounded-coefficient/conditioned circuit barriers also apply only in their stated models (Morgenstern and Ailon).
+
+## 2. A genuinely global O(N) operator from a tridiagonal solve
+
+For length N, define a tridiagonal `T_N` with main diagonal `3` and `−1` on both adjacent diagonals. It is nonsingular. Let `G=T_N^(-1)`.
+
+Applying `G x` is solving `T_N y=x` using a precomputed Thomas elimination plan: one forward recurrence and one backward recurrence, each O(N) field operations. Every entry of `G` is nonzero over the real numbers (it is an irreducible positive-definite M-matrix inverse), so **all N outputs depend on all N fresh inputs**. This is truly global mixing, not a local butterfly.
+
+But `G^(-1)=T_N` has at most **3 nonzeros in each row**. Consider an algorithm applying t such inverse-tridiagonal Green stages, separated by any number of exact input-independent permutations and invertible diagonal scalings. Invert the whole factorization. Each Green stage contributes a tridiagonal factor to the inverse, and each permutation/diagonal has exactly one nonzero per row. Every row of a product of matrices with at most s1 and s2 nonzeros per row has at most s1*s2 nonzeros. Hence every row of the inverse product has support <=3^t.
+
+The unnormalized DFT matrix has inverse `N^(-1) conjugate(F_N)^T`, **all N^2 entries nonzero**. Thus necessarily
+
+    3^t >= N,     t >= ceil(log_3 N).
+
+This argument is exact over complex numbers and any suitable field; no bounded-coefficient assumption is used. In the specified implementation model, a full tridiagonal solve is a Theta(N)-work pass, so these stages alone cannot yield total O(N) work for a full DFT. This is a **scoped logarithmic-stage theorem**, generalizing our older bidiagonal inverse-support test, not a universal FFT lower bound.
+
+| N | mandatory one-Green stages |
+|---:|---:|
+| 16 | 3 |
+| 64 | 4 |
+| 256 | 6 |
+| 1,024 | 7 |
+| 65,536 | 11 |
+
+## 3. A true escape: sum two Green solves (still O(N))
+
+Set `U=T+I`, and form
+
+    S = T^(-1) + U^(-1).
+
+Compute `S x` via **two independent tridiagonal solves**, O(N) field operations. Yet its inverse is
+
+    S^(-1) = U (T+U)^(-1) T
+           = (1/2) T + (1/4)I - (1/4)(2T+I)^(-1).
+
+The inverse also applies in O(N) with tridiagonal multiplication, **one** tridiagonal solve and another multiplication. It is nonetheless **fully dense**, even over the reals. Indeed `2T+I` is irreducible SPD with diagonal 7 and adjacent off-diagonal −2; its inverse is strictly positive. For |i−j|>=2 the `S^(-1)` entry is exactly `−(1/4)(2T+I)^(-1)[i,j]<0`; adjacent entries are `−1/2−(1/4)(2T+I)^(-1)[i,j]<0`. Diagonal entries are positive by positive definiteness (or the spectral estimates below). So none of the N^2 entries vanishes.
+
+This is not numerical instability masquerading as global mixing. Eigenvalues of T lie in [1,5] and those of U in [2,6]. The eigenvalues of S therefore lie in [1/5+1/6, 1+1/2] and
+
+    condition_2(S) <= (3/2)/(11/30) = 45/11 < 4.091.
+
+The N=8,16,32,64,128 real-condition sanity checks agree, with the condition tending to ~4.09 and all off-diagonal inverse entries negative.
+
+**Important mathematical limitation:** S has quasiseparable order at most 2 because it is a sum of two rank-one-offdiagonal Green operators. Its inverse also has order at most 2 (standard nullity theorem for inverses, or direct structure). A *single* such stage, even with arbitrary endpoint permutations, cannot implement F_N for N>8: the previous Fourier submatrix rank bound demands >=N/4 independent channels per direction, and N=8 needs 3 by the stronger previous certificate. However **a product of multiple such stages with new permutations between them is NOT excluded** by this one-stage rank bound or by the sparse-inverse theorem. This is the narrower surviving exact research problem.
+
+## 3A. Stronger all-N theorem: column-amplification budget blocks even dense-inverse stages
+
+The previous inverse-sparsity proof indeed fails for `S`, but we can prove **another** constraint without any assumption about inverse sparsity. For an arbitrary complex matrix, let
+
+    ||A||_1 = max_j sum_i |A[i,j]|
+
+be its induced column-sum operator norm. It is submultiplicative:
+
+    ||AB||_1 <= ||A||_1 ||B||_1.
+
+An input-independent permutation or a diagonal of unit-magnitude phases has `||.||_1=1` and leaves this norm unchanged. The **normalized** DFT `U_N=F_N/sqrt(N)` satisfies
+
+    ||U_N||_1 = sqrt(N)
+
+because every column has N entries of magnitude `1/sqrt(N)`. Therefore **any** exact factorization of the normalized Fourier matrix into `t` arbitrary stages `S_i` interleaved with permutations and phase diagonals obeys the necessary budget
+
+    product_i ||S_i||_1 >= sqrt(N),
+    sum_i log(||S_i||_1) >= (1/2) log(N).
+
+This applies whether the stages are unitary, nonunitary, sparse, fully dense, Green operators, or anything else. It does **NOT** bound the elementary operation count for an unrestricted stage: the DFT matrix itself, treated as one stage, already has norm sqrt(N) but is not known to apply in O(N) exact arithmetic.
+
+### Scale-invariant strengthening (the primary general stage budget)
+
+Using `kappa_1(A)=||A||_1 ||A^(-1)||_1`, submultiplicativity gives a **more robust** necessary condition for ANY exact product of invertible square linear stages:
+
+    kappa_1(F_N) = N <= product_i kappa_1(S_i),
+    sum_i log kappa_1(S_i) >= log N.
+
+Permutations, unit-magnitude phase diagonals, and **arbitrary nonzero GLOBAL scalar rescalings** all have `kappa_1=1`; they cannot evade this budget. In fact an individual arbitrary diagonally rescaling gate contributes the cost `kappa_1(D)=max|d_j|/min|d_j|`, making any uneven amplification explicit in the budget. For a factor family with `kappa_1(S_i)<=C` uniformly, the number of stages obeys `t>=ceil(log_C N)`.
+
+For our two-Green operator, from the closed-form inverse above:
+
+    ||S^(-1)||_1
+       <= (1/2)||T||_1 + 1/4 + (1/4)||(2T+I)^(-1)||_1
+       <= 5/2 + 1/4 + 1/12 = 17/6.
+
+The final term follows from the Neumann series for `2T+I = 7I-2A`: its inverse 1-norm is at most `(1/7)/(1−4/7)=1/3`. Combining this with `||S||_1<=3/2` gives
+
+    kappa_1(S) <= (3/2)(17/6) = 17/4 = 4.25,
+    t >= ceil(log_(17/4) N)
+
+for any chain of these S stages, arbitrary shuffles/phase diagonals, **and arbitrary global scalar normalization**. At N=1,024 this gives at least 5 stages; at N=65,536 at least 8. The earlier forward-norm bound is stronger (9 and 14 respectively), but requires that arbitrary amplifying global scalars not be inserted between stages. The condition-number bound survives those scalings.
+
+**Especially clean control:** a normalized radix-2 butterfly stage has `||B||_1=||B^(-1)||_1=sqrt(2)`, hence `kappa_1(B)=2`. The normalized Fourier target has `kappa_1(F_N)=N`, so any factorization whose stages all satisfy `kappa_1<=2` needs **at least log_2 N stages**. The standard normalized radix-2 FFT attains equality. This is a stage-count result, **not** an operation lower bound for unrestricted stages.
+
+`kappa_1` is not the spectral 2-condition number: the normalized Fourier matrix itself has `kappa_2=1` but `kappa_1=N`. Large `kappa_1` does not, on its own, prove floating-point instability. In particular, do not misstate the necessary growth of 1-condition as a universal numerical-instability theorem. The result is a **fully charged matrix-factor model** restriction, not a refutation of unbounded-coefficient FFT algorithms like OpenAI #130.
+
+For our concrete dense-inverse S, write `A` for the path adjacency matrix (`||A||_1 <=2`). The Neumann series gives
+
+    ||T^(-1)||_1 = ||(3I-A)^(-1)||_1 <= sum_(k>=0) (1/3)(2/3)^k = 1,
+    ||U^(-1)||_1 = ||(4I-A)^(-1)||_1 <= 1/2.
+
+Thus `||S||_1 <= 3/2`, **independently of N**. A chain made from these stages, arbitrary shuffles, and unit-modulus phase rotations must therefore use
+
+    t >= ceil(log(sqrt(N)) / log(3/2)).
+
+Under the explicitly charged implementation with **two whole-array solves per stage**, the total scalar work is Omega(N log N), despite every S and S^(-1) being dense. This is a stronger obstruction for this surviving class than inverse sparsity, and it holds for every N even with arbitrary inter-stage permutations. It does not rule out a *different* dense nonunitary stage family with `||S_i||_1` growing with N, large intermediate amplifications, arbitrary-magnitude diagonal scalings, or different work models.
+
+Exact rational column sums **and scale-invariant 1-condition numbers** of our real S were independently checked at N=2,4,8,16,32 (`norm_budget.py`); N=32 gives `||S||_1≈1.4999997158` and `kappa_1(S)≈4.11944`, both below the rigorous bounds. Integer-only exact stage-bound checks (for the nonamplifying variant) give:
+
+| N | mandatory stable two-Green stages | standard radix-2 FFT levels |
+|---:|---:|---:|
+| 16 | 4 | 4 |
+| 64 | 6 | 6 |
+| 256 | 7 | 8 |
+| 1,024 | 9 | 10 |
+| 4,096 | 11 | 12 |
+| 65,536 | 14 | 16 |
+| 1,048,576 | 18 | 20 |
+
+**Prior art/scope:** Submultiplicativity of operator norms is standard textbook mathematics; lower bounds for stable/limited-amplification linear networks also have a large literature (including Morgenstern/Ailon in distinct models). We make **no novelty claim for the norm inequality**. Its value here is an exact, sharper falsification of the two-Green model that passed our earlier rank/sparse-inverse gates.
+
+## 4. A key adversarial negative control: make EVERY FFT stage fully dense
+
+Let `B_0, ..., B_(L-1)` be the ordinary radix-2 butterfly matrices on bit-reversed input for `N=2^L`. Choose *one* fixed, invertible, nonunitary rank-one gauge
+
+    H = I + alpha*u*v^T,
+    H^(-1) = I - [alpha/(1+alpha*v^Tu)]*u*v^T.
+
+Define dense dressed stages:
+
+    G_0 = H B_0,
+    G_i = H B_i H^(-1)          (1 <= i <= L-2),
+    G_(L-1) = B_(L-1) H^(-1).
+
+Then **exactly**
+
+    G_(L-1) ... G_1 G_0 = B_(L-1) ... B_1 B_0.
+
+Every H or H^(-1) application is a dot product plus rank-one broadcast, costing `2N+1` counted multiplications and `2N−1` counted additions in the intentionally straightforward implementation. Preparing u,v,alpha and the one scalar inverse costs O(N) field arithmetic; the basic NTT twiddle and bit-reversal preparation is also charged separately. A complete FFT uses `2(L−1)` extra gauge applications: the algorithm still has **L stages and Theta(N log N) arithmetic**, with a strictly larger leading constant.
+
+Despite that, with the exact finite-field parameters in `gauge_fft.py`, **every entry of every individual dressed stage matrix** at N=4,8,16,32 is nonzero (all N^2 positions). Each stage genuinely mixes all inputs, uses only O(N) runtime scalar work, and is generally not unitary. This shows that a plot of matrix density, inter-stage global overlap, or rank of the inverse cannot by itself establish computational savings. It is an *adversarial normalizer*: dense global mixing can be faked by a cheap invertible change of intermediate coordinates.
+
+`gauge_recognizer.py` reconstructs `H=G_0 B_0^(-1)` from the exact stage matrices, verifies rank(H−I)=1, and independently checks **every** factor identity. Its negative-control corruption is rejected. This is an exact **known-baseline gauge detector**, not a complete novelty detector for arbitrary algorithms.
+
+### Explicit gate counts
+
+With one butterfly having two output additions and one twiddle multiply, un-dressed radix-2 executes
+
+    add_plain = N*L,     mul_plain = (N/2)*L.
+
+The dense-gauge execution performs
+
+    add_dressed = N*L + 2(L−1)(2N−1),
+    mul_dressed = (N/2)*L + 2(L−1)(2N+1).
+
+The formulas explicitly exclude field root-exponentiation setup, twiddle creation, bit-reversal index construction, the O(N) gauge constants and finite-field `pow` inversions; those additional costs are recorded/upper-bounded and **are not free**. `GaugeFFT.prepare_counts` records plan construction, which in this simple prototype includes O(N log N) bit-reversal bit steps. Including these costs cannot turn the dressed method into a saving.
+
+## 5. Bounded synthesis attempt in the genuinely surviving family
+
+A more expressive full-array stage is
+
+    S[i,j] = d[i]                    if i=j;
+             sum_k p[i,k] q[j,k]    if i>j;
+             sum_k u[i,k] v[j,k]    if i<j,
+
+with r independent lower and r upper generator channels. Applying S costs O(rN) by prefix and suffix accumulators. A sum of r Green solves belongs to this quasiseparable class. We numerically optimized products of 1–3 of these global stages, with parity/bit-reversal/identity permutations interleaved, to approximate **the full normalized complex Fourier matrix** for N=8,16,32. The entire N-by-N error was evaluated; no input restrictions or cached data.
+
+Best local numerical relative Frobenius residuals:
+
+| N | stages t | channels r | best residual | status |
+|---:|---:|---:|---:|---|
+| 8 | 1 | 2 | 0.299 | **exactly impossible** by prior 3-channel theorem; search is a negative control |
+| 8 | 2 | 2 | 1.4e−8 | **NOT exact**; suggestive finite-size numerical fit only |
+| 16 | 2 | 2 | 0.150 | search did not converge |
+| 16 | 2 | 3 | 0.0151 | search did not converge |
+| 32 | 2 | 2 | 0.459 | search did not converge |
+| 32 | 2 | 3 | 0.309 | search did not converge |
+| 32 | 3 | 2 | 0.430 | search did not converge |
+
+`synthesis_probe.py` uses PyTorch complex128, a fixed seed, 250–350 Adam iterations and preset permutations. These are **negative/uncertified heuristic experiments**, not mathematical impossibility results. In particular a small `1.4e−8` residual is not an exact factorization or a uniform family. Per-stage arithmetic costs increase with r, so even a valid small-factor factorization may cost more than radix-2 butterflies. The search makes no claim to beat #130 or FFT.
+
+A generic-parameter sanity check (not an FFT lower bound): one such r-channel stage has at most `(4r+1)N` scalar generator parameters. A product of t stages with finitely many allowed permutations has parameter-space dimension at most `t(4r+1)N`. If `t(4r+1)<N`, a generic N-by-N matrix lies outside this family (standard dimension counting). The Fourier matrix is highly nongeneric and might still belong. This is not evidence that Fourier needs Ω(N) stages.
+
+## 6. Measured work (and the honest failure)
+
+Five-run medians in CPython, fresh unrelated vectors, precomputed plan shared by both algorithms; no threads, same field, **same complete exact outputs**:
+
+| N | ordinary exact NTT | fully dense gauged NTT | slowdown | counted scalar arithmetic ratio |
+|---:|---:|---:|---:|---:|
+| 256 | 0.440 ms | 0.948 ms | 2.16x | 5.67x |
+| 1024 | 2.491 ms | 5.114 ms | 2.05x | 5.80x |
+| 4096 | 12.191 ms | 24.569 ms | 2.02x | 5.89x |
+| 8192 | 27.710 ms | 55.368 ms | 2.00x | 5.92x |
+
+The Python runtime ratio is smaller than the field-gate ratio because interpreter work, modulus reduction and memory allocation differ between the implementations. All coefficients and inverse plans are prepared with charged separate work; the table is a *warm* comparison. It neither proves a universal runtime relationship nor represents an optimized NTT baseline. The new code is a deliberately inefficient **control**, not a proposed production algorithm.
+
+The independent checker reconstructs the tridiagonal inverses via its own Gauss–Jordan code, validates the exact two-Green inverse formula, checks the density and rank of the gauge stages, multiplies all stage matrices and compares them against the full DFT, and checks fresh random vectors. The 8 tests cover all available algorithms, including a gauge-recognizer corruption negative control.
+
+## 7. Conclusion and next hypothesis
+
+**We did NOT find a uniform o(log N)-stage factorization or an O(N) exact arbitrary-input DFT.** We established a useful, fully charged research distinction:
+
+- A dense O(N)-work global Green stage can still require Ω(log N) stages because its inverse is sparse.
+- Two such Green operators can be summed to escape inverse sparsity **without** coefficient blow-up or poor conditioning, but new **column-norm and scale-invariant 1-condition budgets still force Omega(log N) stages** for this specific stable family.
+- Dense overlapping nonunitary stages can also merely hide an ordinary FFT behind cancelling rank-one gauge transformations. The exact detector eliminates that false positive.
+- The attempted genuinely overlapping multi-stage synthesis has no exact certificate or scalable construction.
+
+**Next falsifiable target:** derive a stronger invariant for *products of two-channel quasiseparable stages with arbitrary internal permutations and uncontrolled (but fully charged) norm amplification*, or find a nontrivial exact small witness with a mathematically verifiable composition law for arbitrary powers of two. It must beat fully charged `Theta(N log N)` arithmetic at every size and survive gauge-stripping. Do not start another numerical search without a concrete algebraic strategy for general N.

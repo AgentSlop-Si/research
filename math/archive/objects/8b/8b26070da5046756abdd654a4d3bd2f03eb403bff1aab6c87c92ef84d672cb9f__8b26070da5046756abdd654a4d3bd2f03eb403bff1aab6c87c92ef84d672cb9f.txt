@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+(cd fft_global_green_gauge && python -m unittest discover -s tests -v)
+(cd fft_two_stage_minor_gate && python -m unittest discover -s tests -v)
+(cd fft_two_stage_minor_gate && python halfcut_certificate.py > /dev/null)
+(cd fft_two_stage_minor_gate && python three_stage_control.py > /dev/null)
+(cd fft_two_stage_minor_gate && python mixed_order_green.py > /dev/null)
+if python -c 'import numpy' 2>/dev/null; then
+  (cd fft_two_stage_minor_gate && OPENBLAS_NUM_THREADS=1 python condition_audit.py > /dev/null)
+fi
+printf '\nAll archived and continuation checks passed.\n'

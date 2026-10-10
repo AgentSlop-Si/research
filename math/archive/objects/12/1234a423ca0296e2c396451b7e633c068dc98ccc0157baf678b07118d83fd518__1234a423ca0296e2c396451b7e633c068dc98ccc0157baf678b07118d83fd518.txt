@@ -1,0 +1,86 @@
+"""Deterministic candidate search for exact Fourier-minor/scan mincut violations.
+
+Search failure is NEVER proof of feasibility or impossibility. Any positive
+witness has a reproducible exact modular rank and integer mincut certificate.
+"""
+import json, random, time
+from collections import Counter
+from fast_mincut import ScanFlowOracle
+from cut_rank_gate import bitrev, rank_np
+from two_stage_ct import root, P
+
+def search(n=64, r=2, trials=25000, seed=20261009):
+    prof=json.load(open('rank_profiles_results.json'))
+    p=next(x['optimized_shuffle'] for x in prof if x['n']==n and x['endpoints']=='bitrev_both')
+    order=bitrev(n)
+    powers=[pow(root(n),i,P) for i in range(n)]
+    G=ScanFlowOracle(n,[r,r],[p]);rng=random.Random(seed)
+    classes=Counter();cut_cases=0;min_slack=999;min_case=None;best_gain=0;winner=None
+    t0=time.time()
+    for j in range(trials):
+        typ=j%6
+        if typ==0: # random input/output subsets
+            R=sorted(rng.sample(range(n),rng.randrange(4,n-3)))
+            C=sorted(rng.sample(range(n),rng.randrange(4,n-3)))
+        elif typ==1: # single intervals
+            k=rng.randrange(2,n);h=rng.randrange(2,n)
+            a=rng.randrange(n-k+1);b=rng.randrange(n-h+1)
+            R=list(range(a,a+k));C=list(range(b,b+h))
+        elif typ==2: # 2 intervals, separated
+            def two():
+                arr=[]
+                for x,y in ((0,n//2),(n//2,n)):
+                    a=rng.randrange(x,y);b=rng.randrange(a+1,y+1)
+                    arr.extend(range(a,b))
+                return sorted(set(arr))
+            R=two();C=two()
+        elif typ==3: # sampled interval family, include empty possibility
+            def multi():
+                S=set()
+                for _ in range(rng.randrange(1,5)):
+                    a=rng.randrange(n);b=rng.randrange(a+1,n+1)
+                    S.update(range(a,b))
+                return sorted(S)
+            R=multi();C=multi()
+        elif typ==4: # aligned multiscale dyadic blocks
+            def dyadic():
+                S=set()
+                for _ in range(rng.randrange(1,5)):
+                    h=2**rng.randrange(0,(n.bit_length()-2))
+                    a=rng.randrange(n//h)*h
+                    S.update(range(a,a+h))
+                return sorted(S)
+            R=dyadic();C=dyadic()
+        else: # intervals with checkerboard holes
+            def holes():
+                a=rng.randrange(n-3);b=rng.randrange(a+3,n+1)
+                S=set(range(a,b))
+                for _ in range(rng.randrange(0,5)):
+                    j=rng.randrange(a,b); S.discard(j)
+                return sorted(S)
+            R=holes();C=holes()
+        classes[typ]+=1
+        flow=G.bound(R,C)
+        if flow>=min(len(R),len(C)):
+            continue
+        cut_cases+=1
+        actual=rank_np([order[i] for i in R],[order[j] for j in C],powers)
+        slack=flow-actual
+        if slack<min_slack:
+            min_slack=slack
+            min_case=dict(j=j,kind=typ,R=R,C=C,rank=actual,flow=flow)
+        if actual>flow:
+            winner=dict(j=j,kind=typ,R=R,C=C,rank=actual,flow=flow)
+            break
+    res={'n':n,'r':r,'trials':j+1,'seed':seed,'kind_counts':dict(classes),
+         'cases_with_flow_below_min_dims':cut_cases,
+         'minimum_slack':min_slack if min_case else None,
+         'closest_case':min_case,'violation':winner,
+         'duration_seconds':round(time.time()-t0,3)}
+    print(json.dumps({k:v for k,v in res.items() if k not in ('closest_case',)},indent=2),flush=True)
+    with open(f'witness_search_n{n}_r{r}.json','w') as f:json.dump(res,f,indent=2)
+    return res
+
+if __name__=='__main__':
+    import sys
+    search(64,int(sys.argv[1]) if len(sys.argv)>1 else 2, int(sys.argv[2]) if len(sys.argv)>2 else 25000)

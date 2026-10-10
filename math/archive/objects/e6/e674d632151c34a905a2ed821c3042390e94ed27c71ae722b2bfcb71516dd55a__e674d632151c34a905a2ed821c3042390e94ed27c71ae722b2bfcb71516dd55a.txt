@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+import json
+from phase6_exact import *
+from phase6_complex import sparse_phase_fft,dense_chirp_mode_example
+import numpy as np
+
+def audit():
+  result={}
+  q=512;m=16;k=q//m
+  support=[1,3,7]
+  all_x=[[0]*q for _ in support]
+  for j,r in enumerate(support):
+    block=synth_sparse(k,m,[r],seed=150+j)
+    for b in range(k):
+      if b%3==j:
+        all_x[j][b*m:(b+1)*m]=block[b*m:(b+1)*m]
+  x=[sum(xx[i] for xx in all_x)%P for i in range(q)]
+  z,found,c=adaptive_green_sparse(x,m,len(support))
+  assert z==independent_full_dft(x) and set(found)==set(support)
+  result['disjoint_support_across_blocks']={'passed':True,'q':q,'support_found':found,'small_dfts':c.full_block_dfts}
+
+  # Last-block rejection is a worst-case certification cost for arbitrary data.
+  base=synth_sparse(k,m,[1],seed=100)
+  added=synth_sparse(k,m,[2],seed=101)
+  for j in range(q-m,q):base[j]=(base[j]+added[j])%P
+  z,found,c=adaptive_green_sparse(base,m,1)
+  assert z is None and set(found)=={1,2} and c.input_checked>=(k-2)*m
+  result['late_rejection']={'passed':True,'q':q,'checked_positions':c.input_checked,'support_found':found}
+
+  # Full phase support yields the ordinary, no-saving O(Q log Q) route.
+  q=256;m=16;k=q//m
+  import random
+  rng=random.Random(123)
+  y=[rng.randrange(P) for _ in range(q)]
+  z,s,c=adaptive_green_sparse(y,m,m)
+  assert z==independent_full_dft(y) and len(s)==m
+  result['full_support']={'passed':True,'q':q,'rows_used':len(s),'counted_ops':c.mult+c.add}
+
+  # One phase, one occupied block ends at Q/2-1; Hankel matrix is anti-triangular.
+  corner=[]
+  for q,m in [(64,8),(128,8),(256,16),(512,16)]:
+    xx=synth_sparse(q//m,m,[1],seed=q)
+    h=q//2
+    xx[:h-m]=[0]*(h-m)
+    xx[h:]=[0]*(q-h)
+    rank=hankel_rank(xx)
+    assert xx[h-1] and rank==h
+    corner.append({'q':q,'m':m,'hankel_rank':rank,'maximal_rank':h})
+  result['hankel_antitriangular_exact']=corner
+
+  # Complex phase support split over disjoint blocks also works.
+  q=1024;m=16;k=q//m
+  cmodes=[1,5,9]
+  x=np.zeros(q,dtype=np.complex128)
+  for t,r in enumerate(cmodes):
+    chunk=dense_chirp_mode_example(q,m,[r],seed=t+212)
+    for b in range(k):
+      if b%3==t:x[b*m:(b+1)*m]=chunk[b*m:(b+1)*m]
+  got=sparse_phase_fft(x,m,3)
+  err=np.max(abs(got.y-np.fft.fft(x)/np.sqrt(q)))
+  assert got.accepted and set(got.modes)==set(cmodes) and err<1e-11
+  result['complex_disjoint_modes']={'passed':True,'q':q,'max_error':float(err),'support':got.modes}
+  print(json.dumps(result,indent=2))
+  open('adversarial_verification.json','w').write(json.dumps(result,indent=2))
+if __name__=='__main__':audit()

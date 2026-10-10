@@ -1,0 +1,78 @@
+import unittest
+from weyl_gate import P,modular_root,ntt,seeded_product,seeded_near_resonant_product,NearResonantGreen,DiagonalAfter,ScaledFFT,modular_sqrt
+from projective_gate import (MaskedPermutedFFT,cross_ratio_witness,column_pair_fingerprint,
+                             full_monomial_gate,dense_from_oracle)
+
+class CurveTests(unittest.TestCase):
+    def test_cross_masked_fft_8(self):
+        self.assertFalse(cross_ratio_witness(MaskedPermutedFFT(8,17),8).excluded)
+    def test_cross_masked_fft_64(self):
+        self.assertFalse(cross_ratio_witness(MaskedPermutedFFT(64,17),64).excluded)
+    def test_cross_masked_fft_1024(self):
+        self.assertFalse(cross_ratio_witness(MaskedPermutedFFT(1024,17),1024).excluded)
+    def test_cross_reject_green_8(self):
+        self.assertTrue(cross_ratio_witness(seeded_product(8,seed=19),8).excluded)
+    def test_cross_reject_green_64(self):
+        self.assertTrue(cross_ratio_witness(seeded_product(64,seed=19),64).excluded)
+    def test_cross_reject_green_1024(self):
+        self.assertTrue(cross_ratio_witness(seeded_product(1024,seed=19),1024).excluded)
+    def test_cross_reject_resonant_product_256(self):
+        self.assertTrue(cross_ratio_witness(seeded_near_resonant_product(256,seed=21),256).excluded)
+    def test_cross_reject_single_resonant_64(self):
+        self.assertTrue(cross_ratio_witness(NearResonantGreen(64),64).excluded)
+
+    def test_histogram_masked_8(self):
+        r=column_pair_fingerprint(MaskedPermutedFFT(8,17),8)
+        self.assertFalse(r.excluded);self.assertEqual(r.circuit_calls,2)
+    def test_histogram_masked_64(self):
+        self.assertFalse(column_pair_fingerprint(MaskedPermutedFFT(64,17),64).excluded)
+    def test_histogram_masked_4096(self):
+        self.assertFalse(column_pair_fingerprint(MaskedPermutedFFT(4096,17),4096).excluded)
+    def test_histogram_near_resonant_4096(self):
+        self.assertTrue(column_pair_fingerprint(seeded_near_resonant_product(4096,seed=21),4096).excluded)
+    def test_histogram_green_4096(self):
+        self.assertTrue(column_pair_fingerprint(seeded_product(4096,seed=19),4096).excluded)
+
+    def test_full_masked_8(self):
+        self._full_success(8)
+    def test_full_masked_16(self):
+        self._full_success(16)
+    def test_full_masked_32(self):
+        self._full_success(32)
+    def test_full_masked_64(self):
+        self._full_success(64)
+    def _full_success(self,n):
+        mat=dense_from_oracle(MaskedPermutedFFT(n,17),n)
+        r=full_monomial_gate(mat)
+        self.assertTrue(r.equivalent, r.reason)
+        self.assertEqual(sorted(r.alpha),list(range(n)))
+        self.assertEqual(sorted(r.beta),list(range(n)))
+        w=modular_root(n);invroot=pow(modular_sqrt(n),-1,P)
+        for i in range(n):
+            for j in range(n):
+                val=(r.row_scalings[i]*invroot%P *pow(w,r.alpha[i]*r.beta[j],P)%P *r.col_scalings[j])%P
+                self.assertEqual(val,mat[i][j])
+
+    def test_full_green_excluded_16(self):
+        self.assertFalse(full_monomial_gate(dense_from_oracle(seeded_product(16,seed=19),16)).equivalent)
+    def test_full_resonant_excluded_16(self):
+        self.assertFalse(full_monomial_gate(dense_from_oracle(seeded_near_resonant_product(16,seed=21),16)).equivalent)
+    def test_full_row_scaled_is_equivalent(self):
+        self.assertTrue(full_monomial_gate(dense_from_oracle(DiagonalAfter(16),16)).equivalent)
+    def test_full_globally_scaled_is_equivalent(self):
+        self.assertTrue(full_monomial_gate(dense_from_oracle(ScaledFFT(16,9),16)).equivalent)
+
+    def test_not_sufficient_all_roots_doubled_frequency(self):
+        n=16;w=modular_root(n)
+        # Every nonzero ratio is an Nth root, but row indices wrap twice.
+        mat=[[pow(w,2*i*j,P) for j in range(n)] for i in range(n)]
+        self.assertFalse(full_monomial_gate(mat).equivalent)
+    def test_not_sufficient_arbitrary_butson(self):
+        n=16;w=modular_root(n)
+        mat=[[pow(w,(i*j+i*i*j*j)%n,P) for j in range(n)] for i in range(n)]
+        self.assertFalse(full_monomial_gate(mat).equivalent)
+    def test_zero_entry_never_fourier(self):
+        n=8;mat=dense_from_oracle(ntt,n);mat[3][5]=0
+        self.assertFalse(full_monomial_gate(mat).equivalent)
+
+if __name__=='__main__':unittest.main()

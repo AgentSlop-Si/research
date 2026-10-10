@@ -1,0 +1,94 @@
+   1 """Exact necessary rank tests for two raw bidirectional scan stages.
+   2 Own code. Modular ranks certify LOWER bounds on the complex cyclotomic rank.
+   3 No finite-field coefficient specialization of the hypothetical factors is assumed.
+   4 """
+   5 from pathlib import Path
+   6 from itertools import permutations
+   7 import json
+   8 import numpy as np
+   9 
+  10 PRIME=257
+  11 GENERATOR=3
+  12 
+  13 def fourier(n):
+  14     w=pow(GENERATOR,(PRIME-1)//n,PRIME)
+  15     assert pow(w,n,PRIME)==1 and pow(w,n//2,PRIME)!=1
+  16     return np.array([[pow(w,i*j,PRIME) for j in range(n)] for i in range(n)],dtype=np.int64)
+  17 
+  18 def all_prefix_ranks(a):
+  19     n=a.shape[0]
+  20     out=np.zeros((n+1,n+1),dtype=np.int64)
+  21     for k in range(1,n+1):
+  22         basis={}
+  23         for j in range(n):
+  24             v=a[:k,j].copy()
+  25             for h in sorted(basis):
+  26                 if v[h]: v=(v-int(v[h])*basis[h])%PRIME
+  27             piv=np.flatnonzero(v)
+  28             if len(piv):
+  29                 h=int(piv[0]); basis[h]=v*pow(int(v[h]),-1,PRIME)%PRIME
+  30             out[k,j+1]=len(basis)
+  31     return out
+  32 
+  33 def rank_tables(a):
+  34     return [all_prefix_ranks(b) for b in (a,a[:,::-1],a[::-1,:],a[::-1,::-1])]
+  35 
+  36 def pcount(p):
+  37     n=len(p); a=np.zeros((n+1,n+1),dtype=np.int64)
+  38     for j,i in enumerate(p): a[i+1,j+1]=1
+  39     return a.cumsum(0).cumsum(1)
+  40 
+  41 def reject(p,tables):
+  42     n=len(p); q=pcount(p)
+  43     for k in range(1,n):
+  44         for l in range(1,n):
+  45             counts=[int(q[k,l]), k-int(q[k,l]), l-int(q[k,l]),n-k-l+int(q[k,l])]
+  46             dims=[(k,l),(k,n-l),(n-k,l),(n-k,n-l)]
+  47             for name,t,c,(a,b) in zip(['TL','TR','BL','BR'],tables,counts,dims):
+  48                 r=int(t[a,b])
+  49                 if r>c+2:
+  50                     return dict(k=k,l=l,quadrant=name,modular_rank=r,permutation_ones=c,stage_rank_upper_bound=c+2)
+  51     return None
+  52 
+  53 def bitperm(n,sigma):
+  54     return [sum(((j>>s)&1)<<t for t,s in enumerate(sigma)) for j in range(n)]
+  55 
+  56 def endpoint_orders(n):
+  57     m=n.bit_length()-1
+  58     natural=list(range(n)); reverse=bitperm(n,tuple(reversed(range(m))))
+  59     # Output scatter order of the final radix-4 leaf layer in the verified control.
+  60     radix4=[j+r*(n//4) for j in range(n//4) for r in [0,2,1,3]]
+  61     return {'natural':natural,'bit_reversed':reverse,'radix4_final_scatter':radix4}
+  62 
+  63 def endpoint_obstruction(tables):
+  64     """A witness here excludes ALL internal permutations for fixed endpoints."""
+  65     n=tables[0].shape[0]-1
+  66     for k in range(1,n):
+  67         for l in range(1,n):
+  68             tl=int(tables[0][k,l]);tr=int(tables[1][k,n-l])
+  69             bl=int(tables[2][n-k,l]);br=int(tables[3][n-k,n-l])
+  70             for name,left,right,dimension in [('top',tl,tr,k),('bottom',bl,br,n-k),('left',tl,bl,l),('right',tr,br,n-l)]:
+  71                 if left+right>dimension+4:
+  72                     return dict(k=k,l=l,side=name,first_modular_rank=left,second_modular_rank=right,sum_upper_bound=dimension+4)
+  73     return None
+  74 
+  75 def run():
+  76     records=[]
+  77     for n in [16,32,64]:
+  78         m=n.bit_length()-1; rev=bitperm(n,tuple(reversed(range(m))))
+  79         candidates=[('bit_reversal_xor_'+str(a),[x^a for x in rev]) for a in range(n)]
+  80         candidates += [('bit_permutation_'+str(s),bitperm(n,s)) for s in permutations(range(m))]
+  81         orders=endpoint_orders(n)
+  82         for rn,cn in [('natural','natural'),('bit_reversed','bit_reversed'),('radix4_final_scatter','radix4_final_scatter')]:
+  83             a=fourier(n)[np.ix_(orders[rn],orders[cn])]
+  84             tables=rank_tables(a)
+  85             tested=[]
+  86             for name,p in candidates:
+  87                 w=reject(p,tables)
+  88                 tested.append(dict(name=name,rejected=w is not None,witness=w))
+  89             rec=dict(n=n,row_order_name=rn,column_order_name=cn,row_order=orders[rn],column_order=orders[cn],all_internal_permutations_excluded=endpoint_obstruction(tables),total=len(tested),rejected=sum(x['rejected'] for x in tested),survivors=[x['name'] for x in tested if not x['rejected']],tests=tested)
+  90             records.append(rec)
+  91             print(n,rn,cn,'rejected',rec['rejected'],'/',len(tested),'survivors',rec['survivors'],flush=True)
+  92     Path(__file__).with_name('endpoint_rank_results.json').write_text(json.dumps(records,indent=2)+'\n')
+  93 
+  94 if __name__=='__main__':run()

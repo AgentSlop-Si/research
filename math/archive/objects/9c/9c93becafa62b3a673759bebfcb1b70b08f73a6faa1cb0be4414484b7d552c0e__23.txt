@@ -1,0 +1,354 @@
+   1 #!/usr/bin/env python3
+   2 """Independent Phase20 audit. No uploaded Python module is imported or executed.
+   3 Python 3.10+; NumPy is used only for separately labelled numerical controls.
+   4 The optional --source path is read solely as JSON/text data.
+   5 """
+   6 from __future__ import annotations
+   7 import argparse, hashlib, itertools, json, math, pathlib, random
+   8 import numpy as np
+   9 
+  10 
+  11 def rank(A,p):
+  12     a=[[int(x)%p for x in row] for row in A]
+  13     if not a:return 0
+  14     r=0
+  15     for j in range(len(a[0])):
+  16         k=next((i for i in range(r,len(a)) if a[i][j]),None)
+  17         if k is None:continue
+  18         a[r],a[k]=a[k],a[r]
+  19         v=pow(a[r][j],-1,p);a[r]=[x*v%p for x in a[r]]
+  20         for i in range(r+1,len(a)):
+  21             v=a[i][j]
+  22             if v:a[i]=[(x-v*y)%p for x,y in zip(a[i],a[r])]
+  23         r+=1
+  24         if r==len(a):break
+  25     return r
+  26 
+  27 
+  28 def eye(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+  29 def add(A,B,p):return [[(x+y)%p for x,y in zip(a,b)] for a,b in zip(A,B)]
+  30 def sub(A,B,p):return [[(x-y)%p for x,y in zip(a,b)] for a,b in zip(A,B)]
+  31 def mul(A,B,p):return [[sum(x*y for x,y in zip(a,b))%p for b in zip(*B)] for a in A]
+  32 def vec(A,v,p):return [sum(x*y for x,y in zip(a,v))%p for a in A]
+  33 def inv(A,p):
+  34     n=len(A);a=[list(row)+e for row,e in zip(A,eye(n))]
+  35     for j in range(n):
+  36         k=next(i for i in range(j,n) if a[i][j]%p)
+  37         a[j],a[k]=a[k],a[j]
+  38         u=pow(a[j][j],-1,p);a[j]=[x*u%p for x in a[j]]
+  39         for i in range(n):
+  40             if i!=j:
+  41                 u=a[i][j];a[i]=[(x-u*y)%p for x,y in zip(a[i],a[j])]
+  42     return [a[n:] for a in a]
+  43 
+  44 
+  45 def prime_factors(n):
+  46     a=[];q=2
+  47     while q*q<=n:
+  48         if n%q==0:
+  49             a.append(q)
+  50             while n%q==0:n//=q
+  51         q+=1
+  52     if n>1:a.append(n)
+  53     return a
+  54 
+  55 
+  56 def primitive_root(p):
+  57     assert p>2 and all(p%d for d in range(2,math.isqrt(p)+1))
+  58     fs=prime_factors(p-1)
+  59     return next(g for g in range(2,p) if all(pow(g,(p-1)//q,p)!=1 for q in fs))
+  60 
+  61 
+  62 def roots(n,p,g):
+  63     assert (p-1)%n==0
+  64     w=pow(g,-((p-1)//n),p);a=[1]
+  65     for _ in range(n-1):a.append(a[-1]*w%p)
+  66     assert len(set(a))==n and a[-1]*w%p==1
+  67     return a
+  68 
+  69 
+  70 def matrices(n,p,g,scale=1):
+  71     a=roots(n,p,g)
+  72     H=[[scale*a[i*j%n]%p for j in range(n)] for i in range(n)]
+  73     Z=[[int(i==(j+1)%n) for j in range(n)] for i in range(n)]
+  74     D=[[a[i] if i==j else 0 for j in range(n)] for i in range(n)]
+  75     Zi=[[int(i==(j-1)%n) for j in range(n)] for i in range(n)]
+  76     return H,Z,D,Zi
+  77 
+  78 
+  79 def residuals(A,p,g):
+  80     _,Z,D,Zi=matrices(len(A),p,g)
+  81     return sub(mul(A,Z,p),mul(D,A,p),p),sub(mul(A,D,p),mul(Zi,A,p),p)
+  82 
+  83 
+  84 def recognize(A,p,g):
+  85     """Complete general-N monomial Fourier recognizer; returns a certificate.
+  86     Primitive exponent means gcd(e,N)=1, also for non-prime-power lengths.
+  87     Root table is prepared by successive multiplication, not repeated powers.
+  88     """
+  89     n=len(A)
+  90     assert all(len(a)==n for a in A)
+  91     if any(x%p==0 for a in A for x in a):return {'equivalent':False,'reason':'zero'}
+  92     a=roots(n,p,g);lookup={x:i for i,x in enumerate(a)}
+  93     ri=[A[0][0]*pow(A[i][0],-1,p)%p for i in range(n)]
+  94     ci=[pow(A[0][j],-1,p) for j in range(n)]
+  95     E=[];pivot=None
+  96     for i in range(n):
+  97         E.append([])
+  98         for j in range(n):
+  99             x=lookup.get(A[i][j]*ri[i]*ci[j]%p)
+ 100             if x is None:return {'equivalent':False,'reason':'non-root'}
+ 101             E[i].append(x)
+ 102             if pivot is None and math.gcd(x,n)==1:pivot=(i,j)
+ 103     if pivot is None:return {'equivalent':False,'reason':'no-unit-pivot'}
+ 104     i,j=pivot;v=pow(E[i][j],-1,n)
+ 105     alpha=[E[k][j]*v%n for k in range(n)];beta=E[i]
+ 106     if sorted(alpha)!=list(range(n)) or sorted(beta)!=list(range(n)):
+ 107         return {'equivalent':False,'reason':'not-permutations'}
+ 108     if any(E[i][j]!=alpha[i]*beta[j]%n for i in range(n) for j in range(n)):
+ 109         return {'equivalent':False,'reason':'nonseparable'}
+ 110     left=[A[i][0]%p for i in range(n)]
+ 111     right=[A[0][j]*pow(A[0][0],-1,p)%p for j in range(n)]
+ 112     assert alpha[0]==beta[0]==0
+ 113     assert all(A[i][j]%p==left[i]*a[alpha[i]*beta[j]%n]*right[j]%p
+ 114                for i in range(n) for j in range(n))
+ 115     return {'equivalent':True,'alpha':alpha,'beta':beta,'left':left,'right':right}
+ 116 
+ 117 
+ 118 def fingerprint(A,p,g,k=0,l=1):
+ 119     n=len(A);a=roots(n,p,g);logs={x:i for i,x in enumerate(a)}
+ 120     if any(A[j][k]%p==0 or A[j][l]%p==0 for j in range(n)):return None
+ 121     base=A[0][k]*pow(A[0][l],-1,p)%p;hist=[0]*n
+ 122     for j in range(n):
+ 123         e=logs.get(A[j][l]*pow(A[j][k],-1,p)*base%p)
+ 124         if e is None:return None
+ 125         hist[e]+=1
+ 126     d=hist[0]
+ 127     if not 1<=d<n or n%d:return None
+ 128     return d if all(hist[e]==(d if e%d==0 else 0) for e in range(n)) else None
+ 129 
+ 130 
+ 131 def weyl_trial(A,p,g,seed,h=1,calibration=1):
+ 132     n=len(A);a=roots(n,p,g);rng=random.Random(seed);calls=0
+ 133     def apply(v):
+ 134         nonlocal calls
+ 135         calls+=1
+ 136         return vec(A,v,p)
+ 137     calibrated=apply([1]+[0]*(n-1))[0]==calibration
+ 138     count=[0,0]
+ 139     for _ in range(h):
+ 140         v=[rng.randrange(p) for _ in range(n)];y=apply(v)
+ 141         az=apply(v[-1:]+v[:-1]);ad=apply([x*z%p for x,z in zip(v,a)])
+ 142         count[0]+=sum(x!=y*z%p for x,y,z in zip(az,y,a))
+ 143         count[1]+=sum(x!=z for x,z in zip(ad,y[1:]+y[:1]))
+ 144     assert calls==1+3*h
+ 145     return {'calibrated':calibrated,'first_equation':count[0]==0,
+ 146             'second_equation':count[1]==0,'nonzero_first':count[0],
+ 147             'nonzero_second':count[1],'circuit_calls':calls,
+ 148             'passed':calibrated and not any(count)}
+ 149 
+ 150 
+ 151 def exact_checks():
+ 152     out={};p=20161;g=primitive_root(p)
+ 153     lengths=[2,3,4,5,6,7,8,9,10,12,15,16,18,20,21,24,28,32]
+ 154     cases=[]
+ 155     for n in lengths:
+ 156         H,Z,D,Zi=matrices(n,p,g)
+ 157         assert mul(H,Z,p)==mul(D,H,p) and mul(H,D,p)==mul(Zi,H,p)
+ 158         assert weyl_trial(H,p,g,n,h=2)['passed']
+ 159         rng=random.Random(4200+n);rho=list(range(n));sigma=list(range(n));rng.shuffle(rho);rng.shuffle(sigma)
+ 160         left=[rng.randrange(1,p) for _ in range(n)];right=[rng.randrange(1,p) for _ in range(n)]
+ 161         A=[[left[i]*H[rho[i]][sigma[j]]*right[j]%p for j in range(n)] for i in range(n)]
+ 162         cert=recognize(A,p,g);assert cert['equivalent']
+ 163         for k in range(n):
+ 164             for l in range(k+1,n):assert fingerprint(A,p,g,k,l)==math.gcd(sigma[l]-sigma[k],n)
+ 165         bad=[[roots(n,p,g)[(i*j+i*i*j*j)%n] for j in range(n)] for i in range(n)]
+ 166         bad_report=recognize(bad,p,g)
+ 167         cases.append({'n':n,'weyl_exact':True,'masked_reconstructed':True,
+ 168                       'all_column_pairs':n*(n-1)//2,'nonlinear_exponent_counterfeit_rejected':not bad_report['equivalent'],
+ 169                       'certificate':cert})
+ 170     out['field']={'p':p,'primitive_generator':g,'lengths':cases}
+ 171     # Nullity of both identities, over fields with primitive roots; no normalization needed.
+ 172     nullities=[]
+ 173     for n in (2,3,4,6,8):
+ 174         columns=[]
+ 175         for t in range(n*n):
+ 176             E=[[0]*n for _ in range(n)];E[t//n][t%n]=1
+ 177             a,b=residuals(E,p,g);columns.append([x for row in a+b for x in row])
+ 178         rk=rank(list(zip(*columns)),p);assert rk==n*n-1
+ 179         nullities.append({'n':n,'equation_rank':rk,'solution_dimension':n*n-rk})
+ 180     out['weyl_nullities']=nullities
+ 181     # Exhaustively count the same-random-vector common kernel.
+ 182     exhaustive=[]
+ 183     for p0,n,g0 in ((5,2,2),(7,3,3)):
+ 184         H,*_=matrices(n,p0,g0)
+ 185         for kind in ('single_entry','row_scaled','wrong_scalar'):
+ 186             M=[a[:] for a in H]
+ 187             if kind=='single_entry':M[-1][-1]=(M[-1][-1]+1)%p0
+ 188             if kind=='row_scaled':M[-1]=[2*x%p0 for x in M[-1]]
+ 189             if kind=='wrong_scalar':M=[[2*x%p0 for x in row] for row in M]
+ 190             a,b=residuals(M,p0,g0);rho=rank(a+b,p0)
+ 191             accepted=sum(not any(vec(a,v,p0)+vec(b,v,p0)) for v in itertools.product(range(p0),repeat=n))
+ 192             assert accepted==p0**(n-rho)
+ 193             exhaustive.append({'p':p0,'n':n,'candidate':kind,'stacked_rank':rho,
+ 194                                'common_kernel_size':accepted,'total_vectors':p0**n,
+ 195                                'calibration_passes':M[0][0]==1})
+ 196     out['exhaustive_kernel_probabilities']=exhaustive
+ 197     # Sylvester real Hadamards fool every individual column-pair histogram.
+ 198     counterfeit=[]
+ 199     for n in (4,8,16):
+ 200         H=[[(-1 if (i&j).bit_count()%2 else 1)%p for j in range(n)] for i in range(n)]
+ 201         passed=sum(fingerprint(H,p,g,k,l)==n//2 for k in range(n) for l in range(k+1,n))
+ 202         assert passed==n*(n-1)//2 and not recognize(H,p,g)['equivalent']
+ 203         counterfeit.append({'n':n,'all_histograms_pass':passed,'full_test_rejects':True,'reason':'no-unit-pivot'})
+ 204     out['all_pair_histogram_counterfeit']=counterfeit
+ 205     # Exact path commutator decomposition and Green rank budget, odd and even lengths.
+ 206     stationary=[]
+ 207     for n in (3,4,5,6,7,8,9,12,16,24,32):
+ 208         H,Z,_,_=matrices(n,p,g);stages=[];decomp_ok=True
+ 209         for t in range(2):
+ 210             S=[[0]*n for _ in range(n)]
+ 211             for q in range(2):
+ 212                 aa,bb,cc=2*n+23*q+11*t,-(n-1)+3*q,-(n-1)+5*t
+ 213                 B=[[aa if i==j else bb if i==j+1 else cc if j==i+1 else 0 for j in range(n)] for i in range(n)]
+ 214                 C=sub(mul(B,Z,p),mul(Z,B,p),p);E=[[0]*n for _ in range(n)]
+ 215                 E[0][0]+=cc;E[0][n-2]-=bb;E[1][n-1]+=bb;E[n-1][n-1]-=cc
+ 216                 E=[[x%p for x in a] for a in E];assert C==E and rank(C,p)<=2
+ 217                 S=add(S,inv(B,p),p)
+ 218             assert rank(sub(mul(S,Z,p),mul(Z,S,p),p),p)<=4
+ 219             stages.append(S)
+ 220         M=mul(stages[1],stages[0],p)
+ 221         r=rank(sub(mul(M,Z,p),mul(Z,M,p),p),p)
+ 222         fr=rank(sub(mul(H,Z,p),mul(Z,H,p),p),p)
+ 223         assert r<=8 and fr==n-(n%2)
+ 224         stationary.append({'n':n,'green_product_commutator_rank':r,'rank_budget':8,'Fourier_rank':fr})
+ 225     out['stationary_exact_ranks']=stationary
+ 226     return out
+ 227 
+ 228 
+ 229 def numerical_checks():
+ 230     out={'dtype':'complex128; numerical checks support but do not prove identities'}
+ 231     rng=np.random.default_rng(91837);records=[];sparse=[];row_sharp=[]
+ 232     for n in (3,4,5,6,8,9,12,16,24,32,64,128):
+ 233         x=np.arange(n);F=np.exp(-2j*np.pi*np.outer(x,x)/n)/np.sqrt(n)
+ 234         Z=np.roll(np.eye(n),1,axis=0);D=np.diag(np.exp(-2j*np.pi*x/n))
+ 235         K=rng.standard_normal((n,n))+1j*rng.standard_normal((n,n));M=F@K
+ 236         residual=np.linalg.norm(M@Z-D@M,'fro')**2+np.linalg.norm(M@D-Z.T@M,'fro')**2
+ 237         # Parseval identity in a freshly generated Weyl basis.
+ 238         weighted=0.
+ 239         for a in range(n):
+ 240             for b in range(n):
+ 241                 W=(np.exp(-2j*np.pi*a*x/n)[:,None]*np.roll(np.eye(n),b,axis=0))/np.sqrt(n)
+ 242                 coefficient=np.vdot(W,K)
+ 243                 weighted+=(abs(1-np.exp(-2j*np.pi*a/n))**2+abs(1-np.exp(-2j*np.pi*b/n))**2)*abs(coefficient)**2
+ 244         rel=abs(residual-weighted)/max(1,residual)
+ 245         fd=F@D;dist=np.linalg.norm(fd-F*np.vdot(F,fd)/n,'fro')
+ 246         rr=np.hypot(np.linalg.norm(fd@Z-D@fd,'fro'),np.linalg.norm(fd@D-Z.T@fd,'fro'))
+ 247         sharp=abs(rr/dist-2*np.sin(np.pi/n))
+ 248         comm=F@Z-Z@F;sv=np.linalg.svd(comm,compute_uv=False)
+ 249         formula=np.array([2*np.cos((2*(r//2)+1)*np.pi/(2*n)) for r in range(n)])
+ 250         spectrum_error=float(np.max(np.abs(sv-formula)))
+ 251         C=F.real;S=F.imag;J=np.eye(n)[(-x)%n]
+ 252         parity_error=max(np.linalg.norm(C@S),np.linalg.norm(C@C-(np.eye(n)+J)/2),np.linalg.norm(S@S-(np.eye(n)-J)/2))
+ 253         vals,O=np.linalg.eigh(C+np.sqrt(2)*S);q=np.diag(O.T@F@O)
+ 254         reconstruction=float(np.linalg.norm(O@np.diag(q)@O.T-F,2))
+ 255         c=2 if n%2==0 else 1
+ 256         real_count=int(sum(abs(z.imag)<1e-9 for z in q));imag_count=int(sum(abs(z.real)<1e-9 for z in q))
+ 257         assert rel<1e-10 and sharp<1e-10 and spectrum_error<1e-10 and parity_error<1e-9 and reconstruction<1e-10
+ 258         assert (real_count,imag_count)==((n+c)//2,(n-c)//2)
+ 259         records.append({'n':n,'weyl_quadratic_identity_relative_error':rel,'sharp_gap_absolute_error':float(sharp),
+ 260                         'commutator_spectrum_max_error':spectrum_error,'real_mask_reconstruction_error':reconstruction,
+ 261                         'real_mask_counts':[real_count,imag_count],
+ 262                         'stationary_r8_improved_floor':float(formula[8]/2) if n>8 else 0})
+ 263         for s in sorted(set([1,min(3,n-1),n-1])):
+ 264             k=1;b=np.zeros(n,dtype=complex);b[:s]=np.exp(2j*np.pi*k*x[:s]/n)*np.sin(np.pi*(x[:s]+1)/(s+1))
+ 265             ratio=np.linalg.norm(Z@b-np.exp(-2j*np.pi*k/n)*b)/np.linalg.norm(b)
+ 266             theoretical=2*np.sin(np.pi/(2*(s+1)))
+ 267             assert abs(ratio-theoretical)<1e-10
+ 268             sparse.append({'n':n,'s':s,'measured':float(ratio),'sharp_bound':float(theoretical)})
+ 269             # Sharpness when only one inverse row is prescribed sparse.
+ 270             u=F.conj().T[0,:];a=s/n;b=np.zeros(n,dtype=complex);b[:s]=u[:s]/a
+ 271             e=np.eye(n)[0,:];d=e-b@F
+ 272             M=F+np.outer(b.conj(),d)/np.vdot(b,b).real
+ 273             error=np.linalg.norm(M-F,2);B=np.linalg.inv(M)
+ 274             bound=np.sqrt(1-a)
+ 275             assert np.linalg.norm(B[0]-b)<1e-8 and abs(error-bound)<1e-9
+ 276             row_sharp.append({'n':n,'s':s,'error':float(error),'improved_bound':float(bound),
+ 277                               'source_bound':float(bound/(1+bound)),
+ 278                               'inverse_row_residual':float(np.linalg.norm(B[0]-b))})
+ 279     out['weyl_spectrum_real_mask']=records;out['sparse_column_sharpness']=sparse
+ 280     out['one_sparse_inverse_row_sharpness']=row_sharp
+ 281     return out
+ 282 
+ 283 
+ 284 def sqrt_mod(a,p):
+ 285     """Independent Tonelli-Shanks implementation, to match normalized data."""
+ 286     a%=p
+ 287     if a==0:return 0
+ 288     if pow(a,(p-1)//2,p)!=1:raise ValueError('not square')
+ 289     q=p-1;s=0
+ 290     while q%2==0:q//=2;s+=1
+ 291     z=next(z for z in range(2,p) if pow(z,(p-1)//2,p)==p-1)
+ 292     c=pow(z,q,p);x=pow(a,(q+1)//2,p);t=pow(a,q,p);m=s
+ 293     while t!=1:
+ 294         i=1;v=t*t%p
+ 295         while v!=1:v=v*v%p;i+=1
+ 296         b=pow(c,2**(m-i-1),p);x=x*b%p;c=b*b%p;t=t*c%p;m=i
+ 297     return x
+ 298 
+ 299 
+ 300 def reconstruct_seeded_source_family(n,near=False):
+ 301     """Dense algebraic reconstruction from prose/source formula, no source import.
+ 302     Inverts whole matrices with elimination, independently of uploaded LU solves.
+ 303     """
+ 304     p=998244353;g=3;rng=random.Random(21 if near else 19);a=roots(n,p,g);M=eye(n)
+ 305     for stage in range(2):
+ 306         S=[[0]*n for _ in range(n)]
+ 307         for term in range(2):
+ 308             if near:
+ 309                 off=-(n-1-(stage+term)%3);diag=[2*n]*n;lo=[0]+[off]*(n-1);up=[off]*(n-1)+[0]
+ 310             else:
+ 311                 diag=[9+a[rng.randrange(n)] for _ in range(n)]
+ 312                 lo=[0]+[1+a[rng.randrange(n)] for _ in range(n-1)]
+ 313                 up=[1+a[rng.randrange(n)] for _ in range(n-1)]+[0]
+ 314             B=[[diag[i] if i==j else lo[i] if j==i-1 else up[i] if j==i+1 else 0 for j in range(n)] for i in range(n)]
+ 315             G=inv(B,p);perm=list(range(n));rng.shuffle(perm)
+ 316             l=[(2*n if near else 1)*a[rng.randrange(n)]%p for _ in range(n)]
+ 317             r=[a[rng.randrange(n)] for _ in range(n)]
+ 318             for i in range(n):
+ 319                 for j in range(n):S[perm[i]][perm[j]]=(S[perm[i]][perm[j]]+l[i]*G[i][j]*r[j])%p
+ 320         M=mul(S,M,p)
+ 321     return M
+ 322 
+ 323 
+ 324 def source_data_checks(path):
+ 325     data=json.loads((path/'audit.json').read_text());out={'files_read_as_data':{},'reconstructed_small_cases':[]}
+ 326     for f in sorted(path.glob('*.py'))+sorted(path.glob('*.md'))+[path/'audit.json']:
+ 327         out['files_read_as_data'][f.name]=hashlib.sha256(f.read_bytes()).hexdigest()
+ 328     fields=['calibrated','first_equation','second_equation','passed','circuit_calls','nonzero_first','nonzero_second']
+ 329     for near,key in ((False,'independently_permuted_green_sums'),(True,'independently_permuted_near_resonant_green_sums')):
+ 330         for n in (8,16,32):
+ 331             A=reconstruct_seeded_source_family(n,near);cal=pow(sqrt_mod(n,998244353),-1,998244353)
+ 332             report=weyl_trial(A,998244353,3,(411 if near else 311)+n,calibration=cal)
+ 333             source=next(x for x in data[key] if x['n']==n)
+ 334             assert all(report[f]==source['weyl'][f] for f in fields)
+ 335             excluded=fingerprint(A,998244353,3) is None
+ 336             assert excluded==source['two_column']['excluded']
+ 337             a,b=residuals(A,998244353,3)
+ 338             out['reconstructed_small_cases'].append({'n':n,'near_resonant':near,'source_report_fields_match':fields,
+ 339                 'histogram_rejection_matches':excluded,'exact_residual_ranks':[rank(a,998244353),rank(b,998244353)]})
+ 340     out['uploaded_test_definitions_count']=sum(f.read_text().count('def test_') for f in (path/'tests').glob('*.py'))
+ 341     out['large_source_runs_not_reexecuted']=[16384,65536]
+ 342     return out
+ 343 
+ 344 
+ 345 def main():
+ 346     ap=argparse.ArgumentParser();ap.add_argument('--source',type=pathlib.Path);ap.add_argument('--output',type=pathlib.Path)
+ 347     args=ap.parse_args();result={'audit':'independently authored checks; uploaded code never executed','exact':exact_checks(),'numerical':numerical_checks()}
+ 348     if args.source:result['source_data_comparison']=source_data_checks(args.source)
+ 349     result['status']='ALL ASSERTIONS PASSED'
+ 350     text=json.dumps(result,indent=2)
+ 351     if args.output:args.output.write_text(text+'\n')
+ 352     else:print(text)
+ 353 
+ 354 if __name__=='__main__':main()

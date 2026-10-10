@@ -1,0 +1,62 @@
+"""Tiny *exact rational* witness for the affine-subspace + sparse-error
+obstruction. The general theorem is proved in RESEARCH.md. This audit
+illustrates it on a concrete finite family, not every conceivable family.
+"""
+from fractions import Fraction
+from itertools import combinations
+import json
+
+def rank(columns):
+    if not columns:return 0
+    # Store rows so we can row-reduce.
+    m=len(columns[0]);c=len(columns)
+    rows=[[Fraction(columns[j][i]) for j in range(c)] for i in range(m)]
+    pivot=0
+    for col in range(c):
+        k=next((j for j in range(pivot,m) if rows[j][col]),None)
+        if k is None:continue
+        rows[pivot],rows[k]=rows[k],rows[pivot]
+        t=rows[pivot][col]
+        rows[pivot]=[v/t for v in rows[pivot]]
+        for j in range(pivot+1,m):
+            factor=rows[j][col]
+            if factor:
+                rows[j]=[rows[j][h]-factor*rows[pivot][h] for h in range(c)]
+        pivot+=1
+        if pivot==m:break
+    return pivot
+
+def in_affine_plus_sparse(x,offset,basis,k):
+    n=len(x)
+    residue=[x[i]-offset[i] for i in range(n)]
+    for size in range(k+1):
+        for support in combinations(range(n),size):
+            expanded=[list(v) for v in basis]
+            for j in support:
+                unit=[0]*n;unit[j]=1
+                expanded.append(unit)
+            if rank(expanded)==rank(expanded+[residue]):
+                return True
+    return False
+
+def audit():
+    n=6;r=2;k=1
+    def e(i):
+        v=[0]*n;v[i]=1;return v
+    def add(a,b):return [a[i]+b[i] for i in range(n)]
+    families=[
+        {'offset':[0]*n,'basis':[add(e(0),e(1)),add(e(2),e(3))]},
+        {'offset':e(0),'basis':[add(e(4),e(5)),add(e(0),e(4))]},
+        {'offset':add(e(0),e(1)),'basis':[add(e(1),e(3)),add(e(3),e(5))]}
+    ]
+    for t in range(1,100):
+        candidate=[t**(i+1) for i in range(n)]
+        if not any(in_affine_plus_sparse(candidate,s['offset'],s['basis'],k) for s in families):
+            report={'n':n,'r':r,'k':k,'families':len(families),
+                    'witness':[int(x) for x in candidate],
+                    'all_representations_rejected':True,
+                    'generalization':'Any finite family with r+k<n misses some C^n inputs.'}
+            print(json.dumps(report,indent=2));return report
+    raise AssertionError('Search did not find an explicit witness')
+
+if __name__=='__main__':audit()

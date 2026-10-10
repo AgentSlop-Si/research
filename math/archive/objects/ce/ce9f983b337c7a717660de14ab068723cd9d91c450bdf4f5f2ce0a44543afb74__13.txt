@@ -1,0 +1,150 @@
+   1 #!/usr/bin/env python3
+   2 """Independently authored exact-integer stress checks, not uploaded execution.
+   3 
+   4 Proof is in STREAMING_ROBUST_SYNTHESIS.md. These checks test bookkeeping,
+   5 adversarial orders and boundaries; finite tests do not replace its proof.
+   6 """
+   7 import itertools
+   8 import json
+   9 import random
+  10 from pathlib import Path
+  11 
+  12 
+  13 def robust_select(values, mu=0, bscale=2, tie='first', rng=None, verify=True):
+  14     reps=[]
+  15     counts=[]
+  16     bad=0
+  17     good=0
+  18     decrements=0
+  19     max_occupied=0
+  20     for n,z in enumerate(values,1):
+  21         is_bad=abs(z-mu)>bscale
+  22         bad+=is_bad
+  23         good+=not is_bad
+  24         matching=[j for j,c in enumerate(reps) if (z-c)**2<=4*bscale*bscale]
+  25         if matching:
+  26             j=matching[0] if tie=='first' else matching[-1] if tie=='last' else rng.choice(matching)
+  27             counts[j]+=1
+  28         elif len(reps)<5:
+  29             reps.append(z)
+  30             counts.append(1)
+  31         else:
+  32             decrements+=1
+  33             pairs=[(c,h-1) for c,h in zip(reps,counts) if h>1]
+  34             reps=[c for c,h in pairs]
+  35             counts=[h for c,h in pairs]
+  36         max_occupied=max(max_occupied,len(reps))
+  37         if verify:
+  38             assert len(reps)==len(counts)<=5
+  39             assert all(h>0 for h in counts)
+  40             assert all(abs(reps[i]-reps[j])>2*bscale for i in range(len(reps)) for j in range(i))
+  41             near=[h for c,h in zip(reps,counts) if abs(c-mu)<=3*bscale]
+  42             far=[h for c,h in zip(reps,counts) if abs(c-mu)>3*bscale]
+  43             assert len(near)<=3
+  44             assert sum(far)+2*decrements<=bad
+  45             assert sum(near)>=good-4*decrements
+  46             # Each full decrement consumes 5 old counts and discards 1 arrival.
+  47             assert sum(counts)==n-6*decrements
+  48             if 4*bad<n:
+  49                 assert near
+  50                 assert max(near)>max(far,default=0)
+  51     chosen=None if not counts else reps[max(range(len(counts)),key=lambda j:counts[j])]
+  52     if 4*bad<len(values):
+  53         assert chosen is not None and abs(chosen-mu)<=3*bscale
+  54     return chosen, decrements, max_occupied
+  55 
+  56 
+  57 def one_counter(values,bscale=1):
+  58     candidate=None
+  59     count=0
+  60     for z in values:
+  61         if count==0:
+  62             candidate=z
+  63             count=1
+  64         elif abs(z-candidate)<=2*bscale:
+  65             count+=1
+  66         else:
+  67             count-=1
+  68     return candidate
+  69 
+  70 
+  71 def main():
+  72     rng=random.Random(9012026)
+  73     exhaustive=0
+  74     dec_cases=0
+  75     max_dec=0
+  76     # Exhaust all short words. Includes exact ±B, ±2B, ±3B boundaries.
+  77     alphabet=(-8,-6,-4,-2,0,2,4,6,8)
+  78     for length in range(1,7):
+  79         for values in itertools.product(alphabet, repeat=length):
+  80             _,d,_=robust_select(values)
+  81             exhaustive+=1
+  82             dec_cases+=bool(d)
+  83             max_dec=max(max_dec,d)
+  84     # All permutations of a designed full-counter cancellation multiset.
+  85     # Here mu=0,B=2. Stored -5,0,5 are near; ±12 are far.
+  86     ordered_cases=0
+  87     for seq in itertools.permutations((-12,-5,0,5,12,2)):
+  88         robust_select(seq)
+  89         ordered_cases+=1
+  90     random_cases=0
+  91     certified_cases=0
+  92     full_slots=0
+  93     for it in range(16000):
+  94         length=rng.choice((7,11,15,19,23,31,47,63,95,127))
+  95         # Sometimes hit or exceed the proved boundary to exercise decrement accounting.
+  96         b=rng.randrange(length//3+1) if it%3==0 else rng.randrange((length-1)//4+1)
+  97         good=[rng.choice((-2,-1,0,1,2)) for _ in range(length-b)]
+  98         bad=[rng.choice((-20,-12,-7,-6,-5,-3,3,5,6,7,12,20)) for _ in range(b)]
+  99         seq=good+bad
+ 100         rng.shuffle(seq)
+ 101         if it%5==0:
+ 102             # Correlate order with signs while retaining bad/good counts.
+ 103             seq.sort(reverse=bool(it%2))
+ 104         for tie in ('first','last','random'):
+ 105             _,d,occupied=robust_select(seq,tie=tie,rng=rng)
+ 106             random_cases+=1
+ 107             certified_cases+=4*b<length
+ 108             dec_cases+=bool(d)
+ 109             max_dec=max(max_dec,d)
+ 110             full_slots+=occupied==5
+ 111     # Strong bad-first and bad-last cases with exact boundary good points.
+ 112     adversarial=0
+ 113     for repeat in range(1,61):
+ 114         bad=[-20,-5,5,20]*repeat
+ 115         good=[-2]*(8*repeat+1)+[2]*(8*repeat+1)
+ 116         for seq in (bad+good, good+bad, good[::2]+bad+good[1::2]):
+ 117             for tie in ('first','last'):
+ 118                 robust_select(seq,tie=tie)
+ 119                 adversarial+=1
+ 120     witness=(-2,-1,-1,1,1,1,10)
+ 121     assert one_counter(witness)==10
+ 122     assert sum(abs(z)<=1 for z in witness)==5
+ 123     result={
+ 124         'status':'pass',
+ 125         'arithmetic':'exact Python integers; no uploaded modules',
+ 126         'exhaustive_short_sequences':exhaustive,
+ 127         'designed_permutations':ordered_cases,
+ 128         'randomized_order_and_tie_cases':random_cases,
+ 129         'random_cases_in_proved_below_quarter_regime':certified_cases,
+ 130         'adversarial_bad_first_or_last_cases':adversarial,
+ 131         'cases_with_full_decrement':dec_cases,
+ 132         'cases_reaching_five_slots':full_slots,
+ 133         'maximum_observed_decrement_events':max_dec,
+ 134         'one_counter_counterexample':{'samples':list(witness),'target':0,'B':1,'good':5,'returned':10},
+ 135         'checked_invariants':[
+ 136             'representatives pairwise farther than 2B',
+ 137             'at most three representatives within 3B of target',
+ 138             'surviving far mass + 2D <= bad samples',
+ 139             'near mass >= good samples - 4D',
+ 140             'total counter mass = processed samples - 6D',
+ 141             'largest counter near whenever bad < processed/4'
+ 142         ],
+ 143         'scope':'Finite invariant checks support the separate all-size proof; no statistical performance or floating stability claim.'
+ 144     }
+ 145     path=Path(__file__).with_name('streaming_check_results.json')
+ 146     path.write_text(json.dumps(result,indent=2)+'\n')
+ 147     print(json.dumps(result,indent=2))
+ 148 
+ 149 if __name__=='__main__':
+ 150     main()

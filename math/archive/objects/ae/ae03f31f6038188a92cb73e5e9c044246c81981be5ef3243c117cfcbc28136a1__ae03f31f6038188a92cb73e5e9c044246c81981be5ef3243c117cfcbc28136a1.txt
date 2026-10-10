@@ -1,0 +1,114 @@
+"""Exact first/second-order membership gate for a 2-stage separated generator.
+
+Let Phi(params) = B P A and set params(t)=params0 + t*v + t^2*w.
+Working modulo t^3 over the prime field, the output jet is
+Phi0 + t*(Jv) + t^2*(Jw + H(v,v)/2).
+The code gives a NECESSARY AND SUFFICIENT local lift test for that 2-jet
+through a specified parameter point. NOT a full implicit polynomial of M.
+"""
+import sys,json,random
+from pathlib import Path
+import numpy as np
+BASE=(Path(__file__).resolve().parent/'prior_checkpoint' if (Path(__file__).resolve().parent/'prior_checkpoint').exists() else Path(__file__).resolve().parents[1]/'fft_nonlinear_compatibility_2026-10-09')
+sys.path.insert(0,str(BASE))
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+import jacobian_gate as j
+from superconcentrator_gate import pivots
+from gauge_curvature import hessmap,gauge_basis
+P=[7,0,6,3,4,1,2,5];MOD=12289
+
+def inverse_mod(A,p=MOD):
+    a=np.array(A,dtype=np.int64)%p
+    nr,nc=a.shape;assert nr==nc
+    work=np.hstack([a,np.eye(nr,dtype=np.int64)])
+    for c in range(nr):
+        choices=np.flatnonzero(work[c:,c]);assert len(choices)>0
+        k=c+int(choices[0]);work[[c,k]]=work[[k,c]]
+        work[c,:]=work[c,:]*pow(int(work[c,c]),-1,p)%p
+        for r in range(nr):
+            if r!=c and work[r,c]: work[r,:]=(work[r,:]-int(work[r,c])*work[c,:])%p
+    return work[:,nr:]
+
+class JetGate:
+    def __init__(self,seed=1011):
+        j.MOD=MOD
+        self.M,self.J,self.a,self.b=j.basis(8,1,P,seed)
+        self.Q=np.array(j.basis_null(self.J.T),dtype=np.int64)%MOD
+        rows,cols=pivots(self.J)
+        assert len(rows)==len(cols)==60
+        self.rows,self.cols=rows,cols
+        self.right_inverse=inverse_mod(self.J[np.ix_(rows,cols)])
+    def lift_first(self,d1):
+        d1=np.array(d1,dtype=np.int64)%MOD
+        v=np.zeros(80,dtype=np.int64)
+        v[self.cols]=self.right_inverse@d1[self.rows]%MOD
+        return v if np.array_equal((self.J@v)%MOD,d1) else None
+    def accepts(self,d1,d2):
+        d1=np.asarray(d1,dtype=np.int64)%MOD
+        d2=np.asarray(d2,dtype=np.int64)%MOD
+        v=self.lift_first(d1)
+        if v is None:return False,{'stage':'first','conormal':(self.Q@d1%MOD).tolist()}
+        quadratic=hessmap(v,v,self.a,self.b)*pow(2,-1,MOD)%MOD
+        residual=(d2-quadratic)%MOD
+        w=self.lift_first(residual)
+        return (w is not None),{'stage':'second','conormal':(self.Q@residual%MOD).tolist(),
+                                'first_lift':v,'second_lift':w}
+
+def exact_stage_value(par):return j.value(par)
+def path_output(gate,direction,t):
+    def perturb(PAR,q):
+        c={k:v.copy() for k,v in PAR.items()}
+        names=['d','L','V','U','W']
+        for k,typ in enumerate(names):
+            z=q[k*8:(k+1)*8]%MOD
+            if typ=='d':c[typ]=(c[typ]+t*z)%MOD
+            else:c[typ][:,0]=(c[typ][:,0]+t*z)%MOD
+        return c
+    a=perturb(gate.a,direction[:40]);b=perturb(gate.b,direction[40:])
+    return (j.value(b)@j.value(a)[P,:])%MOD
+
+def polynomial_jets_via_evaluation(gate,v):
+    # Evaluate degree<=4 polynomial at t=0,...,4 and solve Vandermonde mod p.
+    C=np.array([[pow(t,k,MOD) for k in range(5)] for t in range(5)],dtype=np.int64)
+    Cin=inverse_mod(C)
+    Y=np.array([path_output(gate,v,t).reshape(-1) for t in range(5)],dtype=np.int64)
+    return (Cin@Y)%MOD
+
+def run():
+    G=JetGate()
+    rng=np.random.default_rng(98712)
+    accepted=0;invariant=0;verified_interpolation=0
+    gauge,_=gauge_basis(G.a,G.b)
+    for _ in range(20):
+        v=rng.integers(0,MOD,size=80,dtype=np.int64)
+        w=rng.integers(0,MOD,size=80,dtype=np.int64)
+        first=G.J@v%MOD
+        second=(G.J@w+hessmap(v,v,G.a,G.b)*pow(2,-1,MOD))%MOD
+        good,info=G.accepts(first,second)
+        assert good and not any(info['conormal'])
+        accepted+=1
+        k=gauge@rng.integers(0,MOD,size=20,dtype=np.int64)%MOD
+        assert np.array_equal(G.J@(v+k)%MOD,first)
+        quadratic_diff=(hessmap(v+k,v+k,G.a,G.b)-hessmap(v,v,G.a,G.b))%MOD
+        assert np.all(G.Q@quadratic_diff%MOD==0)
+        invariant+=1
+        if verified_interpolation<3:
+            coeff=polynomial_jets_via_evaluation(G,v)
+            assert np.array_equal(coeff[0],G.M.reshape(-1))
+            assert np.array_equal(coeff[1],first)
+            assert np.array_equal(coeff[2],hessmap(v,v,G.a,G.b)*pow(2,-1,MOD)%MOD)
+            verified_interpolation+=1
+    diagonal=np.zeros(80,dtype=np.int64);diagonal[7]=1;diagonal[40]=1
+    d1=G.J@diagonal%MOD
+    accepted_line,line_info=G.accepts(d1,np.zeros(64,dtype=np.int64))
+    assert not accepted_line and any(line_info['conormal'])
+    accepted_curve,curve_info=G.accepts(d1,hessmap(diagonal,diagonal,G.a,G.b)*pow(2,-1,MOD)%MOD)
+    assert accepted_curve
+    return {'field_prime':MOD,'jacobian_rank':60,'conormal_dimension':4,
+        'random_realized_two_jets_accepted':accepted,'gauge_invariance_checks':invariant,
+        'independent_degree4_polynomial_interpolations':verified_interpolation,
+        'straight_line_to_second_order_rejected':True,
+        'straight_line_compatibility_conormal':line_info['conormal'],
+        'same_first_order_tangent_with_exact_curvature_accepted':True,
+        'scope':'Exact local compatibility over F_p through stored parameter point; NOT a global Fourier obstruction'}
+if __name__=='__main__':print(json.dumps(run(),indent=2))

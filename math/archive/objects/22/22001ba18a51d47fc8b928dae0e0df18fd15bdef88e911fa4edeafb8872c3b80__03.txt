@@ -1,0 +1,183 @@
+0001 #!/usr/bin/env python3
+0002 """Exact deterministic hierarchical geometry controls; no Fourier fitting."""
+0003 from pathlib import Path
+0004 import json
+0005 import random
+0006 import time
+0007 from check_n16_outer_gate import LABELS, PRIME, pivots
+0008 from check_lift_defects import cover_and_splice, project, fiber, fold, apply_green
+0009 
+0010 HERE = Path(__file__).resolve().parent
+0011 
+0012 
+0013 def cover(a, b, label):
+0014     axis, c, sign = label
+0015     out = []
+0016     for v in range(a * b):
+0017         x, y = divmod(v, b)
+0018         if axis == "H":
+0019             x = (x + sign * (2 * y + c)) % a
+0020         else:
+0021             y = (y + sign * (2 * x + c)) % b
+0022         out.append(x * b + y)
+0023     return out
+0024 
+0025 
+0026 def lift(ts, ps, a, b, label):
+0027     n = a * b
+0028     assert ps[0] != ts[0], "Chosen-base invariant: zero is already an edited tail"
+0029     eta = [0] * n
+0030     hs = 0
+0031     for v in range(n):
+0032         eta[ts[v]] = ps[v]
+0033         hs += ts[v] != ps[v]
+0034     assert sum(v != w for v, w in enumerate(eta)) == hs
+0035     tl = cover(2 * a, 2 * b, label)
+0036     q = []
+0037     for v, target in enumerate(tl):
+0038         x, y = divmod(target, 2 * b)
+0039         low = (x % a) * b + y % b
+0040         nx, ny = divmod(eta[low], b)
+0041         lifted = (nx + (x // a) * a) * (2 * b) + ny + (y // b) * b
+0042         q.append(lifted)
+0043         assert project(lifted, a, b) == ps[project(v, a, b)]
+0044     h0 = sum(v != w for v, w in zip(q, tl))
+0045     assert h0 == 4 * hs
+0046     seen, tails, lengths = bytearray(4 * n), [], []
+0047     for v in range(4 * n):
+0048         if seen[v]:
+0049             continue
+0050         w, length, chosen = v, 0, None
+0051         while not seen[w]:
+0052             seen[w] = 1
+0053             length += 1
+0054             if project(w, a, b) == 0:
+0055                 chosen = w if chosen is None else min(chosen, w)
+0056             w = q[w]
+0057         assert w == v and chosen is not None and length % n == 0
+0058         tails.append(chosen)
+0059         lengths.append(length)
+0060     assert len(tails) <= 4
+0061     tails.sort()
+0062     heads = [q[v] for v in tails]
+0063     for j, v in enumerate(tails):
+0064         q[v] = heads[(j + 1) % len(tails)]
+0065     assert all(project(q[v], a, b) == ps[project(v, a, b)] for v in range(4 * n))
+0066     seen, v = bytearray(4 * n), 0
+0067     for _ in range(4 * n):
+0068         assert not seen[v]
+0069         seen[v] = 1
+0070         v = q[v]
+0071     assert v == 0
+0072     hl = sum(v != w for v, w in zip(q, tl))
+0073     assert hl <= 4 * hs + 4
+0074     assert q[0] != tl[0]
+0075     assert all((q[v] != tl[v]) == (ps[project(v, a, b)] != ts[project(v, a, b)])
+0076                for v in range(4 * n))
+0077     assert hl == 4 * hs
+0078     return tl, q, {"small_N": n, "large_N": 4 * n, "label": label,
+0079                    "small_edits": hs, "initial_large_edits": h0,
+0080                    "premerge_cycle_lengths": lengths, "merge_tails": tails,
+0081                    "large_edits": hl, "edit_bound": 4 * hs + 4,
+0082                    "exact_edit_count_4_times_small": hl == 4 * hs,
+0083                    "edited_zero_invariant": True,
+0084                    "quotient_defect_columns": 0, "hamiltonian_cycles": 1}
+0085 
+0086 
+0087 def small_chains():
+0088     rng, records = random.Random(9371), []
+0089     for seed_k in range(2, 7):
+0090         b0 = 1 << (seed_k // 2)
+0091         a0 = (1 << seed_k) // b0
+0092         for label in LABELS:
+0093             a, b = a0, b0
+0094             t, p, reps = cover_and_splice(a, b, label)
+0095             for level in range(1, 4):
+0096                 tt, pp, rec = lift(t, p, a, b, label)
+0097                 rec.update({"seed_N": a0 * b0, "level": level})
+0098                 if a * b <= 128:
+0099                     tau = pow(2, -1, PRIME)
+0100                     x = [rng.randrange(PRIME) for _ in range(4 * a * b)]
+0101                     lhs = fold(apply_green(pp, [tau] * len(pp), x), a, b)
+0102                     rhs = apply_green(p, [tau] * len(p), fold(x, a, b))
+0103                     assert lhs == rhs
+0104                     rec["exact_resolvent_commutation_checked"] = True
+0105                 records.append(rec)
+0106                 a, b, t, p = 2 * a, 2 * b, tt, pp
+0107         print("small chain seed", a0 * b0, flush=True)
+0108     return records
+0109 
+0110 
+0111 def threshold_bases():
+0112     records = []
+0113     for k in (17, 18):
+0114         b = 1 << (k // 2)
+0115         a = (1 << k) // b
+0116         n = a * b
+0117         total_small, total_large, details = 0, 0, []
+0118         for label in LABELS:
+0119             t, p, reps = cover_and_splice(a, b, label)
+0120             tt, pp, rec = lift(t, p, a, b, label)
+0121             total_small += rec["small_edits"]
+0122             total_large += rec["large_edits"]
+0123             details.append(rec)
+0124             print("threshold", n, label, rec["large_edits"], flush=True)
+0125         assert total_large == 4 * total_small
+0126         d0 = 7936 if k == 17 else 11264
+0127         assert total_small == 2 * d0
+0128         # Sixteen times a conservative margin using the actual edit count.
+0129         margin16 = 3 * (4 * n) - 24 * total_large
+0130         assert margin16 > 0
+0131         records.append({"base_N": n, "large_N": 4 * n, "base_total_edits": total_small,
+0132                         "large_total_edits": total_large,
+0133                         "positive_rational_margin_times_16": margin16, "details": details})
+0134     return records
+0135 
+0136 
+0137 def margins():
+0138     records = []
+0139     for n0, d0, coefficient in ((1 << 17, 7936, 752), (1 << 18, 11264, 15344)):
+0140         for level in range(101):
+0141             power = 4 ** level
+0142             n = n0 * power
+0143             # Three times half-edit upper bound = 3*power*d0+16*(power-1).
+0144             margin = 3 * n // 16 - 3 * power * d0 - 16 * (power - 1)
+0145             assert margin == coefficient * power + 16 and margin > 0
+0146             sharpened_margin = 3 * n // 16 - 3 * power * d0
+0147             assert sharpened_margin == (coefficient + 16) * power
+0148             if level <= 4:
+0149                 records.append({"N0": n0, "level": level, "N": n,
+0150                                 "previous_general_rational_margin_lower_bound": margin,
+0151                                 "sharpened_exact_edit_rational_margin_lower_bound": sharpened_margin})
+0152     return {"levels_checked": "0..100 in both parity chains", "displayed": records}
+0153 
+0154 
+0155 def fourier_defect_controls():
+0156     out = []
+0157     for a, b in ((2, 2), (4, 2), (4, 4), (8, 4), (8, 8), (16, 8)):
+0158         n = a * b
+0159         z = pow(3, (PRIME - 1) // (4 * n), PRIME)
+0160         assert pow(z, 2 * n, PRIME) == PRIME - 1
+0161         aa = [[sum(pow(z, v * j, PRIME) for v in fiber(i, a, b)) % PRIME
+0162                for j in range(4 * n)] for i in range(n)]
+0163         bb = [[pow(z, 4 * i * project(j, a, b), PRIME) for j in range(4 * n)]
+0164               for i in range(n)]
+0165         diff = [[(x - y) % PRIME for x, y in zip(u, v)] for u, v in zip(aa, bb)]
+0166         assert len(pivots(diff)) == n
+0167         out.append({"N": n, "rank_QF4N_minus_FNQ": n, "half_active_bank_defect_rank": n // 2})
+0168     return out
+0169 
+0170 
+0171 def main():
+0172     start = time.monotonic()
+0173     result = {"status": "PASS", "scope": "New hierarchical geometry, separate from the N16 coefficient family; no Fourier coefficients supplied.",
+0174               "small_chains": small_chains(), "threshold_bases": threshold_bases(),
+0175               "margins": margins(), "fourier_defects": fourier_defect_controls(),
+0176               "provenance": "Fresh checker using previously authored helpers from this same constructor track; no uploaded code executed."}
+0177     result["elapsed_seconds"] = time.monotonic() - start
+0178     (HERE / "HIERARCHICAL_LIFT_CONTROLS.json").write_text(json.dumps(result, indent=2) + "\n")
+0179     print(json.dumps({"status": "PASS", "elapsed_seconds": result["elapsed_seconds"]}), flush=True)
+0180 
+0181 
+0182 if __name__ == "__main__":
+0183     main()

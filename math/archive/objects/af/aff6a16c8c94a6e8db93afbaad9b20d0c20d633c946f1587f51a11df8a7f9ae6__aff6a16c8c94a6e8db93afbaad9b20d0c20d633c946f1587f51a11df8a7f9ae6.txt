@@ -1,0 +1,176 @@
+"""Exact-arithmetic model, O(N) unitary global mixer research primitive.
+
+Not an FFT algorithm. Implements Cayley transforms of tree/path adjacencies
+with O(N) precomputation and application, then a small unitary rotation of a
+Hermitian involution assembled from a binary-tree Cayley.
+
+Use p=None for complex floating evaluation, or p=998244353 for exact modular
+identities with a modular square root of -1. In modular mode, the small
+involution rotation Q=(I+i eps R) is UNNORMALIZED, and inverse is
+(I-i eps R)/(1+eps^2). This avoids computing sqrt(1+eps^2) modulo p.
+"""
+from math import sqrt
+from random import Random
+
+MOD = 998244353
+
+
+def random_order(n, seed):
+    p=list(range(n));Random(seed).shuffle(p)
+    return p
+
+
+def all_path_edges(permutation):
+    n=len(permutation)
+    inv=[0]*n
+    for i,j in enumerate(permutation):inv[j]=i
+    p1=[(i,i+1) for i in range(n-1)]
+    p2=[(inv[i],inv[i+1]) for i in range(n-1)]
+    return p1,p2
+
+
+def parent_path(ordered_vertices, n):
+    parents=[-1]*n
+    for k in range(1,len(ordered_vertices)):
+        parents[ordered_vertices[k]]=ordered_vertices[k-1]
+    return parents
+
+
+def parent_complete_binary_forest(n):
+    """Largest COMPLETE rooted binary subtree plus isolated spare vertices."""
+    m=(1<<(n+1).bit_length()-1)-1  # largest 2^k-1 <=n
+    assert m<=n and (m+1)&m==0
+    return [-1 if j==0 or j>=m else (j-1)//2 for j in range(n)], m
+
+
+class TreeCayley:
+    """C(A)=(I+i alpha A)(I-i alpha A)^{-1} for undirected rooted forest."""
+    def __init__(self, parents, alpha, p=None):
+        self.p=p
+        self.n=len(parents)
+        self.parents=list(parents)
+        self.alpha=alpha if p is None else alpha%p
+        self.children=[[] for _ in parents]
+        self.roots=[]
+        for v,pa in enumerate(parents):
+            if pa==-1:self.roots.append(v)
+            else:
+                if not 0<=pa<len(parents):raise ValueError('bad parent')
+                self.children[pa].append(v)
+        if not self.roots: raise ValueError('no roots')
+        # Construct topological order even when arbitrary permuted path order.
+        topo=[];frontier=self.roots[:]
+        for v in frontier:
+            topo.append(v)
+            frontier.extend(self.children[v])
+        if len(topo)!=self.n:raise ValueError('not a rooted forest')
+        self.topo=topo
+        self.inv_piv=[None]*self.n
+        for v in reversed(topo):
+            denom=1 + self.alpha*self.alpha*sum(self.inv_piv[c] for c in self.children[v])
+            if p is None:self.inv_piv[v]=1/denom
+            else:self.inv_piv[v]=pow(denom%p,-1,p)
+        if p is None:
+            self.i=1j
+        else:
+            if (p-1)%4:raise ValueError('modulus must contain sqrt(-1)')
+            self.i=pow(3,(p-1)//4,p)
+            assert (self.i*self.i+1)%p==0
+
+    def solve(self, x, inverse=False):
+        """Solve (I - s A)y=x, s=+i alpha (forward) or -i alpha."""
+        if len(x)!=self.n:raise ValueError('bad vector length')
+        s=self.i*self.alpha*(-1 if inverse else 1)
+        p=self.p
+        f=list(x)
+        if p is None:
+            for v in reversed(self.topo):
+                f[v]+=s*sum(f[c]*self.inv_piv[c] for c in self.children[v])
+        else:
+            s%=p
+            for v in reversed(self.topo):
+                f[v]=(f[v]+s*sum(f[c]*self.inv_piv[c] for c in self.children[v]))%p
+        y=[0]*self.n
+        for v in self.topo:
+            pa=self.parents[v]
+            val=(f[v]+(s*y[pa] if pa!=-1 else 0))*self.inv_piv[v]
+            y[v]=val if p is None else val%p
+        return y
+
+    def apply(self,x,inverse=False):
+        """C or C^-1, by identity C=2(I-i alpha A)^-1-I."""
+        z=self.solve(x,inverse=inverse)
+        if self.p is None:return [2*a-b for a,b in zip(z,x)]
+        return [(2*a-b)%self.p for a,b in zip(z,x)]
+
+
+class UnitaryGreenMixer:
+    def __init__(self,n,order=None,seed=20261009, p=None):
+        if n%2:raise ValueError('n must be even')
+        self.n=n; self.p=p
+        self.order=order if order is not None else random_order(n,seed)
+        if sorted(self.order)!=list(range(n)):raise ValueError('bad permutation')
+        a=(1/32) if p is None else pow(32,-1,p)
+        self.path1=TreeCayley(parent_path(list(range(n)),n),a,p=p)
+        inv=[0]*n
+        for i,j in enumerate(self.order):inv[j]=i
+        self.path2=TreeCayley(parent_path(inv,n),a,p=p)
+        self.half=n//2
+        self.tree_parents,self.tree_size=parent_complete_binary_forest(self.half)
+        self.tree=TreeCayley(self.tree_parents,2,p=p)
+        self.eps=(1/512) if p is None else pow(512,-1,p)
+        self.norm=sqrt(1+self.eps**2) if p is None else None
+
+    def apply_path(self,x,inverse=False):
+        if inverse:
+            return self.path2.apply(self.path1.apply(x,inverse=True),inverse=True)
+        return self.path1.apply(self.path2.apply(x),inverse=False)
+
+    def apply_R(self,x):
+        m=self.half
+        left=self.tree.apply(x[m:],inverse=False)
+        right=self.tree.apply(x[:m],inverse=True)
+        return left+right
+
+    def apply_V(self,x,inverse=False):
+        z=self.apply_R(x)
+        coeff=self.eps*self.tree.i*(-1 if inverse else 1)
+        if self.p is None:
+            return [(a+coeff*b)/self.norm for a,b in zip(x,z)]
+        coeff%=self.p
+        if inverse:
+            inv_norm2=pow((1+self.eps*self.eps)%self.p,-1,self.p)
+            return [((a+coeff*b)*inv_norm2)%self.p for a,b in zip(x,z)]
+        # Modular forward is the unnormalized Q rather than V.
+        return [(a+coeff*b)%self.p for a,b in zip(x,z)]
+
+    def apply(self,x,inverse=False):
+        if inverse:return self.apply_path(self.apply_V(x,inverse=True),inverse=True)
+        return self.apply_V(self.apply_path(x))
+
+    def dense(self):
+        n=self.n
+        cols=[]
+        for j in range(n):
+            x=[0]*n;x[j]=1
+            cols.append(self.apply(x))
+        return [[cols[j][i] for j in range(n)] for i in range(n)]
+
+
+def rank_mod(A,p=MOD):
+    x=[[v%p for v in row] for row in A]
+    m=len(x);n=len(x[0]) if x else 0
+    r=0
+    for c in range(n):
+        row=next((i for i in range(r,m) if x[i][c]),None)
+        if row is None:continue
+        x[row],x[r]=x[r],x[row]
+        inv=pow(x[r][c],-1,p)
+        for j in range(c,n):x[r][j]=x[r][j]*inv%p
+        for i in range(r+1,m):
+            s=x[i][c]
+            if s:
+                for j in range(c,n):x[i][j]=(x[i][j]-s*x[r][j])%p
+        r+=1
+        if r==m:break
+    return r

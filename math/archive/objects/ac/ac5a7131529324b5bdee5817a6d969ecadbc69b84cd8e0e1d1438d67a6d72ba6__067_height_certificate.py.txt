@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Exact integer height-envelope extractor; no numerical spectral calculations.
+
+Input is a VERIFIED arithmetic DAG specification. This tool checks topology and
+requires a nonzero-proof reference on every division/inverse; it does not prove
+those references or that the DAG computes a Fourier transform. It does not
+implement the #130 primitive. Roots have height zero. A supplied positive degree
+bound must cover the local coefficient field, including normalization.
+"""
+from __future__ import annotations
+import argparse
+import json
+from pathlib import Path
+
+
+def ceil_log2(n: int) -> int:
+    if n < 1:
+        raise ValueError("Positive integer required")
+    return (n - 1).bit_length()
+
+
+def extract(spec: dict) -> dict:
+    degree = int(spec["field_degree_upper_bound"])
+    if degree < 1:
+        raise ValueError("Field degree bound must be positive")
+    heights: dict[str, int] = {}
+    for node in spec["nodes"]:
+        key, op = node["id"], node["op"]
+        if key in heights:
+            raise ValueError(f"Duplicate node {key}")
+        args = node.get("args", [])
+        hs = [heights[a] for a in args]  # Reject forward/missing references.
+        if op == "root":
+            if int(node["order"]) < 1:
+                raise ValueError("Root order must be positive")
+            h = 0
+        elif op == "rational":
+            p, q = int(node["numerator"]), int(node["denominator"])
+            if q == 0:
+                raise ValueError("Zero rational denominator")
+            h = ceil_log2(max(1, abs(p), abs(q)))
+        elif op in ("add", "sub", "mul", "div"):
+            if len(hs) != 2:
+                raise ValueError(f"{op} needs two predecessors")
+            if op == "div" and not node.get("nonzero_proof_reference"):
+                raise ValueError("Division lacks a nonzero proof reference")
+            h = hs[0] + hs[1] + int(op in ("add", "sub"))
+        elif op in ("neg", "conj", "inverse"):
+            if len(hs) != 1:
+                raise ValueError(f"{op} needs one predecessor")
+            if op == "inverse" and not node.get("nonzero_proof_reference"):
+                raise ValueError("Inverse lacks a nonzero proof reference")
+            h = hs[0]
+        else:
+            raise ValueError(f"Unknown operation {op}")
+        heights[key] = h
+    coefficients = spec["shear_coefficient_nodes"]
+    H = max((heights[k] for k in coefficients), default=0)
+    L = len(coefficients)
+    A = degree * H
+    E_shear = 2 * sum(1 + degree * heights[k] for k in coefficients)
+    E_scalar = 2 * L * (A + 1) + 4 if L else 0
+    return {
+        "field_degree_upper_bound": degree,
+        "height_budgets": heights,
+        "shear_count": L,
+        "maximum_coefficient_height_budget": H,
+        "maximum_coefficient_log2_magnitude_bound": A,
+        "common_split_scalar": {"base": 2, "exponent": A + 1},
+        "shear_boundary_kappa_upper_bound": {"base": 2, "exponent": E_shear},
+        "scalar_instruction_kappa_upper_bound": {"base": 2, "exponent": E_scalar},
+        "scalar_prefix_norm_and_inverse_upper_bound": {
+            "base": 2, "exponent": E_scalar // 2
+        },
+        "scalar_instruction_count": 6 * L,
+        "stored_scalar_certificate_exponent_bit_length": E_scalar.bit_length(),
+        "warning": "Conditional on correct field bound, DAG identity and nonzero proofs; these are not verified by this extractor."
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("spec", type=Path)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    result = extract(json.loads(args.spec.read_text()))
+    text = json.dumps(result, indent=2) + "\n"
+    if args.output:
+        args.output.write_text(text)
+    else:
+        print(text, end="")
+
+
+if __name__ == "__main__":
+    main()

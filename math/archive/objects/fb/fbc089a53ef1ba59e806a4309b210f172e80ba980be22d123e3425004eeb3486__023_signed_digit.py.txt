@@ -1,0 +1,37 @@
+"""The user's repeated (A-k)B+kB is closely related to signed-digit
+recoding. Non-adjacent form (NAF) is a classical representation, not a
+new integer multiplication algorithm. No caches, no parallelism.
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class NAFResult:
+    product:int
+    shift_adds:int
+    digits:tuple[int,...]
+
+def naf(a:int)->tuple[int,...]:
+    if a<0:
+        raise ValueError('nonnegative integer required')
+    out=[]
+    while a:
+        if a&1:
+            digit=2-(a%4)
+            a-=digit
+        else:
+            digit=0
+        out.append(digit)
+        a//=2
+    return tuple(out or [0])
+
+def shift_multiply(a:int,b:int)->NAFResult:
+    if a<0 or b<0:
+        raise ValueError('nonnegative inputs required')
+    bits=naf(a)
+    out=0; count=0
+    for t,d in enumerate(bits):
+        if d:
+            out += (b<<t) if d==1 else -(b<<t)
+            count+=1
+    return NAFResult(out,count,bits)

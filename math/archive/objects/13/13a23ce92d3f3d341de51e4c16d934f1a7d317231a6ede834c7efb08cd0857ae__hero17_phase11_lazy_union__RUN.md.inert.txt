@@ -1,0 +1,23 @@
+# Reproduction steps
+
+Run with Python >=3.10; no third-party libraries are required.
+
+```bash
+python -m unittest -v test_phase11
+python independent_audit.py
+```
+
+The ZIP includes `controls/phase10_reference.py` as an independent, differently organized DIF FFT implementation to compare against the new lazy quotient-state (DIT) code. The audit does not use the Phase 10 projector API as the algorithm being tested.
+
+Expected outcomes:
+
+- New Phase 11: 16/16 unittest groups pass.
+- 42 complete direct DFT comparisons (1,524 bins), plus a complete 65,536-output reference comparison and 41 direct Fourier sums.
+- 189 explicit sharp rational-distance witnesses and 69 independently constructed matrix-rank checks.
+- 65,536 cyclic Green recurrence residual equations and 41 direct spectral identity checks.
+- `lazy_online_field_ops == classical_online_field_ops` at tested lengths 256, 1024, 4096, 65536.
+- `rank(P_even-G) = 65536` while the Green apply costs `O(N)` field operations.
+
+All requested original inputs are fresh; plan and online arithmetic are separated. Field characteristic and root are part of the supplied execution contract (test fixture: `F_2013265921`, primitive generator 31). Trial division during validation and array addressing use `O(log N)`-word integer operations, tracked in an explicit bookkeeping allowance; this is an **abstract exact field/word-RAM audit**, not Python wall-clock time or bit-level timing.
+
+The original user's goal of a universal exact `O(N)` FFT is **not** achieved by this phase.

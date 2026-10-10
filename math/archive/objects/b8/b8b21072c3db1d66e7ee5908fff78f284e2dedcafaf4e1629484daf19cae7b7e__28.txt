@@ -1,0 +1,141 @@
+   1 """Regression tests for input-independent FFT graph and tabulated WHT."""
+   2 import math
+   3 import random
+   4 import unittest
+   5 import numpy as np
+   6 from structural_fft import (
+   7     FFTGraph, CompactSplitRadix, SharedLookupTable, fwht_mod, tabulated_fwht_mod,
+   8     count_nontrivial_twiddles, asymptotic_block_length,
+   9 )
+  10 
+  11 
+  12 class GraphTests(unittest.TestCase):
+  13     def test_fft_against_numpy_all_inputs_complex_random(self):
+  14         rng = np.random.default_rng(20261009)
+  15         for n in [1,2,4,8,16,32,64,128,256]:
+  16             for method in ['radix2','split_radix']:
+  17                 graph = FFTGraph(n,method)
+  18                 for _ in range(3):
+  19                     a = rng.normal(size=n) + 1j*rng.normal(size=n)
+  20                     actual = np.array(graph.execute(a))
+  21                     expected = np.fft.fft(a)
+  22                     np.testing.assert_allclose(actual,expected,rtol=1e-12,atol=1e-10,
+  23                                                err_msg=f'{method} n={n}')
+  24 
+  25     def test_compact_template_same_transform_without_expanded_graph(self):
+  26         rng=np.random.default_rng(20261009)
+  27         for n in [1,2,4,8,16,32,64,256,1024]:
+  28             plan=CompactSplitRadix(n)
+  29             full=FFTGraph(n,'split_radix')
+  30             for _ in range(2):
+  31                 a=rng.standard_normal(n)+1j*rng.standard_normal(n)
+  32                 np.testing.assert_allclose(plan.execute(a), np.fft.fft(a),atol=1e-9)
+  33                 np.testing.assert_allclose(plan.execute(a), full.execute(a),atol=1e-9)
+  34             self.assertLessEqual(plan.stats()['twiddle_complex_values'],2*n)
+  35 
+  36     def test_graph_for_all_zero_ones_impulse_and_reuse(self):
+  37         for method in ('radix2', 'split_radix'):
+  38             for n in (8,16,128):
+  39                 graph = FFTGraph(n,method)
+  40                 inputs = [np.zeros(n), np.ones(n),np.arange(n),np.eye(n)[n//3]]
+  41                 for a in inputs:
+  42                     np.testing.assert_allclose(graph.execute(a), np.fft.fft(a), atol=1e-9)
+  43                 # identical precompiled graph is reused for all input arrays
+  44                 self.assertEqual(graph.stats()['n'],n)
+  45 
+  46     def test_complex_twiddle_recurrence_and_gains(self):
+  47         for n in [1,2,4,8,16,32,64,128,256,512,1024,2048]:
+  48             g2 = FFTGraph(n,'radix2')
+  49             gs = FFTGraph(n,'split_radix')
+  50             a=g2.stats()
+  51             b=gs.stats()
+  52             self.assertEqual(a['nontrivial_complex_multiplies'],count_nontrivial_twiddles(n,'radix2'))
+  53             self.assertEqual(b['nontrivial_complex_multiplies'],count_nontrivial_twiddles(n,'split_radix'))
+  54             self.assertEqual(a['complex_add_sub'],int(n*math.log2(n)))
+  55             self.assertEqual(b['complex_add_sub'],int(n*math.log2(n)))
+  56             if n>=16:
+  57                 self.assertLess(b['nontrivial_complex_multiplies'],a['nontrivial_complex_multiplies'])
+  58 
+  59     def test_n_must_be_power_of_two(self):
+  60         with self.assertRaises(ValueError):
+  61             FFTGraph(7)
+  62         with self.assertRaises(ValueError):
+  63             FFTGraph(0)
+  64 
+  65     def test_original_integer_multiplication(self):
+  66         a=np.array([4,3,2,1,0,0,0,0], dtype=float)
+  67         b=np.array([8,7,6,5,0,0,0,0], dtype=float)
+  68         graph=FFTGraph(8,'split_radix')
+  69         fa=np.array(graph.execute(a))
+  70         fb=np.array(graph.execute(b))
+  71         product=np.fft.ifft(fa*fb)
+  72         np.testing.assert_allclose(product.real, [32,52,61,60,34,16,5,0],atol=1e-10)
+  73         self.assertEqual(sum(int(round(v.real))*10**j for j,v in enumerate(product)),7006652)
+  74 
+  75     def test_packed_two_distinct_real_ffts(self):
+  76         rng = np.random.default_rng(1009)
+  77         for n in [4,8,32,128]:
+  78             graph = FFTGraph(n, 'split_radix')
+  79             for _ in range(4):
+  80                 a=rng.standard_normal(n)
+  81                 b=rng.standard_normal(n)
+  82                 fa,fb=graph.execute_two_real(a,b)
+  83                 np.testing.assert_allclose(fa,np.fft.fft(a),rtol=1e-12,atol=1e-10)
+  84                 np.testing.assert_allclose(fb,np.fft.fft(b),rtol=1e-12,atol=1e-10)
+  85 
+  86 class WalshTests(unittest.TestCase):
+  87     def test_tabulated_against_standard_for_random_inputs(self):
+  88         rng = random.Random(20261009)
+  89         for p in (3,5):
+  90             cache = SharedLookupTable(p, max_entries=500_000)
+  91             for n in [1,2,4,8,16,32,64,128,256,1024]:
+  92                 for block in [2,4,8]:
+  93                     if p == 5 and block == 8:
+  94                         continue  # 390625-entry table is not needed in tests
+  95                     for _ in range(3):
+  96                         a=[rng.randrange(p) for _ in range(n)]
+  97                         expected=fwht_mod(a,p)
+  98                         got, stats=tabulated_fwht_mod(a,p,block,cache)
+  99                         self.assertEqual(got, expected, f'p={p}, n={n}, block={block}')
+ 100                         self.assertEqual(stats['online_field_reads'],stats['n']*stats['passes'])
+ 101 
+ 102     def test_linear_identity_every_field_element(self):
+ 103         p=3
+ 104         table=SharedLookupTable(p)
+ 105         t=table.ensure(4)
+ 106         self.assertEqual(len(t),p**4)
+ 107         for code in range(len(t)):
+ 108             x=[]
+ 109             c=code
+ 110             for _ in range(4):
+ 111                 x.append(c%p)
+ 112                 c//=p
+ 113             self.assertEqual(list(t[code]), fwht_mod(x,p))
+ 114 
+ 115     def test_multipass_and_inversion(self):
+ 116         p=5
+ 117         cache=SharedLookupTable(p)
+ 118         x=[(7*j*j+j+3)%p for j in range(512)]
+ 119         y, _=tabulated_fwht_mod(x,p,4,cache)
+ 120         z, _=tabulated_fwht_mod(y,p,4,cache)
+ 121         inv_n=pow(len(x),-1,p)
+ 122         self.assertEqual([(i*inv_n)%p for i in z],x)
+ 123 
+ 124     def test_table_is_independent_of_online_values(self):
+ 125         cache=SharedLookupTable(3)
+ 126         cache.ensure(8)
+ 127         before=cache.stats()['total_table_entries']
+ 128         for k in range(4):
+ 129             tabulated_fwht_mod([k%3]*256,3,8,cache)
+ 130         self.assertEqual(cache.stats()['total_table_entries'],before)
+ 131 
+ 132     def test_expected_sublinear_table_family(self):
+ 133         for L in (16, 32, 64, 128, 256, 1024):
+ 134             n=1<<L
+ 135             b=asymptotic_block_length(n,3,0.25)
+ 136             self.assertTrue(b & (b-1) == 0)
+ 137             self.assertLessEqual(b*math.log(3),0.251*L*math.log(2))
+ 138             self.assertGreaterEqual(b,2)
+ 139 
+ 140 if __name__=='__main__':
+ 141     unittest.main(verbosity=2)

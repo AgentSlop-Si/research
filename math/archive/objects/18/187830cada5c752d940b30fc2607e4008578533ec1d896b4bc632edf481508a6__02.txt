@@ -1,0 +1,298 @@
+   1	"""Exact first-derivative linearization of arbitrary arithmetic DAGs over F_p.
+   2	
+   3	This is an auditing device, NOT a fast Fourier algorithm.  Its purpose is to
+   4	check that nonlinear algebraic intermediate computations cannot by themselves
+   5	reduce the unrestricted algebraic circuit complexity of an exact linear map.
+   6	
+   7	Supported gates: inputs, field constants, +, -, *, /.  Division requires a
+   8	nonzero denominator at the selected base point.  Tangent outputs are linear in
+   9	new formal direction inputs.  The basepoint and its cost are explicit.
+  10	"""
+  11	from __future__ import annotations
+  12	from dataclasses import dataclass
+  13	from typing import Sequence
+  14	
+  15	P = 998244353
+  16	ROOT = 3
+  17	
+  18	
+  19	@dataclass(frozen=True)
+  20	class Gate:
+  21	    op: str
+  22	    a: int = -1
+  23	    b: int = -1
+  24	    v: int = 0
+  25	
+  26	
+  27	class ArithmeticDAG:
+  28	    def __init__(self, p: int = P):
+  29	        self.p = p
+  30	        self.gates: list[Gate] = []
+  31	        self.vars: list[int] = []
+  32	        self.constant_cache: dict[int, int] = {}
+  33	
+  34	    def _put(self, op: str, a=-1, b=-1, v=0) -> int:
+  35	        self.gates.append(Gate(op, a, b, v))
+  36	        return len(self.gates) - 1
+  37	
+  38	    def var(self) -> int:
+  39	        k = self._put('var', v=len(self.vars))
+  40	        self.vars.append(k)
+  41	        return k
+  42	
+  43	    def const(self, v: int) -> int:
+  44	        v %= self.p
+  45	        if v not in self.constant_cache:
+  46	            self.constant_cache[v] = self._put('const', v=v)
+  47	        return self.constant_cache[v]
+  48	
+  49	    def add(self, a: int, b: int) -> int:
+  50	        return self._put('add', a, b)
+  51	
+  52	    def sub(self, a: int, b: int) -> int:
+  53	        return self._put('sub', a, b)
+  54	
+  55	    def mul(self, a: int, b: int) -> int:
+  56	        return self._put('mul', a, b)
+  57	
+  58	    def div(self, a: int, b: int) -> int:
+  59	        return self._put('div', a, b)
+  60	
+  61	    def scale(self, a: int, v: int) -> int:
+  62	        v %= self.p
+  63	        if v == 1:
+  64	            return a
+  65	        if v == 0:
+  66	            return self.const(0)
+  67	        return self.mul(self.const(v), a)
+  68	
+  69	    def eval_all(self, inputs: Sequence[int]) -> list[int]:
+  70	        if len(inputs) != len(self.vars):
+  71	            raise ValueError('Incorrect number of inputs')
+  72	        out = []
+  73	        p = self.p
+  74	        for g in self.gates:
+  75	            if g.op == 'var':
+  76	                v = int(inputs[g.v]) % p
+  77	            elif g.op == 'const':
+  78	                v = g.v
+  79	            else:
+  80	                a, b = out[g.a], out[g.b]
+  81	                if g.op == 'add':
+  82	                    v = (a + b) % p
+  83	                elif g.op == 'sub':
+  84	                    v = (a - b) % p
+  85	                elif g.op == 'mul':
+  86	                    v = a * b % p
+  87	                elif g.op == 'div':
+  88	                    if b == 0:
+  89	                        raise ZeroDivisionError('Rational circuit singular at this input')
+  90	                    v = a * pow(b, -1, p) % p
+  91	                else:
+  92	                    raise ValueError(g.op)
+  93	            out.append(v)
+  94	        return out
+  95	
+  96	    def evaluate(self, inputs: Sequence[int], outputs: Sequence[int]) -> list[int]:
+  97	        v = self.eval_all(inputs)
+  98	        return [v[i] for i in outputs]
+  99	
+ 100	    def cost(self) -> int:
+ 101	        return sum(g.op not in ('const', 'var') for g in self.gates)
+ 102	
+ 103	
+ 104	class LinearDAG:
+ 105	    """Linear circuit with only additions, subtractions and scalar multiplications."""
+ 106	    def __init__(self, nvar: int, p: int):
+ 107	        self.p = p
+ 108	        self.gates: list[Gate] = [Gate('zero')]
+ 109	        self.zero = 0
+ 110	        self.vars = [self._put('var', v=i) for i in range(nvar)]
+ 111	        self._scale_cache: dict[tuple[int, int], int] = {}
+ 112	        self._add_cache: dict[tuple[str,int,int], int] = {}
+ 113	
+ 114	    def _put(self, op: str, a=-1, b=-1, v=0):
+ 115	        self.gates.append(Gate(op, a, b, v))
+ 116	        return len(self.gates)-1
+ 117	
+ 118	    def scale(self, a: int, c: int) -> int:
+ 119	        c %= self.p
+ 120	        if a == 0 or c == 0:
+ 121	            return 0
+ 122	        if c == 1:
+ 123	            return a
+ 124	        key = (a, c)
+ 125	        if key not in self._scale_cache:
+ 126	            self._scale_cache[key] = self._put('scale', a=a, v=c)
+ 127	        return self._scale_cache[key]
+ 128	
+ 129	    def add(self, a: int, b: int) -> int:
+ 130	        if a == 0:
+ 131	            return b
+ 132	        if b == 0:
+ 133	            return a
+ 134	        if a > b:
+ 135	            a, b = b, a
+ 136	        key = ('add',a,b)
+ 137	        if key not in self._add_cache:
+ 138	            self._add_cache[key] = self._put('add', a,b)
+ 139	        return self._add_cache[key]
+ 140	
+ 141	    def sub(self, a: int, b: int) -> int:
+ 142	        if b == 0:
+ 143	            return a
+ 144	        if a == b:
+ 145	            return 0
+ 146	        if a == 0:
+ 147	            return self.scale(b,-1)
+ 148	        key = ('sub',a,b)
+ 149	        if key not in self._add_cache:
+ 150	            self._add_cache[key] = self._put('sub', a,b)
+ 151	        return self._add_cache[key]
+ 152	
+ 153	    def evaluate(self, direction: Sequence[int], outputs: Sequence[int]) -> list[int]:
+ 154	        if len(direction) != len(self.vars):
+ 155	            raise ValueError('Incorrect number of direction inputs')
+ 156	        vals = []
+ 157	        for g in self.gates:
+ 158	            if g.op == 'zero':
+ 159	                v = 0
+ 160	            elif g.op == 'var':
+ 161	                v = direction[g.v] % self.p
+ 162	            elif g.op == 'scale':
+ 163	                v = g.v * vals[g.a] % self.p
+ 164	            elif g.op == 'add':
+ 165	                v = (vals[g.a] + vals[g.b]) % self.p
+ 166	            elif g.op == 'sub':
+ 167	                v = (vals[g.a] - vals[g.b]) % self.p
+ 168	            else:
+ 169	                raise ValueError(g.op)
+ 170	            vals.append(v)
+ 171	        return [vals[i] for i in outputs]
+ 172	
+ 173	    def cost(self):
+ 174	        return sum(g.op not in ('zero','var') for g in self.gates)
+ 175	
+ 176	
+ 177	def linearize(arith: ArithmeticDAG, outputs: Sequence[int], basepoint: Sequence[int]):
+ 178	    """Return linear DAG for Jacobian(basepoint) * direction.
+ 179	
+ 180	    All Jacobian constants are exact.  Computing arith.eval_all(basepoint)
+ 181	    costs at most the original s arithmetic gates and is charged separately;
+ 182	    selecting a nonsingular basepoint may have additional cost.
+ 183	    """
+ 184	    at = arith.eval_all(basepoint)
+ 185	    lin = LinearDAG(len(arith.vars), arith.p)
+ 186	    tangent: list[int] = []
+ 187	    for i, g in enumerate(arith.gates):
+ 188	        if g.op == 'const':
+ 189	            out = 0
+ 190	        elif g.op == 'var':
+ 191	            out = lin.vars[g.v]
+ 192	        else:
+ 193	            a, b = tangent[g.a], tangent[g.b]
+ 194	            if g.op == 'add':
+ 195	                out = lin.add(a,b)
+ 196	            elif g.op == 'sub':
+ 197	                out = lin.sub(a,b)
+ 198	            elif g.op == 'mul':
+ 199	                out = lin.add(lin.scale(a,at[g.b]),lin.scale(b,at[g.a]))
+ 200	            elif g.op == 'div':
+ 201	                inv = pow(at[g.b],-1,arith.p)
+ 202	                out = lin.sub(lin.scale(a, inv),lin.scale(b,at[g.a]*inv*inv))
+ 203	            else:
+ 204	                raise ValueError(g.op)
+ 205	        tangent.append(out)
+ 206	    assert lin.cost() <= 3*arith.cost(), (lin.cost(), arith.cost())
+ 207	    return lin, [tangent[i] for i in outputs]
+ 208	
+ 209	
+ 210	def eval_dual(arith: ArithmeticDAG, base: Sequence[int], direction: Sequence[int], outputs: Sequence[int]):
+ 211	    """Independent first-order dual-field interpreter, for cross-checks."""
+ 212	    if len(base)!=len(arith.vars) or len(direction)!=len(arith.vars):
+ 213	        raise ValueError('length mismatch')
+ 214	    vs = []
+ 215	    for g in arith.gates:
+ 216	        if g.op == 'const':
+ 217	            a,b=g.v,0
+ 218	        elif g.op == 'var':
+ 219	            a,b=base[g.v]%arith.p,direction[g.v]%arith.p
+ 220	        else:
+ 221	            x,dx=vs[g.a]
+ 222	            y,dy=vs[g.b]
+ 223	            if g.op=='add':
+ 224	                a,b=x+y,dx+dy
+ 225	            elif g.op=='sub':
+ 226	                a,b=x-y,dx-dy
+ 227	            elif g.op=='mul':
+ 228	                a,b=x*y,x*dy+y*dx
+ 229	            elif g.op=='div':
+ 230	                inv=pow(y,-1,arith.p)
+ 231	                a,b=x*inv,(dx*y-x*dy)*inv*inv
+ 232	            else:
+ 233	                raise ValueError(g.op)
+ 234	            a%=arith.p;b%=arith.p
+ 235	        vs.append((a,b))
+ 236	    return [vs[i][1] for i in outputs]
+ 237	
+ 238	
+ 239	def fft_dag(arith: ArithmeticDAG, data: Sequence[int], w: int) -> list[int]:
+ 240	    n = len(data)
+ 241	    if n==1:
+ 242	        return list(data)
+ 243	    if n<1 or n&(n-1):
+ 244	        raise ValueError('power of 2 length required')
+ 245	    even = fft_dag(arith,data[::2],w*w%arith.p)
+ 246	    odd = fft_dag(arith,data[1::2],w*w%arith.p)
+ 247	    out = [0]*n
+ 248	    phase=1
+ 249	    for j in range(n//2):
+ 250	        t=arith.scale(odd[j], phase)
+ 251	        out[j]=arith.add(even[j],t)
+ 252	        out[j+n//2]=arith.sub(even[j],t)
+ 253	        phase=phase*w % arith.p
+ 254	    return out
+ 255	
+ 256	
+ 257	def build_fft(n: int, p=P, root=ROOT):
+ 258	    if n<2 or n&(n-1) or (p-1)%n:
+ 259	        raise ValueError('supported radix-2 NTT length required')
+ 260	    d=ArithmeticDAG(p)
+ 261	    x=[d.var() for _ in range(n)]
+ 262	    w=pow(root,(p-1)//n,p)
+ 263	    return d,x,fft_dag(d,x,w),w
+ 264	
+ 265	
+ 266	def build_nonlinear_fft(n:int, method='square'):
+ 267	    d,x,y,w=build_fft(n)
+ 268	    if method=='square':
+ 269	        # Exact identity s = ((s+c)^2 - s^2 - c^2)/(2c)
+ 270	        c=d.const(7)
+ 271	        cc=d.const(49)
+ 272	        out=[]
+ 273	        for s in y:
+ 274	            z=d.add(s,c)
+ 275	            a=d.mul(z,z)
+ 276	            b=d.mul(s,s)
+ 277	            u=d.sub(d.sub(a,b),cc)
+ 278	            out.append(d.scale(u,pow(14,-1,d.p)))
+ 279	    elif method=='rational':
+ 280	        # Works whenever denominator 1+x[0] is nonzero.
+ 281	        denom=d.add(d.const(1),x[0])
+ 282	        out=[d.div(d.mul(s,denom),denom) for s in y]
+ 283	    elif method=='baseline':
+ 284	        # Generalized user A-k rewrite, with arbitrary *nonlinear* k(x).
+ 285	        # DFT(x-k*e_0) + k*DFT(e_0) = DFT(x) identically.
+ 286	        k=d.add(d.mul(x[0],x[1]),x[0])
+ 287	        shifted=list(x)
+ 288	        shifted[0]=d.sub(shifted[0],k)
+ 289	        y_shift=fft_dag(d,shifted,w)
+ 290	        out=[d.add(s,k) for s in y_shift]
+ 291	    else:
+ 292	        raise ValueError('unknown method')
+ 293	    return d,x,out
+ 294	
+ 295	
+ 296	def direct_dft(x:Sequence[int],w:int,p=P) -> list[int]:
+ 297	    n=len(x)
+ 298	    return [sum(int(x[j])*pow(w,j*k,p) for j in range(n))%p for k in range(n)]

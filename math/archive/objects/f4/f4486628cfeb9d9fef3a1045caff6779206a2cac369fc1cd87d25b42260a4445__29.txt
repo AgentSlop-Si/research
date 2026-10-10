@@ -1,0 +1,148 @@
+0001 #!/usr/bin/env python3
+0002 """Independently authored verifier. Never imports/executes uploaded code."""
+0003 import json,random,hashlib,pathlib,itertools
+0004 ROOT=pathlib.Path(__file__).resolve().parent
+0005 P=65537
+0006 
+0007 def rank(A,p=P):
+0008  A=[list(x) for x in A]
+0009  if not A:return 0
+0010  n=len(A);m=len(A[0]);r=0
+0011  for c in range(m):
+0012   j=next((j for j in range(r,n) if A[j][c]%p),None)
+0013   if j is None:continue
+0014   A[r],A[j]=A[j],A[r];q=pow(A[r][c],-1,p);A[r]=[x*q%p for x in A[r]]
+0015   for j in range(r+1,n):
+0016    q=A[j][c]%p
+0017    if q:A[j]=[(x-q*y)%p for x,y in zip(A[j],A[r])]
+0018   r+=1
+0019   if r==n:break
+0020  return r
+0021 
+0022 def inv(A,p=P):
+0023  n=len(A);B=[[x%p for x in A[i]]+[int(i==j) for j in range(n)] for i in range(n)]
+0024  for c in range(n):
+0025   j=next((j for j in range(c,n) if B[j][c]),None)
+0026   if j is None:return None
+0027   B[c],B[j]=B[j],B[c];q=pow(B[c][c],-1,p);B[c]=[x*q%p for x in B[c]]
+0028   for j in range(n):
+0029    if j!=c:
+0030     q=B[j][c];B[j]=[(x-q*y)%p for x,y in zip(B[j],B[c])]
+0031  return [r[n:] for r in B]
+0032 
+0033 def mul(A,B,p=P):
+0034  return [[sum(x*y for x,y in zip(a,b))%p for b in zip(*B)] for a in A]
+0035 def sub(A,R,C):return [[A[i][j] for j in C] for i in R]
+0036 def rev(i,m):return int(format(i,f'0{m}b')[::-1],2)
+0037 def perm(p):return [[int(i==p[j]) for j in range(len(p))] for i in range(len(p))]
+0038 def qs(n,rng):
+0039  a,b,c,d,g,h=[[rng.randrange(0,7) for _ in range(n)] for _ in range(6)]
+0040  X=[[0]*n for _ in range(n)]
+0041  for i in range(n):
+0042   X[i][i]=rng.randrange(0,11)
+0043   for j in range(i):
+0044    z=a[i]*b[j]
+0045    for k in range(j+1,i):z=z*g[k]%P
+0046    X[i][j]=z%P
+0047   for j in range(i+1,n):
+0048    z=c[i]*d[j]
+0049    for k in range(i+1,j):z=z*h[k]%P
+0050    X[i][j]=z%P
+0051  return X
+0052 
+0053 def check_bitrev():
+0054  out=[];prev=None
+0055  for m in range(1,19):
+0056   n=1<<m
+0057   if m%2:w=t=(n+1)//3
+0058   else:w=2*((n//2+1)//3);t=w//2
+0059   A=sum(rev(i,m)<t for i in range(w));B=sum(rev(i,m)<t for i in range(n-w,n))
+0060   assert A-B==(m+1)//2
+0061   if m%2:
+0062    if prev:
+0063     assert A==prev['w']+prev['A'] and B==prev['w']-1+prev['B']
+0064    prev=dict(w=w,A=A,B=B)
+0065   out.append(dict(m=m,N=n,W=w,T=t,A=A,B=B,discrepancy=A-B))
+0066  n=128;w=43;root=pow(3,(P-1)//n,P)
+0067  assert pow(root,n,P)==1 and pow(root,n//2,P)!=1
+0068  F=[[pow(root,i*j,P) for j in range(n-w,n)] for i in range(w)]
+0069  assert rank(F)==43
+0070  return dict(counts=out,N128_fourier_rank=rank(F),field=P,N128_root=root)
+0071 
+0072 def check_qs():
+0073  rng=random.Random(921);inversion_cases=0;cyclic_cases=0;averages=0
+0074  for n in [3,4,8,16]:
+0075   for trial in range(10):
+0076    stages=[qs(n,rng) for _ in range(3)]
+0077    if trial==0:stages[0]=[[0]*n for _ in range(n)]
+0078    for S in stages:
+0079     T=inv(S)
+0080     for k in range(1,n):
+0081      assert rank(sub(S,range(k),range(k,n)))<=1
+0082      assert rank(sub(S,range(k,n),range(k)))<=1
+0083      if T:
+0084       assert rank(sub(S,range(k),range(k,n)))==rank(sub(T,range(k),range(k,n)))
+0085       assert rank(sub(S,range(k,n),range(k)))==rank(sub(T,range(k,n),range(k)))
+0086       inversion_cases+=2
+0087    p1=list(range(n));p2=list(range(n));rng.shuffle(p1);rng.shuffle(p2)
+0088    q2=[p2.index(i) for i in range(n)]
+0089    M=mul(mul(mul(mul(stages[2],perm(p2)),stages[1]),perm(p1)),stages[0])
+0090    for w in range(1,n):
+0091     I=list(range(w));R=[q2[i] for i in I]
+0092     for t in range(n+1):
+0093      a=sum(x<t for x in R);total=0
+0094      for start in range(n):
+0095       J=[(start+j)%n for j in range(w)];C=[p1[j] for j in J];b=sum(x<t for x in C);total+=b
+0096       if (start+t+trial)%max(1,n//2)==0:
+0097        actual=rank(sub(M,I,J));cap=4+w-abs(a-b)
+0098        assert actual<=cap
+0099        ext=rank(sub(stages[0],[i for i in range(n) if i not in J],J));assert ext<=2
+0100        assert rank(sub(stages[1],R,C))<=1+w-abs(a-b)
+0101        cyclic_cases+=1
+0102      assert total==w*t;averages+=1
+0103  # Singular-pivot but invertible separated-generator counterexample.
+0104  L=[[1,0,0],[1,1,0],[0,1,1]]
+0105  assert inv(L) is not None
+0106  return dict(inverse_cut_rank_checks=inversion_cases,cyclic_matrix_rank_cases=cyclic_cases,exact_cyclic_average_cases=averages,separated_generator_counterexample=L)
+0107 
+0108 def fast_cycle_solve(pi,diag,rhs):
+0109  n=len(pi);seen=set();out=[0]*n
+0110  for start in range(n):
+0111   if start in seen:continue
+0112   cycle=[];j=start
+0113   while j not in seen:seen.add(j);cycle.append(j);j=pi[j]
+0114   order=cycle[::-1];z=[];h=[];u=0;v=1
+0115   for j in order:
+0116    d=pow(diag[j],-1,P);u=(rhs[j]-2*u)*d%P;v=-2*v*d%P;z.append(u);h.append(v)
+0117   c=z[-1]*pow(1-h[-1],-1,P)%P
+0118   for j,u,v in zip(order,z,h):out[j]=(u+v*c)%P
+0119  return out
+0120 
+0121 def check_phase16():
+0122  rng=random.Random(922);cases=0;entries=0;weyl=0
+0123  for n in [2,4,8,16,32]:
+0124   w=pow(3,(P-1)//n,P);assert pow(w,n,P)==1 and pow(w,n//2,P)!=1
+0125   F=[[pow(w,i*j,P) for j in range(n)] for i in range(n)]
+0126   perms=[list(range(n)),[(i-1)%n for i in range(n)],list(reversed(range(n)))]
+0127   q=list(range(n));rng.shuffle(q);perms.append(q)
+0128   for pi in perms:
+0129    diag=[(7+pow(w,i,P))%P for i in range(n)]
+0130    L=[[((diag[i] if j==i else 0)+(2 if j==pi[i] else 0))%P for j in range(n)] for i in range(n)]
+0131    Li=inv(L);assert Li is not None
+0132    B=mul(L,F);expected=[[F[i][j]*(7+pow(w,i,P)+2*pow(w,((pi[i]-i)*j)%n,P))%P for j in range(n)] for i in range(n)]
+0133    assert B==expected and mul(Li,B)==F
+0134    for j in range(n):assert fast_cycle_solve(pi,diag,[B[i][j] for i in range(n)])==[F[i][j] for i in range(n)]
+0135    entries+=n*n;cases+=1
+0136   # Signed Weyl atoms: (S^a D^b F)ij = omega^(b*(i-a)+(i-a)*j)
+0137   # (F D^-a S^b)ij = omega^(i*(j+b)-a*(j+b)).
+0138   for a,b in [(-3,2),(1,-4),(0,5),(7,-1),(-2,-2),(0,0)]:
+0139    for i in range(n):
+0140     for j in range(n):
+0141      left=pow(w,(b*(i-a)+(i-a)*j)%n,P)
+0142      right=pow(w,(i*(j+b)-a*(j+b))%n,P)
+0143      assert left==right;weyl+=1
+0144  return dict(permutation_green_cases=cases,exact_forcing_entries=entries,weyl_atom_entries=weyl,field=P,includes_fixed_points=True)
+0145 
+0146 out={'bit_reversal':check_bitrev(),'quasiseparable':check_qs(),'hero1_phase16':check_phase16()}
+0147 (ROOT/'INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+0148 print(json.dumps(out,indent=2))

@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""Bounded exact divisibility checks on freshly reconstructed polynomials.
+No full factorization or irreducibility claim is made.
+"""
+from pathlib import Path
+import runpy,json
+ns=runpy.run_path(str(Path(__file__).with_name('independent_exact_check.py')))
+W=ns['W'];tests={}
+for label,P in [('tail_pivot',ns['pivot']),('quartic_beta_coefficient',ns['B']),('h0',ns['h0'])]:
+ quotient,remainder=divmod(W,P)
+ tests[label]={'divides_W':not bool(remainder),'remainder_terms':len(remainder),'remainder_degree':max(map(sum,remainder)) if remainder else -1}
+res={'field':'Q[z]/(z^4+1)','known_guard_divisibility':tests,'full_factorization':'undetermined; bounded attempt stopped without conclusion'}
+Path(__file__).with_name('guard_results.json').write_text(json.dumps(res,indent=2)+'\n');print(json.dumps(res,indent=2))

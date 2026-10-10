@@ -1,0 +1,61 @@
+   1 """Review-authored modular linear algebra; no external dependencies."""
+   2 class Field:
+   3     def __init__(self,p):
+   4         self.p=p
+   5     def inv(self,x):
+   6         assert x % self.p
+   7         return pow(x,-1,self.p)
+   8     def eye(self,n):
+   9         return [[int(i==j) for j in range(n)] for i in range(n)]
+  10     def mul(self,a,b):
+  11         bt=list(zip(*b));p=self.p
+  12         return [[sum(x*y for x,y in zip(row,col))%p for col in bt] for row in a]
+  13     def rank(self,a):
+  14         b=[row[:] for row in a];r=0;p=self.p
+  15         for c in range(len(b[0])):
+  16             t=next((i for i in range(r,len(b)) if b[i][c]%p),None)
+  17             if t is None:continue
+  18             b[r],b[t]=b[t],b[r];v=self.inv(b[r][c])
+  19             for i in range(r+1,len(b)):
+  20                 z=b[i][c]*v%p
+  21                 if z:b[i]=[(x-z*y)%p for x,y in zip(b[i],b[r])]
+  22             r+=1
+  23             if r==len(b):break
+  24         return r
+  25     def det(self,a):
+  26         b=[row[:] for row in a];out=1;p=self.p
+  27         for c in range(len(b)):
+  28             t=next((i for i in range(c,len(b)) if b[i][c]%p),None)
+  29             if t is None:return 0
+  30             if c!=t:b[c],b[t]=b[t],b[c];out=-out
+  31             out=out*b[c][c]%p;v=self.inv(b[c][c])
+  32             for i in range(c+1,len(b)):
+  33                 z=b[i][c]*v%p
+  34                 if z:b[i]=[(x-z*y)%p for x,y in zip(b[i],b[c])]
+  35         return out%p
+  36     def inverse(self,a):
+  37         n=len(a);b=[row[:]+e for row,e in zip(a,self.eye(n))];p=self.p
+  38         for c in range(n):
+  39             t=next((i for i in range(c,n) if b[i][c]%p),None)
+  40             if t is None:raise ValueError('singular')
+  41             b[c],b[t]=b[t],b[c];v=self.inv(b[c][c]);b[c]=[x*v%p for x in b[c]]
+  42             for i in range(n):
+  43                 if i!=c:
+  44                     z=b[i][c]
+  45                     if z:b[i]=[(x-z*y)%p for x,y in zip(b[i],b[c])]
+  46         return [row[n:] for row in b]
+  47     def solve(self,a,b):
+  48         return [row[0] for row in self.mul(self.inverse(a),[[x] for x in b])]
+  49 
+  50 
+  51 def root(n,p,g):
+  52     assert (p-1)%n==0
+  53     z=pow(g,(p-1)//n,p)
+  54     assert pow(z,n,p)==1
+  55     if n>1 and n&(n-1)==0:assert pow(z,n//2,p)!=1
+  56     return z
+  57 
+  58 
+  59 def prime_by_trial_division(p):
+  60     from math import isqrt
+  61     return p>=2 and (p==2 or p%2 and all(p%d for d in range(3,isqrt(p)+1,2)))

@@ -1,0 +1,142 @@
+1: #!/usr/bin/env python3
+2: """Independent exact-rational tests of a proposed reduced-center DFT network.
+3: 
+4: Scope: finite scalar network and constants only. Does not execute tensor recursion
+5: or prove the entire published theorem. Uses rational arithmetic throughout.
+6: """
+7: from fractions import Fraction as F
+8: from itertools import combinations
+9: from math import comb
+10: from decimal import Decimal, localcontext
+11: import random
+12: 
+13: class ReducedNetwork:
+14:     def __init__(self,h):
+15:         self.h=h
+16:         self.triples=list(combinations(range(h),3))
+17:         self.v=len(self.triples)
+18:         self.tsets=[set(t) for t in self.triples]
+19:         self.neighbors=[[(k, F(1-len(S & T),2)) for k,T in enumerate(self.tsets) if len(S & T)%2==0] for S in self.tsets]
+20:         self.occurrences=[[t for t,T in enumerate(self.triples) if j in T] for j in range(h)]
+21: 
+22:     def new_scratch(self, rng):
+23:         a=[[F(rng.randint(-9,9)) for _ in ns] for ns in self.neighbors]
+24:         c=[F(rng.randint(-9,9)) for _ in range(self.h)]
+25:         return (a,c)
+26: 
+27:     def J(self,a):
+28:         return [sum((coeff * a[s][r] for r, (_,coeff) in enumerate(self.neighbors[s])),F(0)) for s in range(self.v)]
+29: 
+30:     def R(self,c):
+31:         cs=sum(c,F(0))
+32:         return [sum((c[j] for j in T),F(0))/2-cs/6 for T in self.triples]
+33: 
+34:     def G(self,x):
+35:         return [sum((x[t] for t in ts),F(0)) for ts in self.occurrences]
+36: 
+37:     def step(self,x,y, scratch, direction=1):
+38:         """Run eight reversible gates in forward or exact inverse order."""
+39:         a,c=scratch
+40:         x=list(map(F,x))
+41:         y=list(map(F,y))
+42:         gx=self.G(x)
+43:         def gate(k, sign):
+44:             if k in (0,5):
+45:                 ja=self.J(a)
+46:                 sig = -1 if k==0 else 1
+47:                 for s in range(self.v): y[s] += sign*sig*ja[s]
+48:             elif k in (1,4):
+49:                 rc=self.R(c)
+50:                 sig = -1 if k==1 else 1
+51:                 for s in range(self.v): y[s] += sign*sig*rc[s]
+52:             elif k in (2,7):
+53:                 sig = 1 if k==2 else -1
+54:                 for s,ns in enumerate(self.neighbors):
+55:                     for pos,(t,_) in enumerate(ns): a[s][pos] += sign*sig*x[t]
+56:             elif k in (3,6):
+57:                 sig = 1 if k==3 else -1
+58:                 for j in range(self.h): c[j] += sign*sig*gx[j]
+59:             else: raise AssertionError(k)
+60:         if direction==1:
+61:             for k in range(8): gate(k,1)
+62:         else:
+63:             for k in range(7,-1,-1): gate(k,-1)
+64:         return y
+65: 
+66: def run():
+67:     rng=random.Random(0xDFF)
+68:     print('Independent exact-rational network validation')
+69:     for h in (6,7,8):
+70:         net=ReducedNetwork(h)
+71:         for trial in range(3):
+72:             x=[F(rng.randint(-6,6)) for _ in range(net.v)]
+73:             y=[F(rng.randint(-6,6)) for _ in range(net.v)]
+74:             scratch=net.new_scratch(rng)
+75:             saved=([r.copy() for r in scratch[0]],scratch[1].copy())
+76:             after=net.step(x,y,scratch,1)
+77:             assert after == [q+p for q,p in zip(y,x)],(h,trial)
+78:             assert scratch == saved,(h,trial,'forward scratch')
+79:             inv=net.step(x,y,scratch,-1)
+80:             assert inv == [q-p for q,p in zip(y,x)],(h,trial,'inverse')
+81:             assert scratch == saved,(h,trial,'inverse scratch')
+82:         print(f'PASS forward + inverse + arbitrary scratch restoration: h={h}, v={net.v}, trials=3')
+83: 
+84:     # Perform all 3 stages of the published 3-coordinate exchange.
+85:     h=6
+86:     net=ReducedNetwork(h)
+87:     v=net.v
+88:     # Flat coordinates to avoid large tensor dependencies.
+89:     indices=[(i,j,k) for i in range(v) for j in range(v) for k in range(v)]
+90:     X={d:F(rng.randint(-4,4)) for d in indices}
+91:     Y={d:F(rng.randint(-4,4)) for d in indices}
+92:     x0=X.copy();y0=Y.copy()
+93:     for stage in range(3):
+94:         other=[k for k in range(3) if k!=stage]
+95:         for frozen in ((i,j) for i in range(v) for j in range(v)):
+96:             keys=[]
+97:             for t in range(v):
+98:                 key=[0,0,0]
+99:                 key[stage]=t
+100:                 for axis,value in zip(other,frozen): key[axis]=value
+101:                 keys.append(tuple(key))
+102:             scratch=net.new_scratch(rng)
+103:             saved=([r.copy() for r in scratch[0]],scratch[1].copy())
+104:             if stage!=1:
+105:                 # Stage 1/3: X -> Y
+106:                 out=net.step([X[d] for d in keys],[Y[d] for d in keys],scratch,1)
+107:                 for d,value in zip(keys,out): Y[d]=value
+108:             else:
+109:                 # Stage 2: inverse Y -> X
+110:                 out=net.step([Y[d] for d in keys],[X[d] for d in keys],scratch,-1)
+111:                 for d,value in zip(keys,out): X[d]=value
+112:             assert scratch==saved
+113:     assert all(X[d] == -y0[d] and Y[d]==x0[d] for d in indices)
+114:     print(f'PASS three-stage bank exchange: h={h}, entries per bank={len(indices)}, invocations=1200, scratch restored')
+115: 
+116:     # Recompute all numeric claims from exact integer formulas with Decimal logs.
+117:     def parameters(h,center):
+118:         v=comb(h,3)
+119:         d=comb(h-3,3)+3*(h-3)
+120:         i0=3*v*v
+121:         n0=v**3
+122:         W=2*n0+i0*(v*d+center)
+123:         Wstar=1<<(W-1).bit_length()
+124:         m=h**3
+125:         delta=2*n0-2*i0*center*h
+126:         assert Wstar>=W and delta>0
+127:         return (h,v,d,W,Wstar,m,delta)
+128:     with localcontext() as ctx:
+129:         ctx.prec=75
+130:         for h,center in [(100,101),(24,25),(24,24)]:
+131:             _,v,d,W,Wstar,m,delta=parameters(h,center)
+132:             ratio=Decimal(delta)/Decimal(m*Wstar)
+133:             gap=-(Decimal(1)-ratio).ln()/Decimal(m).ln()
+134:             print(f'h={h}, centers={center}, Wstar=2^{Wstar.bit_length()-1}, delta={delta}, exponent_gap={gap:.25E}')
+135:             if h==24 and center==24:
+136:                 assert gap > Decimal('5e-10')
+137:             if h==100:
+138:                 assert W == 1873807244643542670000
+139:                 assert delta==6871402692000000
+140:     print('PASS all reduced/original dimensions and exponent-gap calculations')
+141: 
+142: if __name__ == '__main__':run()

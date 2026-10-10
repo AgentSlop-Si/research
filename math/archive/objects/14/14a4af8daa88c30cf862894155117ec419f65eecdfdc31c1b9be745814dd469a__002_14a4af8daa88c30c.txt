@@ -1,0 +1,330 @@
+Conditional linear time approximate Fourier evaluation
+9 October 2026
+
+Main conclusion
+
+The earlier sparse exponential-sum reduction composes with standard importance
+sampling. Conditional on Hypothesis H below, every complex length-N input has a
+randomized all-output unitary DFT approximation in O(N) operations for fixed
+accuracy epsilon and polynomially small failure probability, with error measured
+as epsilon times the input l1 norm divided by sqrt(N).
+
+This is an explicit conditional theorem. It does not verify H, establish a new
+thin-matrix algorithm, provide a numerical/bit-complexity guarantee, or prove a
+new general exact FFT bound. The error criterion is substantially weaker than
+relative spectral accuracy for dense inputs. Novelty has not been established.
+
+Hypothesis H and computational model
+
+H: For some fixed c>0, there is a uniform exact algorithm over C for every
+n-by-p times p-by-n matrix product, p <= floor(c log_2 n), costing O(n^2) TOTAL
+scalar arithmetic operations. The bound includes construction, all additions,
+scalar multiplications, divisions if used, and decoding. Constants must be
+uniform in n and p. Essential-multiplication counts, tensor rank alone, and
+unbounded-size integer multiplication charged as one elementary operation do
+not suffice.
+
+The composed algorithm uses a hybrid exact-arithmetic randomized real-RAM:
+
+- Complex numbers are available as pairs of exact real registers. Real/complex
+  field operations, real comparisons, and ordinary indexed register accesses
+  have unit cost. The arithmetic core is conditional on H.
+- Each independent uniform real U in [0,1) is supplied by a unit-cost random
+  primitive. Exact sampling from arbitrary real probabilities therefore is a
+  modeling assumption, not a finite-random-bit implementation claim.
+- A primitive Nth root zeta_N, with the chosen DFT sign, and the normalization
+  scalar sigma_N=1/sqrt(N) are supplied. Generating arbitrary complex roots from
+  the integer N is not asserted to be possible by field operations alone. If
+  real square root is an allowed primitive, sigma_N costs one such operation.
+- The input includes both real and imaginary parts of all N entries. Their
+  signs can be tested. No unit-cost complex-modulus oracle is assumed.
+- Ordinary loop/index/control overhead outside H is charged explicitly. If H
+  is understood as an arithmetic-count statement only, the result has that
+  same scope plus the explicit sampling/comparison/data-handling costs below.
+  A total RAM-time claim additionally requires H's uniform construction and
+  execution control to fit its O(n^2) bound.
+
+No claim is made about finite precision, bit lengths, numerical conditioning,
+the number of random bits, or practical speed. Those need separate analysis.
+
+Theorem
+
+Let N>=2, x in C^N, 0<epsilon<=1, and 0<delta<1. Write
+
+  S = ||x||_1 = sum_j |x_j|,
+  y_m = (1/sqrt(N)) sum_(j=0)^(N-1) x_j zeta_N^(jm),  0<=m<N.
+
+Here |x_j| is the usual complex modulus, used in the guarantee, not evaluated
+by the algorithm. Choose an integer
+
+  k >= 8 epsilon^(-2) ln(4N/delta).
+
+Under H, an algorithm produces all N explicit complex values y_tilde_m with
+
+  Pr[ max_(0<=m<N) |y_tilde_m-y_m|
+      <= epsilon ||x||_1/sqrt(N) ] >= 1-delta.
+
+Its worst-case cost, including scanning the input and outputting all entries,
+is
+
+  O( N[1+k/log(2N)] + sqrt(N) k + k log(2N) ).                 (1)
+
+A sharper bound uses d, the number of distinct sampled indices:
+
+  O( N[1+d/log(2N)] + sqrt(N) d + k log(2N) ),                (2)
+
+where d<=min(k,N), and d is also at most the actual input support size.
+The zero-input case is handled in O(N) without sampling. N=1 can be returned
+exactly in constant time.
+
+Consequently, for any fixed epsilon>0 and fixed C>0, if delta>=N^(-C), taking
+k=ceil(8 epsilon^(-2) ln(4N/delta)) gives k=O(log N) and total cost O(N).
+The hidden constant can depend on epsilon, C, c, and H's uniform constant.
+If epsilon shrinks or log(1/delta)/log N grows, the full bound must be used.
+
+The theorem can equivalently take the integer sample budget k as a parameter.
+Its implementation does not require an exact logarithm primitive. For example,
+integer upper bounds on 8/epsilon^2 and log_2(4N/delta), obtained by charged
+comparisons/loops, can be multiplied to choose a sufficient sample budget of
+the same asymptotic order; their work is covered by O(k+log(N/delta)).
+
+Algorithm and probability proof
+
+1. Read x and form nonnegative weights without complex absolute values:
+
+     w_j = |Re x_j| + |Im x_j|,
+     W = sum_j w_j.
+
+   A constant number of real comparisons, sign changes, and additions suffices
+   per input entry. Detect zero entries and W=0 in this scan. For all x,
+
+     |x_j| <= w_j <= sqrt(2)|x_j|,
+     S <= W <= sqrt(2) S.
+
+   If W=0, x=0, so write the N zero outputs and stop. Otherwise define q_j=w_j/W
+   for positive weights. Zero-weight entries have zero probability and need
+   no division.
+
+2. Build cumulative weights P_j=sum_(i<=j) w_i. For each independent U_t in
+   [0,1), choose the least j with P_j>W U_t, using binary search. This exactly
+   samples J_t with probability q_j in the stated real-RAM model. Repeated
+   cumulative weights from zeros cause no issue with the strict inequality.
+
+3. Initialize an N-entry count array to zero, increment count[J_t] for each
+   sample, and scan it to obtain the d distinct sampled indices j_1,...,j_d
+   and their positive counts h_1,...,h_d. This avoids any uncharged hashing,
+   equality oracle for roots, or sorting cost. For each retained index set
+
+     a_s = (W h_s/(k w_(j_s))) x_(j_s),
+     z_s = zeta_N^(j_s).
+
+   The z_s are distinct because the indices are distinct. Compute the complete
+   exponential sum f_m=sum_(s=1)^d a_s z_s^m using the reduction below, and
+   return y_tilde_m=sigma_N f_m.
+
+Before duplicate consolidation, the same estimator is
+
+  y_tilde_m = (1/(k sqrt(N))) sum_(t=1)^k Z_(t,m),
+  Z_(t,m) = W x_(J_t) zeta_N^(m J_t) / w_(J_t).
+
+For each fixed m, the samples are independent, and
+
+  E Z_(t,m) = sum_j x_j zeta_N^(mj) = sqrt(N) y_m,
+  |Z_(t,m)| <= W.
+
+Both real and imaginary coordinates of Z_(t,m) lie in [-W,W]. The two-sided
+scalar Hoeffding inequality therefore gives, for either coordinate and t>0,
+
+  Pr[ |(sample mean)-(its expectation)| > t ]
+      <= 2 exp(-k t^2/(2 W^2)).
+
+If a complex error has modulus greater than epsilon S, at least one of its
+real and imaginary parts has magnitude greater than epsilon S/sqrt(2).
+Thus for a fixed frequency m,
+
+  Pr[ |y_tilde_m-y_m| > epsilon S/sqrt(N) ]
+      <= 4 exp(-k epsilon^2 S^2/(4 W^2))
+      <= 4 exp(-k epsilon^2/8).
+
+A union bound over N frequencies gives failure probability at most
+
+  4N exp(-k epsilon^2/8) <= delta.
+
+Different output bins are correlated because they use the same samples.
+The union bound needs no independence between bins. Duplicate consolidation
+does not change the estimator and therefore does not affect this proof.
+
+Charged exact evaluation of the sparse sum under H
+
+Choose n=max(n_0,ceil(sqrt(N))), with a fixed n_0 large enough that
+p_0=floor(c log_2 n)>=1. Then n^2=O(N), p_0=Theta(log(2N)), and padding the
+output interval from N to n^2 changes the work only by a constant factor.
+For retained nodes/amplitudes form
+
+  U[r,s] = z_s^r,                  0<=r<n,
+  V[s,b] = a_s (z_s^n)^b,          0<=b<n.
+
+Then
+
+  (UV)[r,b] = sum_s a_s z_s^(r+nb) = f_(r+nb).
+
+Split the inner dimension into R=ceil(d/p_0) groups. Apply H to each n-by-p
+times p-by-n group product and sum the R resulting n-by-n arrays. Each product
+costs O(n^2), and summation costs O(R n^2) as well. No dense n-by-n product is
+being treated as O(n^2). The inner dimensions are all at most p_0.
+
+Here is the complete accounting:
+
+- Input reading, zero/support recognition, weights, prefix sums: O(N).
+- k random draws and binary searches: O(k log(2N)).
+- Count-array initialization, duplicate consolidation and support listing:
+  O(N+k). Coefficient construction: O(d).
+- Root preparation from zeta_N and integer indices by binary powering:
+  O(d log(2N)). Alternatively, form all N root powers successively in O(N)
+  and read the d needed powers. Either is charged; the first cost is already
+  absorbed by k log(2N).
+- Construct U and V by consecutive powers, including z_s^n: O(nd)=O(sqrt(N)d).
+  Tables may be made one inner-dimension group at a time.
+- H products, padding/setup, and accumulation:
+  O(n^2[1+d/p_0])=O(N[1+d/log(2N)]).
+- Reordering the r+nb positions, discarding padded positions, normalizing, and
+  materializing all N outputs: O(N).
+
+Summing gives (2); substituting d<=k gives (1). For k=O(log N), the extra
+sqrt(N)log N and log^2 N terms are O(N), hence the claimed linear consequence.
+
+Why the error criterion does not imply a general exact FFT breakthrough
+
+For a dense input with |x_j|=1, S=N and ||x||_2=sqrt(N). The permitted error
+in each unitary Fourier output is epsilon sqrt(N). Meanwhile, by unitarity,
+the root-mean-square output magnitude is only
+
+  ||y||_2/sqrt(N) = ||x||_2/sqrt(N) = 1.
+
+Thus fixed epsilon permits errors growing like sqrt(N) relative to this RMS
+scale. This is a global absolute guarantee tied to input l1 mass, useful for
+controlling large coefficients at that scale; it gives no relative guarantee
+for an individual small or zero Fourier coefficient.
+
+The extreme example x=(1,...,1) makes the limitation concrete. The exact unitary
+DFT is y_0=sqrt(N) and y_m=0 for all m!=0, while the permitted absolute error
+is epsilon sqrt(N) at every bin. The sampler's DC output is exact, but its
+other bins contain sampling noise. If x_tilde denotes the consolidated sampled
+input vector, independence, unbiasedness, and unitarity give the exact identity
+
+  E ||F(x_tilde-x)||_2^2
+      = (sum_(j:q_j>0) |x_j|^2/q_j - ||x||_2^2)/k.
+
+For the all-ones input q_j=1/N, this becomes (N^2-N)/k. The relative RMS l2
+error is therefore sqrt((N-1)/k). With k=O(log N), it can grow without bound.
+This is an expectation identity, not a claim that every run has that error.
+It directly shows that the stated guarantee does not generally provide small
+relative energy error, even though it can hold simultaneously at all bins.
+
+The direct implication for total l2 error is only
+
+  ||y_tilde-y||_2 <= epsilon ||x||_1.
+
+To derive a relative-l2 guarantee <=eta ||x||_2 for arbitrary dense flat
+inputs from this theorem alone requires epsilon<=eta/sqrt(N), and thus
+k=Omega(N eta^(-2) log(N/delta)) in this proof. The fixed-accuracy O(N)
+conclusion then disappears. This is a limitation of this theorem and its
+sampling analysis, not a lower bound excluding other approximation methods.
+
+The full exact transform is not recovered merely by taking a small fixed
+epsilon, averaging a few runs, or invoking uniqueness of Fourier inversion.
+There is no certified rounding gap for arbitrary complex inputs. Nor does
+arithmetic exactness of the sampled expansion mean that expansion equals the
+original dense DFT: the approximation is statistical, even with an exact core.
+
+Relation to the new obstruction results
+
+The new uploads delimit different targets and do not invalidate the theorem.
+
+1. Galois measurement-only stability. The stated lower bound
+
+     L >= [2^floor(N/(4r))-1]/N
+
+   assumes exact recovery of every full spectrum in a complementary binary
+   family from r selected odd Fourier measurements. The sampler reads the
+   original input, computes input-dependent probabilities, and keeps sampled
+   coordinate values, indices, and scale information. It neither receives
+   only those r Fourier measurements nor reconstructs all spectra exactly.
+   Its target therefore lacks both decisive hypotheses of that barrier.
+
+2. Global rank bottleneck. A differentiable exact factorization of the entire
+   invertible complex DFT through C^w requires w>=N. The sampled map is a
+   randomized approximate map. Sampling decisions are input-dependent and
+   need not be differentiable; most importantly, the map is not an exact
+   factorization of the DFT. The Jacobian-rank conclusion is inapplicable.
+
+3. Stable binary compression and precision. Those counting/packing bounds
+   require distinguishing all allowed binary inputs, or exact/stably precise
+   recovery from a bounded-size encoding. Our error balls may overlap heavily.
+   The theorem makes a per-input probabilistic coarse-error statement, not
+   simultaneous exact recovery for all inputs under one fixed seed. It does
+   not need an injective compressed representation. Stronger accuracy and
+   finite-precision versions would need new analysis and could encounter such
+   bounds; the present theorem does not refute them.
+   In particular, the unitary tolerance epsilon ||x||_1/sqrt(N) translates to
+   unnormalized tolerance epsilon ||x||_1. For dense binary inputs this is
+   typically much larger than the uniform error threshold below 1/2 used in
+   the global binary-recovery packing argument. The error hypotheses differ
+   quantitatively as well as in exactness and quantifier order.
+
+   A fixed input-independent linear-sketch rank argument also cannot simply
+   be transferred: these probabilities depend on the input, the sampling map
+   is nonlinear, and the retained state includes indices and amplitudes.
+
+4. One giant integer multiplication. The composed algorithm does not pack a
+   whole transform into a hidden variable-length integer macro. Nevertheless,
+   its own exact-real and exact-complex unit-cost assumptions are explicit.
+   The bigint audit remains a reason not to promote any of these arithmetic
+   statements to bit complexity or practical performance without proof.
+
+All four points explain scope, not a circumvention of a lower bound for the
+same task. The approximate theorem and the obstruction theorems can all hold.
+
+Prior art and verification status
+
+Importance sampling with inverse-probability scaling is classical. Drineas,
+Kannan, and Mahoney, Fast Monte Carlo Algorithms for Matrices I Approximating
+Matrix Multiplication, SIAM J. Comput. 36(1), 132-157 (2006), presents sampled
+and rescaled matrix products; see especially Sections 3 and 4 and Figure 2.
+The present Fourier estimator is in that general tradition. The exact
+all-bin max-error constant above is derived here directly, rather than
+attributed to the paper's different matrix-norm theorems.
+https://doi.org/10.1137/S0097539704442684
+https://perso.ens-lyon.fr/loris.marchal/docs-data-aware/papers/paper9.pdf
+
+The concentration tool is Hoeffding, Probability Inequalities for Sums of
+Bounded Random Variables, JASA 58(301), 13-30 (1963). Applying its bounded
+independent-variable inequality separately to two real coordinates and then
+taking a union bound gives the displayed factor 8 with these surrogate weights.
+https://doi.org/10.1080/01621459.1963.10500830
+https://www.cs.rpi.edu/academics/courses/spring06/random/hoefding.pdf
+
+H remains the unresolved premise of this note. The prior checkpoint records
+total-operation wording in Chan's paper and multiplication-count wording in
+the original Brockett-Dobkin abstract. This composition does not independently
+audit that construction, its additions, the erratum, or uniformity. It must
+not be relabeled an unconditional verified algorithm on that evidence alone.
+https://tmc.web.engr.illinois.edu/bmm9_14.pdf
+https://doi.org/10.1137/0205041
+https://doi.org/10.1137/0207021
+
+The estimator, concentration, and baby-step/giant-step identity are elementary
+and closely connected to classical methods. A separate targeted literature
+review is needed before claiming priority for the combined statement. No
+novelty claim or implemented thin-product core is supplied here. No uploaded
+code needed to be executed for this analytic composition.
+
+Next mathematical gate
+
+Resolve H under the precise total-operation model, including all additions,
+preprocessing, execution uniformity, and arbitrary complex inputs. If H is
+verified, check whether this composition and its all-output weak-error target
+are already explicit in prior work. For a stronger Fourier advance, specify
+a materially stronger error target first and re-derive the sampling budget
+and full cost; the present fixed-epsilon linear statement cannot be carried
+over unchanged.

@@ -1,0 +1,81 @@
+"""Uniform all-length channel-cut obstruction to a 3-stage bit-reversal FFT.
+
+N=32*m (m any power of two).  We exhibit 12*m+1 one-scalar wires that
+separate inputs 0..13*m-1 from outputs 19*m..32*m-1 of the three-stage
+rank-one QS generator network.  Fourier's matching minor has rank 13*m.
+
+Contains a pure-Python Boolean path verifier independent of max-flow code.
+See PROOF_CERTIFICATE.md for the all-length mathematical proof.
+"""
+from __future__ import annotations
+from research_gate import bitrev
+
+BASE_INPUT_RESIDUES=(0,2,4,6,8,10,12,16,18,20,24,26,28)
+KEPT_AFTER_XCUT=(0,2,4,6,8,10,12,16,18,20)
+FINAL_HIGH_BLOCKS=(20,22,24,25,26,28,30)
+
+
+def cut_sets(n):
+    if n<32 or n&(n-1):raise ValueError('N must be a power of two at least 32')
+    m=n//32
+    x1={32*z+r for z in range(m) for r in (24,26,28)}
+    f1={32*z+21 for z in range(m)}
+    b1={32*z+31 for z in range(m-1)}
+    x2={v*m+u for v in FINAL_HIGH_BLOCKS for u in range(m)}
+    return {'n':n,'m':m,
+        'sources':set(range(13*m)),
+        'targets':set(range(19*m,n)),
+        'x0':set(),'f0':{13*m},'b0':set(),
+        'x1':x1,'f1':f1,'b1':b1,
+        'x2':x2,'f2':{19*m},'b2':set()}
+
+
+def wire_list(n):
+    a=cut_sets(n)
+    return ([(0,'f',j) for j in sorted(a['f0'])]
+         +[(1,'x',j) for j in sorted(a['x1'])]
+         +[(1,'f',j) for j in sorted(a['f1'])]
+         +[(1,'b',j) for j in sorted(a['b1'])]
+         +[(2,'x',j) for j in sorted(a['x2'])]
+         +[(2,'f',j) for j in sorted(a['f2'])])
+
+
+def active_outputs(n,active,removed_x,removed_f,removed_b):
+    """Exact *graph reachability* (not a coefficient-dependent computation)."""
+    x=[i in active and i not in removed_x for i in range(n)]
+    f=[False]*n
+    b=[False]*n
+    for i in range(1,n):
+        f[i]=(i not in removed_f) and (x[i-1] or f[i-1])
+    for i in range(n-2,-1,-1):
+        b[i]=(i not in removed_b) and (x[i+1] or b[i+1])
+    return {i for i in range(n) if x[i] or f[i] or b[i]}
+
+
+def test_cut(n):
+    a=cut_sets(n);m=a['m'];P=bitrev(n)
+    assert len(wire_list(n))==12*m+1
+    y0=active_outputs(n,a['sources'],a['x0'],a['f0'],a['b0'])
+    assert y0==a['sources'],('stage0',n)
+    x1={P[j] for j in y0}
+    expected_x1={32*z+r for z in range(m) for r in BASE_INPUT_RESIDUES}
+    assert x1==expected_x1,('bitrev1',n)
+    y1=active_outputs(n,x1,a['x1'],a['f1'],a['b1'])
+    expected_y1={32*z+r for z in range(m) for r in range(21)}
+    assert y1==expected_y1,('stage1',n)
+    x2={P[j] for j in y1}
+    V={int(f'{r:05b}'[::-1],2) for r in range(21)}
+    expected_x2={v*m+u for v in V for u in range(m)}
+    assert x2==expected_x2,('bitrev2',n)
+    assert {v for v in V if v>=19}==set(FINAL_HIGH_BLOCKS)
+    y2=active_outputs(n,x2,a['x2'],a['f2'],a['b2'])
+    assert not(y2&a['targets']),('final reachable',n,y2&a['targets'])
+    return {'N':n,'m':m,'sources':13*m,'outputs':13*m,
+            'removed_scalar_channels':len(wire_list(n)),
+            'rank_deficit':m-1,'middle_blocks_0_20':21,'final_removed_blocks':7,
+            'after_stage0_active':len(y0),'after_first_shuffle_active':len(x1),
+            'after_middle_stage_active':len(y1),'after_last_cut_active':len(y2)}
+
+if __name__=='__main__':
+    for n in (32,64,128,256,512,1024,2048,4096,8192):
+        print(test_cut(n),flush=True)

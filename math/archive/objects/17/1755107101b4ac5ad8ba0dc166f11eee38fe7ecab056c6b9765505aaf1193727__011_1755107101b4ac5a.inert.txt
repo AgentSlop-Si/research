@@ -1,0 +1,287 @@
+GLOBAL-BOTTLENECK PACKAGE: STATIC AUDIT AND INTEGRATION
+9 October 2026
+
+BOTTOM LINE
+
+The package supplies sound, elementary necessary conditions for compressing a
+complete fresh dense Fourier input, plus a correct-in-principle finite-field
+Bluestein/Kronecker control exposing hidden bigint work. It supplies no new
+Fourier speed bound, no universal N log N arithmetic lower bound, and no
+constructive ingredient that already improves our O(N log k) sparse expansion.
+
+Its useful addition relative to selected-frequency sampling barriers is that
+the binary packing argument permits EVERY bounded encoder, including nonlinear
+and discontinuous encoders. The dense complex rank barrier is a width theorem,
+not a time theorem. Both barriers must be adjusted before applying them to the
+k-dimensional sparse-amplitude family. They do not obstruct the decoded-state
+fusion or the conditional thin-matrix route.
+
+VERIFICATION STATUS
+
+- Read README.md, RESEARCH.md, NEXT_GATE.md, all Python sources/tests, the
+  captured audit_results.json, and the SHA256 manifest.
+- All 10 manifest entries passed the installed system sha256sum utility.
+  This checks consistency with the supplied manifest, not trusted provenance.
+- Did NOT import or execute uploaded Python. Unit-test and timing results are
+  supplied results, not independently reproduced results in this review.
+- Independently checked the mathematical identities and cost distinctions on
+  paper and inspected their implementation line by line.
+- Confirmed the cited classical mechanisms against the AMD Bluestein design
+  documentation and Dumas--Fousse--Salvy's original paper abstract. The latter
+  describes packing polynomials into integers by sufficiently large radix
+  evaluation. No novelty claim is supported or needed.
+- Did not re-audit OpenAI Math #130 or the original Brockett--Dobkin construction
+  during this package audit. Mentions of those results in the upload are
+  background claims, not new evidence supplied by this package.
+
+1. DENSE COMPLEX WIDTH THEOREM: VALID, CAREFULLY SCOPED
+
+For differentiable E:C^N -> C^w and D:C^w -> C^N with D(E(x))=F_N x on an
+open set, differentiation at a compatible point yields F_N=J_D J_E. Thus
+N=rank(F_N)<=w. For real differentiability use real dimensions 2N and 2w;
+the conclusion is unchanged. For finite piecewise algebraic algorithms use
+a regular open branch, with all information selecting the branch accounted for.
+
+This remains true if the maps contain regular nonlinear algebraic operations.
+It does not establish that the algorithm needs N log N operations. A putative
+O(N) algorithm retaining N scalar coordinates is compatible with the theorem.
+Previously emitted outputs, retained original inputs, side memory, and any
+other information crossing the claimed cut cannot be left out of its width.
+
+The finite-field rank tests are useful implementation sanity checks. They are
+not proofs of the complex differentiability theorem; the chain rule is the
+proof. The supplied documentation makes this distinction correctly.
+
+2. BINARY NONLINEAR PACKING THEOREM: VALID
+
+If E:{0,1}^N -> C^w has |E_j(x)|<=M, and a decoder has absolute Fourier-output
+error at most epsilon<1/2 and Lipschitz constant L on the encoded image, put
+tau=1-2 epsilon. Distinct binary inputs have unnormalized Fourier-output
+separation at least 1 in maximum modulus: Parseval gives
+||F_N(x-y)||_infinity >= ||x-y||_2 >= 1.
+
+The decoded outputs are consequently separated by tau, and encoded points by
+tau/L. A real-coordinate grid of side tau/(2L), with at most
+Q=ceil(4ML/tau)+1 cells per coordinate, admits at most Q^(2w) separated points.
+Hence 2^N<=Q^(2w). The endpoint slack and complex sqrt(2) factor are adequate.
+For exact decoding, Q<4ML+2 gives the stated strict lower bound
+L>(2^(N/(2w))-2)/(4M).
+
+For polynomial M and L, w=Omega(N/log N). More generally the approximate
+version also needs log(1/tau)=O(log N); allowing epsilon to approach 1/2
+arbitrarily closely changes that asymptotic deduction. The upload states its
+polynomial-width conclusion after setting epsilon=0, so there is no error.
+
+The theorem does not forbid enormous dynamic range or extreme sensitivity.
+It does not give arithmetic gate complexity. Its L is an absolute Lipschitz
+constant in specified coordinates, so rescaling changes M and L separately;
+the product ML is the relevant scale-invariant quantity. Nor can the same
+constant-error statement be copied unchanged to outputs normalized by 1/N.
+
+The explicit block code genuinely has a pair at distance 2^(-b) with Fourier
+outputs separated by 1, giving L>=2^b. This is a valid lower witness. No proof
+of an upper bound L=O(2^b) for the entire decoder is provided or needed. The
+word "sharp" should mean the same exponential scale, not exact constants or
+a proved matching decoder upper bound.
+
+3. ESSENTIAL INTEGRATION: USE THE SPARSE INPUT DIMENSION
+
+3a. Fixed support and arbitrary complex amplitudes
+
+Our actual sparse family is
+  f_m=sum_{s=1}^k a_s z_s^m, 0<=m<N,
+for distinct supplied roots z_s. The first k rows of its N-by-k Vandermonde
+matrix form an invertible square Vandermonde, so the full output map has
+rank k. A smooth exact factorization through C^w therefore needs w>=k,
+NOT w>=N. Keeping the k amplitudes, or a length-k decoded recurrence state,
+meets that requirement exactly. An N-component output is not the same thing
+as N independent input dimensions.
+
+For unknown support the domain is a finite union of k-dimensional subspaces;
+it still contains no open subset of C^N when k<N. Discrete support information
+must be counted if it is hidden across a cut, but the dense rank theorem cannot
+be applied unchanged to that union.
+
+3b. Unknown sparse Boolean support
+
+For exactly k ones there are S=binomial(N,k) legal inputs. Repeating the same
+packing proof gives
+  binomial(N,k) <= Q^(2w),
+  w >= log_2(binomial(N,k))/(2 log_2 Q).
+For at most k ones, replace S by sum_{j=0}^k binomial(N,j). The separation
+argument still applies. For polynomial M,L and k<=N/2 this implies
+  w=Omega(k log(N/k)/log N).
+At k=Theta(log N), this is only Omega(log N), compatible with k states.
+For one FIXED support and Boolean amplitudes there are only 2^k inputs, so
+the corresponding counting lower bound is weaker still.
+
+This corollary is an elementary application of the supplied packing argument,
+not a literature-wide novelty claim. It prevents an incorrect synthesis in
+which a dense-input barrier is used to reject our sparse recurrence or modal
+state construction.
+
+3c. Selected Fourier measurements of k-hot signals
+
+A useful specialization connects this audit to the Galois/sampling package.
+Suppose the encoder is r fixed unnormalized Fourier bins of a binary signal
+with exactly k ones. There are B=binomial(N,k) inputs, and every measured
+coordinate has modulus at most k. Two distinct such inputs differ in at
+least two coordinates, so Parseval gives full-output maximum separation at
+least sqrt(2).
+
+Let a=floor(log_2(B)/(2r)) and M_grid=2^a-1, when a>=1. Partition each real
+and imaginary component of the r bins into M_grid intervals across [-k,k].
+There are M_grid^(2r)<B cells, so two inputs have measurement max-distance
+at most 2 sqrt(2) k/M_grid. Every measurement-only exact full-output decoder
+therefore has
+  L >= M_grid/(2k).
+If the measurements collide exactly, no such exact decoder exists and the
+conditioning obstruction is stronger. This covers any choice of r fixed bins;
+it does not assume that the bins are a Galois generating set or independent.
+
+For k=Theta(log N), log B=Theta(log^2 N). A polynomial-in-N decoder L requires
+r=Omega(log N). A constant-bin sketch may still be injective in exact
+arithmetic, but injectivity does not supply a stable low-precision decoder.
+
+If every real/imaginary measurement is stored on a step-2^(-b) fixed-point
+grid over [-k,k], there are at most ((2k+2)2^b)^(2r) distinct stored states
+for b>=0. Exact reconstruction requires
+  b >= log_2(B)/(2r) - log_2(2k+2).
+Here b denotes fractional grid bits, not an unspecified floating-point
+mantissa. With arbitrary storage of at most b_total bits per real component,
+the simpler counting necessity is 2r*b_total>=log_2(B). Thus one complex bin
+needs Omega(log^2 N) total distinguishable-value bits in this regime.
+
+These are measurement-only reconstruction requirements, not runtime lower
+bounds for a full sparse expansion that still retains its original support
+and amplitudes. Its support already contains Theta(k log(N/k)) information.
+
+3d. Decoded fusion and conditional thin multiplication
+
+J_Q=-T_(1/Q) U_Q remains a valid length-k recurrence extension. The new rank
+and packing conditions do not add a terminal decoder, disprove the fusion,
+or raise its existing O(N log k) bound. The unresolved step remains a cheaper
+TOTAL-cost application to the jointly constrained family of states.
+
+The baby-step/giant-step product U[r,s]=z_s^r and
+W[s,b]=a_s(z_s^n)^b with n=ceil(sqrt N) remains the strongest concrete
+conditional shortcut. A uniform total-O(n^2) n-by-log n times log n-by-n
+algorithm would give O(N) sparse expansion after O(k sqrt N+k log N) setup.
+All output entries depend on only k amplitudes; their count is not a rank-N
+obstruction. The supplied package neither verifies nor refutes the missing
+total-operation construction in the Brockett--Dobkin/Chan source audit.
+
+Even a proved O(N) k=Theta(log N) sparse expansion does not automatically give
+a dense O(N) FFT. Splitting a dense input into N/k sparse groups and fully
+expanding each by that black box costs O(N^2/k), plus aggregation. A new
+composition identity or cheaper shared batching is needed to bridge that gap.
+
+4. PACKED DFT: ALGEBRA AND IMPLEMENTATION
+
+For even N and primitive 2N-th root zeta, d_j=zeta^(j^2) and h_j=d_j^(-1)
+satisfy h_(j+N)=h_j. Consequently
+  d_k sum_j h_(k-j) d_j x_j = sum_j x_j zeta^(2kj).
+The implemented positive-exponent DFT convention matches its two references.
+N=1, accepted by the code, is a separate trivial identity case.
+
+Canonical lifts 0<=a_j,h_j<=p-1 have integer convolution coefficients at most
+N(p-1)^2. Choosing a byte-aligned base B=2^s strictly larger than that bound
+means integer multiplication contains the convolution coefficients without
+interdigit carries. The extraction length 2N cells is ample; only 2N-1
+coefficients are nonzero. Folding c_j+c_(j+N) produces the cyclic convolution,
+then multiplication by d_j produces the DFT. The phase recurrence correctly
+generates consecutive square exponents by successive odd-exponent increments.
+
+The code supports power-of-two lengths only. In a prime field the tested
+conditions zeta^N=-1 and zeta^(2N)=1 suffice to establish exact order 2N for
+these lengths. They would not suffice for arbitrary N without extra order
+checks. The routines assume p is prime; they do not prove primality. The
+general even-N identity and all-length rank/packing theorems should not be
+mistaken for an all-N tested implementation.
+
+PackedCost.operand_bits=N*cell_bits is an allocated/worst-case width, not the
+actual bit length of both operands on every input. The structure separately
+records actual bit lengths, correctly allowing the all-zero input operand.
+
+The large integer multiplication costs M_int(Theta(N(log N+log p))) bit work,
+with additional packing, extraction, and modular field arithmetic. For a
+prime field supporting a primitive 2N-th root, p>=2N+1; explicit N fixed-width
+field outputs require Omega(N log N) bits. This is an output-format bit lower
+bound, not a complex-arithmetic or word-RAM N log N operation lower bound.
+
+In particular, this does NOT imply an Omega(n log n) lower bound for multiplying
+two n-bit integers. In a transform reduction with N=Theta(n/log n) digits and
+Theta(log n)-bit field entries, the explicit transform output size is
+Theta(N log N)=Theta(n). Even computing that full transform does not exceed
+linear-in-n output size. A general integer-multiplication algorithm need not
+materialize that particular transform at all. The package cannot rule out
+O(n) integer multiplication or convert a transform-length bound into an
+input-bit-length bound without this parameter translation.
+
+"One multiplication" refers only to one GIANT convolution multiplication;
+phase generation, input/output scaling, and modular arithmetic contain many
+other multiplications. This deliberate control does not establish a one-gate
+DFT. Initial modular exponentiation/inversion also adds O(log p) modular
+multiplications in a straightforward implementation, so uniform variable-p
+phase setup is more precisely O(N+log p), not unconditionally O(N) when p may
+grow arbitrarily fast. Prime/root search and certification are separate input
+assumptions. These refinements strengthen the package's own cost warning.
+
+5. TEST COVERAGE AND MINOR HARDENING POINTS
+
+The static test inventory includes 126 basis-vector inputs for N=2..64,
+random signed field vectors through N=2048, direct-reference random cases,
+three additional primes plus the default prime, zero/constant vectors,
+exact block encoding enumeration, and finite-field rank sanity checks.
+The captured benchmark has five samples at each N=64,256,1024,4096,16384.
+It is internally consistent with the byte-cell thresholds 72 and 80 bits.
+The captured timings are educational Python comparisons and provide no
+asymptotic superiority, native-performance, or stability evidence.
+
+No correctness defect was found within the documented valid-prime,
+power-of-two, integer/Boolean input contract. Optional hardening:
+- Explicit tests for N=1, invalid root, unsupported root order and field
+  assumptions would improve boundary coverage.
+- block_digits accepts an empty sequence despite its error text saying
+  "nonzero signal length" and converts entries through int(), so floats
+  such as 0.5 are silently truncated. Validate the exact Boolean contract
+  if this becomes a user-facing API.
+- The final information-count test checks (w-1)*b<n+b; the sharper intended
+  minimal-capacity assertion is (w-1)*b<n. The current weaker assertion does
+  not invalidate the theorem but tests less than the accompanying comment.
+- audit.py's displayed sensitivity bounds use floating-point exponentiation.
+  They are illustrative numerical values; the exact symbolic inequality and
+  integer grid_count routine carry the rigorous statement.
+
+6. RECOMMENDED MERGE INTO THE RESEARCH PROGRAM
+
+Keep this package as a candidate-screening and cost-accounting appendix.
+Do not count it as an independent fast-FFT engine or combine its benchmark
+with sparse recurrence timings to claim a speedup.
+
+For every candidate first specify the input family and its actual dimension
+or entropy; then specify the exact arithmetic/bit/word/accuracy model. Apply
+the relevant width barrier only to a claimed information cut. Charge every
+remaining decoding, convolution, coefficient setup and output materialization
+operation. No rank or descriptor-length statement supplies that cost.
+
+The highest-value constructive next step remains the existing total-addition
+and construction audit for thin matrix multiplication. In parallel, the
+explicit fused primitive/transposed remainder is a legitimate target for a
+new jointly batched circuit. For a truly dense fresh complex FFT, demand an
+actual wide evaluator and a complete scalable operation recurrence. None of
+the newly uploaded global-bottleneck material supplies that evaluator yet.
+
+PRIMARY SOURCES CHECKED FOR THIS AUDIT
+
+AMD rocFFT Bluestein Design Document:
+https://rocm.docs.amd.com/projects/rocFFT/en/docs-6.3.0/design/bluestein.html
+
+Dumas, Fousse, Salvy, Simultaneous Modular Reduction and Kronecker
+Substitution for Small Finite Fields:
+https://arxiv.org/abs/0809.0063
+
+SOURCE PACKAGES
+
+fft_global_bottleneck_research_2026-10-09(2).zip
+The prior rectangular, cross-block, and fused-reconstruction reports are listed in SOURCE_INVENTORY.txt.

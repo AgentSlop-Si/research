@@ -1,0 +1,236 @@
+# A sharp 11-by-11 rank gate for the 32-point Fourier matrix
+
+Date: 2026-10-09.
+
+## Result and scope
+
+**Theorem.** Let `omega = exp(2 pi i / 32)` and `F32[r,c] = omega^(rc)` for `0 <= r,c < 32`. For every two 11-element subsets `R,C`,
+
+`rank_C F32[R,C] >= 5`.
+
+The lower bound is sharp. The proof is self-contained except for elementary linear algebra. Its small finite arithmetic certificate considers **63 vertices of six explicitly described rational polytopes**, rather than enumerating pairs of 11-element subsets. A separate exact recursion through only 617 dyadic difference profiles independently confirms the arithmetic maximum. Both checks are in `certify_gate.py`, written freshly for this task; no uploaded executable was run.
+
+This is a finite-size Fourier-submatrix result. It is not an all-input FFT speedup or an unrestricted circuit lower bound. Any architectural implication needs the separately proved reduction from that architecture to a rank-at-most-four 11-by-11 Fourier rectangle.
+
+## 1. Rank four would require a large moment in every Galois conjugate
+
+Put `A = F32[R,C]`, and for each odd `t` modulo 32 put
+
+`A_t[r,c] = omega^(t*r*c)`.
+
+The automorphisms `omega -> omega^t` of `Q(omega)` preserve which minors vanish. Consequently all `A_t` have exactly the same complex rank as `A`.
+
+For `G_t = A_t A_t*`, the trace is 121 because all 121 entries of `A_t` have modulus one. If `rank(A) <= 4`, the nonzero eigenvalues of the positive semidefinite `G_t` satisfy Cauchy-Schwarz:
+
+`tr(G_t^2) >= tr(G_t)^2 / rank(G_t) >= 121^2 / 4 = 3660.25`.
+
+This holds for every one of the 16 odd `t`, hence also for their average.
+
+## 2. That average is an integer depending only on dyadic differences
+
+For a set `R` define `x_i`, `0 <= i <= 4`, to be the number of ordered pairs `(r,r')` in `R x R` whose nonzero difference modulo 32 has 2-adic valuation `i`. Set `x_5 = 11`, counting the diagonal pairs. Define `y` the same way from `C`. Thus
+
+`sum_i x_i = sum_i y_i = 121`, and `x_5 = y_5 = 11`.
+
+The elementary root-of-unity identity
+
+`(1/16) sum_(t odd mod 32) omega^(t*k)`
+
+is 1 when `k = 0 mod 32`, is -1 when `k = 16 mod 32`, and is 0 otherwise. (Write `t=2u+1` and sum the geometric progression over `0 <= u < 16`.) Expanding `tr(G_t^2)` therefore gives
+
+`M(x,y) := (1/16) sum_t tr(G_t^2) = sum_(i,j=0)^5 x_i y_j K_(i,j)`,
+
+where
+
+- `K_(i,j) = 1` if `i+j >= 5`;
+- `K_(i,j) = -1` if `i+j = 4`;
+- `K_(i,j) = 0` if `i+j < 4`.
+
+Assigning the diagonal pairs valuation 5 is harmless: zero times any difference is zero modulo 32.
+
+## 3. Six elementary bounding polytopes
+
+Let `a <= 5` be the number of selected indices in the less populated parity class; the other class has `11-a` indices. The ordered odd differences number
+
+`x_0 = 2a(11-a)`.
+
+Splitting a parity class of size `n` into its two residue classes modulo 4 gives `2u(n-u)` ordered differences of valuation one. Each subclass has at most 8 indices. Its minimum is `16 max(0,n-8)`; its maximum is `2 floor(n^2/4)`. Summing the two parity classes gives the following bounds on `x_1`:
+
+| a | x_0 | lower bound L on x_1 | upper bound U on x_1 |
+|---|----:|--------------------:|--------------------:|
+| 0 | 0   | 48 | 60 |
+| 1 | 20  | 32 | 50 |
+| 2 | 36  | 16 | 42 |
+| 3 | 48  | 0  | 36 |
+| 4 | 56  | 0  | 32 |
+| 5 | 60  | 0  | 30 |
+
+Uniformly we also have
+
+`0 <= x_2 <= 36`, `0 <= x_3 <= 20`, `0 <= x_4 <= 10`.
+
+To see these bounds, a residue class modulo `2^i` of size `n` contributes at most `2 floor(n^2/4)` ordered differences of valuation `i`. Its capacity is `32 / 2^i`. The integer function `2 floor(n^2/4)` is convex, since its consecutive increments are `0,2,2,4,4,6,6,...`; moving occupancy into a fuller class cannot decrease the maximum. Thus fill classes to capacity:
+
+- for `i=2`, capacities 8 give `2 floor(8^2/4) + 2 floor(3^2/4) = 32+4 = 36`;
+- for `i=3`, capacities 4 give `8+8+4 = 20`;
+- for `i=4`, capacities 2 give five contributions of 2, totaling 10.
+
+Finally `x_1+x_2+x_3+x_4 = 110-x_0`.
+
+For each row of the table, let `P_(x_0)` be the real polytope specified by these four coordinate bounds and that one sum constraint, with `x_0` and `x_5=11` fixed. Every actual difference profile belongs to one of these six polytopes. The identical statement holds for `y`.
+
+## 4. The 63-vertex arithmetic certificate
+
+A vertex of a four-coordinate box intersected with one sum hyperplane has at least three coordinates at bounds. Otherwise two non-bound coordinates could be perturbed oppositely, so the point would not be extreme.
+
+Consequently all vertices are generated as follows:
+
+1. Pick the possibly non-bound coordinate `f` from `{1,2,3,4}`.
+2. Put each of the other three coordinates at either its lower or upper bound.
+3. Set coordinate `f` to `110-x_0` minus the other three.
+4. Keep it if within bounds, and remove duplicates.
+
+There are only 32 raw candidates per parity case. The six resulting vertex counts are `8,10,10,12,12,11`, totaling **63**.
+
+Because `M(x,y)` is linear in either variable with the other fixed, its maximum over any two compact polytopes is attained at a pair of vertices. Direct integer evaluation of those pairs gives this complete table of maxima, with rows and columns indexed by `x_0,y_0`:
+
+| x_0 / y_0 | 0 | 20 | 36 | 48 | 56 | 60 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0  | 3377 | 3361 | 3361 | 3377 | 3361 | 3361 |
+| 20 | 3361 | 3321 | 3321 | 3345 | 3321 | 3361 |
+| 36 | 3361 | 3321 | 3297 | 3345 | 3313 | 3361 |
+| 48 | 3377 | 3345 | 3345 | 3377 | 3345 | 3361 |
+| 56 | 3361 | 3321 | 3313 | 3345 | 3265 | 3321 |
+| 60 | 3361 | 3361 | 3361 | 3361 | 3321 | 3241 |
+
+This table, the preceding explicit vertex-generation rule, and the displayed bilinear formula form an integer arithmetic certificate. The accompanying dependency-free checker reproduces every entry. No numerical rank decisions, approximate eigenvalues, optimization solver, or unbounded search is used.
+
+In particular every actual pair satisfies
+
+`M(x,y) <= 3377 < 3660.25`.
+
+Together with Section 1 this contradicts rank at most four. Equivalently the final contradiction is the integer comparison
+
+`4 * 3377 = 13508 < 14641 = 121^2`.
+
+This proves the universal rank-at-least-five claim, including arbitrary mixed parity sets.
+
+## 5. Sharpness: an exact rank-five rectangle
+
+Take both row and column sets to be
+
+`R = C = {0,2,4,8,10,12,16,18,20,24,28}`.
+
+All indices are even. Writing `r=2u,c=2v` changes each entry to `omega^(4uv)`, an eighth-root Fourier entry. After removing repeated rows and columns the selected residues are
+
+`S = {0,1,2,4,5,6} mod 8`.
+
+Thus the original 11-by-11 block has the same rank as `F8[S,S]`. Its complement is `T={3,7}`. With `eta=exp(2 pi i/8)`,
+
+`F8[T,T] = eta * [[1,-1],[-1,1]]`,
+
+which has rank one.
+
+For a unitary matrix, complementary submatrices have the nullity identity
+
+`rank U[S,S] = |S| + |S| - 8 + rank U[T,T]`.
+
+This is the usual complementary-submatrix rank identity for an invertible matrix, applied to `U^-1=U*`; scalar normalization does not affect ranks. Therefore
+
+`rank F8[S,S] = 6+6-8+1 = 5`.
+
+The witness's difference profile is `(0,48,32,20,10,11)`, and its Galois-averaged second moment is exactly 3377. Thus the moment bound is also sharp.
+
+## 6. Independent exact profile cross-check
+
+Let `D(n,k)` be the set of all dyadic difference profiles of k-element subsets of `Z/nZ`, with diagonal count as final coordinate. Base cases are `D(1,0)={(0,)}`, `D(1,1)={(1,)}`. Splitting by parity gives the exact recursion
+
+`D(n,k) = union_(a+b=k) {(2ab, u+v): u in D(n/2,a), v in D(n/2,b)}`,
+
+where both `a,b <= n/2` and the addition after the first coordinate is coordinatewise.
+
+This is exact because every set splits into its even and odd parts, and conversely any two half-size sets lift independently into the two parity classes. It yields `|D(32,11)|=617`. Evaluating the same bilinear form on all 617 squared profile pairs independently returns maximum 3377, and checks that each profile lies in the six bounding polytopes. This is an additional consistency check; the much smaller vertex certificate already suffices.
+
+## 7. Relation to prior work and the FFT project
+
+The uploaded three-character lemma is sufficient for the F8 rank-three gate but by itself does not settle this F32 mixed-parity case. The new argument here adds a Galois-averaged Gram second moment and a tiny dyadic occupancy certificate.
+
+Relevant earlier literature includes Delvaux and Van Barel, “Rank-deficient submatrices of Fourier matrices,” Linear Algebra and its Applications 429 (2008), 1587–1605, DOI https://doi.org/10.1016/j.laa.2008.04.043. Its publisher abstract describes prime-power Fourier matrices and hierarchical low-rank block subdivisions; its results were not needed or silently assumed in this proof. We make no priority claim for either the technique or theorem.
+
+A reduction proving that a proposed two-stage scan/shuffle architecture would force an 11-by-11 Fourier rectangle of rank at most four can now use this exact gate. That eliminates only the architecture and permutation covered by the reduction. It does not eliminate all nonunitary multistage constructions, and it does not improve the asymptotic arithmetic cost of a fresh-input FFT.
+
+## 8. Application: all 120 unsigned bit-coordinate shuffles fail at N=32
+
+**Corollary.** Let `H1,H2` be 32-by-32 matrices whose strict prefix/suffix off-diagonal blocks all have rank at most one. Let `P[p(j),j]=1`, where
+
+`p_sigma(j) = sum_(t=0)^4 bit_(sigma(t))(j) 2^t`
+
+and `sigma` is any permutation of `{0,1,2,3,4}`. Then `H2 P H1` cannot be `F32` up to arbitrary independent endpoint row/column permutations and nonsingular endpoint diagonal scalings.
+
+This includes raw bidirectional sum-of-scans stages with arbitrary diagonal feedthrough, zero propagation weights, resets, and zero injection weights: only their cross-cut ranks are used. It does not cover shuffles that mix bits by XOR, add offsets, or permute the 32 coordinates in an arbitrary way, unless they happen to be one of the 120 listed maps.
+
+### The reset-safe product-quadrant inequality
+
+Let `A` be a prefix or suffix at the output cut, and `B` a prefix or suffix at the input cut. Write their complements as `Ac,Bc`. Expanding across the two cuts gives
+
+`(H2 P H1)[A,B]`
+
+`= H2[A,A] P[A,B] H1[B,B]`
+
+`+ H2[A,A] P[A,Bc] H1[Bc,B]`
+
+`+ H2[A,Ac] ( P[Ac,B] H1[B,B] + P[Ac,Bc] H1[Bc,B] )`.
+
+The three terms have ranks at most `q(A,B),1,1`, respectively, where `q(A,B)` counts permutation ones in that quadrant. Thus
+
+`rank (H2 P H1)[A,B] <= q(A,B)+2`.
+
+No scan coefficient is inverted and no nonvanishing assumption is used.
+
+### The earlier screen eliminates 115 of the 120 maps
+
+For any Fourier rectangle with dimensions `u,v`, its Frobenius norm squared is `uv` and its operator norm is at most `sqrt(32)`, so its rank is at least `ceil(uv/32)`.
+
+Write `q(k,l) = #{j < l : p(j) < k}`. Applying this rank bound and the quadrant inequality to the prefix/prefix and prefix/suffix rectangles gives the necessary condition
+
+`|q(k,l) - kl/32| <= 2` for every `0 <= k,l <= 32`.
+
+The direct exact-integer check `|32 q(k,l)-kl| <= 64` excludes 115 of the 120 coordinate-bit maps. The earlier discrepancy screen established this; the fresh independent checker `certify_bit_permutations.py` also enumerates all 120 maps and all 33-by-33 cut pairs by direct counting. It saves each map's maximum and an attaining cut in `bit_permutation_certificate.json`.
+
+### The new gate eliminates all five remaining maps
+
+The only maps passing that earlier necessary condition are:
+
+| sigma | maximum old discrepancy | q(11,21) | permutation ones in 11-by-11 top-right quadrant |
+|---|---:|---:|---:|
+| (3,4,2,1,0) | 31/16 | 9 | 2 |
+| (4,2,3,1,0) | 61/32 | 9 | 2 |
+| (4,3,1,2,0) | 61/32 | 9 | 2 |
+| (4,3,2,0,1) | 31/16 | 9 | 2 |
+| (4,3,2,1,0) | 57/32 | 9 | 2 |
+
+For each, use output prefix `A={0,...,10}` and input suffix `B={21,...,31}`. Both have size 11. Since `q(11,21)=9`, and the complete 11-row prefix has exactly 11 permutation ones, `q(A,B)=11-9=2`.
+
+The product-quadrant inequality would force this 11-by-11 block to have rank at most `2+2=4`. Arbitrary endpoint permutations select some 11 Fourier rows and some 11 Fourier columns; endpoint nonsingular diagonal scalings preserve rank. The theorem above instead requires rank at least 5. This contradiction excludes each remaining map.
+
+In particular five-bit reversal `sigma=(4,3,2,1,0)` is excluded even with arbitrary endpoint orderings. The earlier argument through a 21-by-21 block and complementary nullity is no longer needed for this application, since the cut `(11,21)` presents the forbidden 11-by-11 rectangle directly.
+
+**Claim boundary:** All 120 unsigned coordinate-bit permutations are excluded in this two-stage, cross-cut-rank-one model. Arbitrary 32-coordinate shuffles, three or more stages, broader primitives, and the fresh-input all-length FFT target remain open to other arguments.
+
+## 9. Smaller alternate arithmetic certificate
+
+The six parity cases can be relaxed into a single continuous polytope. For its first five coordinates require only
+
+- all coordinates nonnegative, and their sum is 110;
+- `x_0 <= 60`;
+- `x_0 + 2 x_1 <= 120`;
+- `x_2 <= 36`, `x_3 <= 20`, `x_4 <= 10`;
+- set `x_5=11`.
+
+The new combined inequality follows because the two parity populations `a,b` sum to 11 and have opposite parity:
+
+`x_1 <= 2 floor(a^2/4) + 2 floor(b^2/4) = (a^2+b^2-1)/2 = 60-x_0/2`.
+
+After eliminating `x_4` using the sum, the remaining polytope has only **22 vertices**. Enumerating every intersection of four active inequalities with exact rational elimination, then checking all 22 squared pairs, gives maximum **3425** for the same moment `M`. It is attained in this relaxation, for example, by the vector `(44,0,36,20,10,11)` paired with itself. That vector need not be a realizable difference profile.
+
+This looser maximum also suffices, since `4*3425=13700 <14641`. The short dependency-free `certify_single_polytope.py` reproduces the 22 vertices and maximum. The sharp 3377 proof and the independent 617-profile check remain available above; the alternate certificate gives the smallest finite check in this bundle.

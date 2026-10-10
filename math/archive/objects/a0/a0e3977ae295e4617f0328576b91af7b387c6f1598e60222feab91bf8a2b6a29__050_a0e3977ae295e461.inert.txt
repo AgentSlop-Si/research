@@ -1,0 +1,54 @@
+# Targeted prior-art check for the shrinking-error Fourier bounds
+
+9 October 2026. This is a focused primary-source check, not a priority certification or an independent correctness proof. It supplements the earlier fixed-error audit. Write L=log N, ell=loglog N, and measure error as rho ||x||_1/sqrt(N); replacing ||x||_1 by the signed component mass M changes only a factor at most sqrt(2).
+
+## Bottom line
+
+- I found no source in this search stating the exact first bound: all N outputs for arbitrary N and bounded/common-scale inputs, rho=O(ell/sqrt(L)), in uniform O(N) randomized word-RAM time with all preprocessing counted. This absence of a hit does not establish novelty.
+- The second bound, time O(N L/ell) and rho=O(ell^(3/2)/L), should **not** be presented as a generally superior shrinking-accuracy tradeoff. Standard sampling plus a pruned Fourier transform already gives the same error in O(N ell) arithmetic operations for power-of-two lengths, including explicit outputs. The finite-precision implementation is a short additional argument in the bounded/common-scale model; unrestricted lengths remain a separate question.
+- The potentially substantive first claim is the **linear-time, fully charged evaluation of the polylogarithmic empirical exponential sum**, not shrinking error by itself. The original empirical approximation and finite-alphabet/packing ideas remain established ingredients.
+
+## 1. The key comparator: sampled input plus pruned transform
+
+Woolfe, Liberty, Rokhlin, and Tygert, *A fast randomized algorithm for the approximation of matrices*, ACHA 25 (2008), §3.3, pp. 341–342, derive O(n log l) floating-point operations for any l selected DFT outputs. Their factorization uses n=l m; for N a power of two, round the requested count upward to a power-of-two divisor. Transposing the linear circuit supplies the sparse-input/all-output form with O(N log k) operations. This transposition/application is a deduction, rather than the Fourier approximation theorem stated in their paper. [Author PDF, §3.3](https://tygert.com/frand.pdf)
+
+Here is the resulting comparison calculation, using the same signed sampling step as v4. For failure N^(-c), k=Theta(L/rho^2) samples suffice by Hoeffding plus a union bound. Sampling after scanning the dense input costs O(N+polylog N) for the displayed parameters. Therefore:
+
+| Error factor rho | Sample count k | Sample + pruned evaluation | v4 evaluation |
+|---|---:|---:|---:|
+| ell/sqrt(L) | Theta(L^2/ell^2) | O(N ell) | O(N) |
+| ell^(3/2)/L | Theta(L^3/ell^3) | O(N ell) | O(N L/ell) |
+
+More generally, any fixed inverse-polylogarithmic rho gives polylogarithmic k and hence O(N ell) arithmetic cost on those lengths. Thus O(N) at the first rho saves an ell factor over this baseline; the second displayed point is slower by Theta(L/ell^2).
+
+**Word-RAM transfer (independent implementation argument, not a quotation from the paper).** A radix-two network with k initially nonzero positions has at most min(N,k 2^s) active wires at stage s, whose sum is O(N(1+log k)). Two O(N)-word arrays, active-index lists, and generation markers avoid clearing all N cells at every sparse stage. For the signed integer surrogate z=sum of k atoms, each exact intermediate magnitude is at most k. If twiddle and local rounding errors are at most e, the elementary recurrence E_(s+1)<=2 E_s+O((k+1)e) gives final error O(N(k+1)e). Choose e much smaller than rho k/N, for example e=Theta(rho/N^2). Generate all powers of one certified primitive N-th root by an O(N)-step rounded recurrence, using per-step and initial-root errors O(e/N). This requires b=O(log N+log(1/rho)) bits and polylogarithmic initial trig work. For either rho above, b=O(log N); fixed-precision products occupy O(1) words. Preprocessing and explicit output writes cost O(N), so the total remains O(N ell). The common scale M/(k sqrt(N)) can use the same charged output-scaling treatment as v4.
+
+This supports the same-model comparator for radix-two lengths. Its O(N) root setup is larger than v4's o(N) phase-table setup, but both are counted inside their respective total bounds. Zero-padding an arbitrary-length signal changes its DFT, so it does not by itself extend this comparator to every N.
+
+## 2. Shrinking accuracy does not remove the older ingredient precedents
+
+**Empirical approximation.** The approximate Carathéodory/Maurey method supports O(rho^(-2) log N) bounded-atom compression in infinity norm. Barman gives a constructive formulation and credits the earlier empirical method. Applying it to real and imaginary Fourier columns, with a concentration bound for high probability, is the standard deduction used here. It does not evaluate all coordinates quickly. [Barman, STOC 2015 / author preprint](https://arxiv.org/abs/1406.2296)
+
+**Finite-alphabet application.** Liberty and Zucker's Mailman method gives matrix-vector application in O(m n log|Sigma|/log(max(m,n))) after O(m n) preprocessing; the paper explicitly discusses tall, skinny matrices and the alphabet-size factor. A rho-quantized phasor alphabet has log|Sigma|=Theta(log(1/rho))=Theta(ell). With an N-by-k sampled matrix this gives application cost O(N k ell/L), plus the matrix's O(Nk) preprocessing. For the two k values, application alone is O(N L/ell) and O(N L^2/ell^2), respectively. These substitutions are deductions. Mailman is therefore a technique precedent, not a direct subsumption of v4's fully charged linear bound. [Liberty–Zucker, pp. 1–4](https://www.cs.yale.edu/homes/el327/papers/matrixVectorApp.pdf)
+
+The parameter-dependent alphabet matters: the fixed-accuracy observation that N-by-O(log N) matrices over a constant alphabet admit linear application cannot simply be repeated unchanged when rho shrinks.
+
+## 3. Closest absolute-error polynomial evaluation result
+
+Reif's *Approximate Complex Polynomial Evaluation in Near Constant Work Per Point*, SICOMP 28(6), 2059–2089 (1999), uses b=log(|P|/epsilon), where |P| is coefficient l1 mass. This is the relevant normalization: evaluating the unnormalized polynomial to epsilon=rho |P| corresponds to unitary Fourier error rho |P|/sqrt(N), and here b=Theta(ell).
+
+The general fixed-point-location result requires roughly m >= n log n/log^2 b evaluations for O(log^2 b) amortized work; special chirp points improve the amortized bound but retain an evaluation-count/setup restriction. Its O(n log b) DFT-related special cases impose restricted points or descending coefficient magnitudes. It does not state the arbitrary-input, n-input/n-output theorem here, and uses exact arithmetic rather than the required finite-word model. [Publisher abstract, full parameter statements](https://epubs.siam.org/doi/abs/10.1137/S0097539797324291?download=true&journalCode=smjcat)
+
+The publisher abstract and search-indexed author-paper passages were accessible. Direct opening of the author PDF failed, so this update does not claim a new full-text audit of Reif.
+
+## 4. Other relevant checks and exclusions
+
+- **Word-RAM numerical accuracy:** Cherniavskii, Gribanov, Malyshev, and Pardalos, *Delta-modular ILP Problems of Bounded Codimension, Discrepancy, and Convolution*, arXiv:2405.17001v3 (2025), Appendix §8, explicitly analyzes approximate DFTs in the word-RAM model. Lemma 17 bounds a radix-two implementation using rational numbers of O(log N+log(1/epsilon)+input-bit-size) bits; the surrounding construction accounts for approximate roots of unity. This is useful evidence that finite-precision FFT model details are real and tractable. It is an O(N log N)-type baseline, not the shrinking-error linear theorem. [Appendix §8](https://arxiv.org/html/2405.17001v3#S8)
+- **NUFFT:** Dutt–Rokhlin's original 1993 result gives O(N log N+N log(1/epsilon)) arithmetic operations for nonequispaced transforms. The headline theorem is not a linear-time all-output substitute. Combining gridding with a sparse-input pruned FFT may sharpen unrestricted-length comparisons, but that combination was not proved in this audit and should not be advertised as an established fully charged theorem. [Original paper abstract](https://epubs.siam.org/doi/10.1137/0914081)
+- **Sparse Fourier recovery:** Li–Nakos's infinity/l1 guarantee refers to the Fourier-domain tail, not input-domain total mass. Such theorems cannot be substituted for this error target by matching the norm names. [ICALP 2020 original paper](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ICALP.2020.77)
+
+## Recommended positioning
+
+State the first theorem precisely, with explicit all-output, input representation, failure, word operations, and counted preprocessing. Describe the second point as a further valid parameter choice of this evaluator, if the proof audit succeeds, rather than an automatically improved state-of-the-art time/error point. Compare against sampling plus pruning before comparing only against the full FFT. Isolate the structured, uniform exponential-sum evaluator as the candidate contribution, cite its standard components, and avoid a novelty/priority claim without a broader specialist review.
+
+Searches covered shrinking/low-precision full Fourier approximation, word-RAM transforms, lookup/Four-Russians Fourier evaluation, absolute-error complex multipoint evaluation, pruned/sparse-input FFTs, and NUFFT accuracy. Fixed-size hardware approximations, multiplication-count-only improvements, quantum transforms, and sparse-output recovery with different guarantees were not treated as exact matches.

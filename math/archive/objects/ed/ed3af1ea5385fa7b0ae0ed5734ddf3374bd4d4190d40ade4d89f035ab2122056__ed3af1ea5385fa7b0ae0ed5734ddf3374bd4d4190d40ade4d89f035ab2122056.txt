@@ -1,0 +1,256 @@
+"""Hero #0 Phase 14: transverse-rank Fourier/Green obstruction.
+
+Standalone exact modular witnesses for axis-polarized Green resolvent networks.
+No claim of a universal FFT improvement or a general FFT lower bound.
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Sequence
+from math import sqrt
+import random
+
+FIELD = 65537
+GENERATOR = 3
+
+
+def margulis_fiber_maps(t: int) -> list[list[int]]:
+    """Four Gabber--Galil maps on one fiber of size s=t*t."""
+    if t < 2:
+        raise ValueError("t>=2")
+    out=[]
+    for k in range(4):
+        a=[]
+        for x in range(t):
+            for y in range(t):
+                if k==0: xp,yp=(x+2*y)%t,y
+                elif k==1: xp,yp=(x+2*y+1)%t,y
+                elif k==2: xp,yp=x,(y+2*x)%t
+                else: xp,yp=x,(y+2*x+1)%t
+                a.append(xp*t+yp)
+        assert sorted(a)==list(range(t*t))
+        out.append(a)
+    return out
+
+
+def cycles(pi: Sequence[int]) -> list[list[int]]:
+    n=len(pi);seen=[False]*n;out=[]
+    for i in range(n):
+        if seen[i]:continue
+        a=[];j=i
+        while not seen[j]:
+            seen[j]=True;a.append(j);j=pi[j]
+        assert j==i
+        out.append(a)
+    return out
+
+
+@dataclass
+class Graph:
+    pi: list[int]
+    weights: list[int]
+    axis: str
+    copy: int
+    family: int
+
+
+def graphs_polarized(t: int, copies: int=5, q: int=FIELD) -> tuple[list[Graph],list[Graph]]:
+    """First layer preserves y, second layer preserves x. N=t**4."""
+    base=margulis_fiber_maps(t); s=t*t; n=s*s
+    def make(axis):
+        results=[]
+        for c in range(copies):
+            for k,perm in enumerate(base):
+                pi=[]
+                for x in range(s):
+                    for y in range(s):
+                        if axis=='y': xp,yp=perm[x],y
+                        else:xp,yp=x,perm[y]
+                        pi.append(xp*s+yp)
+                w=[(3+(i+17*c+11*k)%37)%q for i in range(n)]
+                for cyc in cycles(pi):
+                    prod=1
+                    for idx in cyc:prod=prod*w[idx]%q
+                    if prod==1:w[cyc[0]]=0 # preserves edge count? weight zero on rare singular cycle; avoid by adjustment
+                # Zero weights would remove an edge and invalidate the topological spectral guarantee.
+                # Choose alternate nonzero weight ensuring invertibility.
+                for cyc in cycles(pi):
+                    if w[cyc[0]]==0:
+                        w[cyc[0]]=2
+                        prod=1
+                        for idx in cyc:prod=prod*w[idx]%q
+                        if prod==1:w[cyc[0]]=3
+                    prod=1
+                    for idx in cyc:prod=prod*w[idx]%q
+                    assert prod!=1 and all(w[i]!=0 for i in cyc)
+                results.append(Graph(pi,w,axis,c,k))
+        return results
+    return make('y'),make('x')
+
+
+def green_apply(g: Graph, vec: list[int], q:int=FIELD) -> list[int]:
+    """Solve (I-P)y=x on each cycle, O(N), over GF(q)."""
+    n=len(g.pi)
+    if len(vec)!=n:raise ValueError("input length")
+    out=[0]*n
+    for cyc in cycles(g.pi):
+        prod=1;total=0
+        for idx in cyc:
+            total=(total+prod*vec[idx])%q
+            prod=prod*g.weights[idx]%q
+        if prod==1:raise ZeroDivisionError("singular cycle")
+        out[cyc[0]]=total*pow((1-prod)%q,-1,q)%q
+        for pos in range(len(cyc)-1,0,-1):
+            i=cyc[pos]
+            out[i]=(vec[i]+g.weights[i]*out[g.pi[i]])%q
+    return out
+
+
+def run_layer(graphs: list[Graph], vec: list[int], q:int=FIELD) -> list[int]:
+    n=len(vec);out=[0]*n
+    for g in graphs:
+        y=green_apply(g,vec,q)
+        for i in range(n):out[i]=(out[i]+y[i])%q
+    return out
+
+
+def run_network(layers: tuple[list[Graph],list[Graph]], vec: list[int], q:int=FIELD)->list[int]:
+    return run_layer(layers[1],run_layer(layers[0],vec,q),q)
+
+
+def root(n:int,q:int=FIELD)->int:
+    assert (q-1)%n==0
+    z=pow(GENERATOR,(q-1)//n,q)
+    assert pow(z,n,q)==1
+    # Exact primitive order test for power of two lengths only.
+    assert n>=2 and n&(n-1)==0 and pow(z,n//2,q)!=1
+    return z
+
+
+def fblock(n:int,x:int,yp:int,q:int=FIELD)->list[list[int]]:
+    """Transverse Fourier block: output x fixed, input y' fixed, rows y, columns x'."""
+    s=int(sqrt(n));assert s*s==n
+    z=root(n,q)
+    return [[pow(z,(x*s+y)*(xp*s+yp),q) for xp in range(s)] for y in range(s)]
+
+
+def network_block(layers:tuple[list[Graph],list[Graph]],s:int,x:int,yp:int,q:int=FIELD)->list[list[int]]:
+    """Independent exact whole-network evaluation on s basis inputs."""
+    n=s*s
+    B=[[0]*s for _ in range(s)]
+    for xp in range(s):
+        vec=[0]*n;vec[xp*s+yp]=1
+        y=run_network(layers,vec,q)
+        for yi in range(s):B[yi][xp]=y[x*s+yi]
+    return B
+
+
+def rank_mod(a:list[list[int]],q:int=FIELD)->int:
+    b=[r[:] for r in a];nr=len(b);nc=len(b[0]) if nr else 0;r=0
+    for c in range(nc):
+        pivot=next((j for j in range(r,nr) if b[j][c]%q!=0),None)
+        if pivot is None:continue
+        b[pivot],b[r]=b[r],b[pivot]
+        inv=pow(b[r][c]%q,-1,q)
+        for k in range(c,nc):b[r][k]=b[r][k]*inv%q
+        for j in range(r+1,nr):
+            k=b[j][c]
+            if k:
+                for h in range(c,nc):b[j][h]=(b[j][h]-k*b[r][h])%q
+        r+=1
+        if r==nr:break
+    return r
+
+
+def cut_budget(graphs: list[Graph],R:set[int])->int:
+    return sum(sum(1 for i in R if g.pi[i] not in R and g.weights[i]!=0) for g in graphs)
+
+
+def prefix_gate(layers:tuple[list[Graph],list[Graph]]) -> dict:
+    gs=layers[0]+layers[1];n=len(gs[0].pi)
+    # O(number of edges + N) for forward and reverse capacities.
+    du=[0]*(n+2);dv=[0]*(n+2)
+    for g in gs:
+        for i,j in enumerate(g.pi):
+            if g.weights[i]==0:continue
+            if i<j:
+                du[i+1]+=1;du[j+1]-=1
+            elif j<i:
+                dv[j+1]+=1;dv[i+1]-=1
+    cu=cv=0;minimum=10**9;failed=[]
+    for m in range(1,n):
+        cu+=du[m];cv+=dv[m]
+        diff=min(cu,cv)-min(m,n-m)
+        minimum=min(minimum,diff)
+        if diff<0:failed.append(m)
+    return dict(N=n,min_slack=minimum,failed_prefixes=failed)
+
+
+def graph_gap_lower_bound(copies:int=5)->float:
+    # Cartesian product of two copy*Margulis fiber Laplacians;
+    # Laplacian gap >= copy*(4 - 5*sqrt(2)/2).
+    return copies*(4-5*sqrt(2)/2)
+
+
+def graph_gap_numeric(t:int,copies:int=5)->float:
+    """Independent finite-size eigvalsh check, for a single Margulis fiber."""
+    import numpy as np
+    maps=margulis_fiber_maps(t);s=t*t
+    L=np.zeros((s,s),float)
+    for _ in range(copies):
+        for pi in maps:
+            for i,j in enumerate(pi):
+                L[i,i]+=1
+                L[i,j]-=0.5
+                L[j,i]-=0.5
+                L[j,j]+=0 # symmetric form (correct diag already +1 for directed edge i)
+    vals=np.linalg.eigvalsh(L)
+    # Laplacian sum (I-P+ I-P^T)/2 for each permutation
+    return float(vals[1])
+
+
+def transverse_error_bound(s:int,paths:int=1):
+    return (max(0.,1.-paths/s))**0.5
+
+
+def modular_dft(vec:list[int],q:int=FIELD)->list[int]:
+    n=len(vec);w=root(n,q)
+    return [sum(vec[j]*pow(w,i*j,q) for j in range(n))%q for i in range(n)]
+
+
+if __name__=='__main__':
+    import json
+    for t in [2,4,8]:
+        layers=graphs_polarized(t)
+        p=prefix_gate(layers)
+        print(json.dumps({'t':t,'s':t*t,'N':t**4,'resolvents':sum(map(len,layers)),
+                          'gap_bound':graph_gap_lower_bound(),**p}))
+        if t==2:
+            A=network_block(layers,4,0,1)
+            F=fblock(16,0,1)
+            print('transverse ranks:',rank_mod(A),rank_mod(F))
+
+
+def graphs_mixed_original(side:int=4,copies:int=3,q:int=FIELD) -> tuple[list[Graph],list[Graph]]:
+    """Reproduce Phase 13's MIXED-axis stage arrangement; not polarized.
+
+    The four affine permutations are defined on the whole side-by-side grid.
+    Each stage contains resolvents of both orientations when copies=3.
+    """
+    base=margulis_fiber_maps(side)
+    n=side*side;allgraphs=[]
+    for c in range(copies):
+        for j,pi in enumerate(base):
+            w=[(3+(i+17*c+11*j)%37)%q for i in range(n)]
+            for cyc in cycles(pi):
+                prod=1
+                for k in cyc:prod=prod*w[k]%q
+                if prod==1:
+                    for candidate in [2,3,5,7,11,13,17]:
+                        w[cyc[0]]=candidate
+                        p=1
+                        for k in cyc:p=p*w[k]%q
+                        if p!=1:break
+                    assert p!=1
+            allgraphs.append(Graph(pi[:],w,'mixed',c,j))
+    k=len(allgraphs)//2
+    return allgraphs[:k],allgraphs[k:]

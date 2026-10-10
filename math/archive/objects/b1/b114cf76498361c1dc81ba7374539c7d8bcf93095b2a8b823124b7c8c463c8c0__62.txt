@@ -1,0 +1,166 @@
+   1 """Sparse Fourier decomposition to combine adaptive FFT reuse with a fast DFT oracle.
+   2 
+   3 Algebraically exact (for exact arithmetic), power-of-two length N:
+   4   N = b * m,  k = number of nonzero edits, b = power-of-two >= k.
+   5   T_r[q] = sum_t delta[r+b*t] * omega_m**(t*q).
+   6   C[q,r] = T_r[q] * omega_N**(r*q).
+   7   output[q + m*l] = DFT_b(C[q,:])[l].
+   8 
+   9 Total charged work: O(N + (N/b)*k + (N/b)*DFT_COST(b)).
+  10 With b>=k: O(N + (N/b)*DFT_COST(b)).
+  11 
+  12 With a hypothetical/uniform exact DFT backend that implements OpenAI #130's
+  13 claimed O(b * (log b)^(1-delta)) bound in its specific arithmetic model,
+  14 this is O(N [1 + (log(k+2))^(1-delta)]). This module does NOT implement
+  15 OpenAI #130. It uses floating-point FFT backends to check the decomposition.
+  16 """
+  17 from __future__ import annotations
+  18 from dataclasses import dataclass
+  19 from typing import Callable, Iterable, Sequence
+  20 import math
+  21 import numpy as np
+  22 
+  23 try:
+  24     from scipy import fft as sp_fft
+  25 except ImportError:
+  26     sp_fft = None
+  27 
+  28 
+  29 @dataclass(frozen=True)
+  30 class SparsePlan:
+  31     n: int
+  32     k: int
+  33     b: int
+  34     m: int
+  35     rows_transformed: int
+  36     classical_full_butterflies: int
+  37     classical_inner_butterflies: int
+  38     sparse_phase_terms: int
+  39 
+  40 
+  41 def _validate_n(n: int) -> int:
+  42     n = int(n)
+  43     if n < 1 or n & (n-1):
+  44         raise ValueError('n must be a positive power of two')
+  45     return n
+  46 
+  47 
+  48 def normalize_changes(n: int, changes: Iterable[tuple[int, complex]]) -> dict[int, complex]:
+  49     """Aggregate duplicate edits; discard exact-zero coefficients."""
+  50     n = _validate_n(n)
+  51     merged: dict[int, complex] = {}
+  52     for j, value in changes:
+  53         if not isinstance(j, (int, np.integer)) or not 0 <= j < n:
+  54             raise ValueError(f'index {j!r} outside [0,{n})')
+  55         v = complex(value)
+  56         if not (math.isfinite(v.real) and math.isfinite(v.imag)):
+  57             raise ValueError('edits must be finite')
+  58         merged[int(j)] = merged.get(int(j), 0j) + v
+  59     return {j:v for j,v in merged.items() if v != 0j}
+  60 
+  61 
+  62 def sparse_plan(n: int, changes: Iterable[tuple[int, complex]]) -> SparsePlan:
+  63     n = _validate_n(n)
+  64     d = normalize_changes(n, changes)
+  65     k = len(d)
+  66     b = 1 << (max(1, k)-1).bit_length()
+  67     m = n // b
+  68     logn = n.bit_length()-1
+  69     logb = b.bit_length()-1
+  70     return SparsePlan(n, k, b, m, m, n*logn//2, n*logb//2, m*k)
+  71 
+  72 
+  73 def sparse_dft(
+  74     n: int,
+  75     changes: Iterable[tuple[int, complex]],
+  76     *,
+  77     backend: str = 'scipy',
+  78     small_transform_1d: Callable[[np.ndarray], Sequence[complex]] | None = None,
+  79     return_plan: bool = False,
+  80 ):
+  81     """Calculate all N bins from k explicit nonzero input coefficients.
+  82 
+  83     A future exact scalar DFT routine for length b can be supplied through
+  84     small_transform_1d. The existing SciPy and NumPy backends are numerical,
+  85     NOT the proposed #130 exact DFT algorithm.
+  86 
+  87     The nonzero-edit data, including locations, are part of the input. The
+  88     2-D intermediate array and all N output coefficients are materialized.
+  89     """
+  90     n = _validate_n(n)
+  91     edit = normalize_changes(n, changes)
+  92     plan = sparse_plan(n, edit.items())
+  93     k, b, m = plan.k, plan.b, plan.m
+  94     if not k:
+  95         ans = np.zeros(n, dtype=np.complex128)
+  96         return (ans, plan) if return_plan else ans
+  97 
+  98     # One column per residue modulo b; only k nonzero coefficients feed it.
+  99     # O(m*k) arithmetic for all nonzero terms, at most O(N) because b >= k.
+ 100     q = np.arange(m, dtype=np.float64)
+ 101     intermediate = np.zeros((m,b), dtype=np.complex128)
+ 102     active_residues = set()
+ 103     for j, value in edit.items():
+ 104         r, t = j % b, j // b
+ 105         intermediate[:,r] += value * np.exp((-2j*np.pi * t / m) * q)
+ 106         active_residues.add(r)
+ 107 
+ 108     # The global Nth-root twiddle. O(m*number_of_active_residues) <= O(N).
+ 109     for r in active_residues:
+ 110         intermediate[:,r] *= np.exp((-2j*np.pi * r / n) * q)
+ 111 
+ 112     # m independent DFT_b operations. Replaceable by OpenAI #130 oracle if
+ 113     # one becomes available; the shipped backend runs ordinary native FFTs.
+ 114     if small_transform_1d is not None:
+ 115         freq = np.empty((m,b),dtype=np.complex128)
+ 116         for j in range(m):
+ 117             row = np.asarray(small_transform_1d(intermediate[j,:]))
+ 118             if row.shape != (b,):
+ 119                 raise ValueError('small transform returned incorrect shape')
+ 120             freq[j] = row
+ 121     elif backend == 'scipy' and sp_fft is not None:
+ 122         freq = sp_fft.fft(intermediate, axis=1)
+ 123     elif backend in ('scipy','numpy'):
+ 124         freq = np.fft.fft(intermediate, axis=1)
+ 125     else:
+ 126         raise ValueError('backend must be scipy or numpy')
+ 127 
+ 128     # Our row/column formula generates y[q+m*l].
+ 129     ans = np.asarray(freq.T.reshape(n), dtype=np.complex128)
+ 130     return (ans, plan) if return_plan else ans
+ 131 
+ 132 
+ 133 def update_spectrum(
+ 134     cached_spectrum: Sequence[complex],
+ 135     changes: Iterable[tuple[int, complex]],
+ 136     **kwargs,
+ 137 ):
+ 138     """Reuse F(x), computing F(x+delta) with sparse delta coordinates."""
+ 139     cached = np.asarray(cached_spectrum, dtype=np.complex128)
+ 140     if cached.ndim != 1:
+ 141         raise ValueError('cached spectrum must be 1-D')
+ 142     edit = list(changes)
+ 143     delta, plan = sparse_dft(cached.size, edit, return_plan=True, **kwargs)
+ 144     ans = cached + delta
+ 145     return ans, plan
+ 146 
+ 147 
+ 148 def low_rank_plus_sparse(
+ 149     basis_spectra: np.ndarray,
+ 150     coefficients: Sequence[complex],
+ 151     changes: Iterable[tuple[int, complex]],
+ 152     **kwargs,
+ 153 ):
+ 154     """Known B*c + k-sparse residual, with stored basis spectra F(B).
+ 155 
+ 156     Output is dense. Relation discovery and basis preprocessing are external.
+ 157     """
+ 158     basis = np.asarray(basis_spectra, dtype=np.complex128)
+ 159     c = np.asarray(coefficients, dtype=np.complex128)
+ 160     if basis.ndim != 2 or c.ndim != 1 or basis.shape[0] != c.shape[0]:
+ 161         raise ValueError('basis spectra must have shape (r,n) and coefficients (r,)')
+ 162     if not _validate_n(basis.shape[1]):
+ 163         raise ValueError('bad length')
+ 164     result = np.einsum('r,rn->n', c, basis)
+ 165     residual, plan = sparse_dft(basis.shape[1], changes, return_plan=True, **kwargs)
+ 166     return result + residual, plan

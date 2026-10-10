@@ -1,0 +1,198 @@
+   1	"""Independent checkpoint audit; reads uploaded JSON/text only, imports no upload.
+   2	All algorithmic code here is authored for this audit from the mathematical specification.
+   3	"""
+   4	from pathlib import Path
+   5	from fractions import Fraction as F
+   6	import math, cmath, random, hashlib, json, itertools, argparse
+   7	ROOT=None
+   8	OUT=Path(__file__).resolve().parent
+   9	
+  10	def rnd(n,d):
+  11	    q,r=divmod(abs(n),d)
+  12	    v=q+(2*r>=d)
+  13	    return -v if n<0 else v
+  14	
+  15	def atan_interval(q,precision):
+  16	    s=F(0); n=0
+  17	    while True:
+  18	        t=F(1,(2*n+1)*q**(2*n+1))
+  19	        if t<F(1,2**precision):
+  20	            z=s+(-t if n%2 else t)
+  21	            return min(s,z),max(s,z)
+  22	        s += (-t if n%2 else t); n+=1
+  23	
+  24	a,b=atan_interval(5,300); c,d=atan_interval(239,300)
+  25	PI_LO,PI_HI=16*a-4*d,16*b-4*c
+  26	assert 3<PI_LO<PI_HI<F(22,7)
+  27	
+  28	def fixed_pi(P):
+  29	    u=(128*(P+1)**2).bit_length(); scale=1<<(P+u)
+  30	    parts=[]
+  31	    for q in (5,239):
+  32	        total=0;n=0
+  33	        while True:
+  34	            term=scale//((2*n+1)*q**(2*n+1))
+  35	            if not term:break
+  36	            total+=(-term if n%2 else term);n+=1
+  37	        parts.append(total)
+  38	    p=rnd(16*parts[0]-4*parts[1],1<<u)
+  39	    assert max(abs(F(p,1<<P)-PI_LO),abs(F(p,1<<P)-PI_HI))<F(1,1<<P)
+  40	    return p
+  41	
+  42	def grid(Q,bits,certify=False):
+  43	    deg=next(k for k in range(1,1000) if F(4**(k+1),math.factorial(k+1))<=F(1,2**(bits+4)))
+  44	    P=bits+(256*(deg+1)).bit_length()+4;S=1<<P;p=fixed_pi(P); result=[]; worst=F(0)
+  45	    for a in range(Q):
+  46	        a=a-Q if 2*a>Q else a
+  47	        theta=rnd(2*p*a,Q); re,im=S,0; sr,si=S,0
+  48	        exact_re,exact_im=F(1),F(0); er,ei=F(1),F(0)
+  49	        for k in range(1,deg+1):
+  50	            re,im=rnd(-im*theta,S*k),rnd(re*theta,S*k)
+  51	            sr+=re;si+=im
+  52	            if certify:
+  53	                er,ei=-ei*theta/F(S*k),er*theta/F(S*k)
+  54	                exact_re+=er;exact_im+=ei
+  55	        if certify:
+  56	            rounding=abs(F(sr,S)-exact_re)+abs(F(si,S)-exact_im)
+  57	            phase=max(abs(F(theta,S)-2*a*PI_LO/Q),abs(F(theta,S)-2*a*PI_HI/Q))
+  58	            remainder=F(4**(deg+1),math.factorial(deg+1))
+  59	            total=rounding+phase+remainder
+  60	            assert total<F(1,1<<bits),(bits,Q,a,float(total))
+  61	            worst=max(worst,total)
+  62	        result.append((sr,si))
+  63	    return result,S,{'bits':bits,'Q':Q,'degree':deg,'precision':P,'max_exact_certificate':float(worst),'bound':2.**(-bits)}
+  64	
+  65	def packed_case(n,K,B,Q0,Q1,g,H,w,seed):
+  66	    rng=random.Random(seed); G=K//g;r=(2*H*G).bit_length(); ell=w//r
+  67	    assert ell>0
+  68	    ph,S,_=grid(Q1,24);D=Q0*Q1
+  69	    table=[]; scalars=[]
+  70	    for ds in itertools.product(range(D),repeat=g):
+  71	        # Product order differs from numeric key order: assign explicitly below.
+  72	        key=sum(desc*D**pos for pos,desc in enumerate(ds))
+  73	        lanes=[]
+  74	        for t in range(B):
+  75	            vals=[ph[((desc%Q0)*(Q1//Q0)+t*(desc//Q0))%Q1] for desc in ds]
+  76	            lanes.append(tuple(max(-H,min(H,rnd(H*sum(x[c] for x in vals),g*S))) for c in (0,1)))
+  77	        packed=[[],[]]
+  78	        for c in (0,1):
+  79	            for a in range(0,B,ell):
+  80	                packed[c].append(sum((lanes[t][c]+H) << (r*(t-a)) for t in range(a,min(B,a+ell))))
+  81	        while len(table)<=key:table.append(None);scalars.append(None)
+  82	        table[key]=packed;scalars[key]=lanes
+  83	    assert len(table)==D**g and all(v is not None for v in table)
+  84	    rows=len(table); nchecks=0;max_error=0.;maxword=0
+  85	    for mode in range(7):
+  86	        samples=[(rng.randrange(n),rng.randrange(4)) for _ in range(K)]
+  87	        if mode==0:samples=[(n-1,3)]*K
+  88	        if mode==1:samples=[(0,k%4) for k in range(K)]
+  89	        if mode==2:samples=[(n//2,2*(k%2)) for k in range(K)]
+  90	        outputs=[]
+  91	        for m0 in range(0,n,B):
+  92	            keys=[]
+  93	            for a in range(0,K,g):
+  94	                ds=[]
+  95	                for j,sgn in samples[a:a+g]:
+  96	                    start=(sgn*(Q0//4)-rnd(Q0*(j*m0%n),n))%Q0
+  97	                    slope=(-rnd(Q1*j,n))%Q1
+  98	                    ds.append(start+Q0*slope)
+  99	                keys.append(sum(v*D**p for p,v in enumerate(ds)))
+ 100	            total=[[0]*len(table[0][0]) for _ in (0,1)]
+ 101	            for key in keys:
+ 102	                for c in (0,1):
+ 103	                    for z in range(len(total[c])):
+ 104	                        total[c][z]+=table[key][c][z]
+ 105	                        assert total[c][z]<1<<w
+ 106	                        maxword=max(maxword,total[c][z].bit_length())
+ 107	            for t in range(min(B,n-m0)):
+ 108	                coord=[]
+ 109	                for c in (0,1):
+ 110	                    z,lane=divmod(t,ell)
+ 111	                    val=((total[c][z]>>(r*lane))% (1<<r))-G*H
+ 112	                    assert val==sum(scalars[key][t][c] for key in keys)
+ 113	                    coord.append(val/(G*H))
+ 114	                outputs.append(complex(*coord))
+ 115	        target=[sum((1j)**sgn*cmath.exp(-2j*math.pi*j*m/n) for j,sgn in samples)/K for m in range(n)]
+ 116	        error=max(abs(x-y) for x,y in zip(outputs,target));max_error=max(max_error,error)
+ 117	        bound=math.pi/Q0+math.pi*(B-1)/Q1+2**-24+math.sqrt(2)/(2*H)
+ 118	        assert error<=bound+1e-11
+ 119	        nchecks+=n
+ 120	    return {'N':n,'K':K,'B':B,'g':g,'table_rows':rows,'word_bits':w,'max_packed_bits':maxword,'words_per_row':len(table[0][0]),'outputs':nchecks,'max_error':max_error,'bound':bound}
+ 121	
+ 122	def metadata():
+ 123	    manifest=json.loads((ROOT/'MANIFEST.json').read_text())['files'];mismatch=[]
+ 124	    for p,hash_ in manifest.items():
+ 125	        if hashlib.sha256((ROOT/p).read_bytes()).hexdigest()!=hash_:mismatch.append(p)
+ 126	    assert not mismatch
+ 127	    validation=json.loads((ROOT/'VALIDATION.json').read_text())
+ 128	    for v in validation['audits']:
+ 129	        assert hashlib.sha256((ROOT/v['result']).read_bytes()).hexdigest()==v['sha256']
+ 130	        assert json.loads((ROOT/v['result']).read_text())['status']=='PASS'
+ 131	    source_checks=[]
+ 132	    for path in ROOT.rglob('*.json'):
+ 133	        if 'materials' in path.parts:continue
+ 134	        obj=json.loads(path.read_text())
+ 135	        if not isinstance(obj,dict):continue
+ 136	        for tag,val in obj.items():
+ 137	            if isinstance(val,dict) and ('sha256' in tag or tag=='source_hashes'):
+ 138	                for ref,expected in val.items():
+ 139	                    candidates=[path.parent/ref,ROOT/ref]
+ 140	                    for candidate in candidates:
+ 141	                        if candidate.is_file():
+ 142	                            assert hashlib.sha256(candidate.read_bytes()).hexdigest()==expected,(path,ref)
+ 143	                            source_checks.append([str(path.relative_to(ROOT)),ref]);break
+ 144	        for tag,target in [('reviewed_source_sha256','fft_wordram_decoder_research/guarded_decoder.py'),('reviewed_sampler_sha256','fft_wordram_integration/sampling.py')]:
+ 145	            if tag in obj and path.parent.name=='fft_wordram_review_research':
+ 146	                assert hashlib.sha256((ROOT/target).read_bytes()).hexdigest()==obj[tag];source_checks.append([str(path.relative_to(ROOT)),target])
+ 147	    for src,result,field in [
+ 148	        ('fft_wordram_decoder_research/guarded_decoder.py','fft_wordram_decoder_research/results.json','source_sha256'),
+ 149	        ('fft_bidirectional_graph_research/affine_cycle.py','fft_bidirectional_graph_research/results.json','source_sha256'),
+ 150	        ('fft_bidirectional_graph_research/affine_cycle.py','fft_bidirectional_graph_research/independent_results.json','source_sha256'),
+ 151	        ('fft_bidirectional_graph_research/run_audit.py','fft_bidirectional_graph_research/independent_results.json','author_audit_sha256')]:
+ 152	        expected=json.loads((ROOT/result).read_text())[field]
+ 153	        assert hashlib.sha256((ROOT/src).read_bytes()).hexdigest()==expected
+ 154	        source_checks.append([result,src])
+ 155	    assert len(source_checks)==validation['matched_source_hash_checks']==17
+ 156	    assert sorted({src for result,src in source_checks}) != []
+ 157	    integ=json.loads((ROOT/'fft_wordram_integration/results.json').read_text())
+ 158	    assert len(integ['records'])==24 and sum(r['N'] for r in integ['records'])==10760
+ 159	    assert max(r['total_error_over_mass'] for r in integ['records'])==integ['max_observed_total_error_over_mass']
+ 160	    for r in integ['records']:
+ 161	        assert r['total_error_over_mass']<=r['sampling_error_over_mass']+r['decoder_error_over_mass']+1e-12
+ 162	        assert r['decoder_error_over_mass']<=r['decoder_error_bound']
+ 163	        p=r['parameters']; assert p['materialized_table_rows']==p['possible_table_rows']==16384
+ 164	    return {'manifest_files':len(manifest),'validation_result_hashes':len(validation['audits']),'additional_source_hash_bindings':len(source_checks),'integration_records_consistent':24}
+ 165	
+ 166	def sampler_checks():
+ 167	    cases=0;ticket_cases=0
+ 168	    # Exhaustive exact probability of each accepted ticket, with finite rejection cap.
+ 169	    for L in range(1,65):
+ 170	        b=(L-1).bit_length();universe=1<<b
+ 171	        for cap in range(1,7):
+ 172	            p=sum((F(universe-L,universe))**r/F(universe) for r in range(cap))
+ 173	            success=1-F(universe-L,universe)**cap
+ 174	            assert p*L==success
+ 175	            assert 1-success <= F(1,2**cap)
+ 176	            ticket_cases+=1
+ 177	    for n,a,delta,g in itertools.product((1,3,64,257,1<<40),(F(1,2),F(1,7)),(F(1,3),F(1,1<<50)),(1,3,17)):
+ 178	        z=F(4*n)/delta;upper=(z.numerator+z.denominator-1)//z.denominator
+ 179	        lg=(upper-1).bit_length(); t=4*lg/a**2;k=(t.numerator+t.denominator-1)//t.denominator;k=((k+g-1)//g)*g
+ 180	        assert k*a*a>=4*lg and k%g==0;cases+=1
+ 181	    return {'finite_cap_uniformity_certificates':ticket_cases,'rational_sample_budget_checks':cases}
+ 182	
+ 183	def main():
+ 184	    global ROOT
+ 185	    parser=argparse.ArgumentParser(description=__doc__)
+ 186	    parser.add_argument('--source',type=Path,help='Optional original checkpoint directory for read-only manifest/result-provenance checks. No code is imported.')
+ 187	    args=parser.parse_args(); ROOT=args.source
+ 188	    report={'scope':'Independently authored specification checks. Uploaded programs are never imported or executed.','sampler':sampler_checks()}
+ 189	    if ROOT is not None: report['metadata']=metadata()
+ 190	    report['trig']=[grid(64,b,True)[2] for b in (8,16,24,40,64)]
+ 191	    report['full_tables']=[packed_case(*p) for p in [
+ 192	        (29,42,4,32,128,1,64,64,3101),
+ 193	        (37,40,2,8,16,2,32,64,3102),
+ 194	        (73,202,40,4,4,2,64,64,3103),
+ 195	        (1,8,1,4,4,2,32,64,3104),
+ 196	    ]]
+ 197	    report['status']='PASS';(OUT/'independent_checks_latest.json').write_text(json.dumps(report,indent=2)+'\n'); print(json.dumps(report,indent=2))
+ 198	if __name__=='__main__':main()

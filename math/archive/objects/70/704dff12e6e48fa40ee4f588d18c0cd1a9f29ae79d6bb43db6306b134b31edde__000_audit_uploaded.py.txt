@@ -1,0 +1,46 @@
+"""Preserve and audit the supplied Phase 9 archive in a temporary directory."""
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+from zipfile import ZipFile
+
+
+def main():
+    archive=Path('inputs/fft_phase9_compiler_research.zip')
+    output=Path('results'); output.mkdir(exist_ok=True)
+    results=dict(archive=str(archive),sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+                 supplied_filename='fft_phase9_compiler_research(1).zip',
+                 numba_available=importlib.util.find_spec('numba') is not None,
+                 original_source_modified=False,checks=[])
+    with tempfile.TemporaryDirectory(prefix='phase10-input-audit-') as tmp:
+        root=Path(tmp)
+        with ZipFile(archive) as z:
+            for member in z.infolist():
+                if not (root/member.filename).resolve().is_relative_to(root.resolve()):
+                    raise ValueError('unsafe archive path')
+            z.extractall(root)
+        cwd=root/'fft_phase9_compiler'
+        for tag,cmd in (('compiler_tests',[sys.executable,'-m','unittest','discover','-s','tests','-v']),
+                        ('compiler_exact_audit',[sys.executable,'exact_modular_audit.py'])):
+            run=subprocess.run(cmd,cwd=cwd,capture_output=True,text=True)
+            text=run.stdout+run.stderr
+            (output/(tag+'.log')).write_text(text)
+            checks=dict(name=tag,returncode=run.returncode,log=tag+'.log')
+            if tag=='compiler_tests':
+                checks['passed_tests']=len(re.findall(r'^test_.* \.\.\. ok$',text,re.M))
+                checks['error_tests']=len(re.findall(r'^test_.* \.\.\. ERROR$',text,re.M))
+                checks['numba_missing_errors']=text.count("RuntimeError: numba is not installed. Use backend='python'.")
+                checks['interpretation']=('Two native-backend tests blocked by absent optional Numba dependency; '
+                                          'do not report the whole suite as passing.' if checks['numba_missing_errors']
+                                          else 'Inspect the recorded return code and full log.')
+            results['checks'].append(checks)
+    (output/'compiler_input_audit.json').write_text(json.dumps(results,indent=2)+'\n')
+    print(json.dumps(results,indent=2))
+
+
+if __name__=='__main__': main()

@@ -1,0 +1,474 @@
+
+===== SOURCE 4 e169e72f74158cec070404a92634aceed4feb78010419334fee004222caff6fc fft_materials_extension_20261009/fft_joint_decode_research/run_audit.py | 7135 bytes 135 lines =====
+   1 """Bounded exact audits of adaptive joint decoding and paid FFT baseline."""
+   2 import json
+   3 import random
+   4 from pathlib import Path
+   5 from adaptive_recurrence import (PrimeField,CyclotomicField,prepare_adaptive,
+   6     apply_adaptive,expected_online,Counted,denominator)
+   7 from fft_decoded_baseline import (prepare_baseline,apply_baseline,
+   8     expected_online as baseline_online,expected_preparation as baseline_preparation)
+   9 
+  10 
+  11 def evaluate(field,q,z):
+  12     out=field.zero
+  13     for a in reversed(q):
+  14         out=field.add(field.mul(out,z),a)
+  15     return out
+  16 
+  17 
+  18 def direct(field,roots,amplitudes,n):
+  19     return [sum_field(field,[field.mul(a,field.power(z,j))
+  20                             for a,z in zip(amplitudes,roots)]) for j in range(n)]
+  21 
+  22 
+  23 def sum_field(field,values):
+  24     out=field.zero
+  25     for a in values:
+  26         out=field.add(out,a)
+  27     return out
+  28 
+  29 
+  30 def audit_case(field,n,period,root,indices,name,label,rng,strides=None,basis=True):
+  31     roots=[field.power(root,i) for i in indices]
+  32     k=len(roots)
+  33     assert len(set(roots))==k and all(field.power(z,period)==field.one for z in roots)
+  34     plan=prepare_adaptive(field,n,roots,strides)
+  35     # Independent annihilator identity at every reciprocal support point.
+  36     for z in roots:
+  37         assert evaluate(field,plan.short_denominator,
+  38                         field.power(field.inv(z),plan.stride))==field.zero
+  39     l=max(2,1<<(k-1).bit_length())
+  40     assert period%(2*l)==0
+  41     eta=field.power(root,period//(2*l))
+  42     assert field.power(eta,2*l)==field.one and field.power(eta,l)==field.neg(field.one)
+  43     baseline=prepare_baseline(field,n,roots,eta)
+  44     assert baseline.preparation==baseline_preparation(k)
+  45     vectors=[]
+  46     if basis:
+  47         vectors=[[field.one if i==j else field.zero for i in range(k)] for j in range(k)]
+  48     vectors.extend([[field.integer(rng.randrange(-5,6)) for _ in range(k)],
+  49                     [field.zero]*k])
+  50     for amplitudes in vectors:
+  51         result,counts=apply_adaptive(field,plan,amplitudes)
+  52         expected=direct(field,roots,amplitudes,n)
+  53         other,basecounts=apply_baseline(field,baseline,amplitudes)
+  54         assert result==other==expected,(name,n,indices,label)
+  55         assert counts['field_operations']==expected_online(n,k,plan.initial_length,len(plan.taps))
+  56         assert basecounts['field_operations']==baseline_online(n,k)
+  57     # A stronger conventional comparator when the minimal Q is already sparse:
+  58     # discover only b=1, then use its ordinary tapped recurrence.
+  59     minimal=prepare_adaptive(field,n,roots,[1])
+  60     minimal_value,minimal_counts=apply_adaptive(field,minimal,vectors[-2])
+  61     assert minimal_value==apply_adaptive(field,plan,vectors[-2])[0]
+  62     return dict(field=name,n=n,period=period,support=indices,k=k,label=label,
+  63                 basis_vectors=k if basis else 0,mixed_vectors=2,
+  64                 selected_stride=plan.stride,distinct_powers=plan.degree,
+  65                 initial_length=plan.initial_length,taps=len(plan.taps),
+  66                 candidate_count=len(plan.candidates),candidate_ledger=plan.candidates,
+  67                 adaptive_preparation=plan.preparation,
+  68                 support_equality_tests=plan.support_equality_tests,
+  69                 coefficient_zero_tests=plan.coefficient_zero_tests,
+  70                 root_zero_tests=k,
+  71                 adaptive_online=counts['field_operations'],
+  72                 baseline_preparation=baseline.preparation,
+  73                 baseline_online=basecounts['field_operations'],
+  74                 minimal_recurrence_preparation=minimal.preparation,
+  75                 minimal_recurrence_online=minimal_counts['field_operations'],
+  76                 minimal_recurrence_cold=sum(minimal.preparation.values())+sum(minimal_counts['field_operations'].values()),
+  77                 baseline_fft_calls=basecounts['fft_calls'],
+  78                 adaptive_cold=sum(plan.preparation.values())+sum(counts['field_operations'].values()),
+  79                 baseline_cold=sum(baseline.preparation.values())+sum(basecounts['field_operations'].values()),
+  80                 full_output_writes=n,status='PASS')
+  81 
+  82 
+  83 def main():
+  84     rng=random.Random(20261010)
+  85     cases=[]
+  86     for prime in (65537,998244353):
+  87         field=PrimeField(prime)
+  88         for period in (8,16,32,64):
+  89             root=field.root(period)
+  90             for k in (1,2,min(3,period//2),min(5,period//2)):
+  91                 indices=rng.sample(range(period),k)
+  92                 cases.append(audit_case(field,period,period,root,indices,
+  93                                         f'F_{prime}','arbitrary support',rng))
+  94         period=4096;root=field.root(period)
+  95         examples=[('complete coset',[1+256*j for j in range(16)]),
+  96                   ('two partial fibers',[a+256*j for a in (1,3) for j in range(8)]),
+  97                   ('three partial fibers',[a+256*j for a in (1,3,5) for j in range(6)]),
+  98                   ('unstructured support',rng.sample(range(period),16))]
+  99         for label,indices in examples:
+ 100             cases.append(audit_case(field,period,period,root,indices,
+ 101                                     f'F_{prime}',label,rng,basis=False))
+ 102     # Odd common powers: the planner accepts explicit non-dyadic candidates.
+ 103     field=PrimeField(97);root=5
+ 104     assert pow(root,96,97)==1 and pow(root,48,97)!=1 and pow(root,32,97)!=1
+ 105     cases.append(audit_case(field,96,96,root,[1,33,5,37],
+ 106                             'F_97','stride three, incomplete fibers',rng,[1,2,3,4,6]))
+ 107     for period in (8,16):
+ 108         field=CyclotomicField(period);root=field.root()
+ 109         for indices in ([1,1+period//2],[0,1,period//2],list(range(0,period,2))):
+ 110             cases.append(audit_case(field,period,period,root,indices,
+ 111                                     f'Q(zeta_{period})','cyclotomic support',rng))
+ 112     # API and degree sanity checks, separate from the arithmetic counts.
+ 113     f=PrimeField(97)
+ 114     invalid=0
+ 115     for roots,strides in (([1,1],[1]),([0,1],[1]),([1,2],[0]),([1,2],[True]),([1,2],[1.5])):
+ 116         try:prepare_adaptive(f,8,roots,strides)
+ 117         except (ValueError,TypeError):invalid+=1
+ 118         else:raise AssertionError((roots,strides))
+ 119     result=dict(status='PASS',configurations=len(cases),
+ 120                 basis_vectors=sum(c['basis_vectors'] for c in cases),
+ 121                 mixed_vectors=sum(c['mixed_vectors'] for c in cases),invalid_input_controls=invalid,
+ 122                 full_output_coordinates=sum(c['n']*(c['basis_vectors']+c['mixed_vectors']) for c in cases),
+ 123                 scope='support-adaptive sparse annihilators; no uniform arbitrary-support improvement',
+ 124                 cases=cases)
+ 125     out=Path(__file__).parent/'results';out.mkdir(exist_ok=True)
+ 126     (out/'joint_decode_audit.json').write_text(json.dumps(result,indent=2)+'\n')
+ 127     print(json.dumps({k:v for k,v in result.items() if k!='cases'},indent=2))
+ 128     for row in cases:
+ 129         if row['field']=='F_65537' and row['n']==4096:
+ 130             print(json.dumps({k:row[k] for k in ('label','k','selected_stride','distinct_powers',
+ 131                 'initial_length','taps','adaptive_preparation','adaptive_online','baseline_preparation',
+ 132                 'baseline_online','adaptive_cold','minimal_recurrence_cold','baseline_cold')}))
+ 133 
+ 134 
+ 135 if __name__=='__main__':main()
+
+===== SOURCE 5 1e63fedf2c626c1eaab4b112a6b2aa6a5732d3575feed0969c0062bf768c23a9 fft_materials_extension_20261009/fft_joint_decode_research/run_hybrid_audit.py | 2302 bytes 52 lines =====
+   1 """Focused checks that discovery is paid on both fast and fallback paths."""
+   2 import json
+   3 import random
+   4 from pathlib import Path
+   5 from adaptive_recurrence import PrimeField
+   6 from hybrid import prepare_hybrid,apply_hybrid
+   7 
+   8 
+   9 def direct(field,roots,amplitudes,n):
+  10     out=[]
+  11     for j in range(n):
+  12         value=field.zero
+  13         for root,amplitude in zip(roots,amplitudes):
+  14             value=field.add(value,field.mul(amplitude,field.power(root,j)))
+  15         out.append(value)
+  16     return out
+  17 
+  18 
+  19 def main():
+  20     field=PrimeField(65537)
+  21     rng=random.Random(20261011)
+  22     cases=[]
+  23     for n,label,indices in (
+  24         (4096,'two partial fibers',[a+256*j for a in (1,3) for j in range(8)]),
+  25         (1024,'unstructured fallback',rng.sample(range(1024),128))):
+  26         root=field.root(n)
+  27         roots=[field.power(root,j) for j in indices]
+  28         k=len(roots);length=max(2,1<<(k-1).bit_length())
+  29         eta=field.power(root,n//(2*length))
+  30         plan=prepare_hybrid(field,n,roots,eta)
+  31         amplitudes=[rng.randrange(65537) for _ in roots]
+  32         y,counts=apply_hybrid(field,plan,amplitudes)
+  33         assert y==direct(field,roots,amplitudes,n)
+  34         assert (plan.method=='sparse_annihilator')==(label=='two partial fibers')
+  35         assert sum(counts['field_operations'].values())<=min(
+  36             plan.adaptive_online_total,plan.baseline_additional_total)
+  37         cases.append(dict(n=n,k=k,label=label,method=plan.method,
+  38                 selected_stride=plan.adaptive.stride,taps=len(plan.adaptive.taps),
+  39                 discovery=plan.adaptive.preparation,preparation=plan.preparation,
+  40                 online=counts['field_operations'],
+  41                 adaptive_online_total=plan.adaptive_online_total,
+  42                 baseline_additional_total=plan.baseline_additional_total,
+  43                 cold_total=sum(plan.preparation.values())+sum(counts['field_operations'].values()),
+  44                 returned_output_count=len(y),status='PASS'))
+  45     result=dict(status='PASS',cases=cases,
+  46                 scope='charged adaptive recurrence with ordinary FFT fallback; no universal little-o gain')
+  47     out=Path(__file__).parent/'results';out.mkdir(exist_ok=True)
+  48     (out/'hybrid_audit.json').write_text(json.dumps(result,indent=2)+'\n')
+  49     print(json.dumps(result,indent=2))
+  50 
+  51 
+  52 if __name__=='__main__':main()
+
+===== SOURCE 6 9940bcb774b94f8f9250c8760868cfd5f709d926290bfabef7931287ae6218ef fft_materials_extension_20261009/fft_joint_sideinfo_research/galois_defect.py | 10718 bytes 281 lines =====
+   1 """Fresh exact full DFT with a verified sparse Galois-defect fast path.
+   2 
+   3 This finite-field prototype takes a caller-certified prime and primitive Nth
+   4 root. It verifies the root's order, prepares its powers, scans every input,
+   5 and counts discovery, all arithmetic, and all explicit outputs. The theorem
+   6 also holds over C. No primality proof or root-construction oracle is hidden
+   7 in the counters: those two supplied-field hypotheses are explicit.
+   8 """
+   9 from collections import Counter
+  10 from dataclasses import dataclass
+  11 
+  12 
+  13 @dataclass(frozen=True)
+  14 class Field:
+  15     n: int
+  16     p: int
+  17     powers: tuple
+  18     root_stride: int = 1
+  19 
+  20 
+  21 def power(a, exponent, p, counts):
+  22     result = 1
+  23     while exponent:
+  24         counts['root_verification_index_steps'] += 1
+  25         if exponent & 1:
+  26             result = result * a % p
+  27             counts['mul'] += 1
+  28         exponent >>= 1
+  29         if exponent:
+  30             a = a * a % p
+  31             counts['mul'] += 1
+  32     return result
+  33 
+  34 
+  35 def prepare(n, p, root, counts):
+  36     if isinstance(n, bool) or not isinstance(n, int) or n < 1 or n & (n-1):
+  37         raise ValueError('length must be a positive power of two')
+  38     if isinstance(p, bool) or not isinstance(p, int) or p < 3 or not p & 1:
+  39         raise ValueError('caller must supply an odd prime')
+  40     if isinstance(root, bool) or not isinstance(root, int) or not 0 < root < p:
+  41         raise ValueError('root must be a nonzero canonical residue')
+  42     if power(root, n, p, counts) != 1 or (n > 1 and power(root, n//2, p, counts) == 1):
+  43         raise ValueError('supplied root does not have the requested order')
+  44     powers = [1]
+  45     for _ in range(1, n):
+  46         powers.append(powers[-1] * root % p)
+  47         counts['mul'] += 1
+  48         counts['root_table_reads'] += 1
+  49     counts['root_table_writes'] += n
+  50     return Field(n, p, tuple(powers))
+  51 
+  52 
+  53 def validate(values, n, p, counts):
+  54     if len(values) != n:
+  55         raise ValueError('length does not match the field context')
+  56     for value in values:
+  57         counts['input_reads'] += 1
+  58         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < p:
+  59             raise ValueError('input coefficients must be canonical residues')
+  60 
+  61 
+  62 def signed_action(values, p, counts):
+  63     """P_5: coefficient action of z -> z^5 modulo z^(q/2)+1."""
+  64     m = len(values)
+  65     q = 2*m
+  66     out = [0]*m
+  67     for j, value in enumerate(values):
+  68         exponent = (5*j) & (q-1)
+  69         if exponent >= m:
+  70             value = -value % p
+  71             counts['neg'] += 1
+  72         out[exponent & (m-1)] = value
+  73         counts['action_reads'] += 1
+  74         counts['action_writes'] += 1
+  75         counts['action_index_steps'] += 1
+  76     return out
+  77 
+  78 
+  79 def discover(values, field, max_defect, counts):
+  80     if isinstance(max_defect, bool) or not isinstance(max_defect, int) or max_defect < 0:
+  81         raise ValueError('max_defect must be a nonnegative integer')
+  82     state = list(values)
+  83     counts['input_copy_reads'] += len(state)
+  84     counts['input_copy_writes'] += len(state)
+  85     levels = []
+  86     while len(state) > 1:
+  87         q, m = len(state), len(state)//2
+  88         reduced, sums = [], []
+  89         for j in range(m):
+  90             reduced.append((state[j]-state[j+m]) % field.p)
+  91             sums.append((state[j]+state[j+m]) % field.p)
+  92             counts['sub'] += 1
+  93             counts['add'] += 1
+  94             counts['pair_reads'] += 2
+  95             counts['pair_writes'] += 2
+  96         support = []
+  97         if q >= 4:
+  98             acted = signed_action(reduced, field.p, counts)
+  99             for j, (a, b) in enumerate(zip(acted, reduced)):
+ 100                 difference = (a-b) % field.p
+ 101                 counts['sub'] += 1
+ 102                 counts['defect_reads'] += 2
+ 103                 counts['zero_tests'] += 1
+ 104                 if difference:
+ 105                     support.append((j, difference))
+ 106                     counts['support_records_written'] += 1
+ 107             if len(support) > max_defect:
+ 108                 return None
+ 109         levels.append((q, tuple(reduced), tuple(support)))
+ 110         counts['retained_reduced_values'] += m
+ 111         state = sums
+ 112     return tuple(levels), state[0]
+ 113 
+ 114 
+ 115 def emit_orbit(q, reduced, support, field, counts, out):
+ 116     m, stride = q//2, field.n//q
+ 117     # The odd units have two P_5 orbits, represented by 1 and 3.
+ 118     defects = [0]*m
+ 119     for k in range(1, q, 2):
+ 120         value = 0
+ 121         for j, coefficient in support:
+ 122             value = (value + coefficient*field.powers[((j*k) & (q-1))*stride]) % field.p
+ 123             counts['mul'] += 1
+ 124             counts['add'] += 1
+ 125             counts['root_table_reads'] += 1
+ 126             counts['sparse_terms'] += 1
+ 127         defects[k//2] = value
+ 128         counts['defect_value_writes'] += 1
+ 129     for representative in (1, 3):
+ 130         value = 0
+ 131         for j, coefficient in enumerate(reduced):
+ 132             value = (value + coefficient*field.powers[((j*representative) & (q-1))*stride]) % field.p
+ 133             counts['mul'] += 1
+ 134             counts['add'] += 1
+ 135             counts['root_table_reads'] += 1
+ 136             counts['anchor_terms'] += 1
+ 137         k = representative
+ 138         out[k*stride] = value
+ 139         counts['output_writes'] += 1
+ 140         for _ in range(q//4-1):
+ 141             value = (value+defects[k//2]) % field.p
+ 142             counts['add'] += 1
+ 143             counts['orbit_edges'] += 1
+ 144             k = (5*k) & (q-1)
+ 145             out[k*stride] = value
+ 146             counts['output_writes'] += 1
+ 147 
+ 148 
+ 149 def evaluate(levels, dc, field, counts):
+ 150     out = [None]*field.n
+ 151     out[0] = dc
+ 152     counts['output_writes'] += 1
+ 153     for q, reduced, support in levels:
+ 154         m, stride = q//2, field.n//q
+ 155         if q == 2:
+ 156             out[stride] = reduced[0]
+ 157             counts['output_writes'] += 1
+ 158             continue
+ 159         emit_orbit(q, reduced, support, field, counts, out)
+ 160     assert all(value is not None for value in out)
+ 161     counts['output_coverage_reads'] += field.n
+ 162     return out
+ 163 
+ 164 
+ 165 def radix_two(values, field, counts, count_outputs=True):
+ 166     n, p = field.n, field.p
+ 167     out = list(values)
+ 168     counts['fft_copy_reads'] += n
+ 169     counts['fft_copy_writes'] += n
+ 170     j = 0
+ 171     for i in range(1, n):
+ 172         bit = n >> 1
+ 173         while j & bit:
+ 174             j ^= bit
+ 175             bit >>= 1
+ 176             counts['permutation_index_steps'] += 1
+ 177         j ^= bit
+ 178         counts['permutation_index_steps'] += 1
+ 179         if i < j:
+ 180             out[i], out[j] = out[j], out[i]
+ 181             counts['permutation_reads'] += 2
+ 182             counts['permutation_writes'] += 2
+ 183     width = 2
+ 184     while width <= n:
+ 185         half, stride = width//2, n//width
+ 186         for start in range(0, n, width):
+ 187             for j in range(half):
+ 188                 a = out[start+j]
+ 189                 b = out[start+j+half]*field.powers[j*stride*field.root_stride] % p
+ 190                 out[start+j] = (a+b) % p
+ 191                 out[start+j+half] = (a-b) % p
+ 192                 counts['mul'] += 1
+ 193                 counts['add'] += 1
+ 194                 counts['sub'] += 1
+ 195                 counts['butterflies'] += 1
+ 196                 counts['root_table_reads'] += 1
+ 197                 counts['fft_reads'] += 2
+ 198                 counts['fft_writes'] += 2
+ 199         width <<= 1
+ 200     if count_outputs:
+ 201         counts['output_writes'] += n
+ 202     return out
+ 203 
+ 204 
+ 205 def transform(values, p, root, max_defect=2, use_fast_path=True):
+ 206     counts = Counter()
+ 207     field = prepare(len(values), p, root, counts)
+ 208     validate(values, field.n, p, counts)
+ 209     preparation = dict(counts)
+ 210     plan = discover(values, field, max_defect, counts) if use_fast_path else None
+ 211     discovery = dict(counts)
+ 212     if plan is None:
+ 213         result = radix_two(values, field, counts)
+ 214         accepted, supports = False, []
+ 215     else:
+ 216         levels, dc = plan
+ 217         result = evaluate(levels, dc, field, counts)
+ 218         accepted = True
+ 219         supports = [{'q': q, 'support': len(support)} for q, _, support in levels]
+ 220     return {'values': result, 'accepted': accepted, 'supports': supports,
+ 221             'counts': dict(counts), 'preparation_counts': preparation,
+ 222             'after_discovery_counts': discovery,
+ 223             'field_operations': sum(counts[key] for key in ('add', 'sub', 'mul', 'neg'))}
+ 224 
+ 225 
+ 226 def hybrid_transform(values, p, root):
+ 227     """Choose the cheaper emitted evaluator at every dyadic conductor.
+ 228 
+ 229     Discovery is always fully charged and is O(N). The comparison uses exact
+ 230     emitted field-operation counts, not claimed runtime or bit-cost optimality.
+ 231     The dense alternative uses the same original-root table through a strided
+ 232     view; no extra twiddle preparation is assumed free.
+ 233     """
+ 234     counts = Counter()
+ 235     field = prepare(len(values), p, root, counts)
+ 236     validate(values, field.n, p, counts)
+ 237     preparation = dict(counts)
+ 238     levels, dc = discover(values, field, field.n, counts)
+ 239     discovery = dict(counts)
+ 240     out = [None]*field.n
+ 241     out[0] = dc
+ 242     counts['output_writes'] += 1
+ 243     choices = []
+ 244     for q, reduced, support in levels:
+ 245         m, stride = q//2, field.n//q
+ 246         if q == 2:
+ 247             out[stride] = reduced[0]
+ 248             counts['output_writes'] += 1
+ 249             continue
+ 250         orbit_cost = 5*m+2*m*len(support)-2
+ 251         fft_cost = m+3*(m//2)*(m.bit_length()-1)
+ 252         counts['planner_cost_comparisons'] += 1
+ 253         before = sum(counts[key] for key in ('add', 'sub', 'mul', 'neg'))
+ 254         if orbit_cost <= fft_cost:
+ 255             emit_orbit(q, reduced, support, field, counts, out)
+ 256             method, expected = 'orbit', orbit_cost
+ 257         else:
+ 258             modulated = []
+ 259             for j, coefficient in enumerate(reduced):
+ 260                 modulated.append(coefficient*field.powers[j*stride] % p)
+ 261                 counts['mul'] += 1
+ 262                 counts['root_table_reads'] += 1
+ 263                 counts['modulation_reads'] += 1
+ 264                 counts['modulation_writes'] += 1
+ 265             local = Field(m, p, field.powers, 2*stride)
+ 266             odd_values = radix_two(modulated, local, counts, count_outputs=False)
+ 267             for k, value in enumerate(odd_values):
+ 268                 out[(2*k+1)*stride] = value
+ 269                 counts['output_writes'] += 1
+ 270                 counts['scatter_reads'] += 1
+ 271             method, expected = 'modulated_fft', fft_cost
+ 272         after = sum(counts[key] for key in ('add', 'sub', 'mul', 'neg'))
+ 273         assert after-before == expected
+ 274         choices.append({'q':q, 'support':len(support), 'method':method,
+ 275                         'orbit_field_operations':orbit_cost,
+ 276                         'modulated_fft_field_operations':fft_cost})
+ 277     assert all(value is not None for value in out)
+ 278     counts['output_coverage_reads'] += field.n
+ 279     return {'values':out, 'choices':choices, 'counts':dict(counts),
+ 280             'preparation_counts':preparation, 'after_discovery_counts':discovery,
+ 281             'field_operations':sum(counts[key] for key in ('add', 'sub', 'mul', 'neg'))}

@@ -1,0 +1,74 @@
+1: import random,unittest
+2: from jet_linearize import (P, ArithmeticDAG,build_fft,build_nonlinear_fft,
+3:     direct_dft,linearize,eval_dual)
+4: 
+5: class GateTests(unittest.TestCase):
+6:     def test_linearized_arithmetic_gadget(self):
+7:         r=random.Random(9)
+8:         for mode in ('square','rational','baseline'):
+9:             for n in (2,4,8,16):
+10:                 with self.subTest(mode=mode,n=n):
+11:                     d,x,y=build_nonlinear_fft(n,mode)
+12:                     _,_,_,w=build_fft(n)
+13:                     for rep in range(10):
+14:                         z=[r.randrange(P) for _ in range(n)]
+15:                         if mode=='rational' and z[0]==P-1: z[0]=12
+16:                         self.assertEqual(d.evaluate(z,y),direct_dft(z,w))
+17:                     for rep in range(5):
+18:                         base=[r.randrange(P) for _ in range(n)] if rep else [0]*n
+19:                         if mode=='rational' and base[0]==P-1: base[0]=9
+20:                         L,outs=linearize(d,y,base)
+21:                         self.assertLessEqual(L.cost(),3*d.cost())
+22:                         for _ in range(5):
+23:                             z=[r.randrange(P) for _ in range(n)]
+24:                             f=direct_dft(z,w)
+25:                             self.assertEqual(L.evaluate(z,outs),f)
+26:                             self.assertEqual(eval_dual(d,base,z,y),f)
+27: 
+28:     def test_baseline_derivative_cost(self):
+29:         for n in (2,4,8,16,32,64):
+30:             d,x,y,w=build_fft(n)
+31:             L,outs=linearize(d,y,[0]*n)
+32:             self.assertLessEqual(L.cost(),d.cost())
+33:             z=[(j*31+7)%P for j in range(n)]
+34:             self.assertEqual(L.evaluate(z,outs),direct_dft(z,w))
+35: 
+36:     def test_nonlinearity_really_present(self):
+37:         for mode in ('square','rational','baseline'):
+38:             d,_,_=build_nonlinear_fft(8,mode)
+39:             self.assertTrue(any(g.op in ('mul','div') and g.a>=0 and
+40:                     d.gates[g.a].op != 'const' and d.gates[g.b].op!='const'
+41:                     for g in d.gates))
+42: 
+43:     def test_singular_rational_basepoint(self):
+44:         d,_,outs=build_nonlinear_fft(4,'rational')
+45:         with self.assertRaises(ZeroDivisionError):
+46:             linearize(d,outs,[P-1,0,0,0])
+47: 
+48:     def test_division_gadget_without_zero_extension(self):
+49:         d=ArithmeticDAG()
+50:         x=d.var(); two=d.const(2)
+51:         # (x^2-4)/(x-2)=x+2 except at x=2.
+52:         num=d.sub(d.mul(x,x),d.const(4))
+53:         den=d.sub(x,two)
+54:         out=d.div(num,den)
+55:         for base in (0,1,3,7):
+56:             L,idx=linearize(d,[out],[base])
+57:             for delta in (0,1,2,7,31):
+58:                 self.assertEqual(L.evaluate([delta],idx),[delta])
+59:                 self.assertEqual(eval_dual(d,[base],[delta],[out]),[delta])
+60:         with self.assertRaises(ZeroDivisionError):
+61:             linearize(d,[out],[2])
+62: 
+63:     def test_linearity_zero_at_every_input(self):
+64:         d=ArithmeticDAG()
+65:         x=d.var(); y=d.var()
+66:         t=d.mul(x,y)
+67:         zero=d.sub(t,d.mul(y,x))
+68:         f=d.add(d.add(x,y),zero)
+69:         for base in ([0,0],[1,1],[171,321]):
+70:             L,out=linearize(d,[f],base)
+71:             for z in ([0,1],[2,5],[33,99]):
+72:                 self.assertEqual(L.evaluate(z,out),[(z[0]+z[1])%P])
+73: 
+74: if __name__=='__main__':unittest.main()

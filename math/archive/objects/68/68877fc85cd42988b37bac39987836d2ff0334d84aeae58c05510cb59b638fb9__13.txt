@@ -1,0 +1,152 @@
+   1	#!/usr/bin/env python3
+   2	"""Exact Gaussian-integer Banach certificate for all N16 Fourier entries.
+   3	
+   4	The numerical file proposes a dyadic center and affine chart only. Acceptance
+   5	uses integer arithmetic, rational inequalities, and an elementary root enclosure.
+   6	"""
+   7	import os
+   8	os.environ['OPENBLAS_NUM_THREADS']='1'
+   9	from pathlib import Path
+  10	from fractions import Fraction as F
+  11	from math import lcm, isqrt
+  12	import json, sys, time
+  13	import numpy as np
+  14	import scipy.linalg as la
+  15	HERE=Path(__file__).resolve().parent
+  16	sys.path.insert(0,str(HERE.parent/'seed_compatibility_gate'))
+  17	from check_n16_outer_gate import cycles
+  18	N,J=16,8
+  19	
+  20	def cmul(a,b):
+  21	    ar,ai=a; br,bi=b
+  22	    return ar@br-ai@bi, ar@bi+ai@br
+  23	
+  24	def cadd(*pairs):
+  25	    return sum((a for a,b in pairs)),sum((b for a,b in pairs))
+  26	
+  27	def quantize(a,p=60):
+  28	    return tuple(np.asarray([int(round(float(v)*(1<<p))) for v in part.ravel()],dtype=object).reshape(a.shape)
+  29	                 for part in (a.real,a.imag))
+  30	
+  31	def matrix_bound(pair,den):
+  32	    return F(max(int(sum(abs(r)+abs(i) for r,i in zip(rr,ii))) for rr,ii in zip(*pair)),den)
+  33	
+  34	def show(x):
+  35	    return {'numerator':str(x.numerator),'denominator':str(x.denominator),'decimal':float(x)}
+  36	
+  37	def proposed_chart():
+  38	    data=np.load(HERE/'NUMERICAL_CANDIDATE.npz')
+  39	    jac=data['jacobian']; transform=data['transforms']; physical=data['physical']
+  40	    right=la.lstsq(jac,np.eye(256,dtype=complex),lapack_driver='gelsy')[0].reshape(3,N,J,256)
+  41	    v=np.empty_like(right)
+  42	    for l in range(3):
+  43	        for i in range(N):
+  44	            v[l,i]=la.solve_triangular(transform[i],right[l,i])/(1 if l==2 else 4)
+  45	    center=quantize(physical); directions=quantize(v)
+  46	    chart={'dyadic_exponent':60,'center_real':center[0].tolist(),'center_imag':center[1].tolist(),
+  47	           'directions_real':directions[0].tolist(),'directions_imag':directions[1].tolist(),
+  48	           'parameter_order':'layer,row,term; direction coordinate is flattened Fourier row,column',
+  49	           'exact_target':'F16[i,j]=z^(i*j), z=(sqrt(2+sqrt(2))+i*sqrt(2-sqrt(2)))/2'}
+  50	    (HERE/'DYADIC_AFFINE_CHART.json').write_text(json.dumps(chart,separators=(',',':'))+'\n')
+  51	
+  52	def certify():
+  53	    started=time.monotonic()
+  54	    chart=json.loads((HERE/'DYADIC_AFFINE_CHART.json').read_text())
+  55	    p=chart['dyadic_exponent']; scale=1<<p
+  56	    center=tuple(np.asarray(chart['center_'+part],dtype=object) for part in ('real','imag'))
+  57	    v=tuple(np.asarray(chart['directions_'+part],dtype=object) for part in ('real','imag'))
+  58	    assert center[0].shape==(3,N,J) and v[0].shape==(3,N,J,256)
+  59	    poles=[(j+2)**N-1 for j in range(J)]
+  60	    assert all(d>0 for d in poles)
+  61	    common=lcm(*poles); den=scale*common
+  62	    gs=np.zeros((J,N,N),dtype=object)
+  63	    for j,perm in enumerate(cycles(N)):
+  64	        d=j+2
+  65	        for col in range(N):
+  66	            row=col
+  67	            for power in range(N):
+  68	                gs[j,row,col]=d**(N-power)*(common//poles[j]); row=perm[row]
+  69	    b=(np.eye(N,dtype=object),np.zeros((N,N),dtype=object))
+  70	    for off in (0,4):
+  71	        for i in range(4):
+  72	            for j in range(4):
+  73	                val=[(1,0),(0,1),(-1,0),(0,-1)][i*j%4]
+  74	                b[0][off+i,off+j],b[1][off+i,off+j]=val
+  75	    h=[]; dh=[]
+  76	    for l in range(3):
+  77	        hpair=tuple(np.empty((N,N),dtype=object) for _ in range(2))
+  78	        dpair=tuple(np.empty((N,N,256),dtype=object) for _ in range(2))
+  79	        for part in range(2):
+  80	            for i in range(N):
+  81	                hpair[part][i]=center[part][l,i]@gs[:,i,:]
+  82	                dpair[part][i]=gs[:,i,:].T@v[part][l,i]
+  83	        h.append(hpair); dh.append(dpair)
+  84	    bh1=cmul(b,h[0]); prefix=cmul(h[1],bh1); left=cmul(cmul(h[2],h[1]),b)
+  85	    product=cmul(h[2],prefix); den3=den**3
+  86	    # All entries in the exact chart Jacobian share den^3.
+  87	    jr=np.empty((256,256),dtype=object); ji=np.empty_like(jr)
+  88	    for t in range(256):
+  89	        d0=tuple(q[:,:,t] for q in dh[0]); d1=tuple(q[:,:,t] for q in dh[1]); d2=tuple(q[:,:,t] for q in dh[2])
+  90	        deriv=cadd(cmul(d2,prefix),cmul(cmul(h[2],d1),bh1),cmul(left,d0))
+  91	        jr[:,t]=deriv[0].ravel(); ji[:,t]=deriv[1].ravel()
+  92	    for t in range(256): jr[t,t]-=den3
+  93	    ecenter=matrix_bound((jr,ji),den3)
+  94	    # A rational lower approximation to z. Each positive component differs
+  95	    # from its true value by < 2/Z. Its modulus is <= 1, so for 0<=e<16
+  96	    # the complex l1 error of its e-th power is < 120/Z.
+  97	    Z=1<<160
+  98	    slo=isqrt(2*Z*Z); shi=slo+1
+  99	    cr=isqrt((2*Z+slo)*Z); ci=isqrt((2*Z-shi)*Z); rootden=2*Z
+ 100	    powers=[(1,0,1)]
+ 101	    for e in range(1,16):
+ 102	        ar,ai,ad=powers[-1]
+ 103	        powers.append((ar*cr-ai*ci,ar*ci+ai*cr,ad*rootden))
+ 104	    residual=F(0)
+ 105	    for i in range(N):
+ 106	        for j in range(N):
+ 107	            tr,ti,td=powers[i*j%16]
+ 108	            rr=int(product[0][i,j])*td-tr*den3
+ 109	            ri=int(product[1][i,j])*td-ti*den3
+ 110	            residual=max(residual,F(abs(rr)+abs(ri),den3*td))
+ 111	    residual+=F(120,Z)
+ 112	    hs=[matrix_bound(pair,den) for pair in h]
+ 113	    ls=[]
+ 114	    for pair in dh:
+ 115	        ls.append(F(max(int(sum(abs(pair[0][i,k,t])+abs(pair[1][i,k,t]) for k in range(N) for t in range(256))) for i in range(N)),den))
+ 116	    # Matrix infinity bounds imply output-entry bounds. Derivative variation
+ 117	    # at ||y||_infinity <= rho is at most C2*rho + C3*rho^2.
+ 118	    c2=8*(ls[2]*ls[1]*hs[0]+ls[2]*hs[1]*ls[0]+hs[2]*ls[1]*ls[0])
+ 119	    c3=12*ls[2]*ls[1]*ls[0]
+ 120	    rho=F(1,10**9)
+ 121	    q=ecenter+c2*rho+c3*rho*rho
+ 122	    inward=residual+q*rho
+ 123	    # Lower bound |a0| by max(|Re a0|,|Im a0|), and variation using l1.
+ 124	    physical_margin=None; max_direction=F(0)
+ 125	    for l in range(3):
+ 126	        for i in range(N):
+ 127	            for j in range(J):
+ 128	                base=F(max(abs(int(center[0][l,i,j])),abs(int(center[1][l,i,j]))),scale)
+ 129	                sensitivity=F(int(sum(abs(v[0][l,i,j,t])+abs(v[1][l,i,j,t]) for t in range(256))),scale)
+ 130	                margin=base-rho*sensitivity
+ 131	                physical_margin=margin if physical_margin is None else min(physical_margin,margin)
+ 132	                max_direction=max(max_direction,sensitivity)
+ 133	    accepted=q<1 and inward<rho and physical_margin>0
+ 134	    result={'status':'PASS_EXACT_LOCAL_EXISTENCE' if accepted else 'FAILED_CERTIFICATE',
+ 135	            'all_arithmetic_after_chart_load':'Gaussian integers and rational fractions',
+ 136	            'polydisk_radius':show(rho),'residual_upper_bound':show(residual),
+ 137	            'center_derivative_defect_bound':show(ecenter),'layer_matrix_bounds':[show(x) for x in hs],
+ 138	            'layer_direction_bounds':[show(x) for x in ls], 'quadratic_derivative_constant':show(c2),
+ 139	            'cubic_derivative_constant':show(c3),'contraction_factor_bound':show(q),
+ 140	            'image_radius_upper_bound':show(inward),'physical_nonzero_margin':show(physical_margin),
+ 141	            'max_physical_direction_row_norm':show(max_direction),'fixed_pole_denominators':poles,
+ 142	            'Fourier_equations_checked':256,'physical_endpoint_guards':384,
+ 143	            'chart_complex_dimensions':256,'original_endpoint_parameters':384,
+ 144	            'elapsed_seconds':time.monotonic()-started,
+ 145	            'scope':'Existence of an algebraic N16 solution isolated in the supplied exact affine chart; no size lift or speedup.'}
+ 146	    (HERE/'EXACT_CONTRACTION_CERTIFICATE.json').write_text(json.dumps(result,indent=2)+'\n')
+ 147	    print(json.dumps({k:v for k,v in result.items() if k in ('status','elapsed_seconds') or isinstance(v,dict) and 'decimal' in v},indent=2),flush=True)
+ 148	    assert accepted
+ 149	
+ 150	if __name__=='__main__':
+ 151	    if '--propose' in sys.argv: proposed_chart()
+ 152	    certify()

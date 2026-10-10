@@ -1,0 +1,39 @@
+"""O(nr) scalar-time apply for precomputed separated-generator stages.
+
+NOT an FFT construction. Evaluates arbitrary quasiseparable chart matrices,
+including fresh arbitrary input vectors, and serves as an arithmetic control.
+"""
+import random
+import numpy as np
+from jacobian_gate import MOD,stage,value,matmul
+
+def fast_apply(par,x,p=MOD):
+    x=[int(v)%p for v in x]; n=len(x);r=par['L'].shape[1]
+    assert len(par['d'])==n
+    upper=[0]*n
+    sums=[0]*r
+    # Future input contributions
+    for i in range(n-1,-1,-1):
+        upper[i]=sum(int(par['U'][i,k])*sums[k] for k in range(r))%p
+        for k in range(r):sums[k]=(sums[k]+int(par['W'][i,k])*x[i])%p
+    sums=[0]*r;y=[0]*n
+    for i in range(n):
+        lower=sum(int(par['L'][i,k])*sums[k] for k in range(r))%p
+        y[i]=(lower+upper[i]+int(par['d'][i])*x[i])%p
+        for k in range(r):sums[k]=(sums[k]+int(par['V'][i,k])*x[i])%p
+    return y
+
+def check(n,r,seed=93212):
+    rng=random.Random(seed+n*10+r); par=stage(n,r,rng)
+    M=value(par)
+    for _ in range(12):
+        x=[rng.randrange(MOD) for _ in range(n)]
+        actual=fast_apply(par,x)
+        expected=list(map(int, (M@np.array(x,dtype=np.int64))%MOD))
+        assert actual==expected
+    return True
+
+if __name__=='__main__':
+    for n,r in ((8,1),(16,2),(24,3),(32,4)):
+        assert check(n,r)
+        print(f'PASS {n=} {r=} 12 fresh exact field input vectors')

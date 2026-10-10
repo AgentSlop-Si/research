@@ -1,0 +1,92 @@
+# Latest checkpoint — conditioned macro-FFT
+
+**Date:** 2026-10-09  
+**Main target:** fresh arbitrary dense input, all Fourier outputs, `o(N log N)` work, with a controlled condition number. The earlier relation/query engine is now only a side artifact.
+
+## Strongest result currently supported
+
+A theorem-form **stability regularization principle** has been derived for power-of-two lengths.
+
+Assume an effectively printable exact local DFT family on powers of two with charged work
+
+`A(m)=o(m log m)`.
+
+Then:
+
+1. Symbolically unroll the local data computation into a linear DAG.
+2. Use the arbitrary-dirty-scratch replay lemma already present in the OpenAI #130 local compiler to implement `y += U_m x` transparently, where `U_m=F_m/sqrt(m)`.
+3. Three transparent additions implement the unitary two-bank exchange
+   `(x,y) -> (-U_m^{-1}y, U_m x)` while restoring scratch.
+4. Use this exchange on every radix-`m` fiber. Completed macro-stages are unitary, so local bad conditioning resets instead of multiplying across stages.
+5. Print a computable certificate `Khat(m)` bounding every local prefix condition by reducing prepared coefficients in a cyclotomic field and using crude shear norm bounds.
+6. Use a **bounded printer** at global size `N`: run the local-block printer for only `O(log N)` steps and select the largest completed block satisfying `Khat(m) <= R(N)` and `m <= sqrt(log N)`.
+
+For the explicit choice
+
+`R(N) = max(2, floor(log2 log2(N+4)))`,
+
+the selected local block size tends to infinity, while preparation stays polylogarithmic. The resulting power-of-two transform has
+
+`T(N)=o(N log N)`
+
+and square full-state prefix condition
+
+`kappa <= O(log log N)`.
+
+The machine uses one extra `N`-coordinate bank plus `O(log N)` scratch, initialized and restored to zero.
+
+## Why #130 appears to instantiate the hypothesis
+
+OpenAI #130 gives a fixed deterministic exact DFT algorithm for every length with
+
+`A(m)=O(m (log m)^theta (log log m)^(4-theta))`, `theta<1`,
+
+including scalar preparation and indexing. The input computation is linear: additions, subtractions, and multiplication by prepared input-independent scalars.
+
+Its local compiler already proves a **Replay with arbitrary borrowed coordinates** lemma implementing
+
+`(x,y,z) -> (x, y+Mx, z)`
+
+with arbitrary initial scratch `z`, restoring it exactly. This supplies the transparentization primitive directly.
+
+## Ailon-model alignment
+
+Ailon's Section 5 allows extra memory initialized to zero. The clean-extra-space theorem assumes the Fourier output is in the main coordinates and the extra outputs are zero, and proves `Omega(N log N / R)` rotations for an `R`-well-conditioned circuit.
+
+Our endpoint has exactly this clean form:
+
+- extra bank starts zero and ends zero;
+- scratch starts zero and is restored zero;
+- total extra size is `N+O(log N) <= N log N` for large N;
+- the square full-state condition is bounded by the selected local certificate.
+
+Complex operations can be realified at constant dimension; a fixed-size simulation can be absorbed into the local printable condition certificate.
+
+This does not contradict Ailon because the allowed condition budget diverges and the achieved speedup may diverge much more slowly.
+
+## Verified experiments
+
+- Local condition-reset tests with synthetic local condition `1e2`, `1e4`, `1e6`: global max stays at the local condition; completed stages return to condition 1.
+- Shared-scratch full-state test: sequential fibers reuse one scratch block, global max condition still equals the local bound and final condition is 1.
+- Three-add unitary bank-exchange identity verified numerically for `B=2,4,8,16`.
+- Cyclotomic exact-bound demo: rational functions are reduced modulo `Phi_D`, and coefficient `l1` norm bounds the chosen complex embedding.
+- Bounded-printer selector demo: under deliberately hostile print times/condition growth, larger records become eligible only at astronomical thresholds, but the selected record index still increases while every runtime print budget is capped.
+
+## Important remaining obligations
+
+1. Formalize symbolic unrolling of the concrete #130 uniform program into an `O(A(m))` linear DAG.
+2. Formalize the cyclotomic `Khat(m)` extractor on the actual #130 coefficient programs.
+3. Write the normalized radix-`m` Cooley--Tukey schedule in the same machine model.
+4. Broader literature review before any novelty/priority claim.
+5. **Every-length extension remains open.** Bluestein/Rader introduce a global convolution bridge whose natural coefficient norms grow with N; no `O(log log N)` condition proof has been established for that bridge.
+
+## Files
+
+- `STABILITY_REGULARIZATION_THEOREM.md` — strongest theorem-form statement and proof sketch.
+- `CONDITION_RESET_THEOREM.md` — original condition-reset derivation.
+- `TRANSPARENT_MACRO_COROLLARY.md` — transparent three-add composition with #130.
+- `condition_reset_experiment.py` — matrix-level reset test.
+- `transparent_swap_check.py` — bank-exchange identity test.
+- `full_state_shared_scratch_check.py` — shared-scratch square-state test.
+- `cyclotomic_bound_demo.py` — effective coefficient-bound demonstration.
+- `bounded_printer_selector_demo.py` — uniform selector stress test.

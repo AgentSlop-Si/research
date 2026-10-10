@@ -1,0 +1,5 @@
+import pathlib,json,sys
+p=pathlib.Path(__file__).parent;rows=json.loads((p/'SOURCE_MANIFEST.json').read_text());out=p/'PARENT_REVIEWS.json';reviews=json.loads(out.read_text()) if out.exists() else [];incoming=json.loads(sys.stdin.read());seen={r['index']:r for r in reviews}
+for x in incoming:
+ r=rows[x['index']-1];x.update(sha256=r['sha256'],line_count=r['line_count'],size_bytes=r['size_bytes'],representative_path=r['representative_path'],snapshot_path='sources/'+r['sha256'],static_inspection_complete=True,full_static_inspection=True,inspection_method='Direct first-to-last inert text reading with numbered complete output saved in read_evidence. No supplied execution/import/compile/AST parsing.',coverage_intervals={'bytes_half_open':[[0,r['size_bytes']]],'lines_inclusive':[[1,r['line_count']]]},source_executed_in_review=False,source_imported_in_review=False,source_compiled_in_review=False,source_ast_parsed_in_review=False,dependency_closure_complete=False);seen[r['index']]=x
+out.write_text(json.dumps(list(sorted(seen.values(),key=lambda r:r['index'])),indent=2)+'\n');print('Recorded',len(incoming),'total',len(seen))

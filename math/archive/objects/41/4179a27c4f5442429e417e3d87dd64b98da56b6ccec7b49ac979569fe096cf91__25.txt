@@ -1,0 +1,24 @@
+1: """Self-contained unit tests + regression test of the previous full checkpoint."""
+2: import io,os,subprocess,sys,tempfile,unittest,zipfile
+3: from pathlib import Path
+4: 
+5: HERE=Path(__file__).resolve().parent
+6: 
+7: def run():
+8:     print('Compiling exact modular arithmetic verifier',flush=True)
+9:     subprocess.run(['g++','-O3','-std=c++17',str(HERE/'rankmod.cpp'),'-o',str(HERE/'rankmod')],check=True)
+10:     print('Running new multi-stage exact tests',flush=True)
+11:     completed=subprocess.run([sys.executable,'-m','unittest','-v','test_new_gate'],cwd=HERE)
+12:     if completed.returncode:raise RuntimeError('New tests failed')
+13:     print('Verifying preserved previous endpoint rank checkpoint',flush=True)
+14:     with tempfile.TemporaryDirectory() as tmp:
+15:         with zipfile.ZipFile(HERE/'prior_checkpoint_full.zip') as f:
+16:             assert f.testzip() is None
+17:             f.extractall(tmp)
+18:         tests=list(Path(tmp).rglob('test_exact_gate.py'))
+19:         assert len(tests)==1,tests
+20:         cp=subprocess.run([sys.executable,'-m','unittest','-v','test_exact_gate'],cwd=tests[0].parent)
+21:         if cp.returncode:raise RuntimeError('Previous checkpoint test failed')
+22:     print('PASS: 9 new + 9 previous test groups, across 2 independent verification generations',flush=True)
+23: 
+24: if __name__=='__main__':run()

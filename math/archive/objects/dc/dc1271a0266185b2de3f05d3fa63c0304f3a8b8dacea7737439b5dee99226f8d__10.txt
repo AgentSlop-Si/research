@@ -1,0 +1,105 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh packet, zero-minor, and Krylov checks; no uploaded modules imported."""
+   3 import itertools,json,random
+   4 from collections import deque
+   5 from pathlib import Path
+   6 from exact_utils import Field,prime_by_trial_division
+   7 BASE=Path(__file__).parent
+   8 
+   9 def field(n):
+  10     k=2
+  11     while not prime_by_trial_division(k*n+1):k+=1
+  12     p=k*n+1
+  13     for g in range(2,p):
+  14         if len({pow(g,j,p) for j in range(1,p)})==p-1:return p,pow(g,k,p)
+  15     raise AssertionError
+  16 
+  17 def packet_controls():
+  18     out=[];minors=[];zero=[];total=0
+  19     for n in (3,5,7,11,13,17,19):
+  20         p,w=field(n);f=Field(p);alpha=next(a for a in range(2,p) if pow(a,n,p)!=1);den=f.inv(1-pow(alpha,n,p))
+  21         for h in (1,2):
+  22             greens=[];weyls=[]
+  23             for r in range(n):
+  24                 operator=[[0]*n for _ in range(n)]
+  25                 for j in range(n):operator[(j+h)%n][j]=pow(w,r*j,p)
+  26                 weyls.append(operator)
+  27                 a=[[(int(i==j)-alpha*operator[i][j])%p for j in range(n)] for i in range(n)]
+  28                 greens.append(f.inverse(a))
+  29             left=f.mul(weyls[1],weyls[2]);right=f.mul(weyls[2],weyls[1]);phase=pow(w,-h,p)
+  30             assert left==[[(phase*x)%p for x in row] for row in right]
+  31             # The chirp similarity also establishes the same support-order guard.
+  32             u=[t*(t-h)*pow(2*h,-1,n)%n for t in range(n)]
+  33             for r,operator in enumerate(weyls):
+  34                 d=[pow(w,r*v,p) for v in u]
+  35                 assert all(operator[(j+h)%n][j]==d[(j+h)%n]*f.inv(d[j])%p for j in range(n))
+  36             for s in range(n):
+  37                 literal=[[sum(pow(w,-r*s,p)*greens[r][i][j] for r in range(n))*f.inv(n)%p for j in range(n)] for i in range(n)]
+  38                 predicted=[[0]*n for _ in range(n)]
+  39                 if s==0:
+  40                     for j in range(n):predicted[j][j]=den
+  41                 for m in range(1,n):
+  42                     j=(s-h*m*(m-1)//2)*pow(m,-1,n)%n
+  43                     predicted[(j+m*h)%n][j]=pow(alpha,m,p)*den%p
+  44                 assert literal==predicted
+  45                 nz=sum(bool(x) for row in literal for x in row);assert nz==(2*n-1 if s==0 else n-1)
+  46                 total+=1
+  47             coeff=[(r*r+3*r+2)%p for r in range(n)]
+  48             chat=[sum(c*pow(w,r*q,p) for r,c in enumerate(coeff))%p for q in range(n)]
+  49             packet=[[sum(coeff[r]*greens[r][i][j] for r in range(n))%p for j in range(n)] for i in range(n)]
+  50             expected=[[pow(alpha,((i-j)*pow(h,-1,n))%n,p)*den*chat[(u[i]-u[j])%n]%p for j in range(n)] for i in range(n)]
+  51             assert packet==expected
+  52             if n>=5:
+  53                 rr=[0,h];cc=[(2*h)%n,(-h)%n]
+  54                 det=f.det([[packet[i][j] for j in cc] for i in rr]);assert det==0
+  55                 # All prime Fourier 2-by-2 minors, not just the source's affine examples.
+  56                 count=0
+  57                 for r0,r1 in itertools.combinations(range(n),2):
+  58                     for c0,c1 in itertools.combinations(range(n),2):
+  59                         assert (pow(w,r0*c0+r1*c1,p)-pow(w,r0*c1+r1*c0,p))%p;count+=1
+  60                 rng=random.Random(20261020+n+h);rowperm=rng.sample(range(n),n);colperm=rng.sample(range(n),n)
+  61                 assert (pow(w,rowperm[rr[0]]*colperm[cc[0]]+rowperm[rr[1]]*colperm[cc[1]],p)-pow(w,rowperm[rr[0]]*colperm[cc[1]]+rowperm[rr[1]]*colperm[cc[0]],p))%p
+  62                 minors.append({'N':n,'h':h,'weighted_packet_minor':det,'all_Fourier_two_by_two_minors':count,'arbitrary_permutation_witness':'PASS'})
+  63             # At alpha zero each resolvent is I: original exact counts require an extra nonzero guard.
+  64             counts=[]
+  65             for s in range(n):
+  66                 coefficient=sum(pow(w,-r*s,p) for r in range(n))*f.inv(n)%p
+  67                 assert coefficient==int(s==0);counts.append(n if coefficient else 0)
+  68             zero.append({'N':n,'h':h,'alpha':0,'character_support_counts':counts,'orbit_span_dimension':1})
+  69             out.append({'N':n,'field':p,'root':w,'alpha':alpha,'h':h,'character_cases':n,'weighted_entry_equalities':n*n})
+  70     return {'packet_cases':out,'total_character_matrices':total,'fiber_minor_controls':minors,'alpha_zero_guard_controls':zero}
+  71 
+  72 def krylov():
+  73     source=json.loads((BASE/'sources/weyl_v20/results.json').read_text());p=1009;f=Field(p);out=[]
+  74     for case in source['krylov_cases']:
+  75         n=case['N'];a=f.eye(n)
+  76         for shift,weight in zip(case['shifts'],case['weights']):
+  77             for j in range(n):a[(j+shift)%n][j]=(a[(j+shift)%n][j]-weight)%p
+  78         inv=f.inverse(a);assert all(x for row in inv for x in row)
+  79         graph=[[i for i in range(n) if a[i][j]] for j in range(n)];delta=max(map(len,graph));diameter=0
+  80         for origin in range(n):
+  81             distance=[None]*n;distance[origin]=0;q=deque([origin])
+  82             while q:
+  83                 v=q.popleft()
+  84                 for u in graph[v]:
+  85                     if distance[u] is None:distance[u]=distance[v]+1;q.append(u)
+  86             assert all(d is not None for d in distance);diameter=max(diameter,max(distance))
+  87             vec=[int(i==origin) for i in range(n)]
+  88             for step in range(n):
+  89                 assert all(not x or distance[i]<=step for i,x in enumerate(vec))
+  90                 vec=[sum(x*y for x,y in zip(row,vec))%p for row in a]
+  91         power=f.eye(n);columns=[];target=[x for row in inv for x in row];degree=None
+  92         for d in range(n):
+  93             columns.append([x for row in power for x in row]);mat=list(map(list,zip(*columns)))
+  94             if f.rank(mat)==f.rank([row+[t] for row,t in zip(mat,target)]):degree=d;break
+  95             power=f.mul(power,a)
+  96         bound=0
+  97         while sum(delta**s for s in range(bound+1))<n:bound+=1
+  98         assert diameter==case['directed_diameter'];assert degree==case['minimal_inverse_polynomial_degree'];assert delta==case['max_outdegree'];assert bound==case['size_lower_bound'];assert degree>=diameter>=bound
+  99         out.append({'N':n,'field':p,'inverse_dense':True,'diameter':diameter,'maximum_outdegree':delta,'inverse_polynomial_degree':degree,'branching_bound':bound,'support_radius_controls':n*n})
+ 100     return out
+ 101 
+ 102 if __name__=='__main__':
+ 103     result={'status':'PASS','weyl':packet_controls(),'krylov':krylov(),'timing_claims_replayed':False}
+ 104     (BASE/'WEYL_V20_RESULTS.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 105     print('PASS: 150 full character matrices, 14 weighted packets, 12 zero minors and all prime Fourier 2x2 minors, 14 alpha-zero guards, four saved Krylov cases')

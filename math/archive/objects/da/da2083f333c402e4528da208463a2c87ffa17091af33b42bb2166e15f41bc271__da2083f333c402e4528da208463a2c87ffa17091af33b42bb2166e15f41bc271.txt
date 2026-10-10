@@ -1,0 +1,23 @@
+"""Run new regression tests plus the entire preserved research test lineage.
+No web or external data needed. The optional numeric solver is a positive
+control, not an assertion of Fourier nonmembership.
+"""
+from pathlib import Path
+import subprocess,sys,os
+ROOT=Path(__file__).resolve().parent
+paths=[ROOT/'tests',ROOT/'prior_checkpoint/tests',ROOT/'prior_checkpoint/prior_checkpoint/tests',
+       ROOT/'prior_checkpoint/prior_checkpoint/prior_checkpoint/tests',
+       ROOT/'prior_checkpoint/prior_checkpoint/prior_checkpoint/prior_checkpoint/fft_global_green_gauge/tests']
+num=0
+for tests in paths:
+    if not tests.is_dir():raise FileNotFoundError(tests)
+    print('TEST DIRECTORY',tests.relative_to(ROOT),flush=True)
+    env=os.environ.copy();env['OPENBLAS_NUM_THREADS']='1';env['PYTHONPATH']=str(tests.parent)+os.pathsep+env.get('PYTHONPATH','')
+    z=subprocess.run([sys.executable,'-m','unittest','discover','-s',str(tests),'-v'],cwd=ROOT,env=env,text=True,capture_output=True)
+    print(z.stdout+z.stderr,flush=True)
+    if z.returncode:raise SystemExit(f'TESTS FAILED in {tests}')
+    import re
+    m=re.search(r'Ran (\d+) tests',z.stderr)
+    if not m:raise SystemExit('Could not parse test count')
+    num+=int(m.group(1))
+print(f'ALL PASS: {num} regression tests across {len(paths)} generations',flush=True)

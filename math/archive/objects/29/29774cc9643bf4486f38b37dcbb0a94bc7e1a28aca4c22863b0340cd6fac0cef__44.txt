@@ -1,0 +1,50 @@
+   1	#!/usr/bin/env python3
+   2	"""Bounded retained-carrier-anchor experiment; no upstream file is edited."""
+   3	from pathlib import Path
+   4	from hashlib import sha256
+   5	import argparse, gzip, importlib.util, inspect, json, subprocess, sys, time
+   6	ROOT=Path(__file__).resolve().parent
+   7	UP=ROOT/'upstream'
+   8	sys.path.insert(0,str(UP/'scripts/experiments'))
+   9	import binary_frame_compiler as compiler
+  10	from binary_frame_replay import replay
+  11	from binary_frame_profile_prepare import prepare
+  12	
+  13	def main():
+  14	 p=argparse.ArgumentParser();p.add_argument('h',type=int,choices=[23,25]);p.add_argument('mode',choices=['baseline','carrier']);a=p.parse_args()
+  15	 spec=importlib.util.spec_from_file_location('pinned_pair_graph',UP/'research/pair-assembly/pair_graph.py')
+  16	 graph=importlib.util.module_from_spec(spec);spec.loader.exec_module(graph);compiler.graph=graph.graph
+  17	 source=inspect.getsource(compiler.compile_)
+  18	 if a.mode=='carrier':
+  19	  replacements={
+  20	   "def acquire(g,anchors):":"def acquire(g,anchors):\n  stats['acquire_calls']+=1;stats['acquire_with_carriers']+=bool(carrier_anchors);stats['carrier_anchor_occurrences']+=len(carrier_anchors)",
+  21	   "b=blocks[g];outuses=":"carrier_anchors=[];b=blocks[g];outuses=",
+  22	   "elif kind=='carry':assign[key]=s;assert slots[s]==signal[uses[key][0]]":"elif kind=='carry':assign[key]=s;carrier_anchors.append(s);assert slots[s]==signal[uses[key][0]]",
+  23	   "acquire(g,list(value_slots.values()))":"acquire(g,list(value_slots.values())+carrier_anchors)",
+  24	  }
+  25	  for old,new in replacements.items():
+  26	   assert source.count(old)==(2 if old.startswith('acquire(') else 1),(old,source.count(old))
+  27	   source=source.replace(old,new)
+  28	  exec(compile(source,'<carrier_anchor_variant>','exec'),compiler.__dict__)
+  29	 out=ROOT/'results'/f'{a.mode}-{a.h}';out.mkdir(parents=True,exist_ok=True)
+  30	 (out/'compile_function.py').write_text(source)
+  31	 started=time.time();result,word=compiler.compile_(a.h,matching=True,reclaim=True,dirty=True)
+  32	 raw=(json.dumps(word,separators=(',',':'))+'\n').encode();path=out/'word.json.gz'
+  33	 with path.open('wb') as f:
+  34	  with gzip.GzipFile(fileobj=f,mode='wb',mtime=0) as g:g.write(raw)
+  35	 receipt=replay(path)
+  36	 prepared=prepare(path,out/'transitions.bin')
+  37	 profiler=ROOT/'profiles'
+  38	 subprocess.run([str(profiler),str(out/'transitions.bin')],check=True)
+  39	 profile=json.loads((out/'transitions.bin.profiles.json').read_text())
+  40	 if a.mode=='baseline':
+  41	  expected=json.loads((UP/'research/pair-assembly/frame'/f'frame-profiles-{a.h}.json').read_text())
+  42	  assert profile==expected,('baseline fixed profile mismatch',profile,expected)
+  43	  record=json.loads((UP/'research/pair-assembly/frame/frame-compiler.json').read_text())['axes'][str(a.h)]
+  44	  assert sha256(raw).hexdigest()==record['word_sha256'],'baseline exact serialized word mismatch'
+  45	 assert result['roles']==receipt['roles']==profile['R']
+  46	 assert result['rank_mass']==receipt['rank_mass']==profile['rank_sum']
+  47	 data=dict(mode=a.mode,h=a.h,compiled=result,replay=receipt,prepared=prepared,profile=profile,word_sha256=sha256(raw).hexdigest(),elapsed=time.time()-started)
+  48	 (out/'receipt.json').write_text(json.dumps(data,indent=2)+'\n')
+  49	 print(json.dumps(data),flush=True)
+  50	if __name__=='__main__':main()

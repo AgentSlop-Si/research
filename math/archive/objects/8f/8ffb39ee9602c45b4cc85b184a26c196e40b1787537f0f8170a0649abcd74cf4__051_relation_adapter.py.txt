@@ -1,0 +1,78 @@
+"""Add graph batches and quotient views to the user's supplied Phase 5 API.
+
+The baseline implementation is preserved byte-for-byte. Its legacy absolute
+phase import is satisfied by the identical bundled Phase 4 helper.
+"""
+from __future__ import annotations
+import sys
+from pathlib import Path
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).parent / 'baseline_phase5'))
+from cost_aware_fft import RelationFFT
+
+from support_graph import CosetSpectrum
+from graph_reuse import run_graph
+
+
+class GraphRelationFFT(RelationFFT):
+    def correction_view(self, state):
+        """Compressed residual only; basis spectra remain in the parent state."""
+        self._check_state(state)
+        return CosetSpectrum.from_changes(state.n, state.edits)
+
+    def materialize_quotient(self, state):
+        """Supports existing shifted and multiple-base states as well."""
+        self._check_state(state)
+        out = self._linear_spectrum(state)
+        out += self.correction_view(state).materialize()
+        out[0] = out[0].real
+        if state.n % 2 == 0:
+            out[-1] = out[-1].real
+        self.last_method = 'quotient'
+        self.stats['strategy_quotient'] += 1
+        return out
+
+    def materialize_batch(self, states, candidates=None, *, costs=None,
+                          max_reuse_depth=None):
+        """Plan related single-base states; retain the existing API otherwise.
+
+        Candidate indices refer to states 0..M-1. An internal seed vertex is
+        added. For shifted/scaled/multiple-base mixtures this method uses the
+        supplied Phase 5 dispatcher individually; no approximate matching.
+        Base registration/preprocessing occurs before this API call.
+        """
+        states = list(states)
+        if not states:
+            raise ValueError('need states')
+        for s in states:
+            self._check_state(s)
+        if any(s.n != states[0].n for s in states):
+            raise ValueError('batch states must have the same length')
+        shared = None
+        eligible = True
+        for s in states:
+            if len(s.terms) != 1:
+                eligible = False; break
+            ((base, shift), coefficient), = s.terms.items()
+            if shift != 0 or coefficient != 1 or shared is not None and base is not shared:
+                eligible = False; break
+            shared = base
+        if not eligible:
+            return np.asarray([self.materialize(s) for s in states]), None, {'route': 'phase5_individual'}
+        patches = [{}] + [s.edits for s in states]
+        if candidates is None:
+            pairs = None
+        else:
+            pairs = [(0, v+1) for v in range(len(states))]
+            for u,v in candidates:
+                if not isinstance(u, (int,np.integer)) or not isinstance(v, (int,np.integer)) or not 0 <= u < len(states) or not 0 <= v < len(states) or u == v:
+                    raise ValueError('invalid state candidate edge')
+                pairs.append((int(u)+1,int(v)+1))
+        outputs, plan, stats = run_graph(shared.signal, patches, pairs, costs=costs,
+            cached_spectrum=shared.spectrum, max_reuse_depth=max_reuse_depth)
+        stats['route'] = 'graph_shared_base'
+        stats['cached_base_preprocessing_included'] = False
+        self.last_method = 'graph_batch'
+        return outputs[1:], plan, stats

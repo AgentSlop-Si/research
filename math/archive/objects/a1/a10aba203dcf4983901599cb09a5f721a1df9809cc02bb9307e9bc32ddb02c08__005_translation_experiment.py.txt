@@ -1,0 +1,122 @@
+"""Finite exhaustive offset tests and charged Python-bigint dispatch timings."""
+import json
+import math
+from pathlib import Path
+import random
+import statistics
+import sys
+import time
+from translation_multiply import (naf_terms,weight_table,translated_signed_cost,
+                                  select_translation,adaptive_multiply)
+
+
+def exhaustive(bits,radius=16):
+    limit=1<<bits
+    weights=weight_table(limit+radius)
+    for a in range(limit+radius+1):
+        assert weights[a]==len(naf_terms(a))
+    ks=list(range(-radius,radius+1))
+    corrected_binary_sum=naf_sum=plain_sum=0
+    binary_improved=naf_improved=0
+    worst_binary=worst_naf=0; worst_a=0;covered=0
+    for a in range(limit):
+        direct=weights[a]
+        candidates=[(abs(a-k).bit_count()+weights[abs(k)],
+                     weights[abs(a-k)]+weights[abs(k)],weights[abs(a-k)]) for k in ks]
+        binary=min(x[0] for x in candidates)
+        signed=min(x[1] for x in candidates)
+        assert signed==direct
+        binary_improved+=binary<a.bit_count(); naf_improved+=signed<direct
+        if signed>worst_naf: worst_naf=signed; worst_a=a
+        worst_binary=max(worst_binary,binary)
+        covered+=min(x[2] for x in candidates)<=2
+        corrected_binary_sum+=binary; naf_sum+=direct; plain_sum+=a.bit_count()
+    fast_class_size=sum(weights[abs(s)]<=2 for s in range(-radius,limit+radius))
+    return dict(bits=bits,inputs=limit,radius=radius,offsets_per_input=len(ks),
+                baseline_binary_mean_terms=plain_sum/limit,
+                shifted_binary_with_paid_k_mean_terms=corrected_binary_sum/limit,
+                direct_minimum_signed_mean_terms=naf_sum/limit,
+                binary_cases_improved=binary_improved,
+                minimum_signed_cases_improved=naf_improved,
+                worst_shifted_binary_terms=worst_binary,worst_minimum_signed_terms=worst_naf,
+                worst_signed_example_decimal=worst_a,worst_signed_example_binary=bin(worst_a),
+                covered_if_A_minus_k_has_at_most_two_signed_terms=covered,
+                coverage_fraction=covered/limit,fast_class_size=fast_class_size,
+                translate_union_counting_upper_bound=min(limit,fast_class_size*len(ks)),
+                cost_scope='Term-count experiment, NOT timings. Paid correction terms; selector work excluded from this diagnostic count.')
+
+
+def examples():
+    result=[]
+    for a in (255,256,257,170,43690,43691,65535,65537):
+        ks=list(range(-16,17))
+        best_k=min(ks,key=lambda k:(abs(a-k).bit_count()+len(naf_terms(k)),abs(k)))
+        result.append(dict(a=a,binary_terms=a.bit_count(),minimum_signed_terms=len(naf_terms(a)),
+                           best_small_offset_k=best_k,
+                           corrected_binary_terms=abs(a-best_k).bit_count()+len(naf_terms(best_k)),
+                           signed_terms=naf_terms(a)))
+    return result
+
+
+def whole_domain_offsets():
+    weights=weight_table(512);cases=0
+    for a in range(256):
+        for k in range(-256,257):
+            assert weights[a]<=weights[abs(a-k)]+weights[abs(k)]
+            cases+=1
+    return dict(a_min=0,a_max=255,k_min=-256,k_max=256,cases=cases,strict_term_count_violations=0)
+
+
+def time_dispatch():
+    rng=random.Random(33001);records=[]
+    def measure(fn,a,b,reps):
+        begin=time.perf_counter_ns()
+        for _ in range(reps): result=fn(a,b)
+        return (time.perf_counter_ns()-begin)/reps
+    ordinary=lambda a,b:a*b
+    for n in (256,4096,65536):
+        b=rng.getrandbits(n)|(1<<(n-1))
+        random_a=rng.getrandbits(n)|(1<<(n-1))
+        alternating=int('10'*(n//2),2)
+        for name,a in (('power_minus_one',(1<<n)-1),('power_plus_13',(1<<n)+13),
+                       ('alternating',alternating),('unrelated_random',random_a)):
+            expected=a*b; actual=adaptive_multiply(a,b)
+            assert actual==expected
+            plan=select_translation(a,b)
+            base=[]; translated=[]
+            reps=200 if n==256 else 30 if n==4096 else 3
+            for j in range(9):
+                order=(('baseline',ordinary),('adaptive',adaptive_multiply))
+                if j&1: order=order[::-1]
+                for tag,fn in order:
+                    (base if tag=='baseline' else translated).append(measure(fn,a,b,reps))
+            bmed=statistics.median(base); amed=statistics.median(translated)
+            records.append(dict(nominal_bits=n,case=name,mode=plan.mode,
+                                selected_operand=plan.operand,power=plan.power,k=plan.correction,
+                                baseline_median_us=bmed/1000,adaptive_median_us=amed/1000,
+                                baseline_over_adaptive=bmed/amed,
+                                baseline_samples_us=[x/1000 for x in base],
+                                adaptive_samples_us=[x/1000 for x in translated],
+                                rounds=9,repetitions_per_round=reps,
+                                correctness='exact full-integer equality',
+                                timing_scope='Per-call detector, correction multiplication, shift, addition, allocation and full result included. Inputs already constructed for both. Python bigint baseline, NOT an FFT backend.'))
+    return records
+
+
+def main():
+    root=Path('results');root.mkdir(exist_ok=True)
+    data=dict(identity='A*B=(A-k)*B+k*B',status='SPECIAL_CASE_GAIN_NO_WORST_CASE_EXPONENT_IMPROVEMENT',
+              date='2026-10-09',python=sys.version,examples=examples(),
+              exhaustive=[exhaustive(n) for n in (8,12,16)],
+              wide_offset_check=whole_domain_offsets(),timings=time_dispatch())
+    (root/'translation_results.json').write_text(json.dumps(data,indent=2)+'\n')
+    for row in data['exhaustive']:
+        print(f"{row['bits']} bits: {row['inputs']} A values, signed improvements "
+              f"{row['minimum_signed_cases_improved']}, worst terms {row['worst_minimum_signed_terms']}, "
+              f"2-term shifted coverage {row['coverage_fraction']:.4f}")
+    for row in data['timings']:
+        print(f"{row['nominal_bits']:6} {row['case']:18} {row['mode']:10} "
+              f"baseline/adaptive={row['baseline_over_adaptive']:.2f}x")
+
+
+if __name__=='__main__':main()

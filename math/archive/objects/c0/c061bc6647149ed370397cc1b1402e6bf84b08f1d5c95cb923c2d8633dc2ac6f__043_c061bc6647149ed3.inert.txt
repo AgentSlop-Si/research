@@ -1,0 +1,104 @@
+# A controlled continuation after the broken research chain
+
+**Date:** 2026-10-09. **Mechanism:** One-hot / Boolean-quotient degree-one projection and overlap accounting. **Status:** exact theorem for a restricted circuit conversion, executable exact tests, *negative* full-FFT example. No new uniform O(N) FFT, no priority claim.
+
+## 1. Where this fits, and what NOT to repeat
+
+This is a continuation of the existing `fft_adaptive_branch_boolean_gate/NEXT_RESEARCH_GATE.md`, `FFT_RESEARCH_CANONICAL_CHECKPOINT_2026-10-09.md`, and `fft_global_linearization_gate/RESEARCH.md`. Those files already rejected repeated subtree caching, unrestricted input-dependent `k`, cheap Galois orbit expansion, symbolic DFT descriptions, and direct Boolean monomial expansion. The specific question here is different: **can an arithmetic circuit that uses Boolean idempotence `x_i^2 = x_i` be systematically converted into an ordinary linear circuit, and what exact structural feature obstructs the conversion?**
+
+The project deals with arithmetic DAGs over a field with `+,-,*`, constants, and input variables. Binary input lies in `{0,1}^N`; all scalar work is counted for candidate circuits. A small prime-field instance `p=998244353` is used for exact verification (only sizes supported by the root are used). A fixed finite prime cannot support power-of-two FFTs at unbounded lengths; these are finite checks of field-independent identities, not an all-length complexity theorem.
+
+## 2. The projection map
+
+Let `e_i` be the i-th Boolean basis vector. For any function `f` on the Boolean cube define
+
+`f_0 = f(0),  f_i = f(e_i)-f(0),`
+
+`L(f)(x) = sum_{i=0}^{N-1} f_i x_i`, and `P(f)=f_0+L(f)`.
+
+For an arbitrary arithmetic circuit output, this is exactly the degree-0/degree-1 piece of its unique multilinear polynomial representative modulo `<x_i^2-x_i>`. The projection is linear but **not multiplicative**. It is entirely determined by the N+1 points `0,e_0,...,e_(N-1)`.
+
+For `u,v` and each i, write `u(e_i)=u_0+u_i`, `v(e_i)=v_0+v_i`. Then
+
+`(uv)(e_i)-(uv)(0) = u_0 v_i+v_0 u_i+u_i v_i`.
+
+Therefore the exact identity is
+
+`L(uv) = u_0 L(v)+v_0 L(u)+ sum_i u_i v_i x_i`.
+
+The last term is the **Boolean overlap correction**. If `S(u)={i:u_i!=0}` and similarly for v, it has support contained in `S(u) intersect S(v)`; it is zero when the sets are disjoint.
+
+The formula holds for arbitrary arithmetic DAGs, even when high-degree intermediate polynomials occur and regardless of how many times an input variable is reused. It is the elementary one-hot evaluation identity, not a novel algebraic-complexity theorem.
+
+## 3. Restricted conversion proposition
+
+Let `C` be a finite arithmetic DAG with `s` charged `+,-,*` gates, input-independent field constants, and `N` variables, and let
+
+`T = sum_{v=u*w multiplication gate} |S(u) intersect S(w)|`.
+
+**Proposition (nonuniform gate bound).** There is a linear/affine arithmetic DAG implementing every output's `P(f)` with `O(s+T+N_out)` elementary additions and input-independent scalar multiplications, given the constants `u_0,v_0,u_i,v_i` needed at product gates. The DAG can share all projected intermediates. In particular, if the original output equals a *linear* transform `A x` for every Boolean `x`, then this projected DAG computes `A x` for **all field-valued x**, with `O(s+T+N_out)` gates.
+
+**Proof.** Maintain one (zero-constant) linear DAG node for each old wire. Addition/subtraction are inherited. At a multiplication gate, reuse the two projected children, scale by the *scalar* zero-input values, then add at most one scalar-times-input term per overlapping coordinate. There are at most a constant number of ordinary gates plus `O(|S(u) intersect S(v)|)` gates per multiplication. Output constants add at most one gate per output. Correctness follows from the formula and induction; when the original function is `Ax` on the Boolean cube, its zero and one-hot evaluations are `0` and the columns of `A`. QED.
+
+**Critical scope:** This is a *circuit-size* implication **with prepared constants**. It is not a uniform runtime bound. Computing those constants is not free; a straightforward scan of one-hot coefficient maps can cost `Theta(Ns)` time and memory in the worst case. Our implementation explicitly records `metadata_work_proxy` and total coefficient-support storage. The linearized circuit may also use coefficients larger than the original allowed coefficients, so bounded-coefficient/condition-number lower bounds cannot be applied blindly. The result by itself neither proves a Fourier lower bound nor disproves a potential Boolean-specific algorithm with large overlap.
+
+A useful restricted corollary: when all multiplication gates have disjoint **one-hot sensitivity** supports, `T=0`, so Boolean nonlinear gates give no gate-count asymptotic advantage *relative to the produced linear circuit*, even if the full high-degree arithmetic functions have complex behavior away from `0,e_i`. This is stronger than the immediately obvious *syntactic* disjoint-variable condition, because it only depends on one-hot responses.
+
+## 4. Exact results (not wall-clock speedups)
+
+The prototype builds four circuits whose Boolean outputs are **identical** to the full length-N Fourier transform over F_998244353:
+
+- `plain`: standard radix-2 transform;
+- `squares`: replace every input `x_i` by `x_i^2`, which equals `x_i` on {0,1};
+- `boolean_null`: replace every `x_i` by `x_i+x_i(1-x_i)`; the nonlinear term vanishes on Boolean inputs;
+- `hybrid`: replace every input by `x_i^2+x_i(1-x_i)`.
+
+The compiler constructs the one-hot projected circuit and checks every multiplication in the result has an input-independent constant operand. It then checks **every basis column** of the full Fourier matrix and, additionally, ten random Boolean inputs and ten arbitrary field inputs per row, with the independent direct-DFT defining sum as reference.
+
+| N | Circuit | Original arithmetic gates | Projected linear gates | Multiplication overlap T | Preparation dictionary-work proxy |
+|---:|---|---:|---:|---:|---:|
+| 64 | Plain FFT | 576 | 513 | 0 | 10,720 |
+| 64 | Squared inputs | 640 | 513 | 64 | 10,976 |
+| 64 | Boolean-null inputs | 768 | 769 | 64 | 11,232 |
+| 64 | Hybrid inputs | 832 | 769 | 128 | 11,488 |
+| 256 | Plain FFT | 3,072 | 2,817 | 0 | 166,528 |
+| 256 | Squared inputs | 3,328 | 2,817 | 256 | 167,552 |
+| 256 | Boolean-null inputs | 3,840 | 3,841 | 256 | 168,576 |
+| 256 | Hybrid inputs | 4,096 | 3,841 | 512 | 169,600 |
+
+The reduction from the 3,072-gate plain FFT to the 2,817-gate projected circuit is **constant-one twiddle simplification** built into the linear compiler, not a Boolean-specific algorithmic improvement. The squared-input circuit projects to precisely the same 2,817-gate circuit. Neither construction beats an already-specialized ordinary FFT.
+
+There are 7 main audited lengths (`4,8,16,32,64,128,256`) x 4 variants = 28 row experiments. These cover `4*(4+8+16+32+64+128+256) = 2032` complete exact one-hot Fourier columns, plus 280 fresh Boolean vectors and 280 arbitrary field vectors. Independent unit tests also examine exhaustive Boolean inputs at n=4, random general arithmetic DAGs, square/idempotence controls, high-overlap products, and constant terms.
+
+### Example of large overlap
+
+For `S=x_0+...+x_(N-1)`, `S^2` uses just one multiplication gate but has `T=N` for that gate; its Boolean degree-one projection equals `S`. This is **not** a fast FFT; it illustrates why nonlinearity can *appear* to concentrate work in one gate while putting the linear correction across all N coordinates.
+
+## 5. What this experiment excludes and does not exclude
+
+**Excludes in this narrow nonuniform sense:** simply adding squaring gates or non-overlapping multiplications to a Boolean FFT as a route to a strictly smaller linear work count. It also gives an exact conversion-cost formula to reject specific proposed low-overlap Boolean FFT circuits before optimizing them.
+
+**Does NOT exclude:** a high-overlap Boolean algorithm whose nonlinear gates genuinely amortize correction interactions across outputs; branching, word-level operations, lookup algorithms, field representation changes, or an unrestricted better linear circuit. The conversion's constants and construction must be charged before deriving a *uniform* algorithm. The finite NTT checks do not imply anything asymptotic about fixed-prime modular NTTs, let alone the exact complex model of OpenAI #130.
+
+If a class of linear circuits is known to have a lower bound `L(N)` and the conversion stays **inside the same class**, the proposition formally forces `s+T=Omega(L(N))` for that class. In particular, a bounded-coefficient lower bound cannot simply be substituted unless *all* newly prepared scalars meet its coefficient restrictions.
+
+## 6. Next falsifiable gate
+
+A candidate exploiting Boolean idempotence for the full fresh N-output DFT must exhibit **global high-overlap gates with cheaper cancellation of off-diagonal terms** than the corresponding all-output linear circuit; it must construct all resulting coefficients at charged cost and beat an existing correct full-FFT baseline. This is a concrete mechanism to test, not a proposal to rebuild collision caching, cyclotomic descriptors, or CrocSwap certificates.
+
+For general fresh **complex** inputs the old tangent-linearization barrier still applies, so this Boolean-specific study remains a separate domain. No new all-input O(N) FFT was found.
+
+## 7. References and reproduction
+
+Prior literature on multilinear circuits and why forced multilinearization can be costly:
+- Ran Raz (2006), *Separation of Multilinear Circuit and Formula Size*: https://toc.cs.uchicago.edu/articles/v002a006/
+- Amireddy et al. (ICALP 2023), *Low-Depth Arithmetic Circuit Lower Bounds: Bypassing Set-Multilinearization*: https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ICALP.2023.12
+
+These citations are context, **not** claims that this elementary one-hot formula is first published here or that those works specifically prove the proposition above.
+
+```
+python -m unittest discover -s tests -v
+python boolean_overlap.py --output audit_results.json
+```
+
+The source is standard-library Python; no threads, network access, NumPy, SciPy or LLM tools are involved in verification.

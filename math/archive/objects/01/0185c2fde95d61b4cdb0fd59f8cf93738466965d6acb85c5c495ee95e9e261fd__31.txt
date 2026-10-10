@@ -1,0 +1,116 @@
+0001 """Independent exact controls: cyclic localization, discrepancy, and compatibility.
+0002 Only standard library. No uploaded code is imported or executed.
+0003 """
+0004 from itertools import combinations
+0005 from fractions import Fraction
+0006 from random import Random
+0007 import json
+0008 from pathlib import Path
+0009 P=12289
+0010 
+0011 def mm(a,b):
+0012     return [[sum(x*y for x,y in zip(row,col))%P for col in zip(*b)] for row in a]
+0013 def tr(a):return [list(x) for x in zip(*a)]
+0014 def sub(a,rows,cols):return [[a[i][j] for j in cols] for i in rows]
+0015 def rank(a):
+0016     if not a or not a[0]:return 0
+0017     a=[r[:] for r in a];i=0
+0018     for j in range(len(a[0])):
+0019         k=next((k for k in range(i,len(a)) if a[k][j]%P),None)
+0020         if k is None:continue
+0021         a[i],a[k]=a[k],a[i];v=pow(a[i][j],P-2,P)
+0022         a[i]=[x*v%P for x in a[i]]
+0023         for k in range(i+1,len(a)):
+0024             q=a[k][j];a[k]=[(x-q*y)%P for x,y in zip(a[k],a[i])]
+0025         i+=1
+0026         if i==len(a):break
+0027     return i
+0028 
+0029 def inv(a):
+0030     n=len(a);b=[row[:]+[int(i==j) for j in range(n)] for i,row in enumerate(a)]
+0031     for j in range(n):
+0032         k=next((k for k in range(j,n) if b[k][j]%P),None)
+0033         if k is None:return None
+0034         b[j],b[k]=b[k],b[j];v=pow(b[j][j],P-2,P);b[j]=[x*v%P for x in b[j]]
+0035         for k in range(n):
+0036             if k!=j:
+0037                 q=b[k][j];b[k]=[(x-q*y)%P for x,y in zip(b[k],b[j])]
+0038     return [r[n:] for r in b]
+0039 
+0040 def qs(n,r,rng):
+0041     a=[[rng.randrange(P) if i==j else 0 for j in range(n)] for i in range(n)]
+0042     for ch in range(r):
+0043         low,up,left,right,ta,tb=[[rng.randrange(5) for _ in range(n)] for _ in range(6)]
+0044         for i in range(n):
+0045             for j in range(i):
+0046                 v=low[i]*left[j]
+0047                 for k in range(j+1,i):v*=ta[k]
+0048                 a[i][j]=(a[i][j]+v)%P
+0049             for j in range(i+1,n):
+0050                 v=up[i]*right[j]
+0051                 for k in range(i+1,j):v*=tb[k]
+0052                 a[i][j]=(a[i][j]+v)%P
+0053     return a
+0054 
+0055 def cyc(n,start,w):return [(start+i)%n for i in range(w)]
+0056 def root(n):
+0057     for a in range(2,P):
+0058         w=pow(a,(P-1)//n,P)
+0059         if all(pow(w,k,P)!=1 for k in range(1,n)) and pow(w,n,P)==1:return w
+0060     raise AssertionError
+0061 
+0062 def d2(a,i,j,k,l):return (a[i][k]*a[j][l]-a[i][l]*a[j][k])%P
+0063 
+0064 rng=Random(215603);results={'field':P,'controls':{},'bitrev':[]}
+0065 assert all(P%d for d in range(2,112))
+0066 counts={'matrix_window_rank_bounds':0,'cyclic_exterior_bounds':0,'Fourier_full_ranks':0,'exact_cyclic_averages':0,'inverse_cut_rank_equalities':0,'Fourier_Cauchy_Binet_equalities':0}
+0067 for n in (4,8,12,16):
+0068     w=root(n);F=[[pow(w,i*j,P) for j in range(n)] for i in range(n)]
+0069     for seed in range(5):
+0070         rs=[1+int(seed==4),1,1]
+0071         stages=[qs(n,r,rng) for r in rs]
+0072         p1=list(range(n));p2=list(range(n));rng.shuffle(p1);rng.shuffle(p2)
+0073         ip1=[p1.index(i) for i in range(n)];ip2=[p2.index(i) for i in range(n)]
+0074         middle=mm(stages[1],[stages[0][ip1[i]] for i in range(n)])
+0075         M=mm(stages[2],[middle[ip2[i]] for i in range(n)])
+0076         q=list(range(n));rng.shuffle(q)
+0077         for W in range(1,n):
+0078             I=list(range(W));R=[ip2[i] for i in I]
+0079             sums=[0]*(n+1)
+0080             for start in range(n):
+0081                 J=cyc(n,start,W);C=[p1[j] for j in J]
+0082                 Jc=[j for j in range(n) if j not in J]
+0083                 assert rank(sub(stages[0],Jc,J))<=2*rs[0];counts['cyclic_exterior_bounds']+=1
+0084                 actual=rank(sub(M,I,J))
+0085                 for t in range(n+1):
+0086                     aa=sum(x<t for x in R);bb=sum(x<t for x in C);sums[t]+=bb
+0087                     assert actual<=2*rs[0]+rs[2]+rs[1]+W-abs(aa-bb)
+0088                     counts['matrix_window_rank_bounds']+=1
+0089                 assert rank(sub(F,I,[q[j] for j in J]))==W;counts['Fourier_full_ranks']+=1
+0090             assert sums==[W*t for t in range(n+1)];counts['exact_cyclic_averages']+=n+1
+0091         for A in stages:
+0092             B=inv(A)
+0093             if B is None:continue
+0094             for k in range(1,n):
+0095                 for I,J in [(range(k),range(k,n)),(range(k,n),range(k))]:
+0096                     assert rank(sub(A,I,J))==rank(sub(B,I,J));counts['inverse_cut_rank_equalities']+=1
+0097 for n in (4,6):
+0098     w=root(n);F=[[pow(w,i*j,P) for j in range(n)] for i in range(n)]
+0099     for seed in range(3):
+0100         U=[[rng.randrange(P) for _ in range(n)] for _ in range(n)]
+0101         V=[[rng.randrange(P) for _ in range(n)] for _ in range(n)];K=mm(mm(U,F),V)
+0102         pairs=list(combinations(range(n),2))
+0103         for i,j in pairs:
+0104             for k,l in pairs:
+0105                 rhs=sum(d2(U,i,j,a,b)*(pow(w,a*c+b*d,P)-pow(w,a*d+b*c,P))*d2(V,c,d,k,l) for a,b in pairs for c,d in pairs)%P
+0106                 assert d2(K,i,j,k,l)==rhs;counts['Fourier_Cauchy_Binet_equalities']+=1
+0107 for m in range(1,13):
+0108     n=2**m;p=[int(f'{i:0{m}b}'[::-1],2) for i in range(n)]
+0109     if m%2:w=(n+1)//3;t=w
+0110     else:w=(n//2+1)//3;t=2*w-1
+0111     aa=sum(p[i]<t for i in range(w));bb=sum(p[i]<t for i in range(n-w,n))
+0112     assert aa-bb==(m+1)//2
+0113     results['bitrev'].append({'m':m,'N':n,'W':w,'separator':t,'a':aa,'b':bb,'difference':aa-bb,'deleted_rows':w-aa,'deleted_columns':bb})
+0114 results['controls']=counts;results['all_passed']=True
+0115 path=Path(__file__).with_name('EXACT_CHECK_RESULTS.json');path.write_text(json.dumps(results,indent=2)+'\n')
+0116 print(json.dumps(results,indent=2))

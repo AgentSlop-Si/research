@@ -1,0 +1,309 @@
+"""Hero 17 Phase 11: exact lazy projector states and a rational-Green rank gate.
+
+Fully charged sequential finite-field demonstration (supplied certified prime p and
+primitive n-th root w). Root/factor primality certification is not bundled into
+this model. Root validation itself and root power generation are charged.
+
+No O(n) full DFT claim: the lazy refinement is exactly radix-2 FFT in a
+spectral-projector coordinate system, O(n log n) field operations.
+"""
+from __future__ import annotations
+from dataclasses import dataclass, asdict
+from math import log2
+
+
+@dataclass
+class Meter:
+    prep_muls: int = 0
+    prep_adds: int = 0
+    online_muls: int = 0
+    online_adds: int = 0
+    prep_int_ops: int = 0
+    online_int_ops: int = 0
+    input_reads: int = 0
+    state_reads: int = 0
+    state_writes: int = 0
+    output_writes: int = 0  # subset of state_writes (not added twice)
+    table_writes: int = 0
+    butterflies: int = 0
+    levels: int = 0
+    def mul(self, a, b, p, prep=False):
+        if prep: self.prep_muls += 1
+        else: self.online_muls += 1
+        return (a*b) % p
+    def plus(self, a, b, p):
+        self.online_adds += 1
+        return (a+b) % p
+    def minus(self, a, b, p):
+        self.online_adds += 1
+        return (a-b) % p
+    def pow_prepared(self, a, e, p):
+        out=1; b=a%p
+        while e:
+            self.prep_int_ops+=1
+            if e & 1: out=self.mul(out,b,p,prep=True)
+            e//=2
+            if e: b=self.mul(b,b,p,prep=True)
+        return out
+    def field_ops(self): return self.prep_adds+self.prep_muls+self.online_muls+self.online_adds
+    def describe(self):
+        r=asdict(self); r['total_field_ops']=self.field_ops()
+        return r
+
+
+def unique_prime_factors(k,meter=None):
+    fac=[]; d=2
+    while d*d<=k:
+        if meter:meter.prep_int_ops+=2   # loop comparison and remainder
+        if k%d==0:
+            fac.append(d)
+            while k%d==0:
+                if meter:meter.prep_int_ops+=2
+                k//=d
+        d+=1
+        if meter:meter.prep_int_ops+=1
+    if k>1:fac.append(k)
+    return fac
+
+
+def primitive_root_check(n,p,w,meter):
+    if (p-1)%n: raise ValueError('n does not divide p-1')
+    if meter.pow_prepared(w,n,p)!=1:
+        raise ValueError('root does not have n-th order')
+    for q in unique_prime_factors(n,meter):
+        if meter.pow_prepared(w,n//q,p)==1:
+            raise ValueError('root has nonprimitive order')
+
+
+class LazySpectralUnion:
+    """All projected quotient states C_(d,r)[t] in O(n) retained memory.
+
+    Stage d has d states of length m=n/d, flattened as state[r*m+t].
+    Doubling d uses n/2 butterflies, n additions and n/2 multiplies.
+    The last state is the exact unnormalized DFT for every fresh input.
+    """
+    def __init__(self,n,p,w):
+        if n<2 or n&(n-1): raise ValueError('this executor needs n a power of two')
+        self.n=n; self.p=p; self.w=w; L=Meter()
+        primitive_root_check(n,p,w,L)
+        W=[1]*n
+        L.table_writes=1
+        for j in range(1,n):
+            W[j]=L.mul(W[j-1],w,p,prep=True)
+            L.table_writes+=1
+        self.W=W
+        self.prep=L.describe()
+    def transform(self,x,capture=False):
+        n=self.n; p=self.p; W=self.W
+        if len(x)!=n: raise ValueError('wrong input length')
+        L=Meter(); state=[v%p for v in x]
+        L.input_reads=n; L.state_writes=n; L.online_int_ops=n
+        d=1; m=n; levels=[]
+        if capture:levels.append((d,m,state[:]))
+        while d<n:
+            h=m//2
+            nxt=[0]*n
+            for r in range(d):
+                tw=W[(-r*h)%n]
+                L.online_int_ops+=3  # twiddle-index arithmetic (charged allowance)
+                for t in range(h):
+                    a=state[r*m+t]
+                    b=state[r*m+t+h]
+                    L.state_reads+=2
+                    z=L.mul(b,tw,p)
+                    nxt[r*h+t]=L.plus(a,z,p)
+                    nxt[(r+d)*h+t]=L.minus(a,z,p)
+                    L.state_writes+=2
+                    L.online_int_ops+=8  # address/loop arithmetic upper allowance
+                    L.butterflies+=1
+            state=nxt; d*=2; m//=2; L.levels+=1
+            if capture:levels.append((d,m,state[:]))
+        L.output_writes=n  # final-stage writes have already been charged
+        if capture:return state,L.describe(),levels
+        return state,L.describe()
+    def projector_sample(self, level, r, j):
+        """Query a single time-domain P_(r mod d) x entry from an active state.
+
+        For independent testing/debug only. No such query is needed by the
+        main DFT executor and its field cost is NOT included in transform().
+        """
+        d,m,state=level
+        if not 0<=r<d or not 0<=j<self.n:raise ValueError('out of bounds')
+        t=j%m; ell=j//m
+        return state[r*m+t]*self.W[(r*ell*m)%self.n]*pow(d,-1,self.p)%self.p
+
+
+def direct_dft(x,p,w):
+    n=len(x); W=[pow(w,j,p) for j in range(n)]
+    return [sum(x[j]*W[(-k*j)%n] for j in range(n))%p for k in range(n)]
+
+
+def direct_residue_projector(x,p,w,d,r):
+    """O(d*n) independent primitive character-orthogonality control."""
+    n=len(x)
+    if n%d or not 0<=r<d:raise ValueError('invalid residue mask')
+    m=n//d;inv=pow(d,-1,p)
+    return [inv*sum(pow(w,(-r*ell*m)%n,p)*x[(j+ell*m)%n] for ell in range(d))%p
+            for j in range(n)]
+
+
+def symbols_for_levels(n,p,w):
+    """Each key is a formal linear expression (tuple of sparse terms).
+
+    Uses O(n^2) debug storage for small n only, not the online executor.
+    Coefficient labels reference distinct formal input variables x_0...x_(n-1).
+    """
+    if n<2 or n&(n-1):raise ValueError('power of two')
+    W=[pow(w,j,p) for j in range(n)]
+    all_levels=[]
+    d=1
+    while d<=n:
+        m=n//d; forms=[]
+        for r in range(d):
+            for t in range(m):
+                forms.append(tuple((t+u*m,W[(-r*u*m)%n]) for u in range(d)))
+        all_levels.append((d,m,forms));d*=2
+    return all_levels
+
+
+def eval_poly(coeff, z, p):
+    v=0
+    for a in reversed(coeff):v=(v*z+a)%p
+    return v
+
+
+def rational_mask_difference_rank(n,p,w,K,pcoeff,qcoeff):
+    """Exact matrix rank via simultaneous Fourier diagonalization.
+
+    R(S)=p(S)q(S)^-1 where S is the +1 cyclic time shift. We require
+    q(w^k)!=0 for every k. P_K-R(S) is diagonal in the DFT basis.
+    """
+    mask=set(K)
+    wj=1; mismatch=0
+    values=[]
+    for k in range(n):
+        den=eval_poly(qcoeff,wj,p)
+        if den==0:raise ValueError('denominator zero at a Fourier root')
+        val=eval_poly(pcoeff,wj,p)*pow(den,-1,p)%p
+        desired=int(k in mask)
+        values.append(val)
+        mismatch+=val!=desired
+        wj=wj*w%p
+    return mismatch,values
+
+
+def mat_rank(A,p):
+    B=[list(row) for row in A]
+    if not B:return 0
+    R=len(B);C=len(B[0]); rr=0
+    for j in range(C):
+        pivot=next((i for i in range(rr,R) if B[i][j]%p),None)
+        if pivot is None:continue
+        B[rr],B[pivot]=B[pivot],B[rr]
+        inv=pow(B[rr][j],-1,p)
+        B[rr]=[(x*inv)%p for x in B[rr]]
+        for i in range(rr+1,R):
+            factor=B[i][j]
+            if factor:
+                B[i]=[(u-factor*v)%p for u,v in zip(B[i],B[rr])]
+        rr+=1
+        if rr==R:break
+    return rr
+
+
+def direct_difference_matrix(n,p,w,K,rational_values):
+    """Independent explicit matrix, for n<=32 checks; O(n^3) build."""
+    mask=set(K); W=[pow(w,k,p) for k in range(n)]
+    inv_n=pow(n,-1,p)
+    return [[inv_n*sum((int(k in mask)-rational_values[k])*
+                   W[(k*(i-j))%n] for k in range(n))%p
+             for j in range(n)] for i in range(n)]
+
+
+def rational_degree_rank_lower_bound(n,k_size,d,p_is_zero=False,p_equals_q=False):
+    if p_is_zero:return k_size
+    if p_equals_q:return n-k_size
+    return max(0,n-2*d)
+
+
+def prime_root_for_power_two(n):
+    """Test fixture, NOT included in charged transform model.
+
+    2013265921 = 15*2^27+1, g=31 primitive.
+    """
+    p=2013265921
+    if n<2 or n&(n-1) or (p-1)%n:raise ValueError('unsupported fixture n')
+    return p,pow(31,(p-1)//n,p)
+
+
+def poly_product_linear(roots,p):
+    coeff=[1]
+    for z in roots:
+        nxt=[0]*(len(coeff)+1)
+        for i,a in enumerate(coeff):
+            nxt[i]=(nxt[i]-a*z)%p
+            nxt[i+1]=(nxt[i+1]+a)%p
+        coeff=nxt
+    return coeff
+
+
+def sharp_rational_rank_witness(n,p,w,K,d):
+    """Construct exact rank n-2*d witness (nonconstant rational case).
+
+    Requires 1 <= d <= min(|K|, n-|K|) and field with n distinct
+    roots (guaranteed by primitive w). p(z) vanishes at d outside-mask
+    roots; p(z)-q(z) vanishes at d inside-mask roots. Choose lambda!=0
+    with q=p-lambda*B nonzero at every n-th root.
+    """
+    K=set(K); outside=set(range(n))-K
+    if not 1<=d<=min(len(K),len(outside)):
+        raise ValueError('d out of witness range')
+    A=poly_product_linear([pow(w,k,p) for k in sorted(outside)[:d]],p)
+    B=poly_product_linear([pow(w,k,p) for k in sorted(K)[:d]],p)
+    # At most n-2*d nonzero lambdas are forbidden by roots outside the
+    # selected zeros. There are at least n available choices (p-1>=n).
+    # Try n+1 values; no factoring, inversion or FFT needed.
+    for lam in range(1,min(p,n+2)):
+        q=[(a-lam*b)%p for a,b in zip(A,B)]
+        if all(eval_poly(q,pow(w,k,p),p)!=0 for k in range(n)):
+            rank,vals=rational_mask_difference_rank(n,p,w,K,A,q)
+            if rank!=n-2*d:
+                raise AssertionError('witness not sharp')
+            return A,q,rank
+    raise AssertionError('lambda avoidance pigeonhole failed')
+
+
+
+def apply_one_pole_green(x,p,alpha):
+    """O(n) exact apply of (I-alpha*S)^-1, Sx[j]=x[j+1 mod n].
+
+    Valid iff 1-alpha**n !=0 (mod p). Fully charged linear arithmetic,
+    field inversion by charged Fermat exponentiation (supplied prime field).
+    Dense matrix but linear-time cyclic first-order recurrence.
+    """
+    n=len(x)
+    if n<2:raise ValueError('need n>=2')
+    alpha%=p
+    if not alpha:raise ValueError('alpha must be nonzero for this control')
+    L=Meter()
+    an=L.pow_prepared(alpha,n,p)
+    den=(1-an)%p
+    L.prep_adds+=1
+    if not den:raise ValueError('cyclic recurrence singular')
+    inv=L.pow_prepared(den,p-2,p)
+    total=0
+    for j in range(n-1,-1,-1):
+        total=L.plus(x[j]%p,L.mul(alpha,total,p),p)
+        L.input_reads+=1
+        L.online_int_ops+=2
+    y=[0]*n
+    y[0]=L.mul(total,inv,p)
+    L.state_writes+=1
+    y[-1]=L.plus(x[-1]%p,L.mul(alpha,y[0],p),p)
+    L.state_writes+=1
+    for j in range(n-2,0,-1):
+        y[j]=L.plus(x[j]%p,L.mul(alpha,y[j+1],p),p)
+        L.state_writes+=1
+        L.online_int_ops+=2
+    L.output_writes=n  # subset of state writes
+    return y,L.describe()

@@ -1,0 +1,42 @@
+1: """Single-thread Python exact NTT comparison, includes cold per-call arithmetic.
+2: 
+3: Arithmetic counts include even trivial multiplications executed by the two
+4: kernels. They separately report root pow upper bounds, memory movements, and
+5: layout index steps. Timing is illustrative, not an asymptotic claim.
+6: """
+7: from __future__ import annotations
+8: from collections import OrderedDict
+9: from statistics import median
+10: from time import perf_counter
+11: import json,random,argparse
+12: from exact_scan_macro import P,fft_via_mixed_scan_macros
+13: from reference_ntt import radix2_ntt
+14: 
+15: 
+16: def benchmark(ns=(256,1024,4096), repetitions=5, seed=20261009):
+17:     rng=random.Random(seed)
+18:     result=[]
+19:     for n in ns:
+20:         series={'scan':[],'reference':[]}
+21:         countA=countB=None
+22:         for trial in range(repetitions):
+23:             x=[rng.randrange(P) for _ in range(n)]
+24:             for name,fn in (('scan',fft_via_mixed_scan_macros),('reference',radix2_ntt)) if trial%2==0 else (('reference',radix2_ntt),('scan',fft_via_mixed_scan_macros)):
+25:                 start=perf_counter();y,gates=fn(x);elapsed=perf_counter()-start
+26:                 series[name].append(elapsed*1000)
+27:                 if name=='scan': scan=y;countA=gates
+28:                 else: ordinary=y;countB=gates
+29:             assert scan==ordinary
+30:         result.append({'n':n,'repetitions':repetitions,
+31:                        'median_scan_ms':median(series['scan']),
+32:                        'median_radix2_ms':median(series['reference']),
+33:                        'scan_over_radix2_time_ratio':median(series['scan'])/median(series['reference']),
+34:                        'scan_counts':countA,'radix2_counts':countB})
+35:     return {'seed':seed,'modulus':P,'note':'Both fresh-input, exact, all outputs, same Python execution; operation counts include charged root-power and data-layout estimates.', 'results':result}
+36: 
+37: if __name__=='__main__':
+38:     parser=argparse.ArgumentParser();parser.add_argument('--sizes',type=int,nargs='+',default=[256,1024,4096]);parser.add_argument('--repetitions',type=int,default=5)
+39:     args=parser.parse_args()
+40:     answer=benchmark(ns=args.sizes,repetitions=args.repetitions)
+41:     with open('benchmark_results.json','w') as f:json.dump(answer,f,indent=2)
+42:     print(json.dumps(answer,indent=2))

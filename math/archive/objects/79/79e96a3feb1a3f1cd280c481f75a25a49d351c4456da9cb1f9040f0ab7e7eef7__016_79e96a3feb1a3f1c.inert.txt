@@ -1,0 +1,483 @@
+# Shrinking-error packed sparse-surrogate DFT — continuation checkpoint v4
+
+**Date:** 2026-10-09  
+**Research path:** our sparse-surrogate + finite-state lookup path only. The speedup below does **not** come from OpenAI #130, CrocSwap, Swapnil-jain, cached inputs, or relation metadata.
+
+## Executive result
+
+The v3 packed decoder used `k = Theta(log N)` sampled atoms and output blocks of width `B = Theta(log N)`. That closed the hidden packing gap, but only for a constant normalized error
+
+    ||Xhat - U_N x||_inf
+      <= O(1) * L_box(x)/sqrt(N).
+
+The next improvement is to let both the sample count and the output-block width grow together:
+
+    L   = log_2 N,
+    ell = log_2 L,
+    k = B = Theta(L^2 / ell^2).
+
+At the same time, shrink phase and fixed-point quantization steps to
+
+    Theta(ell / sqrt(L)).
+
+The descriptor width and packed-lane width remain only `Theta(ell)` bits. A table key still fits in one `Theta(log N)`-bit word, the preprocessing table remains `N^gamma polylog(N) = o(N)`, and the complete online cost remains `O(N)` word operations.
+
+This gives the following theorem candidate.
+
+### Linear-time vanishing-error theorem candidate
+
+Fix constants `c >= 0` and `gamma in (0,1)`. On a randomized word-RAM with word size `w = Theta(log N)`, for all sufficiently large `N`, there is an input-independent preprocessing scheme using
+
+    N^gamma polylog(N) = o(N)
+
+words and word operations, followed by an online algorithm which, for every fresh finite-precision `x in C^N`, writes all `N` approximate coefficients in `O(N)` word operations and, with probability at least `1-N^{-c}`, satisfies
+
+    ||Xhat - U_N x||_inf
+      <= C(c,gamma) * (loglog N / sqrt(log N))
+         * L_box(x)/sqrt(N),
+
+where
+
+    L_box(x) = sum_j (|Re x_j| + |Im x_j|).
+
+Since
+
+    L_box(x) <= sqrt(2N) ||x||_2,
+
+the same result implies the cancellation/energy-aware statement
+
+    ||Xhat - U_N x||_inf
+      <= C'(c,gamma) * (loglog N / sqrt(log N)) ||x||_2.
+
+The error relative to total signal energy therefore tends to zero. This is strictly stronger than the constant-error v3 theorem.
+
+It is still **not** an exact FFT, not a usual machine-precision replacement for FFTW, and not an integer-multiplication bound.
+
+## 1. Computational model
+
+Use a randomized word-RAM with:
+
+- `w >= C log_2 N` bits per word for a sufficiently large fixed constant `C`;
+- unit-cost word addition, subtraction, multiplication, shifts, masks, comparisons, and indirect lookup by a one-word key;
+- unit-cost generation of a random word;
+- each input real/imaginary component represented in `O(1)` words;
+- a shared output scale plus `O(loglog N)` fixed-point bits per normalized output component.
+
+Integer masses, cumulative sums, products, and thresholds may occupy a fixed number of words. Operations on a fixed number of words are charged as `O(1)`.
+
+The theorem is asymptotic. The tables and conservative constants are not practical at ordinary transform sizes.
+
+## 2. Signed real/imaginary atom sampler
+
+Split every complex coordinate into signed real and imaginary atoms:
+
+    Re x_j > 0  -> +e_j
+    Re x_j < 0  -> -e_j
+    Im x_j > 0  -> +i e_j
+    Im x_j < 0  -> -i e_j.
+
+The mass of an atom is the absolute value of the corresponding real or imaginary component. Let the total mass be
+
+    L_box(x) = L.
+
+Draw `k` atoms independently with replacement, proportional to their masses. If the draws are `a_r = s_r e_{j_r}`, with `s_r in {+1,-1,+i,-i}`, define
+
+    y = (L/k) sum_{r=1}^k a_r.
+
+Then
+
+    E[y] = x.
+
+For every unitary Fourier bin `m`, one sampled contribution has magnitude exactly
+
+    M = L/sqrt(N).
+
+A safe real/imaginary Hoeffding bound and a union bound over all `N` bins give
+
+    P[ ||U_N y - U_N x||_inf > eta_s L/sqrt(N) ]
+      <= 4N exp(-k eta_s^2/4).
+
+Thus it is sufficient to choose
+
+    k >= 4 eta_s^{-2} ln(4N/delta).
+
+For `delta=N^{-c}` and
+
+    eta_s = Theta(loglog N / sqrt(log N)),
+
+this is
+
+    k = Theta((log N)^2/(loglog N)^2).
+
+### Charged sampling cost
+
+A two-pass sorted-threshold sampler draws all `k` atoms in
+
+    O(N + k log k) = O(N)
+
+word operations:
+
+1. scan once to compute integer masses and `L`;
+2. generate and sort `k=polylog(N)` thresholds in `[0,L)`;
+3. scan the cumulative masses once and emit the crossed atoms.
+
+No alias table or uncharged input-dependent preprocessing is required.
+
+## 3. Why increasing `k` did not automatically break linear time
+
+The v3 decoder used output blocks of width `B=Theta(log N)`. With a larger sample count, forming every sample descriptor for every block would cost
+
+    (N/B) k.
+
+The key move is to widen the output block together with the sample count:
+
+    B = k = Theta((log N)^2/(loglog N)^2).
+
+Then descriptor construction over all blocks is exactly
+
+    (N/B) k = Theta(N).
+
+This is the main structural extension beyond v3.
+
+## 4. Quantized phasor descriptors
+
+For an output block beginning at frequency `m0`, a sampled atom contributes
+
+    s * (omega_N^{j(m0+t)})_{t=0}^{B-1}.
+
+A descriptor contains:
+
+1. `s in {+1,-1,+i,-i}`;
+2. a quantized start phase `j m0/N mod 1`;
+3. a quantized slope `j/N mod 1`.
+
+Let the allowed deterministic trajectory error be
+
+    eta_d = Theta(loglog N / sqrt(log N)).
+
+Choose circular nearest-bin quantizers with
+
+    Q_start = Theta(1/eta_d),
+    Q_slope = Theta(B/eta_d).
+
+Then for every lane `0 <= t < B`, the phase error is `O(eta_d)`.
+
+The descriptor alphabet has size
+
+    A = O(Q_start Q_slope)
+      = polylog(N),
+
+so one descriptor needs
+
+    p = ceil(log_2 A) = Theta(loglog N)
+
+bits.
+
+## 5. First-level table
+
+Choose
+
+    g = floor(gamma log_2 N / p)
+      = Theta(log N/loglog N).
+
+A key containing `g` descriptors uses at most `gamma log_2 N` bits and fits in one word.
+
+The table maps the key to the `B`-lane group-average trajectory
+
+    v_t = (1/g) sum_{r=1}^g
+          s_r exp(2 pi i(alpha_r+t beta_r)).
+
+Round every real and imaginary lane to step
+
+    h1 = Theta(loglog N / sqrt(log N)).
+
+### Fully charged preprocessing
+
+There are at most
+
+    A^g <= 2^{pg} <= N^gamma
+
+keys. Constructing and storing one entry costs only `polylog(N)` word operations and words because `g`, `B`, and the lane precision are all polylogarithmic.
+
+Therefore total preprocessing time and memory are
+
+    N^gamma polylog(N) = o(N).
+
+This is not a free exponential oracle.
+
+## 6. Number of groups and packed lane width
+
+The number of table groups is
+
+    G = k/g = Theta(log N/loglog N).
+
+A rounded group-average lane has magnitude `O(1)` and resolution `h1`, so its signed integer representation needs
+
+    O(log(1/h1)) = O(loglog N)
+
+bits. To sum `G` lanes with no cross-lane carry, add offset and guard bits. The final field width is
+
+    q = O(log(G/h1)) = Theta(loglog N).
+
+A `B`-lane vector therefore occupies
+
+    W = Theta(B q / log N)
+      = Theta(log N/loglog N)
+
+machine words.
+
+## 7. Exact online-cost accounting
+
+Let
+
+    R = ceil(N/B)
+      = Theta(N (loglog N)^2/(log N)^2)
+
+be the number of output blocks.
+
+### Descriptor/key construction
+
+    R k = Theta(N).
+
+### Table lookups
+
+    R G
+      = Theta(N loglog N/log N)
+      = o(N).
+
+### Packed vector accumulation
+
+Each block adds `G` table vectors, each occupying `W` words:
+
+    R G W
+      = Theta(N (loglog N)^2/(log N)^2)
+        * Theta(log N/loglog N)
+        * Theta(log N/loglog N)
+      = Theta(N).
+
+### Unpack and write
+
+Every output lane is unpacked and written once:
+
+    Theta(N).
+
+### Sampling/input scan
+
+    O(N).
+
+Therefore the complete online work is
+
+    O(N).
+
+The mandatory input scan and explicit output materialization are of the same order.
+
+## 8. Error accounting
+
+Work in units of `L_box(x)/sqrt(N)`.
+
+- Monte Carlo sampling: `eta_s`;
+- start/slope phase quantization: `eta_phase`;
+- first table lane rounding: `h1/sqrt(2)`;
+- final output rounding: `h2/sqrt(2)`.
+
+Choose every term as a fixed fraction of
+
+    eta_N = C loglog N/sqrt(log N).
+
+Then, on the sampling success event,
+
+    ||Xhat-U_N x||_inf
+      <= eta_N L_box(x)/sqrt(N).
+
+The table phasors themselves need only `O(loglog N)` accuracy bits; their finite generation error is absorbed into the same budget.
+
+## 9. General cost/error tradeoff
+
+Let `k` be a polylogarithmic sample count and choose `B >= k`. Let
+
+    p = O(log B + log(1/eta_d))
+
+be descriptor bits and
+
+    q = O(log(kp/log N) + log(1/eta_d))
+
+be packed-lane field bits.
+
+The same architecture has online cost
+
+    T(N,k,B)
+      = O( N
+           + N k/B
+           + N k p q/(log N)^2 ).
+
+Its sampling term is
+
+    O(sqrt(log(N/delta)/k)) * L_box(x)/sqrt(N).
+
+The linear-time choice balances these terms at
+
+    k = B = Theta((log N)^2/(loglog N)^2),
+
+which yields the vanishing factor
+
+    Theta(loglog N/sqrt(log N)).
+
+This tradeoff is more informative than a single parameter setting: more online time can be exchanged for a smaller error.
+
+## 10. A stronger `o(N log N)` point
+
+Choose
+
+    k = B = Theta((log N)^3/(loglog N)^3)
+
+and match decoder precision to the sampling error. Then
+
+    sampling/decoder factor
+      = O((loglog N)^{3/2}/log N),
+
+while
+
+    T(N) = O(N log N/loglog N)
+         = o(N log N).
+
+So the same project now contains two distinct fresh-input results in the stated word-RAM model:
+
+1. `O(N)` online time with error factor `O(loglog N/sqrt(log N))`;
+2. `O(N log N/loglog N)` online time with the smaller factor `O((loglog N)^{3/2}/log N)`.
+
+Both output all `N` bins and fully charge the lookup tables.
+
+## 11. Prototype verification
+
+`prototype.py` implements:
+
+- signed real/imaginary mass sampling;
+- variable sample count `k`;
+- output-block width `B=k`;
+- quantized start/slope descriptors;
+- first-level group tables generated on demand for toy tests;
+- guarded packed-lane additions;
+- comparison with the exact sampled-vector FFT;
+- Monte Carlo sampling-scaling experiments;
+- symbolic asymptotic cost models for both regimes.
+
+### Packed-decoder correctness
+
+20 cases were tested at `N=2048`, with
+
+    k in {16,32,64,128}
+
+across flat, random-phase, Gaussian, power-law, and spike+noise inputs.
+
+Observed maximum normalized decoder error:
+
+    0.0305705
+
+Maximum derived deterministic decoder bound:
+
+    0.0753553
+
+Violations:
+
+    0 / 20.
+
+### Sampling scaling
+
+For each of four signal families and
+
+    k in {16,32,64,128,256,512},
+
+40 trials were run. A log-log fit of median all-bin sampling error against `k` gave slopes:
+
+    flat          -0.4892
+    random phase  -0.4876
+    Gaussian      -0.4829
+    spike+noise   -0.4823
+
+which closely tracks the predicted `k^{-1/2}` behavior.
+
+For random-phase input, the median normalized errors were:
+
+    k=16    0.6642
+    k=32    0.4950
+    k=64    0.3482
+    k=128   0.2487
+    k=256   0.1738
+    k=512   0.1250.
+
+The ratio between measured medians and `sqrt(log N/k)` stayed close to one in these tests.
+
+These experiments verify identities, deterministic packing, and scaling. They do not make the enormous asymptotic preprocessing table practical.
+
+## 12. Rejected shortcut: half length-squared + half uniform sampling
+
+A tempting alternative is
+
+    p_j = 1/2 ( |x_j|^2/||x||_2^2 + 1/N ).
+
+The reweighted unitary Fourier sample then has magnitude at most `||x||_2`, because with
+
+    t = sqrt(N)|x_j|/||x||_2,
+
+its normalized magnitude is
+
+    2t/(1+t^2) <= 1.
+
+This gives an elegant `O(||x||_2)` concentration scale with `Theta(log N)` samples.
+
+However, it does **not** improve the v3 guarantee asymptotically:
+
+    L_box(x)/sqrt(N) <= sqrt(2) ||x||_2.
+
+For flat and random-phase inputs, the two scales differ only by a constant. For a spike, the old `L_box/sqrt(N)` scale is better by `sqrt(N)`.
+
+Therefore this branch was audited and rejected as the main continuation. The actual improvement comes from increasing `k` while widening `B`, not from changing to an `l2` sampler.
+
+## 13. Coordinate-sampling barrier
+
+For a general single-coordinate unbiased estimator of one Fourier coefficient, with probabilities `p_j`, the second moment is
+
+    E|Z_m|^2 = (1/N) sum_j |x_j|^2/p_j.
+
+By Cauchy-Schwarz,
+
+    E|Z_m|^2 >= ||x||_1^2/N,
+
+with equality for magnitude-proportional sampling.
+
+For a flat-magnitude input, this lower bound is `Theta(N)`. When a target coefficient is only `Theta(1)`, obtaining constant RMS error from independent coordinate samples requires `Omega(N)` samples.
+
+Thus no polylog-sample coordinate estimator can reach the typical `Theta(1)` coefficient scale on arbitrary flat cancellation-heavy inputs. The new theorem gives a vanishing error relative to total energy, but it still does not solve ordinary high-accuracy FFT approximation.
+
+This is a restriction on the coordinate-sampling family, not a universal FFT lower bound.
+
+## 14. Prior-art boundary
+
+The ingredients are individually classical:
+
+- Monte Carlo / importance-sampled approximate matrix multiplication and matrix-vector products;
+- the Method of Four Russians and lookup-table matrix-vector multiplication;
+- Josh Alman, *Faster Walsh-Hadamard Transform and Matrix Multiplication over Finite Fields using Lookup Tables*, arXiv:2211.04643;
+- cyclotomic finite-field FFT work discussing Four-Russians matrix-vector stages;
+- sparse Fourier transform algorithms, which solve a different problem by returning only a sparse approximation or a small set of significant frequencies.
+
+The searches performed for this continuation did not locate a paper stating this exact combination:
+
+    signed coordinate surrogate
+      + B growing with k
+      + one-word phasor-group keys
+      + guarded packed B-lane accumulation
+      + fully charged N^gamma preprocessing
+      -> all N bins with the above shrinking-error/time tradeoff.
+
+That is **not** a novelty proof. No originality claim should be made without a broader literature review and independent expert verification.
+
+## 15. Current verdict and next target
+
+The broken-chat branch has moved beyond a constant coarse error:
+
+> In the stated finite-precision word-RAM model, the packed sparse-surrogate mechanism supports a fresh arbitrary-input, all-output `O(N)` randomized DFT approximation whose error relative to total signal energy tends to zero as `loglog N/sqrt(log N)`.
+
+This is a real asymptotic strengthening of v3, but the error on flat random-phase inputs is still much larger than a typical individual Fourier coefficient.
+
+The next valid target is therefore **not** another coordinate sampler. It must introduce a non-coordinate structured measurement/evaluator capable of beating the `Omega(N)`-sample variance obstruction for flat cancellation-heavy inputs, while keeping all preprocessing and all `N` outputs charged.

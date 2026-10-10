@@ -1,0 +1,62 @@
+"""Numerical verification of R R* = diag(L/d) and row supports.
+Proof is independent and written in THEOREM.md; numerical check is a control.
+"""
+import numpy as np
+from phase15_executor import orbits
+
+
+def make_R(N,B):
+    L=N//B
+    assert N<=B*B
+    w=np.exp(2j*np.pi/B)
+    tw=w**np.arange(B//2)
+    # columns, one fine-spectrum input at a time.
+    result=np.zeros((N,N),dtype=complex)
+    groups=orbits(N,B)
+    for column in range(N):
+        U=np.zeros((L,B),dtype=complex)
+        U[column//B,column%B]=1.
+        spectra={L:U}
+        d=L
+        while d>1:
+            half=d//2
+            fine=spectra[d]
+            low=np.empty((half,B),dtype=complex)
+            for a in range(half):
+                q=np.arange(B//2)
+                even=fine[a,2*q]
+                odd=tw*fine[a+half,2*q]
+                low[a,q]=even+odd
+                low[a,q+B//2]=even-odd
+            spectra[half]=low
+            d=half
+        ptr=0
+        for orbit in groups:
+            d=len(orbit);g=L//d;u=orbit[0]//g
+            iu=pow(u,-1,d) if d>1 else 0
+            for e in range(d):
+                a=e*iu%d if d>1 else 0
+                c=(u*a-e)//d
+                result[ptr,column]=w**c*spectra[d][a,u]
+                ptr+=1
+    ds=[len(orb) for orb in groups for _ in orb]
+    return result,np.array(ds)
+
+
+if __name__=='__main__':
+    import json
+    for N,B in [(16,8),(32,8),(64,8),(128,16),(256,16),(256,32)]:
+        R,ds=make_R(N,B)
+        L=N//B
+        gram=R@R.conj().T
+        diag=L/ds
+        err=np.max(np.abs(gram-np.diag(diag)))
+        row_count=np.sum(np.abs(R)>1e-7,axis=1)
+        assert np.max(np.abs(row_count-diag))<1e-7,(N,B,'support')
+        assert err<1e-10,(N,B,'orthogonality',err)
+        h=L.bit_length()-1
+        assert int(row_count.sum())== N + (N//2)*h,(N,B,row_count.sum())
+        print(json.dumps(dict(N=N,B=B,orthogonality_max_error=round(float(err),14),
+            R_nonzeros=int(row_count.sum()),A_nonzeros=int(B*row_count.sum()),
+            R_max_row_support=int(max(row_count)),
+            scaled_R_unitary=True)))

@@ -1,0 +1,169 @@
+0001 """Independent exact checks for the correlated forcing scan obstruction.
+0002 
+0003 This file was authored for this audit. It does not import uploaded code.
+0004 Finite-field first moments test the algebraic rank argument; Bessel
+0005 nonvanishing over the complex numbers is proved separately in the report.
+0006 """
+0007 import json
+0008 import random
+0009 from pathlib import Path
+0010 
+0011 P = 998244353
+0012 HALF = pow(2, -1, P)
+0013 
+0014 
+0015 def rank(a):
+0016     a = [row[:] for row in a]
+0017     n, m = len(a), len(a[0])
+0018     r = 0
+0019     for c in range(m):
+0020         j = next((j for j in range(r, n) if a[j][c] % P), None)
+0021         if j is None:
+0022             continue
+0023         a[r], a[j] = a[j], a[r]
+0024         v = pow(a[r][c] % P, -1, P)
+0025         a[r] = [(v * x) % P for x in a[r]]
+0026         for j in range(r + 1, n):
+0027             v = a[j][c] % P
+0028             if v:
+0029                 a[j] = [(x - v * y) % P for x, y in zip(a[j], a[r])]
+0030         r += 1
+0031         if r == min(n, m):
+0032             break
+0033     return r
+0034 
+0035 
+0036 def det(a):
+0037     a = [row[:] for row in a]
+0038     n, d = len(a), 1
+0039     for c in range(n):
+0040         j = next((j for j in range(c, n) if a[j][c] % P), None)
+0041         if j is None:
+0042             return 0
+0043         if j != c:
+0044             a[c], a[j] = a[j], a[c]
+0045             d = -d
+0046         pivot = a[c][c] % P
+0047         d = d * pivot % P
+0048         inv = pow(pivot, -1, P)
+0049         for j in range(c + 1, n):
+0050             v = a[j][c] * inv % P
+0051             if v:
+0052                 for k in range(c + 1, n):
+0053                     a[j][k] = (a[j][k] - v * a[c][k]) % P
+0054                 a[j][c] = 0
+0055     return d % P
+0056 
+0057 
+0058 def nearest_ratio(n, d):
+0059     # Ties upward; selected target nodes in this test have no ties.
+0060     return (2 * n + d) // (2 * d)
+0061 
+0062 
+0063 def one_case(q, m, a, beta, n, extension, rng):
+0064     k = q // m
+0065     omega = pow(3, (P - 1) // q, P)
+0066     assert pow(omega, q, P) == 1 and pow(omega, q // 2, P) == P - 1
+0067     rootk = pow(omega, m, P)
+0068     b = [pow(omega, (m * (a * u + beta) + a * m * (m - 1) // 2) % q, P)
+0069          for u in range(k)]
+0070     boundary = [[0] * k for _ in range(k)]
+0071     for u in range(k):
+0072         boundary[u][u] = 1
+0073         boundary[u][(u + m) % k] = (boundary[u][(u + m) % k] - b[u]) % P
+0074     assert rank(boundary) == k
+0075     cycle_checks = 0
+0076     for u in range(m):
+0077         product = 1
+0078         for j in range(k // m):
+0079             product = product * b[(u + j * m) % k] % P
+0080         expected = pow(omega, (k * (a * u + beta) + a * k * (k - 1) // 2) % q, P)
+0081         assert product == expected and pow(product, m, P) == P - 1
+0082         cycle_checks += 1
+0083 
+0084     # Actual equal-block forcing: gamma_t times the periodic boundary map
+0085     # acting on the a-permuted K-point Fourier channel.
+0086     base = []
+0087     for t in range(q):
+0088         u = t % k
+0089         gamma = pow(omega, (a * t * (t - 1) // 2 + beta * t) % q, P)
+0090         base.append([
+0091             gamma * (pow(rootk, ((a * u) % k) * j, P)
+0092                      - b[u] * pow(rootk, ((a * (u + m)) % k) * j, P)) % P
+0093             for j in range(k)
+0094         ])
+0095     assert rank(base) == k
+0096 
+0097     ai = pow(a, -1, q)
+0098     selected = {}
+0099     invn = pow(n, -1, P)
+0100     for target in range(n):
+0101         j = nearest_ratio(q * target, n)
+0102         t = ai * j % q
+0103         assert t not in selected
+0104         selected[t] = (q * target - n * j) * invn % P
+0105     rows = sorted(selected)
+0106     values = [selected[t] for t in rows]
+0107     assert len(set(values)) == n
+0108     w = [None] * q
+0109     for t in rows:
+0110         w[t] = selected[t]
+0111     for t in range(q):
+0112         if w[t] is None:
+0113             if extension == "zero":
+0114                 w[t] = 0
+0115             elif extension == "match_next_selected":
+0116                 nxt = next(rows[j] for j in range(len(rows)) if rows[j] > t) if t < rows[-1] else rows[0]
+0117                 w[t] = w[nxt]
+0118             else:
+0119                 w[t] = rng.randrange(P)
+0120 
+0121     comm = [[(w[t] - w[u]) * (HALF if u >= t else -HALF) % P
+0122              for u in range(q)] for t in rows]
+0123     principal = [[comm[i][u] for u in rows] for i in range(n)]
+0124     expected_det = (1 if n % 2 == 0 else -1) * pow(4, -1, P) % P
+0125     for i in range(n):
+0126         expected_det = expected_det * (values[i] - values[(i + 1) % n]) % P
+0127     assert expected_det != 0 and det(principal) == expected_det
+0128 
+0129     out = [[sum(c * base[u][j] for u, c in enumerate(row)) % P for j in range(k)]
+0130            for row in comm]
+0131     unweighted_rank = rank(out)
+0132     first_moment = [[v * j % P for j, v in enumerate(row)] for row in out]
+0133     first_moment_rank = rank(first_moment)
+0134     assert unweighted_rank >= max(0, k - (q - n))
+0135     assert first_moment_rank >= max(0, k - 1 - (q - n))
+0136 
+0137     return {"Q": q, "M": m, "K": k, "N": n, "a": a, "beta": beta,
+0138             "extension": extension, "boundary_cycle_checks": cycle_checks,
+0139             "unweighted_rank": unweighted_rank,
+0140             "first_moment_rank": first_moment_rank,
+0141             "unweighted_lower_bound": max(0, k - (q - n)),
+0142             "first_moment_lower_bound": max(0, k - 1 - (q - n))}
+0143 
+0144 
+0145 def main():
+0146     rng = random.Random(92025109)
+0147     cases = []
+0148     for q, m in [(8, 2), (16, 2), (16, 4), (32, 2), (32, 4), (64, 4), (64, 8), (128, 8)]:
+0149         for a, beta in [(1, 0), (3, 2), (q - 1, q - 3)]:
+0150             for n in sorted({q - 1, q - 3, max(q // 2 + 1, q - q // m + 1)}):
+0151                 for extension in ["zero", "match_next_selected", "random"]:
+0152                     cases.append(one_case(q, m, a, beta, n, extension, rng))
+0153     results = {
+0154         "status": "PASS", "field": P,
+0155         "case_count": len(cases),
+0156         "boundary_cycle_checks": sum(c["boundary_cycle_checks"] for c in cases),
+0157         "selected_commutator_determinants": len(cases),
+0158         "correlated_rank_inequalities": 2 * len(cases),
+0159         "limitations": ["Finite tests corroborate the proof, not an asymptotic speedup.",
+0160                         "First-moment field weights test the same algebraic restriction; they are not Bessel values.",
+0161                         "No uploaded code was executed, imported, or used as a dependency."],
+0162         "cases": cases,
+0163     }
+0164     Path(__file__).with_name("CHECK_RESULTS.json").write_text(json.dumps(results, indent=2) + "\n")
+0165     print(json.dumps({k: v for k, v in results.items() if k != "cases"}, indent=2))
+0166 
+0167 
+0168 if __name__ == "__main__":
+0169     main()

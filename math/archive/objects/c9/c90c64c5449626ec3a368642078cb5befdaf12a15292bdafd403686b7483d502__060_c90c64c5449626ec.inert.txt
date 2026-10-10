@@ -1,0 +1,76 @@
+# Independent adversarial review: approximate Word-RAM Fourier decoding
+
+This review concerns the new `SPARSE_SURROGATE_WORDRAM_CHECKPOINT_v2.md`, not an exact arithmetic FFT. The original two-table presentation leaves packing unspecified. A simpler guarded-lane addition construction closes that particular gap. The resulting asymptotic theorem is credible under the explicit finite-word model below. No novelty or practical speed claim follows.
+
+## Model and quantifiers
+
+Fix an accuracy `0 < epsilon < 1`, an input bit bound constant `c`, and a failure exponent constant `d`. Each real and imaginary input component is a signed integer with at most `c log2(N)` bits, or uses a common fixed-point denominator. Let `N` grow and let `N^(-d) <= delta <= 1/2`. A word has `C log2(N)` bits for a sufficiently large constant `C` depending on `c,d`. Unsigned arithmetic, multiplication, division, shifts, Boolean operations, comparisons, memory addressing, and generating a random word take constant time. All packed operands fit a constant number of such words. All tables are constructed afresh and charged.
+
+Arbitrary precision real or complex inputs cannot be substituted for these inputs. The conclusion is a randomized additive approximation, not an exact DFT, a backward-stable FFT, a per-coordinate relative approximation, or a normwise relative-error transform.
+
+Write `L = sum_j (abs(Re x_j) + abs(Im x_j))`. The claimed output error is
+
+    max_m |z_m - (U_N x)_m| <= epsilon L / sqrt(N)
+
+with probability at least `1-delta`. Since `L <= sqrt(2) ||x||_1`, this converts to the usual l1 scale with a factor sqrt(2), or by running with epsilon/sqrt(2). For a dense vector this error can be much larger than individual Fourier coefficients.
+
+## Sampling constants
+
+Sample signed real/imaginary atoms with probabilities equal to their absolute component masses divided by `L`. A normalized atom contribution `Z_m` has modulus one. Its real and imaginary parts lie in `[-1,1]`. Hoeffding and a union bound give
+
+    P(max_m |K^(-1) sum_s Z_{s,m} - (F_N x)_m/L| > r)
+      <= 4N exp(-K r^2 / 4).
+
+Thus `K0 = ceil(16 epsilon^(-2) ln(8N/delta))` suffices for sampling error at most `epsilon/2` with failure at most `delta/2`. Round the sample count UP to a multiple of the first-table group size: `K = g ceil(K0/g)`, and put `G=K/g`. Every group then has exactly `g` atoms; no unequal-group averaging is hidden.
+
+Prefix sums are built in `O(N)` operations. Each sampled atom can be found by binary search in `O(log N)` operations, so sampling adds `O(K log N)=O(log^2 N)` for fixed epsilon and d. Exact uniform integer generation by rejection gives expected bounds. A fixed number of sufficiently many random bits followed by reduction modulo `L` also gives a worst-case word-operation bound, if its total-variation bias is explicitly charged to the remaining `delta/2`; it does not preserve exact unbiasedness. For example, generating `q >= ceil(log2 L)+ceil(log2(2K/delta))` fair bits makes the total coupling error for K samples at most delta/2. The integer interval, not a floating-point cumulative sum, should drive the sampler.
+
+## Quantized trajectories and first table
+
+Use `B=Theta(log N)` consecutive output bins per block. A descriptor consists of a sample's sign in `{1,-1,i,-i}`, a quantized block-start phase, and a quantized slope. Choose powers of two
+
+    Q0 >= 64 pi / epsilon,
+    Qs >= 64 pi B / epsilon,
+
+with `Qs` a multiple of `Q0`. Floor quantization gives a total trajectory angle error at every lane below
+
+    2pi/Q0 + 2pi(B-1)/Qs <= epsilon/16.
+
+The error in the complex unit phasor is at most this angle error. The descriptor alphabet has size `D=4 Q0 Qs`; its encoding uses `p=log2 D=O(log B+log(1/epsilon))` bits. Choose any fixed `0<gamma<1` and `g=floor(gamma log2(N)/p)`. For sufficiently large N, g>=1. The first table has `D^g <= N^gamma` keys.
+
+For every group key and lane, average its g approximate phasors. Approximate each sine/cosine coordinate to error at most `1/(4H)`, where `H` is a fixed integer at least `8/epsilon`. Clamp those approximations to [-1,1], average, then round each coordinate to a multiple of `1/H`. The stored signed integer lies in [-H,H]. The error between the stored group average and the average of exact quantized phasors is at most `3 sqrt(2)/(4H)` in complex modulus. Together with phase error this is less than epsilon/2 with the stated H. A slightly larger H leaves room for any final explicit output rounding.
+
+Certified sine/cosine values can be prepared once for the `Qs=O(log N)` rational angles. Range reduction and rational Taylor series to `O(log log N)` bits require only polylogarithmic-in-log-N work. An ordinary binary64 `sin` call is a useful experimental implementation but is not a formal unit-cost primitive or a certified numerical proof. Enumerating every table entry and all g B lanes costs
+
+    O(N^gamma g B polyloglog(N)) = o(N)
+
+word operations for fixed epsilon,d. The table is independent of the fresh input. Rebuilding it in every call is charged and remains sublinear asymptotically.
+
+## Guarded-lane accumulation closes the packing gap
+
+Offset each stored integer by H, obtaining codes in `[0,2H]`. The number of groups is `G=O(loglog N)`. Give each code
+
+    r = ceil(log2(2HG+1))
+
+bits and pack `ell=floor(w/r)` codes into one word. The real and imaginary coordinates can use the same stream of fields. One group row has `R=ceil(2B/ell)=O(1+log G)` words.
+
+Add the G packed rows word by word. Every field sum is at most `2HG < 2^r`, so no carry crosses a field boundary. Because the top field also satisfies this inequality, no word overflow occurs. This is exact integer addition, not a SIMD assumption or an unbounded-integer operation.
+
+After all G additions, unpack each final lane once. Subtract GH and divide by GH. This gives precisely the average of the G quantized group averages. There is no second aggregation table and no matrix transposition. In particular, unpacking each of G rows separately would cost `N G` and would lose the bound; the implementation must unpack only the accumulated rows.
+
+For every block, computing K atom descriptors and packing keys takes `O(K)` operations; processing all blocks therefore costs `O((N/B)K)=O(N)`. Packed row reads and additions cost
+
+    O((N/B) G R)
+      = O(N loglog(N) logloglog(N) / log(N)) = o(N).
+
+Writing every real and imaginary output takes `O(N)`. Input scan, prefix sampling, full table construction, all descriptor work, packed additions, and explicit outputs are therefore `O(N)` word operations in total, with constants depending on epsilon,c,d. Small N for which g=0 can use a conventional algorithm; this does not alter the asymptotic theorem because the threshold depends only on the fixed parameters. It can make the asymptotic bound completely impractical at accessible N.
+
+## Output representation obligation
+
+The raw decoded coordinate is an integer numerator divided by `GH`, then multiplied by `L/sqrt(N)`. An implementation returning the numerator and common scale is a precise, explicitly declared representation, but is not the same API as N ordinary floating-point complex numbers. If conventional fixed-point outputs are claimed, compute a sufficiently accurate inverse-square-root scale once with charged word arithmetic, multiply and round each coordinate in O(1) word operations, and reserve error budget for this final rounding. Each output must be materialized. Counting only a lazy vector or oracle would not prove the requested all-output result.
+
+## Verdict and remaining implementation checks
+
+The guarded-lane repair supplies a complete asymptotic packing mechanism and removes the two-table checkpoint's main cost gap. The proof is for fixed accuracy, polynomially bounded inverse failure probability, bounded finite-word input, and additive l1-scaled error. Accuracy tending to zero with N, superpolynomially small delta, arbitrary precision input, or exact outputs require a new analysis. Table sizes and sample constants can be enormous; an asymptotic O(N) result alone does not establish a speed win over an FFT implementation.
+
+`verify_packing.py` independently checks the guarded additions against scalar aggregation using exhaustive tiny configurations and randomized boundary cases, including non-power-of-two group counts, maximum field values, and final partial words. It is an algebraic implementation check, not a complexity proof or a statistical verification of Hoeffding's theorem.

@@ -1,0 +1,163 @@
+import unittest
+import sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+import green_sum_cert as g
+import chirp_hankel as c
+
+
+class Phase17Tests(unittest.TestCase):
+    def test_01_finite_field_rank(self):
+        self.assertEqual(g.rank_mod([[1,2],[2,4]],101),1)
+        self.assertEqual(g.rank_mod([[1,2],[2,5]],101),2)
+
+    def test_02_es_many_random_cases(self):
+        import random
+        rng=random.Random(108)
+        for n in (36,41,67,102):
+            for _ in range(4):
+                a=list(range(n));rng.shuffle(a)
+                b=list(range(n));rng.shuffle(b)
+                chain=g.common_monotone_subseq([a,b])
+                self.assertGreaterEqual(len(chain),int(n**.5))
+                posa={x:i for i,x in enumerate(a)}
+                posb={x:i for i,x in enumerate(b)}
+                for pos in (posa,posb):
+                    v=[pos[x] for x in chain]
+                    self.assertTrue(v==sorted(v) or v==sorted(v,reverse=True))
+
+    def test_03_modular_tridiagonal_solve(self):
+        import random
+        rng=random.Random(28)
+        ell=1013
+        for n in (4,11,41):
+            diag,lo,up=g.make_tridiagonal(n,ell,rng)
+            for _ in range(3):
+                y=[rng.randrange(ell) for _ in range(n)]
+                sol=g.solve_tridiagonal_mod(diag,lo,up,y,ell)
+                for i in range(n):
+                    lhs=diag[i]*sol[i]
+                    if i:lhs+=lo[i-1]*sol[i-1]
+                    if i+1<n:lhs+=up[i]*sol[i+1]
+                    self.assertEqual(lhs%ell,y[i])
+
+    def test_04_prime_41_exact_minor(self):
+        a=g.audit_prime_fourier_sum(41,2,seed=1709,full_density=True)
+        self.assertEqual(a['fourier_cross_minor_rank'],3)
+        self.assertLessEqual(a['sum_cross_minor_rank'],2)
+        self.assertGreater(a['full_green_sum_density'][0],1600)
+
+    def test_05_prime_67_exact_minor(self):
+        a=g.audit_prime_fourier_sum(67,2,seed=1710,full_density=True)
+        self.assertEqual(a['fourier_cross_minor_rank'],3)
+        self.assertLessEqual(a['sum_cross_minor_rank'],2)
+
+    def test_06_prime_103_exact_minor(self):
+        a=g.audit_prime_fourier_sum(103,2,seed=1711)
+        self.assertEqual(a['fourier_cross_minor_rank'],3)
+        self.assertLessEqual(a['sum_cross_minor_rank'],2)
+
+    def test_07_chirp_identity_and_rank(self):
+        for n in (8,16,32,64):
+            a=c.chirp_hankel_certificate(n)
+            self.assertEqual(a['chirp_hankel_rank'],n//2)
+
+    def test_08_large_chirp_rank(self):
+        a=c.chirp_hankel_certificate(128)
+        self.assertEqual(a['chirp_hankel_rank'],64)
+
+    def test_09_same_order_green_cut(self):
+        for n in (16,32,64):
+            a=c.common_order_green_fourier_certificate(n,2)
+            self.assertLessEqual(a['green_sum_crosscut_rank'],2)
+            self.assertEqual(a['fourier_crosscut_rank'],n//2)
+
+    def test_10_composite_fourier_minor_can_vanish(self):
+        ell,omega=g.field_for_root(8)
+        m=g.fourier_minor([0,4],[0,2],omega,ell,8)
+        self.assertEqual(g.rank_mod(m,ell),1)
+
+    def test_11_symbolic_nonvanishing(self):
+        # Coefficient polynomial exact over Z, no floating-point rounding.
+        for n,rows,cols in [(41,[0,1,4],[2,7,10]),(67,[3,18,46],[1,16,49])]:
+            poly=g.determinant_polynomial_prime_fourier(rows,cols,n)
+            self.assertTrue(poly)
+            self.assertEqual(sum(poly.values()),0)
+
+    def test_12_power_two_exact_minors(self):
+        for n,q in ((16,2),(32,2),(64,2),(128,2),(256,2),(256,3),(512,3)):
+            a=g.audit_power_two_fourier_sum(n,q,seed=1709+n+q)
+            self.assertEqual(a['Fourier_minor_rank'],q+1)
+            self.assertLessEqual(a['Green_sum_minor_rank'],q)
+
+    def test_13_three_noncommuting_green_paths_prime(self):
+        a=g.audit_prime_fourier_sum(211,3,seed=1717)
+        self.assertEqual(a['fourier_cross_minor_rank'],4)
+        self.assertLessEqual(a['sum_cross_minor_rank'],3)
+        self.assertTrue(a['fourier_determinant_polynomial'])
+
+    def test_14_noncommutativity_is_genuine(self):
+        a=g.noncommuting_witness(41,1709)
+        self.assertGreater(a['nonzero_commutator_vector_entries'],0)
+
+    def test_15_balanced_cut_arbitrary_orders(self):
+        import random
+        rng=random.Random(1234)
+        for n in (64,256,1024):
+            for q in (1,2,3,4,5):
+                orders=[]
+                for _ in range(q):
+                    o=list(range(n));rng.shuffle(o);orders.append(o)
+                rows,cols=g.balanced_separation_witness(orders)
+                self.assertEqual(len(rows),len(cols))
+                self.assertGreaterEqual(len(rows),n//2**q)
+
+    def test_16_universal_power_two_two_paths(self):
+        a=g.audit_balanced_green_sum(64,2,1709)
+        self.assertGreater(a['exact_modular_Fourier_rank'],2)
+        self.assertLessEqual(a['green_sum_modular_rank'],2)
+
+    def test_17_universal_power_two_three_paths(self):
+        a=g.audit_balanced_green_sum(256,3,1717)
+        self.assertGreater(a['exact_modular_Fourier_rank'],3)
+        self.assertLessEqual(a['green_sum_modular_rank'],3)
+
+    def test_18_universal_four_paths_large(self):
+        a=g.audit_balanced_green_sum(2048,4,1800,compute_green=False)
+        self.assertGreater(a['exact_modular_Fourier_rank'],4)
+        self.assertGreater(a['absolute_Fourier_rank_lower_bound'],4)
+
+    def test_19_analytic_approximation_gap(self):
+        import approximation_gap as a
+        for n,q in ((64,2),(128,2),(256,3)):
+            obj=a.instance_gap(n,q,1709+n+q)
+            self.assertGreater(obj['universal_analytic_error_lower_bound'],0)
+            self.assertGreaterEqual(obj['actual_best_rank_q_spectral_approximation_error']+1e-10,
+                                    obj['instance_analytic_error_lower_bound'])
+
+    def test_20_products_of_sums_escape_additive_rank(self):
+        import product_escape_probe as a
+        for n in (32,64):
+            item=a.product_escape_audit(n)
+            self.assertLessEqual(item['one_green_sum_minor_rank'],2)
+            self.assertGreater(item['two_sums_product_minor_rank'],2)
+            self.assertGreater(item['Fourier_covariance_defect_rank_of_product'],0)
+
+    def test_21_adversarial_interleaving_tight_cut(self):
+        for n,q in ((64,2),(256,3),(2048,4)):
+            orders=g.balanced_interleaving_adversarial_orders(n,q)
+            rows,cols=g.balanced_separation_witness(orders)
+            self.assertEqual(len(rows),n//2**q)
+            self.assertEqual(len(cols),n//2**q)
+            self.assertGreater(len(rows)**2/n,q)
+
+    def test_22_finite_field_roots(self):
+        for n in (16,32,41,64,67,128):
+            ell,root=g.field_for_root(n)
+            self.assertEqual(pow(root,n,ell),1)
+            for f in range(1,n):
+                if n%f==0:
+                    self.assertNotEqual(pow(root,f,ell),1)
+
+
+if __name__=='__main__': unittest.main()

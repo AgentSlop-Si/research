@@ -1,0 +1,144 @@
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Iterable, Sequence
+import random
+
+FIELD_DATA = {
+    11: (1000000123, 3, 414936531),
+    13: (1000000093, 14, 619435978),
+    17: (1000000181, 2, 946968386),
+    19: (1000000021, 2, 172159615),
+    29: (1000000447, 3, 715533763),
+    31: (1000001969, 3, 539640862),
+}
+
+
+def mod_rank(a: Sequence[Sequence[int]], p: int) -> int:
+    if not a:
+        return 0
+    m = len(a)
+    n = len(a[0])
+    mat = [[int(x) % p for x in row] for row in a]
+    r = 0
+    for c in range(n):
+        pivot = next((i for i in range(r, m) if mat[i][c] % p), None)
+        if pivot is None:
+            continue
+        mat[r], mat[pivot] = mat[pivot], mat[r]
+        inv = pow(mat[r][c], -1, p)
+        for j in range(c, n):
+            mat[r][j] = mat[r][j] * inv % p
+        for i in range(m):
+            if i == r:
+                continue
+            f = mat[i][c] % p
+            if f:
+                for j in range(c, n):
+                    mat[i][j] = (mat[i][j] - f * mat[r][j]) % p
+        r += 1
+        if r == m:
+            break
+    return r
+
+
+def mod_matmul(a: Sequence[Sequence[int]], b: Sequence[Sequence[int]], p: int) -> list[list[int]]:
+    if not a or not b:
+        return []
+    m, k, n = len(a), len(a[0]), len(b[0])
+    if len(b) != k:
+        raise ValueError("dimension mismatch")
+    out = [[0] * n for _ in range(m)]
+    for i in range(m):
+        for t in range(k):
+            v = a[i][t] % p
+            if v:
+                bt = b[t]
+                for j in range(n):
+                    out[i][j] = (out[i][j] + v * bt[j]) % p
+    return out
+
+
+def mod_transpose(a: Sequence[Sequence[int]]) -> list[list[int]]:
+    return [list(col) for col in zip(*a)]
+
+
+def mod_inverse(a: Sequence[Sequence[int]], p: int) -> list[list[int]]:
+    n = len(a)
+    if any(len(row) != n for row in a):
+        raise ValueError("square matrix required")
+    mat = [[int(x) % p for x in row] + [1 if i == j else 0 for j in range(n)]
+           for i, row in enumerate(a)]
+    for c in range(n):
+        pivot = next((i for i in range(c, n) if mat[i][c] % p), None)
+        if pivot is None:
+            raise ZeroDivisionError("singular matrix")
+        mat[c], mat[pivot] = mat[pivot], mat[c]
+        inv = pow(mat[c][c], -1, p)
+        for j in range(2 * n):
+            mat[c][j] = mat[c][j] * inv % p
+        for i in range(n):
+            if i == c:
+                continue
+            f = mat[i][c] % p
+            if f:
+                for j in range(2 * n):
+                    mat[i][j] = (mat[i][j] - f * mat[c][j]) % p
+    return [row[n:] for row in mat]
+
+
+def dft_matrix(n: int, p: int, omega: int) -> list[list[int]]:
+    return [[pow(omega, i * j, p) for j in range(n)] for i in range(n)]
+
+
+def permutation_matrix(perm: Sequence[int], p: int = 0) -> list[list[int]]:
+    n = len(perm)
+    if sorted(perm) != list(range(n)):
+        raise ValueError("not a permutation")
+    out = [[0] * n for _ in range(n)]
+    for j, i in enumerate(perm):
+        out[i][j] = 1
+    return out
+
+
+def inverse_permutation(perm: Sequence[int]) -> list[int]:
+    inv = [0] * len(perm)
+    for i, j in enumerate(perm):
+        inv[j] = i
+    return inv
+
+
+def submatrix(a: Sequence[Sequence[int]], rows: Sequence[int], cols: Sequence[int]) -> list[list[int]]:
+    return [[a[i][j] for j in cols] for i in rows]
+
+
+def random_permutation(n: int, rng: random.Random) -> list[int]:
+    p = list(range(n))
+    rng.shuffle(p)
+    return p
+
+
+def random_nonzero(p: int, rng: random.Random) -> int:
+    return rng.randrange(1, p)
+
+
+def diag_left_right_permute_fourier(
+    f: Sequence[Sequence[int]],
+    row_perm: Sequence[int],
+    col_perm: Sequence[int],
+    left: Sequence[int],
+    right: Sequence[int],
+    p: int,
+) -> list[list[int]]:
+    n = len(f)
+    if not all(len(v) == n for v in (row_perm, col_perm, left, right)):
+        raise ValueError("size mismatch")
+    return [[left[i] * f[row_perm[i]][col_perm[j]] % p * right[j] % p
+             for j in range(n)] for i in range(n)]
+
+
+def matrix_is_zero(a: Sequence[Sequence[int]], p: int) -> bool:
+    return all((x % p) == 0 for row in a for x in row)
+
+
+def identity(n: int) -> list[list[int]]:
+    return [[1 if i == j else 0 for j in range(n)] for i in range(n)]

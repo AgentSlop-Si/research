@@ -1,0 +1,83 @@
+# Exact two-stage Fourier candidate gate
+
+9 October 2026. This directory contains independently written exact screening code and proofs. There is no claimed two-stage factorization of F32 or F64. Numerical fitting was not used.
+
+## Main results
+
+1. If a complex Fourier matrix is computed by two raw bidirectional-sum scan stages with middle permutation P, then its anchored permutation discrepancy must obey
+
+       max(k,l) |q(k,l) - kl/N| <= 2,
+
+   where q(k,l) counts P's ones in the leading k by l rectangle. The proof uses only scan cross-cut rank one and is safe with zero propagation weights, zero injections, resets and arbitrary diagonal feedthrough. It allows arbitrary independent endpoint permutations and nonsingular diagonal scalings. No tridiagonal chart or division by a stage coefficient is needed.
+
+2. At N64 this excludes all 720 unsigned permutations of the six coordinate bits, including ordinary bit reversal. At N32 it excludes 115 of the 120 unsigned coordinate-bit permutations. This is a bounded structured family, not a search over N! arbitrary permutations.
+
+3. XOR variants demonstrate an important limitation: at N64, bit reversal XOR a passes the discrepancy screen for each a from 1 through 62. XOR 7 and XOR 56 each attain maximum discrepancy 9/8. Passing is only failure of a necessary condition to exclude the candidate.
+
+4. A complete elementary dyadic-Haar discrepancy proof establishes that no arbitrary-permutation two-stage family exists at unbounded N. The explicit conservative threshold obtained here is N >= 2^73727. This enormous threshold is only a finiteness certificate. It does not answer unrestricted N32/N64, establish any lower bound beyond two stages, or settle the requested sublogarithmic-stage question.
+
+See discrepancy_proof.md for the complete proofs, exact witnesses, limits, and additional interval-cut tests.
+
+## A stronger test with prescribed endpoint orders
+
+For any particular endpoint row/column order, compute exact lower bounds r_TL, r_TR, r_BL, r_BR on all Fourier quadrant ranks. A proposed middle permutation with leading-rectangle count q must satisfy
+
+    r_TL <= q+2,
+    r_TR <= k-q+2,
+    r_BL <= l-q+2,
+    r_BR <= N-k-l+q+2.
+
+The script endpoint_rank_screen.py calculates those lower bounds by Gaussian elimination over F_257, using a primitive Nth root, for N16, N32 and N64. These are rigorous LOWER bounds on the corresponding complex ranks: every minor is an integer polynomial in the root. A minor that is zero at a primitive complex root is divisible by its cyclotomic polynomial; it would also vanish at the primitive root mod 257. Thus a nonzero modular minor certifies a nonzero complex minor. The hypothetical scan coefficients themselves are not reduced modulo 257, and no assumption that their reduction exists is needed.
+
+The script considers three explicitly prescribed symmetric endpoint orderings:
+
+- natural order;
+- binary reversal;
+- the last radix-4 layer's output scatter order, j+r*(N/4), with j increasing and r in [0,2,1,3].
+
+For each ordering it tests all unsigned coordinate-bit middle permutations and all bit-reversal-XOR middle permutations. Those lists overlap; the reported total is the number of labeled tests, not the number of distinct permutations.
+
+Results at N32:
+
+- With both endpoints binary reversed, all 120 unsigned coordinate-bit middle permutations are excluded, including the five left by the endpoint-independent discrepancy screen. Exactly 24 of the 32 XOR variants survive this stronger necessary test.
+- With both endpoints the specified radix-4 scatter order, EVERY internal permutation is excluded. At k=5, l=13 the two top Fourier quadrant ranks are at least 5 and 5, while their sum is at most k+4=9 in every two-stage product.
+
+Results at N64:
+
+- With both endpoints binary reversed, 26 of the 64 XOR variants survive.
+- With both endpoints the specified radix-4 scatter order, EVERY internal permutation is excluded by the same k=5, l=13 rank-sum witness.
+
+The all-internal-permutation rank-sum certificate follows by adding pairs of quadrant inequalities. The necessary bounds are
+
+    r_TL+r_TR <= k+4,
+    r_BL+r_BR <= N-k+4,
+    r_TL+r_BL <= l+4,
+    r_TR+r_BR <= N-l+4.
+
+A violated rank-sum inequality is independent of P. These stronger exclusions apply ONLY to their specified endpoint orders. They cannot be combined into an arbitrary-endpoint N32/N64 theorem.
+
+### Elementary affine-endpoint exclusion
+
+If either endpoint's Fourier index order is a*i+b modulo N with gcd(a,N)=1, every prefix or suffix in that dimension is an ordinary Vandermonde rectangle after diagonal scaling. Thus its rank is the smaller dimension, regardless of the other endpoint order. Taking k=l=floor(N/2) makes the top two quadrant ranks each k, forcing 2k <= k+4. Therefore no two-stage realization at N >= 10 can have such an affine endpoint order, whatever the other endpoint order or middle permutation. This includes natural ordering and cyclic shifts. It does not apply to arbitrary endpoint permutations.
+
+## Positive controls and reproducibility
+
+Required runtime: Python 3 and NumPy for the endpoint-rank scripts; the discrepancy scripts use standard Python only.
+
+Run from this directory:
+
+    python discrepancy_screen.py
+    python discrepancy_interval_screen.py
+    OPENBLAS_NUM_THREADS=1 python endpoint_rank_screen.py
+    OPENBLAS_NUM_THREADS=1 python verify_screen_controls.py
+
+verify_screen_controls.py independently constructs the known two-stage F16 radix-4 factorization and verifies all 16 basis columns simultaneously over F_257, then verifies that the necessary screen accepts it. The script independently compares 200 incremental rectangle-rank results against a second scalar Gaussian-elimination implementation. It also checks every permutation count of the positive control directly. control_results.json records the exact endpoint and middle permutations.
+
+Outputs:
+
+- discrepancy_results.json: every tested structured middle permutation, maximum exact rational discrepancy, and a worst-cut witness
+- discrepancy_interval_results.json: additional all-contiguous-interval screening of distinct surviving candidates; no further exclusion found
+- endpoint_rank_results.json: fixed-endpoint candidate tests and rigorous modular rank witnesses
+- control_results.json: known positive control and independently cross-checked ranks
+
+All computations here are finite exact algebra or integer arithmetic. No failure of optimization is used as evidence. No arithmetic-time improvement or new literature-priority claim is made.

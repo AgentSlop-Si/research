@@ -1,0 +1,77 @@
+1: """Ordinary full-length three-convolution comparator for the SAME tail map.
+2: 
+3: This deliberately general polynomial evaluator is O(N log N). It is not the
+4: special H_q(C) Fourier comparator, which computes a different operator.
+5: An additional primitive 2N-th root eta with eta**2=q is supplied.
+6: """
+7: from collections import Counter
+8: from dataclasses import dataclass
+9: from tail_blocks import Counted,prepare,fft
+10: from orbit_kernel import fft_plan
+11: 
+12: 
+13: @dataclass
+14: class FullPlan:
+15:     n: int
+16:     fft: object
+17:     inverse_spectrum: list
+18:     upper_spectrum: list
+19:     forward_spectrum: list
+20:     g: list
+21:     inverse_g: list
+22:     preparation: dict
+23: 
+24: 
+25: def prepare_full(field,n,r,eta,polynomial=None):
+26:     if n<2 or n&(n-1) or not 1<=r<=n:
+27:         raise ValueError('N power of two and 1<=r<=N required')
+28:     c=Counted(field)
+29:     q=c.mul(eta,eta)
+30:     kernel=prepare(field,n,q)
+31:     plan=fft_plan(c,n,eta)
+32:     if polynomial is None:
+33:         polynomial=kernel.kernel[n-r:]
+34:     if not polynomial or len(polynomial)>r:
+35:         raise ValueError('polynomial must have 1..r coefficients')
+36:     polynomial=list(polynomial)+[field.zero]*(r-len(polynomial))
+37:     g=[field.one]
+38:     for j in range(n-1):
+39:         g.append(c.mul(g[-1],c.sub(q,plan.powers[(-2*j)%(2*n)])))
+40:     upper=[field.zero]*(2*n)
+41:     for j,value in enumerate(polynomial,start=n-r):
+42:         upper[(-j)%(2*n)]=value
+43:     inverse_spectrum=fft(c,plan,kernel.middle+[field.zero]*n)
+44:     upper_spectrum=fft(c,plan,upper)
+45:     forward_spectrum=fft(c,plan,kernel.kernel+[field.zero]*n)
+46:     counts=Counter(kernel.preparation);counts.update(c.count)
+47:     return FullPlan(n,plan,inverse_spectrum,upper_spectrum,forward_spectrum,
+48:                     g,kernel.middle,dict(counts))
+49: 
+50: 
+51: def apply_full(field,plan,x):
+52:     n=plan.n
+53:     if len(x)!=n:
+54:         raise ValueError('wrong input length')
+55:     c=Counted(field)
+56:     def convolution(values,spectrum):
+57:         transformed=fft(c,plan.fft,values+[field.zero]*n)
+58:         product=[c.mul(a,b) for a,b in zip(transformed,spectrum)]
+59:         return fft(c,plan.fft,product,inverse=True)[:n]
+60:     z=convolution(list(x),plan.inverse_spectrum)
+61:     z=[c.mul(a,b) for a,b in zip(plan.g,z)]
+62:     z=convolution(z,plan.upper_spectrum)
+63:     z=[c.mul(a,b) for a,b in zip(plan.inverse_g,z)]
+64:     out=convolution(z,plan.forward_spectrum)
+65:     return out,dict(field_operations=dict(c.count),forward_ffts=3,inverse_ffts=3,
+66:                     fft_length=2*n,returned_output_count=n,full_output_writes=n)
+67: 
+68: 
+69: def expected_online(n):
+70:     l=n.bit_length()-1
+71:     return dict(mul=6*n*l+20*n,add=6*n*(l+1),sub=6*n*(l+1))
+72: 
+73: 
+74: def expected_preparation(n):
+75:     l=n.bit_length()-1
+76:     return dict(mul=3*n*l+12*n+2*l-4,sub=2*n-2+3*n*(l+1),
+77:                 add=3*n*(l+1),neg=n-1,constant_inverse=2)

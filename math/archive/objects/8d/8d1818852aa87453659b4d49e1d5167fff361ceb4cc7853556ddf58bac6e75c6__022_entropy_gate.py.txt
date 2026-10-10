@@ -1,0 +1,137 @@
+"""Phase16: exact entropy potential under k-local unitary gates (prior art).
+
+Nir Ailon (2013) established the unitary 2x2 FFT lower bound by matrix
+entropy. This file is a REPRODUCTION and a project-specific regression gate,
+NOT a new lower-bound theorem. It audits tightness of radix-2 butterflies.
+"""
+import json, math
+from pathlib import Path
+import numpy as np
+
+
+def bit_reverse(i,g):
+    return int(f'{i:0{g}b}'[::-1],2)
+
+
+def entropy_of_matrix(u):
+    p=np.abs(u)**2
+    p=np.maximum(p,0)
+    terms=np.zeros_like(p, dtype=np.float64)
+    mask=p>0
+    terms[mask]=-p[mask]*np.log2(p[mask])
+    return float(np.sum(terms))
+
+
+def dft(n):
+    k=np.arange(n)
+    return np.exp(-2j*np.pi*np.outer(k,k)/n)/math.sqrt(n)
+
+
+def radix2_path(n):
+    g=n.bit_length()-1
+    assert n==(1<<g)
+    # Free bit-reversal permutation has entropy zero.
+    u=np.eye(n,dtype=np.complex128)[[bit_reverse(i,g) for i in range(n)]]
+    h0=entropy_of_matrix(u)
+    assert abs(h0)<1e-12
+    max_growth=0.0
+    max_gate_error=0.0
+    num_gates=0
+    rows=[]
+    for stage in range(1,g+1):
+        length=1<<stage
+        half=length//2
+        for start in range(0,n,length):
+            for j in range(half):
+                p=start+j
+                q=p+half
+                twiddle=np.exp(-2j*np.pi*j/length)
+                prev=entropy_of_matrix(u)
+                up=u[p].copy()
+                uq=u[q].copy()
+                u[p]=(up+twiddle*uq)/math.sqrt(2)
+                u[q]=(up-twiddle*uq)/math.sqrt(2)
+                growth=entropy_of_matrix(u)-prev
+                max_growth=max(max_growth,growth)
+                max_gate_error=max(max_gate_error,abs(growth-2.0))
+                if growth>2.0+1e-8:
+                    raise AssertionError(('2-row entropy gate exceeded',n,stage,growth))
+                num_gates+=1
+        total=entropy_of_matrix(u)
+        target=n*stage
+        if abs(total-target)>1e-7:
+            raise AssertionError(('stage potential',n,stage,total,target))
+        rows.append({'stage':stage,'entropy_bits':total,'gates_so_far':num_gates})
+    fft_error=float(np.max(np.abs(u-dft(n))))
+    if fft_error>2e-12:
+        raise AssertionError(('not a normalized FFT',n,fft_error))
+    if num_gates != n*g//2:
+        raise AssertionError('not tight count')
+    return {'n':n,'radix2_gates':num_gates,'lower_bound_n_log2_n_over_2':n*g//2,
+            'max_fft_absolute_error':fft_error,'max_gate_entropy_gain_bits':max_growth,
+            'max_deviation_from_2_bit_gain':max_gate_error,'stages':rows}
+
+
+def entropy_witness_nontrivial_gates(n=16, trials=300):
+    rng=np.random.default_rng(1603)
+    u=np.eye(n,dtype=np.complex128)
+    maximum=-float('inf')
+    minimum=float('inf')
+    for _ in range(trials):
+        i,j=rng.choice(n,2,replace=False)
+        theta=rng.uniform(0,math.pi/2)
+        phase=rng.uniform(-math.pi,math.pi,2)
+        alpha=np.exp(1j*phase[0])*math.cos(theta)
+        beta=np.exp(1j*phase[1])*math.sin(theta)
+        ui=u[i].copy(); uj=u[j].copy()
+        before=entropy_of_matrix(u)
+        u[i]=alpha*ui+beta*uj
+        u[j]=-np.conj(beta)*ui+np.conj(alpha)*uj
+        increase=entropy_of_matrix(u)-before
+        maximum=max(maximum,increase)
+        minimum=min(minimum,increase)
+        if increase>2+1e-8:
+            raise AssertionError('entropy violation')
+        if np.max(np.abs(u@u.conj().T-np.eye(n)))>2e-12:
+            raise AssertionError('unitarity lost')
+    return {'random_unitary_gates':trials,'largest_entropy_increase_bits':maximum,
+            'smallest_entropy_increase_bits':minimum}
+
+
+def binary_entropy(t):
+    if t<=0 or t>=1:
+        return 0.0
+    return -t*math.log2(t)-(1-t)*math.log2(1-t)
+
+
+def robust_approximation_gate(n=32):
+    # Every U reached from the identity by t two-row unitaries satisfies
+    # t >= N/2 * [log2 N-epsilon log2(N-1)-h2(epsilon)]
+    # when ||U-F||_F <= epsilon sqrt(N), 0<=epsilon<=1/2.
+    f=dft(n)
+    u=f.copy()
+    phase=0.02
+    u[0]=np.exp(1j*phase)*u[0]
+    eps=float(np.linalg.norm(u-f,'fro')/math.sqrt(n))
+    assert 0<=eps<=0.5
+    potential=entropy_of_matrix(u)
+    lower_entropy=n*(math.log2(n)-eps*math.log2(n-1)-binary_entropy(eps))
+    if potential+1e-8<lower_entropy:
+        raise AssertionError('Fannes entropy certificate failed')
+    gate_lb=lower_entropy/2
+    if gate_lb>n*math.log2(n)/2+1e-8:
+        raise AssertionError('wrong direction')
+    return {'n':n,'normalized_frobenius_error_epsilon':eps,
+            'entropy_potential_bits':potential,'entropy_lower_certificate_bits':lower_entropy,
+            'certified_unitary_pair_gate_lower_bound':gate_lb}
+
+
+def main():
+    out={'prior_art':'Nir Ailon, arXiv:1305.4745 (2013): unitary 2x2 entropy lower bound',
+         'radix2':[radix2_path(n) for n in [2,4,8,16,32,64]],
+         'random_gates':entropy_witness_nontrivial_gates(),
+         'robust_approximate':robust_approximation_gate()}
+    (Path(__file__).parent/'ENTROPY_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+    print(json.dumps(out,indent=2))
+
+if __name__=='__main__':main()

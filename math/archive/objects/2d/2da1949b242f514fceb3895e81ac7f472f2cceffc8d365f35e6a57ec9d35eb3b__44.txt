@@ -1,0 +1,197 @@
+   1 """Stdlib exact Newton interpolation over Q[z]/(z^m+1).
+   2 
+   3 The quotient is a field for m=2^t, since z^m+1 is cyclotomic.
+   4 Used only to independently check tiny interpolation degrees (N=4,8).
+   5 """
+   6 from __future__ import annotations
+   7 from dataclasses import dataclass
+   8 from fractions import Fraction
+   9 from orbit_recovery import subset_sum_cyclotomic_coeffs,target_conjugate_coeffs,validate_n
+  10 
+  11 
+  12 @dataclass(frozen=True)
+  13 class Cyclo:
+  14     c: tuple[Fraction, ...]
+  15 
+  16     @classmethod
+  17     def of(cls, vals):
+  18         return cls(tuple(Fraction(v) for v in vals))
+  19 
+  20     @classmethod
+  21     def zero(cls,m):return cls.of([0]*m)
+  22     @classmethod
+  23     def one(cls,m):return cls.of([1]+[0]*(m-1))
+  24 
+  25     def __add__(self,other):
+  26         return Cyclo(tuple(a+b for a,b in zip(self.c, other.c)))
+  27 
+  28     def __sub__(self,other):
+  29         return Cyclo(tuple(a-b for a,b in zip(self.c,other.c)))
+  30 
+  31     def __neg__(self):return Cyclo(tuple(-a for a in self.c))
+  32 
+  33     def __mul__(self,other):
+  34         m=len(self.c)
+  35         c=[Fraction(0)]*m
+  36         for i,a in enumerate(self.c):
+  37             if not a: continue
+  38             for j,b in enumerate(other.c):
+  39                 if not b: continue
+  40                 s=i+j
+  41                 c[s%m]+=a*b*(1 if s<m else -1)
+  42         return Cyclo(tuple(c))
+  43 
+  44     def inv(self):
+  45         if not any(self.c):raise ZeroDivisionError('zero cyclotomic value')
+  46         m=len(self.c)
+  47         one=Cyclo.one(m)
+  48         A=[]
+  49         for i in range(m):
+  50             A.append([Fraction(0)]*(m+1))
+  51         for j in range(m):
+  52             unit=Cyclo.of([int(k==j) for k in range(m)])
+  53             col=(self*unit).c
+  54             for i in range(m):A[i][j]=col[i]
+  55         for i in range(m):A[i][m]=one.c[i]
+  56         for j in range(m):
+  57             pivot=next((i for i in range(j,m) if A[i][j]),None)
+  58             if pivot is None:raise ZeroDivisionError('non-invertible cyclotomic value')
+  59             A[j],A[pivot]=A[pivot],A[j]
+  60             scale=A[j][j]
+  61             A[j]=[v/scale for v in A[j]]
+  62             for i in range(m):
+  63                 if i==j:continue
+  64                 scale=A[i][j]
+  65                 if scale:
+  66                     A[i]=[a-scale*b for a,b in zip(A[i],A[j])]
+  67         ans=Cyclo(tuple(A[i][-1] for i in range(m)))
+  68         assert self*ans==one
+  69         return ans
+  70 
+  71     def __truediv__(self,other):return self*other.inv()
+  72 
+  73 
+  74 def newton_interpolant(n: int, u: int):
+  75     """Return nodes, divided differences for the UNIQUE degree<2^m map."""
+  76     validate_n(n)
+  77     m=n//2
+  78     if m>5:
+  79         raise ValueError('exact interpolation intentionally limited to m<=5')
+  80     xs=[Cyclo.of(subset_sum_cyclotomic_coeffs(n,mask)) for mask in range(1<<m)]
+  81     ys=[Cyclo.of(target_conjugate_coeffs(n,u,mask)) for mask in range(1<<m)]
+  82     coeff=[]
+  83     for i,(x,y) in enumerate(zip(xs,ys)):
+  84         if i==0: coeff.append(y);continue
+  85         guess=coeff[-1]
+  86         for j in range(i-2,-1,-1):
+  87             guess=guess*(x-xs[j])+coeff[j]
+  88         den=Cyclo.one(m)
+  89         for j in range(i):den=den*(x-xs[j])
+  90         coeff.append((y-guess)/den)
+  91     return xs,ys,coeff
+  92 
+  93 
+  94 def evaluate_newton(x, xs, coefficients):
+  95     y=coefficients[-1]
+  96     for i in range(len(coefficients)-2,-1,-1):
+  97         y=y*(x-xs[i])+coefficients[i]
+  98     return y
+  99 
+ 100 
+ 101 def interpolation_audit(n: int, u: int=3):
+ 102     xs,ys,cs=newton_interpolant(n,u)
+ 103     assert len(set(xs))==len(xs)
+ 104     for x,y in zip(xs,ys):
+ 105         assert evaluate_newton(x,xs,cs)==y
+ 106     degree=max(i for i,c in enumerate(cs) if any(c.c))
+ 107     return {'N':n,'u':u,'boolean_samples':len(xs),'exact_min_polynomial_degree':degree,
+ 108             'newton_top_coefficient':tuple(str(v) for v in cs[degree].c),
+ 109             'all_samples_verified':True}
+ 110 
+ 111 
+ 112 def rational_interpolation_rank(n: int, u: int, d: int) -> dict:
+ 113     """Exact rank of univariate rational interpolation constraints.
+ 114 
+ 115     P(alpha_mask) - beta_mask Q(alpha_mask) = 0, deg(P),deg(Q) <= d.
+ 116     Full column rank certifies NO rational map at that degree. Nonfull rank
+ 117     does not alone certify a valid denominator at every sample.
+ 118     """
+ 119     if n>8:
+ 120         raise ValueError('exact small-case rank check limited to N<=8')
+ 121     m=n//2
+ 122     xs=[Cyclo.of(subset_sum_cyclotomic_coeffs(n,t)) for t in range(1<<m)]
+ 123     ys=[Cyclo.of(target_conjugate_coeffs(n,u,t)) for t in range(1<<m)]
+ 124     zero=Cyclo.zero(m);one=Cyclo.one(m)
+ 125     A=[]
+ 126     for x,y in zip(xs,ys):
+ 127         powers=[one]
+ 128         for t in range(d):powers.append(powers[-1]*x)
+ 129         A.append(powers+[-y*v for v in powers])
+ 130     rows=len(A)
+ 131     cols=2*(d+1)
+ 132     rank=0
+ 133     for j in range(cols):
+ 134         pivot=next((i for i in range(rank,rows) if A[i][j]!=zero),None)
+ 135         if pivot is None:continue
+ 136         A[rank],A[pivot]=A[pivot],A[rank]
+ 137         inv=A[rank][j].inv()
+ 138         A[rank]=[v*inv for v in A[rank]]
+ 139         for i in range(rank+1,rows):
+ 140             scale=A[i][j]
+ 141             if scale!=zero:
+ 142                 A[i]=[a-scale*b for a,b in zip(A[i],A[rank])]
+ 143         rank+=1
+ 144         if rank==rows:break
+ 145     return {'N':n,'u':u,'max_degree':d,'rows':rows,'columns':cols,
+ 146             'rank_over_cyclotomic_field':rank,'no_rational_solution_proved':rank==cols}
+ 147 
+ 148 
+ 149 def rational_interpolant(n: int, u: int, d: int):
+ 150     """Construct a full-rank nullspace candidate with nonvanishing denominators.
+ 151 
+ 152     Intended for N=8, d=8 only. Raises ValueError if no candidate is found.
+ 153     """
+ 154     if n>8:raise ValueError('small exact example only')
+ 155     m=n//2
+ 156     xs=[Cyclo.of(subset_sum_cyclotomic_coeffs(n,t)) for t in range(1<<m)]
+ 157     ys=[Cyclo.of(target_conjugate_coeffs(n,u,t)) for t in range(1<<m)]
+ 158     zero=Cyclo.zero(m);one=Cyclo.one(m)
+ 159     A=[]
+ 160     for x,y in zip(xs,ys):
+ 161         powers=[one]
+ 162         for _ in range(d):powers.append(powers[-1]*x)
+ 163         A.append(powers+[-y*v for v in powers])
+ 164     rows=len(A);cols=2*(d+1); pivots=[];rank=0
+ 165     for j in range(cols):
+ 166         pivot=next((i for i in range(rank,rows) if A[i][j]!=zero),None)
+ 167         if pivot is None:continue
+ 168         A[rank],A[pivot]=A[pivot],A[rank]
+ 169         inv=A[rank][j].inv()
+ 170         A[rank]=[v*inv for v in A[rank]]
+ 171         for i in range(rows):
+ 172             if i!=rank and A[i][j]!=zero:
+ 173                 factor=A[i][j]
+ 174                 A[i]=[a-factor*b for a,b in zip(A[i],A[rank])]
+ 175         pivots.append(j);rank+=1
+ 176         if rank>=rows:break
+ 177     frees=[j for j in range(cols) if j not in pivots]
+ 178     basis=[]
+ 179     for free in frees:
+ 180         vec=[zero]*cols
+ 181         vec[free]=one
+ 182         for i,piv in enumerate(pivots):
+ 183             vec[piv]=-A[i][free]
+ 184         basis.append(vec)
+ 185     def ev(c,x):
+ 186         ans=zero
+ 187         for a in reversed(c):ans=ans*x+a
+ 188         return ans
+ 189     for t in range(1,40):
+ 190         weights=[Cyclo.of([t**j]+[0]*(m-1)) for j in range(len(basis))]
+ 191         v=[sum((base[j]*weight for base,weight in zip(basis,weights)),zero) for j in range(cols)]
+ 192         P,Q=v[:d+1],v[d+1:]
+ 193         if all(ev(Q,x)!=zero and ev(P,x)==y*ev(Q,x) for x,y in zip(xs,ys)):
+ 194             return {'N':n,'u':u,'degree':d,'num_coeffs':P,'den_coeffs':Q,
+ 195                     'denominator_nonzero_on_all':True,'all_values_verified':True,
+ 196                     'nullspace_dimension':len(frees)}
+ 197     raise ValueError('no nonvanishing rational interpolant found in finite candidate sweep')

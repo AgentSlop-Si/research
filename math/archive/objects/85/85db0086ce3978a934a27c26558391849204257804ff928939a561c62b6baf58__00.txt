@@ -1,0 +1,87 @@
+   1 """Exact rational helpers extracted without body changes from pinned PR48 verify.py.
+   2 Credits: icekylinx PR32/36, Dominik Scholz PR35, Zhihao Chen PR29/23,
+   3 Paureel/Aurel Prosz, Swapnil Jain, Rohan Arun PR25/31, RaD/hipotures,
+   4 Chafik Boukhalfa and inherited notices in references/frame-compiler/pr48.
+   5 Prepared with OpenAI Codex assistance; no formal theorem claim.
+   6 """
+   7 from fractions import Fraction as Q
+   8 from functools import lru_cache
+   9 from math import comb, factorial, isqrt, prod
+  10 
+  11 def js(x):
+  12  if isinstance(x,Q):return str(x)
+  13  if isinstance(x,dict):return {str(k):js(v)for k,v in x.items()}
+  14  if isinstance(x,(list,tuple)):return [js(v)for v in x]
+  15  return x
+  16 
+  17 def require(condition, message):
+  18     if not condition:
+  19         raise ValueError(message)
+  20 
+  21 
+  22 def mersenne(exponent):
+  23     require(exponent >= 3 and all(exponent % d for d in range(2, isqrt(exponent)+1)),
+  24             'Composite Lucas-Lehmer exponent')
+  25     p = 2**exponent - 1
+  26     s = 4
+  27     for _ in range(exponent - 2):
+  28         s = (s*s-2) % p
+  29     require(s == 0, 'Lucas-Lehmer failed')
+  30     return p
+  31 
+  32 
+  33 def exactness(h):
+  34     require(h in (23, 25), 'Uncertified dimension')
+  35     primes = [mersenne(e) for e in (61, 31, 19)]
+  36     Z = 3*h-7
+  37     B0 = (4*h-2)*Z + 27*(h+1)
+  38     D = 3*(h+1)*(h-1)**2
+  39     B = 2*(h-1)*B0
+  40     bounds = {r: sum(comb(h,j)*factorial(j)*B**j*D**(r-j)
+  41                      for j in range(r+1)) for r in (2,3,4)}
+  42     require(bounds[2] < primes[0], 'Rank-two minor modulus insufficient')
+  43     require(max(bounds[3],bounds[4]) < prod(primes), 'CRT minor modulus insufficient')
+  44     require(3*(h+1)*(h-1) < min(primes), 'Denominator may vanish')
+  45     return dict(h=h, primes=primes, prime_product=prod(primes),
+  46                 single_numerator_bound=B0, common_denominator_bound=D,
+  47                 correction_numerator_bound=B, minor_bounds=bounds,
+  48                 modulus_gaps={2: primes[0]-bounds[2],
+  49                               3: prod(primes)-bounds[3],4: prod(primes)-bounds[4]})
+  50 
+  51 
+  52 @lru_cache(None)
+  53 def logs(x):
+  54     x = Q(x)
+  55     require(x >= 1, 'Log domain')
+  56     k = 0
+  57     while x > 2:
+  58         x /= 2
+  59         k += 1
+  60     def small(y):
+  61         z = (y-1)/(y+1)
+  62         lo = 2*sum((z**(2*j+1)/Q(2*j+1) for j in range(32)), Q())
+  63         return lo, lo+2*z**65/(65*(1-z*z))
+  64     lo,hi = small(x)
+  65     lo2,hi2 = small(Q(2))
+  66     lo,hi = lo+k*lo2,hi+k*hi2
+  67     scale = 10**30
+  68     return Q((lo*scale).numerator//(lo*scale).denominator,scale), \
+  69         Q(-(-(hi*scale).numerator//(hi*scale).denominator),scale)
+  70 
+  71 
+  72 def moment(m,W,rows,saving):
+  73     require(type(saving) is Q and 0 < saving < 1, 'Exact positive saving required')
+  74     lower,upper = Q(),Q()
+  75     enclosure = {}
+  76     for t,n in sorted(rows.items()):
+  77         require(type(t) is int and type(n) is int and 0<t<m and n>0, 'Invalid child')
+  78         lo,hi = logs(Q(m,t))
+  79         u,v = saving*lo,saving*hi
+  80         require(0 <= u <= v < 1, 'Exponential enclosure domain')
+  81         weight = Q(t*n,m*W)
+  82         lower += weight*(1+u+u*u/2+u*u*u/6)
+  83         upper += weight*(1+v+v*v/(2*(1-v/3)))
+  84         enclosure[t] = dict(lower=lo,upper=hi)
+  85     return dict(saving=saving,exponent=1-saving,lower=lower,upper=upper,
+  86                 strict_gap=1-upper,logarithms=enclosure)
+  87 

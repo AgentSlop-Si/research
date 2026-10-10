@@ -1,0 +1,214 @@
+# Finish-line research note: removing the redundant center wire
+
+**Date:** 2026-10-09  
+**Status:** Algebraically verified proof simplification + recomputed constants.  
+**Scope:** OpenAI's September 25, 2026 exact-DFT construction, in the same exact-complex-register model.  
+**Important:** This is *not* a claim of a practical floating-point FFT speedup, and public-search absence is not proof of novelty.
+
+## 1. The key simplification
+
+The published finite network uses triples `T` from an `h`-element ground set and
+`h+1` central scratch wires
+
+`c_1, ..., c_h, c_*`.
+
+Its gather/scatter maps are
+
+`(Gx)_j = sum_(T contains j) x_T`,
+`(Gx)_* = sum_T x_T`,
+
+and
+
+`(Rc)_S = (sum_(j in S) c_j - c_*)/2`.
+
+But for 3-subsets,
+
+`sum_j (Gx)_j = 3 sum_T x_T = 3 (Gx)_*`.
+
+So the `*` coordinate is linearly redundant. Keep only `h` center wires and define
+
+`(G' x)_j = sum_(T contains j) x_T`
+
+and
+
+`(R' c)_S = (1/2) sum_(j in S) c_j - (1/6) sum_(j=1)^h c_j`.
+
+For a source triple `T`, the coefficient of `x_T` in row `S` is
+
+`|S intersect T|/2 - 3/6 = (|S intersect T|-1)/2`.
+
+This is **exactly the same coefficient matrix** as the published center map.
+
+Therefore:
+
+- intersection size 3 (the diagonal): coefficient `1`;
+- intersection size 1: coefficient `0`;
+- intersection sizes 0 and 2: the same coefficients as before, canceled by the same side-wire map.
+
+Hence the identity `R'G' + JV = I` is unchanged.
+
+The restoration schedule also remains valid for arbitrary initial scratch values:
+subtract `J a + R' c`, update scratch to `a+Vx, c+G'x`, add their effect, then undo the scratch updates.
+
+## 2. Why the frame/dimension proof still works
+
+The manuscript assigns the same frame path to every center wire. Removing one center role
+does not change any label inclusion, side-wire orthogonality, terminal frame, or directional operation.
+
+Each remaining center wire still has one decreasing edge of dimension loss `h`.
+Thus with
+
+`v = C(h,3)`,
+`N0 = v^3`,
+`I0 = 3 v^2`,
+`d_nbr = C(h-3,3) + 3(h-3)`,
+
+the reduced physical wire count is
+
+`W = 2 N0 + I0 (v d_nbr + h)`
+
+instead of the published `... + (h+1)`.
+
+The absolute directional saving becomes
+
+`Delta = 2 N0 - 2 I0 h^2`
+`      = 2 v^2 (v - 3 h^2)`.
+
+The first positive integer is `h=21` because `C(21,3)=1330 > 3*21^2=1323`.
+
+## 3. Best parameter with the manuscript's original power-of-two padding
+
+A scan through `h = 7,...,100000` gives the best reduced-center padded exponent at
+
+**h = 24**.
+
+Exact constants:
+
+- `h = 24`
+- `v = 2024`
+- `N0 = 8291469824`
+- `I0 = 12289728`
+- `d_nbr = 1393`
+- `center wires / invocation = 24`
+- `W = 34666930287616`
+- `W_* = 2^45 = 35184372088832`
+- `m = h^3 = 13824`
+- `Delta = 2425172992`
+
+The padded recurrence coefficient is
+
+`lambda = m - Delta/W_*`
+
+and
+
+`theta = log_m(lambda)`.
+
+High-precision result:
+
+`1 - theta = 5.2296989632709109282062267331217562498710122306813187208899295669233832231565182E-10`.
+
+For comparison, the published `h=100` construction has
+
+`1 - theta_published = 2.1064384300401810834416405036955125721501141606446923032195464068647270508315352E-13`.
+
+So the tensor exponent gap is larger by about
+
+**2482.721018x**.
+
+The padded role count also drops from `2^71` to `2^45`, a factor of exactly `2^26 = 67,108,864`.
+
+## 4. Consequence for the every-length exact DFT theorem
+
+Crucially, this conclusion does **not** require the stronger quadratic-log Lean local compiler.
+Keep the manuscript's original uniform `O(log^4 r)` exact-width compiler unchanged.
+
+Its transfer gives an all-length cost of the shape
+
+`O(n (log n)^theta (log log n)^(4-theta))`.
+
+Let
+
+`gamma = 1-theta = 5.2296989632709109282062267331217562498710122306813187208899295669233832231565182E-10`.
+
+For every fixed `delta < gamma`,
+
+`(log log n)^(4-theta) = o((log n)^(gamma-delta))`.
+
+Therefore the same proof architecture yields
+
+`O(n (log n)^(1-delta))`
+
+for every fixed `delta < gamma`.
+
+A simple clean choice is
+
+**delta = 5e-10**,
+
+because `5e-10 < 5.2296989632709109282062267331217562498710122306813187208899295669233832231565182E-10`.
+
+So, conditional only on the same manuscript proof framework plus the center-wire algebra above:
+
+> **Every length-n DFT can be computed in
+> O(n (log n)^(1 - 5×10^-10))
+> operations in the manuscript's exact complex arithmetic model.**
+
+This is an exponent-constant improvement from the published headline `10^-13` to `5×10^-10`.
+
+It does **not** mean a practical FFT implementation will beat FFTW; the hidden constants remain enormous,
+and the model allows unrestricted exact complex coefficients / potentially ill-conditioned intermediate maps.
+
+## 5. Stronger but not yet headline-safe: remove power-of-two role padding
+
+If recursive batches are grouped in blocks of the actual `W` roles, padding only the final incomplete
+batch, the natural critical coefficient becomes
+
+`lambda_0 = m - Delta/W`
+
+rather than `m - Delta/W_*`.
+
+At `h=24` this gives
+
+`1 - log_m(lambda_0) = 5.3077579328932098411099187535171351326637417417174813461026619958292190315432608E-10`.
+
+A recurrence with `ceil(Q/W)` batches adds a vanishing/constant-threshold remainder term.
+A proof can obtain any exponent strictly above this critical value by choosing a sufficiently large fixed base threshold.
+I have **not** promoted this to the main theorem above; the padded result is cleaner and follows the manuscript's batching argument directly.
+
+## 6. Generalizing 3-subsets did not help
+
+I also tested the natural odd-`r` generalization.
+
+For odd `r`, one can choose a polynomial in `|S intersect T|` that:
+- equals 1 at `r`,
+- vanishes at every odd off-diagonal intersection,
+- leaves only even-intersection terms for side-wire cancellation.
+
+The required center feature dimension grows roughly like
+`sum_(j=0)^((r-1)/2) C(h,j)`.
+Scanning `r=3,5,...,19` with moderate/large `h` showed the `r=3` construction remains best in this family.
+So the profitable improvement is compression of the original center map, not increasing subset size.
+
+## 7. Novelty check
+
+Public search found an independent October 2026 write-up that already noticed **smaller h**
+(e.g. `h=25` with the original `h+1` centers), so parameter tuning alone is not a safe novelty claim.
+
+I did **not** find the specific `c_*` elimination / `-1/6 sum_j c_j` reduced-center factorization
+in the current OpenAI Math repository or public discussion searched on 2026-10-09.
+That is evidence only, not a guarantee of novelty.
+
+A source-level search of the exact-DFT manuscript found `c_*` only in `network.tex`;
+the downstream occurrences are the `h+1`, `101`, wire-count, residual-count, and saving formulas that
+change mechanically under the substitution above.
+
+## 8. What should happen next
+
+1. Formalize the reduced-center scalar lemma in Lean.
+2. Replace the exact-DFT finite-network constants by the `h=24`, 24-center values.
+3. Re-run the tensor-bound proof with `W_*=2^45`.
+4. Re-run the all-length asymptotic cleanup with explicit `delta=5e-10`.
+5. Independently review the frame/residual bookkeeping.
+6. Only then consider a public issue/PR or novelty statement.
+
+The accompanying `verify_reduced_center.py` checks the intersection-class identity exactly,
+runs direct small-instance checks, scans `h`, and recomputes the constants.

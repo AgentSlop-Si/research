@@ -1,0 +1,80 @@
+   1 """Targeted independent tests of CDF sampling and pre-RNG fallback."""
+   2 from bisect import bisect_right
+   3 from collections import Counter
+   4 from fractions import Fraction
+   5 import hashlib
+   6 import json
+   7 import math
+   8 from pathlib import Path
+   9 from prefix_planner import plan_prefix,construct_surrogate
+  10 
+  11 
+  12 class NoAccessRng:
+  13     def __getattribute__(self,name):
+  14         raise AssertionError('fallback must not even consult RNG state')
+  15 
+  16 
+  17 class GivenUniforms:
+  18     def __init__(self,values):self.values=values;self.position=0
+  19     def random(self):
+  20         result=self.values[self.position];self.position+=1;return result
+  21 
+  22 
+  23 def main():
+  24     n=1024
+  25     x=[complex((-1 if j%2 else 1)*(1+j%3)) for j in range(n)]
+  26     x[777]=4096+0j
+  27     plan=plan_prefix(x,.25,.5,max_head=1)
+  28     assert plan.chosen.method=='sample-tail' and plan.chosen.head_size==1
+  29     assert plan.ordered_top_indices==(777,)
+  30     k=plan.chosen.requested_samples
+  31     cycle=[0.,math.nextafter(0.,1.),.25,.5,.75,math.nextafter(1.,0.)]
+  32     uniforms=[cycle[j%len(cycle)] for j in range(k)]
+  33     rng=GivenUniforms(uniforms)
+  34     entries,metadata=construct_surrogate(x,.25,.5,plan=plan,rng=rng)
+  35     # Independent inverse-CDF oracle, with exact masses of integer-real input.
+  36     tail=[j for j in range(n) if j!=777]
+  37     cdf=[];total=0
+  38     for j in tail:
+  39         total+=int(abs(x[j]));cdf.append(Fraction(total))
+  40     counts=Counter(tail[bisect_right(cdf,Fraction(u)*total)] for u in uniforms)
+  41     expected={777:x[777]}
+  42     for j,count in counts.items():
+  43         expected[j]=complex(float(Fraction(total*count,k))*(1 if x[j].real>0 else -1))
+  44     assert dict(entries)==expected
+  45     assert rng.position==metadata['actual_draws']==k
+  46     assert metadata['sampled_distinct_indices']==len(counts)
+  47     assert metadata['realized_support']==len(counts)+1
+  48     assert metadata['selection_calls_during_construction']==0
+  49     for epsilon in (1e-300,math.nextafter(0.,1.)):
+  50         fallback=plan_prefix([1,2,3,4],epsilon,.125,max_head=0)
+  51         assert fallback.chosen.method=='exact-input'
+  52         copied,info=construct_surrogate([1,2,3,4],epsilon,.125,
+  53                                        plan=fallback,rng=NoAccessRng())
+  54         assert copied==[(0,1+0j),(1,2+0j),(2,3+0j),(3,4+0j)]
+  55         assert info['actual_draws']==0
+  56     cutoff=plan_prefix([3,1],.25,.125,max_head=1)
+  57     copied,info=construct_surrogate([3,1],.25,.125,plan=cutoff,rng=NoAccessRng())
+  58     assert copied==[(0,3+0j)] and info['actual_draws']==0
+  59     # Strict rejection of non-uniform-domain values is separate from asserting
+  60     # that a caller-supplied RNG is independent/uniform (which is a precondition).
+  61     rejected=0
+  62     for bad in (-.01,1.,float('nan'),float('inf')):
+  63         values=[0.]*k;values[k//2]=bad
+  64         try:construct_surrogate(x,.25,.5,plan=plan,rng=GivenUniforms(values))
+  65         except ValueError:rejected+=1
+  66         else:raise AssertionError('out-of-domain RNG value accepted')
+  67     root=Path(__file__).resolve().parent
+  68     report={'status':'PASS','sampled_with_nonempty_head':True,
+  69             'head_index':777,'actual_draws':k,'tail_distinct_indices':len(counts),
+  70             'independent_inverse_cdf_output_match':True,
+  71             'huge_budget_rng_nonaccess_cases':2,'exact_cutoff_rng_nonaccess_cases':1,
+  72             'invalid_uniform_values_rejected':rejected,
+  73             'source_sha256':{name:hashlib.sha256((root/name).read_bytes()).hexdigest()
+  74                              for name in ('prefix_planner.py','run_audit.py')},
+  75             'scope':'CDF/construction checks; not empirical or machine-certified probability bounds.'}
+  76     (root/'independent_review_checks.json').write_text(json.dumps(report,indent=2)+'\n')
+  77     print(json.dumps(report,indent=2))
+  78 
+  79 
+  80 if __name__=='__main__':main()

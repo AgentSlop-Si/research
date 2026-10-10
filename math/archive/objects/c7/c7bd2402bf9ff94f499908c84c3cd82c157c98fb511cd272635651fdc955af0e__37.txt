@@ -1,0 +1,214 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh standard-library checks; no imported research/constructor programs."""
+   3 import json
+   4 from pathlib import Path
+   5 P=65537
+   6 
+   7 def root(N):
+   8     for a in range(2,P):
+   9         w=pow(a,(P-1)//N,P)
+  10         if pow(w,N,P)==1 and pow(w,N//2,P)!=1:return w
+  11     raise AssertionError()
+  12 
+  13 def qstep(x,w):
+  14     N=len(x);out=[0]*N;phase=1
+  15     for s,a in enumerate(x):
+  16         out[2*s%N]=(out[2*s%N]+a)%P
+  17         out[(2*s+1)%N]=(out[(2*s+1)%N]+phase*a)%P
+  18         phase=phase*w%P
+  19     return out
+  20 
+  21 def qtstep(x,w):
+  22     N=len(x);out=[0]*N;phase=1
+  23     for s in range(N):
+  24         out[s]=(x[2*s%N]+phase*x[(2*s+1)%N])%P
+  25         phase=phase*w%P
+  26     return out
+  27 
+  28 def gamma(k):
+  29     ans=0
+  30     while k:
+  31         ans+=(k//2)*(k&1);k//=2
+  32     return ans
+  33 
+  34 def rev(k,d):
+  35     ans=0
+  36     for _ in range(d):ans=2*ans+(k&1);k//=2
+  37     return ans
+  38 
+  39 def good(k,L,b):
+  40     return k>0 and k.bit_length()==L and '0'*b not in format(k,'b')
+  41 
+  42 def fold_inputs(x,b):
+  43     N=len(x);r=N>>b;us=[]
+  44     for c in range(b):
+  45         a=b-c;u=[0]*r
+  46         for j in range(N>>a):u[j%r]=(u[j%r]+x[j<<a])%P
+  47         us.append(u)
+  48     return us
+  49 
+  50 def schur_coefficient(cur,t,b,w,N):
+  51     r=len(cur);eta=pow(w,1<<b,P);out=[0]*r
+  52     for a,v in enumerate(cur):
+  53         k=a% (1<<t)
+  54         if good(k,t,b) and k%2:
+  55             y=((1<<b)*(a-k)+k)%r
+  56             out[y]=(out[y]+pow(w*pow(eta,-1,P)%P,gamma(k),P)*v)%P
+  57     return out
+  58 
+  59 def compressed_source(x,b,w):
+  60     N=len(x);n=N.bit_length()-1;d=n-b;r=1<<d
+  61     out=[[0]*r for _ in range(n+1)];out[0]=x[::1<<b]
+  62     for s in range(1,N):
+  63         a=(s&-s).bit_length()-1
+  64         if a<b:
+  65             L=b-a;y=(s>>a)%r;out[L][y]=(out[L][y]+x[s])%P
+  66     cur=x[:]
+  67     for t in range(1,d+1):
+  68         cur=qstep(cur,w)
+  69         for a,v in enumerate(cur):
+  70             k=a% (1<<t);c=t-k.bit_length()
+  71             if k%2 and c<b and '0'*b not in format(k,'b'):
+  72                 out[b+t][a%r]=(out[b+t][a%r]+v)%P
+  73     eta=pow(w,1<<b,P);us=fold_inputs(x,b)
+  74     for c in range(min(b,d)):
+  75         cur=us[c]
+  76         for t in range(1,d-c+1):
+  77             cur=qstep(cur,eta);v=schur_coefficient(cur,t,b,w,N)
+  78             out[b+c+t]=[(a-z)%P for a,z in zip(out[b+c+t],v)]
+  79     return out
+  80 
+  81 def direct_source(x,b,w):
+  82     N=len(x);n=N.bit_length()-1;R=list(range(0,N,1<<b));cur=x[:]
+  83     for s in R:cur[s]=0
+  84     out=[[x[s] for s in R]]
+  85     for L in range(1,n+1):
+  86         cur=qstep(cur,w);out.append([cur[s] for s in R])
+  87         for s in R:cur[s]=0
+  88     return out
+  89 
+  90 def forced_constant(v,N,b,w,H=None):
+  91     n=N.bit_length()-1;H=n if H is None else H;d=n-b;r=1<<d;eta=pow(w,1<<b,P)
+  92     out=[[0]*N for _ in range(H+1)];cur=v[:]
+  93     for L in range(1,min(d,H)+1):
+  94         cur=qstep(cur,eta)
+  95         for a,u in enumerate(cur):
+  96             k=a%(1<<L)
+  97             if good(k,L,b):
+  98                 y=((1<<b)*(a-k)+k)%N
+  99                 out[L][y]=(out[L][y]+pow(w*pow(eta,-1,P)%P,gamma(k),P)*u)%P
+ 100     if H>d:
+ 101         assert len(cur)==r
+ 102         for L in range(d+1,H+1):
+ 103             for word in range(1<<(L-1),1<<L):
+ 104                 if good(word,L,b):
+ 105                     a=word>>(L-d)
+ 106                     phase=pow(w,gamma(word),P)*pow(pow(eta,gamma(a),P),-1,P)%P
+ 107                     out[L][word]=phase*cur[a]%P
+ 108     return out
+ 109 
+ 110 def direct_forced(v,N,b,w,H=None):
+ 111     n=N.bit_length()-1;H=n if H is None else H;R=list(range(0,N,1<<b))
+ 112     cur=[0]*N
+ 113     for j,s in enumerate(R):cur[s]=v[j]
+ 114     out=[[0]*N]
+ 115     for L in range(1,H+1):
+ 116         cur=qstep(cur,w)
+ 117         for s in R:cur[s]=0
+ 118         out.append(cur[:])
+ 119     return out
+ 120 
+ 121 def compressed_free(x,b,w):
+ 122     N=len(x);n=N.bit_length()-1;d=n-b;r=1<<d;eta=pow(w,1<<b,P)
+ 123     full=x[:]
+ 124     for _ in range(n):full=qstep(full,w)
+ 125     us=fold_inputs(x,b);trans=[]
+ 126     for u in us:
+ 127         cur=u[:]
+ 128         for _ in range(d):cur=qstep(cur,eta)
+ 129         trans.append(cur)
+ 130     out=[0]*N;correction=[0]*N;mask=[]
+ 131     for word in range(1,N):
+ 132         binary=format(word,'0%db'%n)
+ 133         if '0'*b in binary:continue
+ 134         c=n-word.bit_length();freq=rev(word,n);a=rev((freq>>c)%r,d)
+ 135         assert a==word>>(b-c)
+ 136         phase=pow(w,gamma(word),P)*pow(pow(eta,gamma(a),P),-1,P)%P
+ 137         correction[word]=phase*trans[c][a]%P
+ 138         out[word]=(full[word]-correction[word])%P;mask.append(word)
+ 139     return out,full,correction,mask
+ 140 
+ 141 def direct_free(x,b,w):
+ 142     N=len(x);n=N.bit_length()-1;R=list(range(0,N,1<<b));cur=x[:]
+ 143     for s in R:cur[s]=0
+ 144     for _ in range(n):
+ 145         cur=qstep(cur,w)
+ 146         for s in R:cur[s]=0
+ 147     return cur
+ 148 
+ 149 def vapply(x,w):
+ 150     N=len(x);n=N.bit_length()-1;out=[0]*N
+ 151     for s,a in enumerate(x):out[rev(s,n)]=pow(pow(w,gamma(s),P),-1,P)*a%P
+ 152     return out
+ 153 
+ 154 def main():
+ 155     result={'field':P,'cases':[], 'polynomial_force_cases':[], 'transpose_cases':[], 'count_cases':[], 'transpose_boundary_cases':[]}
+ 156     for N in [2,4,8,16,32,64,128]:
+ 157         w=root(N);n=N.bit_length()-1
+ 158         x=[(s*s+5*s+7)%P for s in range(N)]
+ 159         assert vapply(qstep(x,w),w)==qtstep(vapply(x,w),w)
+ 160         result['transpose_cases'].append({'N':N})
+ 161         for b in range(1,n+1):
+ 162             r=N>>b;d=n-b
+ 163             for s in range(N):
+ 164                 x=[0]*N;x[s]=1
+ 165                 assert compressed_source(x,b,w)==direct_source(x,b,w),(N,b,s,'source')
+ 166                 got,full,correction,mask=compressed_free(x,b,w)
+ 167                 assert got==direct_free(x,b,w),(N,b,s,'free')
+ 168                 assert N-len(mask)<= (n-b+1)*r
+ 169             for j in range(r):
+ 170                 v=[0]*r;v[j]=1
+ 171                 assert forced_constant(v,N,b,w)==direct_forced(v,N,b,w),(N,b,j,'forced')
+ 172             # Endpoint-weighted transpose turns a suffix-zero source into prefix-zero forced recovery.
+ 173             xx=[(s*s+7*s+2)%P if s%(1<<b) else 0 for s in range(N)]
+ 174             hh=[(j*j+11*j+3)%P for j in range(r)]
+ 175             source=direct_source(xx,b,w)
+ 176             hglobal=[0]*N
+ 177             for j in range(r):hglobal[j<<b]=hh[j]
+ 178             vinvh=[pow(w,gamma(s),P)*hglobal[rev(s,n)]%P for s in range(N)]
+ 179             assert all(vinvh[s]==0 for s in range(r,N))
+ 180             state=vinvh
+ 181             for L in range(1,n+1):
+ 182                 state=qstep(state,w)
+ 183                 for s in range(r):state[s]=0
+ 184                 mapped=vapply(state,w)
+ 185                 assert sum(hh[j]*source[L][j] for j in range(r))%P==sum(xx[s]*mapped[s] for s in range(N))%P
+ 186             result['transpose_boundary_cases'].append({'N':N,'b':b,'all_coefficients':n})
+ 187             result['cases'].append({'N':N,'b':b,'global_basis_inputs':N,'retained_basis_inputs':r,'free_allowed_rows':len(mask),'rank_difference_upper':(n+1)*r})
+ 188             v=[[((j+3)*(k+5)+j*j+k*k)%P for k in range(r)] for j in range(n+1)]
+ 189             got=[[0]*N for _ in range(n+1)];want=[[0]*N for _ in range(n+1)]
+ 190             for j in range(n+1):
+ 191                 a=forced_constant(v[j],N,b,w,n-j);z=direct_forced(v[j],N,b,w,n-j)
+ 192                 for L in range(len(a)):
+ 193                     got[j+L]=[(u+t)%P for u,t in zip(got[j+L],a[L])]
+ 194                     want[j+L]=[(u+t)%P for u,t in zip(want[j+L],z[L])]
+ 195             assert got==want,(N,b,'polynomial forced')
+ 196             stages=sum(min(d,n-j) for j in range(n+1))
+ 197             assert stages==d*(n+1)-d*(d+1)//2
+ 198             late=sum((n-L+1)*(1<<(L-1)) for L in range(d+1,n+1))
+ 199             assert late<2*N
+ 200             result['polynomial_force_cases'].append({'N':N,'b':b,'small_state_visits':r*stages,'late_word_visits':late})
+ 201     for n in range(1,129):
+ 202         N=1<<n
+ 203         for b in range(1,n+1):
+ 204             # Counts only, not exponentially large transforms.
+ 205             state=[0]*b;state[0]=1
+ 206             for _ in range(n):state=[sum(state)]+state[:-1]
+ 207             allowed=sum(state);r=N>>b
+ 208             assert N-allowed<=(n-b+1)*r
+ 209             if b>=min(n,2*(n.bit_length()-1)+2):
+ 210                 result['count_cases'].append({'n':n,'b':b,'missing_rows':N-allowed,'difference_rank_bound':(n+1)*r})
+ 211     result['summary']={'parameters':len(result['cases']),'global_basis_inputs':sum(a['global_basis_inputs'] for a in result['cases']),'retained_basis_inputs':sum(a['retained_basis_inputs'] for a in result['cases']),'polynomial_force_parameters':len(result['polynomial_force_cases']),'transpose_parameters':len(result['transpose_cases']),'transpose_boundary_parameters':len(result['transpose_boundary_cases']),'integer_count_parameters':sum(range(1,129))}
+ 212     Path(__file__).with_name('COMPRESSED_BOUNDARY_CONTROLS.json').write_text(json.dumps(result,indent=2)+'\n')
+ 213     print(json.dumps(result['summary'],sort_keys=True));print('ALL EXACT CHECKS PASSED')
+ 214 if __name__=='__main__':main()

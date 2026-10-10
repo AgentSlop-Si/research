@@ -1,0 +1,78 @@
+"""Independent randomized generator-realization stress tests of the scan cut.
+
+Every generated matrix is an actual forward/backward rank-r quasiseparable
+operator. All arithmetic is modulo 65521 (no Fourier roots required).
+"""
+from __future__ import annotations
+import random
+import numpy as np
+from fast_mincut import ScanFlowOracle
+from cut_rank_gate import bitrev
+from two_stage_ct import modular_rank
+from radix2_control import Radix2Control
+from two_stage_ct import P,root
+from cut_rank_gate import rank_np
+
+MOD=65521
+
+def generator_matrix(n, r, rng):
+    # Build independent random local-state recurrences with small coefficients.
+    def rand_scalar():return rng.randrange(1,71)
+    d=[rand_scalar() for _ in range(n)]
+    transitions_f=[np.array([[rand_scalar() for _ in range(r)] for _ in range(r)],dtype=np.int64) for _ in range(n)]
+    transitions_b=[np.array([[rand_scalar() for _ in range(r)] for _ in range(r)],dtype=np.int64) for _ in range(n)]
+    uf=[np.array([rand_scalar() for _ in range(r)],dtype=np.int64) for _ in range(n)]
+    ub=[np.array([rand_scalar() for _ in range(r)],dtype=np.int64) for _ in range(n)]
+    of=[np.array([rand_scalar() for _ in range(r)],dtype=np.int64) for _ in range(n)]
+    ob=[np.array([rand_scalar() for _ in range(r)],dtype=np.int64) for _ in range(n)]
+    a=np.zeros((n,n),dtype=np.int64)
+    for src in range(n):
+        x=np.zeros(n,dtype=np.int64);x[src]=1
+        f=np.zeros((n,r),dtype=np.int64)
+        b=np.zeros((n,r),dtype=np.int64)
+        for j in range(1,n):f[j]=(transitions_f[j]@f[j-1]+uf[j]*x[j-1])%MOD
+        for j in range(n-2,-1,-1):b[j]=(transitions_b[j]@b[j+1]+ub[j]*x[j+1])%MOD
+        for j in range(n):a[j,src]=(d[j]*x[j]+of[j]@f[j]+ob[j]@b[j])%MOD
+    return a
+
+def stage_chain(n,ranks,shuffles,rng):
+    current=np.eye(n,dtype=np.int64)
+    for s,r in enumerate(ranks):
+        matrix=generator_matrix(n,r,rng)
+        if s:
+            current=current[shuffles[s-1],:]
+        current=(matrix@current)%MOD
+    return current
+
+def stress(seed=20261009):
+    rng=random.Random(seed)
+    trials=0
+    for n in (6,11,17):
+        for ranks in ((1,), (1,1), (2,1), (1,2,1), (2,2,2,1)):
+            shuffles=[]
+            for _ in range(len(ranks)-1):
+                p=list(range(n));rng.shuffle(p);shuffles.append(p)
+            oracle=ScanFlowOracle(n,list(ranks),shuffles)
+            A=stage_chain(n,ranks,shuffles,rng)
+            for _ in range(28):
+                R=rng.sample(range(n),rng.randrange(1,n+1))
+                C=rng.sample(range(n),rng.randrange(1,n+1))
+                rk=modular_rank([[int(A[i,j]) for j in C] for i in R],MOD)
+                c=oracle.bound(R,C)
+                assert rk<=c,(n,ranks,R,C,rk,c)
+                trials+=1
+    print('PASS randomized exact generator matrices:',trials,'cut-rank comparisons')
+    for n in (8,16,32):
+        ctrl=Radix2Control(n)
+        oracle=ScanFlowOracle(n,ctrl.ranks,ctrl.shuffles)
+        powers=[pow(root(n),i,P) for i in range(n)]
+        for _ in range(70):
+            R=rng.sample(range(n),rng.randrange(1,n+1))
+            C=rng.sample(range(n),rng.randrange(1,n+1))
+            rk=rank_np([ctrl.output_order[i] for i in R],
+                       [ctrl.input_order[j] for j in C],powers)
+            f=oracle.bound(R,C)
+            assert f>=rk,(n,R,C,rk,f)
+    print('PASS exact radix2 Fourier chain:',3*70,'cut-rank comparisons')
+
+if __name__=='__main__':stress()

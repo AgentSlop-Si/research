@@ -1,0 +1,109 @@
+1: """Independent full-output exact tests, not timing-only regression."""
+2: import random,sys,unittest
+3: from pathlib import Path
+4: sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+5: from exact_scan_macro import (P,make_scan4_plan,dft_matrix,direct_dft,
+6:     fft_via_mixed_scan_macros,fft_via_scan4,ranks_at_all_cuts,rank_mod)
+7: from ordering_dp import optimal_orders
+8: from reference_ntt import radix2_ntt
+9: from analytic_certificate import run as independent_rank_certificate
+10: from unitary_control import run as unitary_control
+11: 
+12: class ScanMacroTests(unittest.TestCase):
+13:     def test_four_point_whole_matrix(self):
+14:         for p,g in ((998244353,3),(2013265921,31)):
+15:             plan=make_scan4_plan(p,g)
+16:             mat=dft_matrix(4,p,g)
+17:             for j in range(4):
+18:                 x=[int(i==j) for i in range(4)]
+19:                 self.assertEqual(plan.evaluate(x),[row[j] for row in mat])
+20: 
+21:     def test_direct_full_matrix_all_small_lengths(self):
+22:         for n in (2,4,8,16,32,64):
+23:             f=dft_matrix(n)
+24:             for j in range(n):
+25:                 x=[int(i==j) for i in range(n)]
+26:                 got,_=fft_via_mixed_scan_macros(x)
+27:                 self.assertEqual(got,[row[j] for row in f])
+28: 
+29:     def test_fresh_dense_random_all_lengths(self):
+30:         r=random.Random(20261009)
+31:         for n in (2,4,8,16,32,64,128,256,512,1024):
+32:             for _ in range(5 if n<=256 else 2):
+33:                 x=[r.randrange(P) for j in range(n)]
+34:                 a,_=fft_via_mixed_scan_macros(x)
+35:                 b,_=radix2_ntt(x)
+36:                 self.assertEqual(a,b)
+37: 
+38:     def test_arbitrary_integers_reduced_mod_p(self):
+39:         for n in (2,4,8,16,32):
+40:             x=[(-3 if i%3==0 else 3*P+11) for i in range(n)]
+41:             self.assertEqual(fft_via_mixed_scan_macros(x)[0],direct_dft(x))
+42: 
+43:     def test_4power_wrapper(self):
+44:         with self.assertRaises(ValueError):fft_via_scan4([1]*8)
+45:         for n in (4,16,64,256):
+46:             a=[((31*i*i+11)%P) for i in range(n)]
+47:             self.assertEqual(fft_via_scan4(a)[0],direct_dft(a))
+48: 
+49:     def test_invalid_lengths(self):
+50:         for n in (0,1,3,6,7):
+51:             with self.assertRaises(ValueError):fft_via_mixed_scan_macros([1]*n)
+52: 
+53:     def test_root_moduli(self):
+54:         for p,g in ((998244353,3),(2013265921,31)):
+55:             for n in (4,8,16,32,64):
+56:                 x=[((i*71+19)%p) for i in range(n)]
+57:                 self.assertEqual(fft_via_mixed_scan_macros(x,p,g)[0],direct_dft(x,p,g))
+58: 
+59:     def test_macro_stage_count(self):
+60:         for n in (2,4,8,16,32,64,128,256):
+61:             x=[int(i==1) for i in range(n)]
+62:             _,stats=fft_via_mixed_scan_macros(x)
+63:             L=n.bit_length()-1
+64:             self.assertEqual(stats['macro_stages'],(L+1)//2)
+65:             self.assertEqual(stats['bidirectional_passes_per_element'],2*((L+1)//2))
+66:             self.assertLessEqual(stats['permutation_index_steps'],2*n)
+67: 
+68:     def test_scan_cost_not_hidden(self):
+69:         for n in (16,64,256):
+70:             scan,sc=fft_via_mixed_scan_macros(list(range(n)))
+71:             ordinary,rc=radix2_ntt(list(range(n)))
+72:             self.assertEqual(scan,ordinary)
+73:             self.assertGreater(sc['scan_additions_upper'],rc['additions'])
+74:             self.assertGreater(sc['scan_multiplications_upper'],rc['data_twiddle_mult'])
+75:             self.assertGreater(sc['permutation_moves'],rc['permutation_moves'])
+76:             self.assertGreater(sc['modular_power_mult_upper'],0)
+77: 
+78:     def test_exact_endpoint_optimum_n4(self):
+79:         result=optimal_orders(4)
+80:         self.assertEqual(result['optimum'],1)
+81:         self.assertEqual(result['states_examined'],69)
+82: 
+83:     def test_exact_endpoint_optimum_n8(self):
+84:         result=optimal_orders(8)
+85:         self.assertEqual(result['optimum'],3)
+86:         self.assertEqual(result['states_examined'],12869)
+87:         self.assertEqual(len(result['row_order']),8)
+88: 
+89:     def test_two_primes_independent_certificate(self):
+90:         result=independent_rank_certificate()
+91:         self.assertEqual([entry['rank3_3x5_matrices'] for entry in result['primes']],[3136,3136])
+92:         for v in result['complex_balanced_determinants'].values():
+93:             self.assertEqual(v,(0,0,0,0))
+94: 
+95:     def test_unitary_qsep_control(self):
+96:         report=unitary_control((4,8,16))
+97:         self.assertEqual([r['maximum_quasiseparable_offdiagonal_rank'] for r in report],[1,1,1])
+98:         for record in report:
+99:             self.assertLess(record['final_entropy_bits'],record['target_fourier_entropy_bits'])
+100:             self.assertLessEqual(record['maximum_entropy_increase_per_gate'],2+1e-9)
+101: 
+102:     def test_parity_ranks(self):
+103:         for n,expectedmax in ((4,1),(8,3),(16,6)):
+104:             mat=dft_matrix(n)
+105:             ordering=list(range(0,n,2))+list(range(1,n,2))
+106:             vals=ranks_at_all_cuts(mat,ordering,ordering)
+107:             self.assertEqual(max(max(x) for x in vals),expectedmax)
+108: 
+109: if __name__=='__main__':unittest.main()

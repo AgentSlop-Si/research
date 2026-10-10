@@ -1,0 +1,72 @@
+"""Exact-by-structure Shannon entropy audit of all three Phase15 factors.
+
+In a 2-coordinate unitary-gate model, each factor attains the exact
+matrix-entropy lower bound independently:
+base: N log2 B ; R: N-B ; orbit: B+N(log2 L-1).
+"""
+import math
+import json
+import cmath
+import numpy as np
+from entropy_gate_audit import entropy_rows,galois_orbits
+
+
+def make_fold_R(n,b):
+    assert n%b==0 and b>1
+    l=n//b
+    U=np.eye(n,dtype=complex)
+    pos={(l,a,q):a*b+q for a in range(l) for q in range(b)}
+    d=l
+    while d>1:
+        h=d//2
+        for a in range(h):
+            for q in range(b//2):
+                p=pos.pop((d,a,2*q))
+                r=pos.pop((d,a+h,2*q))
+                t=cmath.exp(2j*math.pi*q/b)*U[r,:].copy()
+                v=U[p,:].copy()
+                U[p,:]=(v+t)/math.sqrt(2)
+                U[r,:]=(v-t)/math.sqrt(2)
+                pos[(h,a,q)]=p
+                pos[(h,a,q+b//2)]=r
+        d//=2
+    output_idx=[]; phases=[]; support=[]
+    for cycle in galois_orbits(n,b):
+        d=len(cycle);g=l//d;u=cycle[0]//g
+        invu=pow(u,-1,d) if d>1 else 0
+        for e in range(d):
+            a=e*invu%d if d>1 else 0
+            c=(u*a-e)//d
+            output_idx.append(pos[(d,a,u)])
+            phases.append(cmath.exp(2j*math.pi*c/b))
+            support.append(g)
+    U=U[output_idx,:]*np.array(phases)[:,None]
+    return U,support
+
+
+def audit(n,b):
+    l=n//b
+    R,support=make_fold_R(n,b)
+    nnz_per_row=np.sum(np.abs(R)>1e-12,axis=1)
+    assert list(nnz_per_row)==support
+    for row,g in zip(R,support):
+        on=np.abs(row[np.abs(row)>1e-12])
+        assert max(abs(on-1/math.sqrt(g)))<1e-10
+    entropy=entropy_rows(R)
+    orbit_expected=b+n*(int(math.log2(l))-1)
+    fold_expected=n-b
+    base_expected=n*math.log2(b)
+    assert abs(entropy-fold_expected)<1e-9
+    assert fold_expected+orbit_expected+base_expected==n*int(math.log2(n))
+    return dict(N=n,B=b,L=l,
+      normalized_R_entropy_bits=entropy,normalized_R_expected_entropy_bits=fold_expected,
+      normalized_R_pairwise_gate_optimum=(n-b)//2,
+      base_bank_entropy_bits=base_expected,
+      orbit_bank_entropy_bits=orbit_expected,
+      sum_factor_entropies=base_expected+entropy+orbit_expected,
+      exact_fourier_entropy_bits=n*int(math.log2(n)),
+      all_factor_optima_match_existing_gate_counts=True)
+
+if __name__=='__main__':
+    for n,b in [(16,8),(32,8),(64,8),(128,16),(256,16),(256,32),(512,32)]:
+        print(json.dumps(audit(n,b)))

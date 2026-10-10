@@ -1,0 +1,44 @@
+"""Find exact modular interval-minor witnesses against specified two-stage ranks.
+
+Heuristic discovery only; each printed witness is a rigorously checkable minor
+rank certificate. No universal impossibility follows without quantifying permutations.
+"""
+from pathlib import Path
+import random,json,time
+from two_stage_ct import P,root
+from cut_rank_gate import rank_np,bitrev
+
+
+def probe(n,trials=25000,seed=20261009):
+    js=json.load(open(str(Path(__file__).resolve().parent/'rank_profiles_results.json')))
+    cfg=next(x for x in js if x['n']==n and x['endpoints']=='bitrev_both')
+    perm=cfg['optimized_shuffle'];O=I=bitrev(n)
+    powers=[pow(root(n),z,P) for z in range(n)]
+    rng=random.Random(seed+n)
+    best={'min_equal_rank':0,'gap_over_bound_for_r2':-999}
+    for trial in range(trials):
+        # 4-way selection: evenly sample small/half/large window sizes.
+        L1=rng.randrange(1,n)
+        L2=rng.randrange(1,n)
+        s1=rng.randrange(n-L1+1)
+        s2=rng.randrange(n-L2+1)
+        R=range(s1,s1+L1);C=range(s2,s2+L2)
+        overlap=sum(s2<=perm[i]<s2+L2 for i in R)
+        br=(s1>0)+(s1+L1<n)
+        bc=(s2>0)+(s2+L2<n)
+        rank=rank_np([O[i] for i in R],[I[j] for j in C],powers)
+        gap=max(0,rank-overlap)
+        equal_rank=(gap+br+bc-1)//(br+bc) if br+bc else 0
+        violation=gap-2*(br+bc)
+        if (equal_rank>best['min_equal_rank'] or
+            equal_rank==best['min_equal_rank'] and violation>best['gap_over_bound_for_r2']):
+            best={'n':n,'trial':trial+1,'s1':s1,'L1':L1,'s2':s2,'L2':L2,
+                  'rank':rank,'overlap':overlap,'gap':gap,'bR':br,'bC':bc,
+                  'min_equal_rank':equal_rank,'gap_over_bound_for_r2':violation}
+    print('INTERVAL_SEARCH',n,'trials',trials,'result',best,flush=True)
+    return best
+
+if __name__=='__main__':
+    t=time.time()
+    for n in (16,32,64):probe(n,20000)
+    print('SECONDS',round(time.time()-t,1),flush=True)

@@ -1,0 +1,157 @@
+1: """Exact fresh-input DFT fast path from weighted affine-cycle defects.
+2: 
+3: This is a detected input class, not an arbitrary-input faster FFT.
+4: Every field operation performed by the evaluator, including setup, is counted.
+5: """
+6: from collections import Counter
+7: 
+8: 
+9: class Counted:
+10:     def __init__(self, field):
+11:         self.field = field
+12:         self.zero, self.one = field.zero, field.one
+13:         self.count = Counter()
+14:     def add(self, a, b): self.count['add'] += 1; return self.field.add(a, b)
+15:     def sub(self, a, b): self.count['sub'] += 1; return self.field.sub(a, b)
+16:     def mul(self, a, b): self.count['mul'] += 1; return self.field.mul(a, b)
+17:     def inv(self, a): self.count['inverse'] += 1; return self.field.inv(a)
+18: 
+19: 
+20: def cycle_order(permutation):
+21:     n = len(permutation); order = []; seen = [False]*n; j = 0
+22:     while not seen[j]:
+23:         seen[j] = True; order.append(j); j = permutation[j]
+24:     if j != 0 or len(order) != n:
+25:         raise ValueError('required one full cycle')
+26:     return order
+27: 
+28: 
+29: def solve_cycle(c, permutation, coefficients, rhs):
+30:     """Solve y_j - coefficients[j] y_perm(j) = rhs_j.
+31: 
+32:     Returns None exactly when the one-cycle matrix is singular. No divisions
+33:     by edge weights are needed, including when all edge weights are zero.
+34:     """
+35:     order = cycle_order(permutation)
+36:     product = c.one
+37:     for j in order: product = c.mul(product, coefficients[j])
+38:     denominator = c.sub(c.one, product)
+39:     if denominator == c.zero: return None
+40:     value = c.zero
+41:     for j in reversed(order): value = c.add(rhs[j], c.mul(coefficients[j], value))
+42:     value = c.mul(value, c.inv(denominator))
+43:     result = [c.zero] * len(order)
+44:     for j in reversed(order):
+45:         value = c.add(rhs[j], c.mul(coefficients[j], value))
+46:         result[j] = value
+47:     return result
+48: 
+49: 
+50: def try_affine_fourier(field, query, q, max_defects=1, a=5, b=1, shift=1,
+51:                        supplied_lambda=None):
+52:     """Return complete DFT or an explicit decline, with a cold operation bill.
+53: 
+54:     Mx[j] = q**(b*j) * x[(a*j+shift) mod N].
+55:     Fourier-conjugate Mhat y[k] = q**(-shift*a^-1*(k+b))
+56:                                   * y[a^-1*(k+b)].
+57:     For a=1 mod 4, odd b,shift, both permutations are full dyadic cycles.
+58:     """
+59:     n = len(query)
+60:     if n < 4 or n & (n-1): raise ValueError('dyadic N >= 4 required')
+61:     if not isinstance(max_defects, int) or max_defects < 0: raise ValueError('invalid defect budget')
+62:     if any(not isinstance(v, int) for v in (a,b,shift)): raise ValueError('integer affine parameters required')
+63:     if a % 4 != 1 or b % 2 != 1 or shift % 2 != 1:
+64:         raise ValueError('a=1 mod 4 and odd b,shift required')
+65:     c = Counted(field); stages = {}; previous = {}
+66:     def checkpoint(name):
+67:         nonlocal previous
+68:         stages[name] = {k:v-previous.get(k,0) for k,v in c.count.items() if v != previous.get(k,0)}
+69:         previous = dict(c.count)
+70:     def finish(result, reason, **extra):
+71:         meta = dict(accepted=result is not None, reason=reason, stages=stages,
+72:                     field_operations=dict(c.count), all_input_rows_read=n,
+73:                     full_output_writes=n if result is not None else 0,
+74:                     ordinary_fft_calls=0, maximum_defects=max_defects,
+75:                     source_a=a % n, source_b=b % n, source_shift=shift % n)
+76:         meta.update(extra)
+77:         return result, meta
+78:     powers = [c.one]
+79:     for _ in range(1,n): powers.append(c.mul(powers[-1],q))
+80:     if c.mul(powers[-1],q) != c.one or powers[n//2] == c.one:
+81:         raise ValueError('primitive Nth root required')
+82:     source = [(a*j+shift) % n for j in range(n)]
+83:     inverse_a = pow(a,-1,n)
+84:     target = [(inverse_a*(k+b)) % n for k in range(n)]
+85:     cycle_order(source); cycle_order(target)
+86:     checkpoint('roots_and_graphs')
+87:     weighted = [c.mul(powers[(b*j) % n], query[source[j]]) for j in range(n)]
+88:     if all(v == c.zero for v in query):
+89:         checkpoint('zero_input_check')
+90:         return finish([c.zero]*n, 'zero_input', actual_defects=0)
+91:     parameter = supplied_lambda
+92:     nonzero_denominators = sum(v != c.zero for v in weighted)
+93:     if parameter is None:
+94:         if nonzero_denominators <= 2*max_defects:
+95:             checkpoint('discovery')
+96:             return finish(None, 'insufficient_majority_support')
+97:         candidate = None; votes = 0
+98:         for numerator, denominator in zip(query, weighted):
+99:             if denominator == c.zero: continue
+100:             if votes == 0:
+101:                 candidate = (numerator, denominator); votes = 1
+102:             elif c.mul(numerator, candidate[1]) == c.mul(candidate[0], denominator):
+103:                 votes += 1
+104:             else: votes -= 1
+105:         parameter = c.mul(candidate[0], c.inv(candidate[1]))
+106:     checkpoint('discovery')
+107:     residual = [c.sub(value, c.mul(parameter, weighted[j])) for j,value in enumerate(query)]
+108:     defects = [(j,v) for j,v in enumerate(residual) if v != c.zero]
+109:     checkpoint('complete_residual_verification')
+110:     if len(defects) > max_defects:
+111:         return finish(None, 'defect_budget_exceeded', actual_defects=len(defects))
+112:     forcing = [c.zero]*n
+113:     for j,value in defects:
+114:         for k in range(n): forcing[k] = c.add(forcing[k], c.mul(value,powers[(j*k)%n]))
+115:     coefficients = [c.mul(parameter,powers[(-shift*j)%n]) for j in target]
+116:     checkpoint('sparse_defect_transform_and_target')
+117:     result = solve_cycle(c,target,coefficients,forcing)
+118:     checkpoint('weighted_cycle_solve')
+119:     return finish(result, 'accepted' if result is not None else 'singular_target_cycle',
+120:                   actual_defects=len(defects), parameter=field.encode(parameter),
+121:                   nonzero_input_entries=sum(v != c.zero for v in query))
+122: 
+123: 
+124: def ordinary_fft(field, query, q):
+125:     """Independent iterative radix-2 comparator, also with cold root preparation."""
+126:     n=len(query); c=Counted(field); powers=[c.one]
+127:     for _ in range(1,n): powers.append(c.mul(powers[-1],q))
+128:     if c.mul(powers[-1],q)!=c.one or powers[n//2]==c.one: raise ValueError('bad root')
+129:     result=list(query); j=0
+130:     for i in range(1,n):
+131:         bit=n//2
+132:         while j&bit: j^=bit;bit//=2
+133:         j^=bit
+134:         if i<j: result[i],result[j]=result[j],result[i]
+135:     width=2
+136:     while width<=n:
+137:         half=width//2
+138:         for base in range(0,n,width):
+139:             for i in range(half):
+140:                 even=result[base+i]; odd=c.mul(powers[i*n//width],result[base+i+half])
+141:                 result[base+i]=c.add(even,odd); result[base+i+half]=c.sub(even,odd)
+142:         width*=2
+143:     return result,dict(c.count)
+144: 
+145: 
+146: def affine_fft_or_fallback(field, query, q, **kwargs):
+147:     """All-input exact wrapper; for a fixed defect budget declines cost O(N)."""
+148:     result,meta=try_affine_fourier(field,query,q,**kwargs)
+149:     meta['fast_path_accepted']=meta['accepted']
+150:     if result is not None: return result,meta
+151:     result,baseline=ordinary_fft(field,query,q)
+152:     meta['fallback_field_operations']=baseline
+153:     meta['field_operations']=dict(Counter(meta['field_operations'])+Counter(baseline))
+154:     meta['ordinary_fft_calls']=1
+155:     meta['full_output_writes']=len(query)
+156:     meta['accepted']=True
+157:     return result,meta

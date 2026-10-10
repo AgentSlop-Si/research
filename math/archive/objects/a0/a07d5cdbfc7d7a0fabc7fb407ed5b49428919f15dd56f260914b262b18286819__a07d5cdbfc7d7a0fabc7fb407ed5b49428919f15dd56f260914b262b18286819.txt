@@ -1,0 +1,41 @@
+"""Separates global support/cross-cut rank from full Fourier matrix entropy."""
+import math,json,sys,os
+import numpy as np
+from entropy_gate_audit import entropy_rows
+from haar_green_givens import haar_compiled, HaarEscapeMixer
+
+
+def h2(p):
+    if p==0 or p==1:return 0.0
+    return -p*math.log2(p)-(1-p)*math.log2(1-p)
+
+
+def audit(n, eps=1/512, include_stage=True):
+    m=n//2
+    H=np.column_stack([haar_compiled(np.eye(m)[:,j]) for j in range(m)])
+    H_ent=entropy_rows(H)
+    p=eps*eps/(1+eps*eps)
+    # V_H=(I + i eps [[0,H],[H*,0]])/sqrt(1+eps²)
+    R=np.zeros((n,n),complex)
+    R[:m,m:]=H;R[m:,:m]=H.conj().T
+    V=(np.eye(n)+1j*eps*R)/math.sqrt(1+eps*eps)
+    actual=entropy_rows(V)
+    prediction=n*h2(p)+2*p*H_ent
+    assert abs(H_ent-2*(m-1))<1e-10,(n,H_ent)
+    assert abs(actual-prediction)<1e-9,(n,actual,prediction)
+    data=dict(N=n,haar_entropy_bits=H_ent,haar_exact_formula_bits=2*(m-1),
+          V_entropy_bits=actual,V_entropy_predicted=prediction,
+          V_entropy_fraction_of_fourier=actual/(n*math.log2(n)))
+    if include_stage:
+        mixer=HaarEscapeMixer(n,seed=20261009+n)
+        stage=np.array(mixer.dense(),dtype=complex)
+        ent=entropy_rows(stage)
+        data.update(full_Haar_Green_entropy_bits=ent,
+                    full_Haar_Green_entropy_per_coordinate=ent/n,
+                    Fourier_entropy_bits=n*math.log2(n),
+                    full_stage_entropy_fraction_of_Fourier=ent/(n*math.log2(n)))
+    return data
+
+if __name__=='__main__':
+    for n in [16,32,64,128,256]:
+        print(json.dumps(audit(n,include_stage=(n<=128))))

@@ -1,0 +1,20 @@
+"""No input-dependent strategy: always correct for fresh arbitrary dense values.
+
+A measured threshold makes small inputs schoolbook and large inputs NTT.
+This improves constants vs always NTT at small sizes but is O(N log N)
+for the general worst case. It is *not* OpenAI #130's exact-DFT program.
+"""
+from __future__ import annotations
+from typing import Sequence
+from dense_algebra import schoolbook, DEFAULT_P
+from fresh_factor import ntt_convolution
+
+def convolve(a:Sequence[int],b:Sequence[int],modulus:int=DEFAULT_P,
+             schoolbook_threshold:int=32):
+    if not a or not b:
+        raise ValueError('nonempty inputs required')
+    if modulus != DEFAULT_P:
+        raise ValueError('this reference NTT path is fixed to prime 998244353')
+    if min(len(a),len(b)) <= schoolbook_threshold and len(a)*len(b)<=schoolbook_threshold**2:
+        return schoolbook(a,b,modulus).coeffs,'schoolbook'
+    return tuple(ntt_convolution(a,b)),'ntt'

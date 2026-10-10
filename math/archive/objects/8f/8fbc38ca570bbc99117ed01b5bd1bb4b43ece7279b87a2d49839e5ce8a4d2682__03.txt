@@ -1,0 +1,186 @@
+   1 """Auditor-authored Good-Thomas, optimized schedule, codelet and entropy checks."""
+   2 import json,itertools,random,cmath,math
+   3 from pathlib import Path
+   4 import independent_phase24_math as H
+   5 import independent_phase21_math as M
+   6 RNG=random.Random(251778)
+   7 class Tight(H.Schedule):
+   8  def prepare_branch(self,node,start,size,which):
+   9   h=size//2;old=self.state[node];assert which&old==0
+  10   if old==0 and which!=3:
+  11    shift=0 if which==1 else h;self.saved[node]=self.a[start+shift:start+shift+h];self.current+=h;self.peak=max(self.current,self.peak)
+  12   for j in range(h):
+  13    if old==1:u,v=self.saved[node][j],self.a[start+h+j]
+  14    elif old==2:u,v=self.a[start+j],self.saved[node][j]
+  15    else:u,v=self.a[start+j],self.a[start+h+j]
+  16    if which&1:self.operation(node,j,'A');self.a[start+j]=(u+v)%self.p
+  17    if which&2:
+  18     self.operation(node,j,'D');difference=(u-v)%self.p
+  19     if j:self.operation(node,j,'M');difference=difference*self.W[j*(self.N//size)]%self.p
+  20     self.a[start+h+j]=difference
+  21   self.state[node]|=which
+  22   if old and self.state[node]==3:self.current-=h;self.saved[node]=None
+  23  def full(self):
+  24   stack=[(1,0,self.N)]
+  25   while stack:
+  26    node,start,size=stack.pop()
+  27    if size==1:continue
+  28    if self.state[node]!=3:self.prepare_branch(node,start,size,3^self.state[node])
+  29    h=size//2;stack.extend([(2*node,start,h),(2*node+1,start+h,h)])
+  30   self.closed=True;assert self.current==0
+  31   t=self.N.bit_length()-1;assert self.adds==self.N*t and self.muls==self.N//2*t-self.N+1
+  32   return [self.a[H.reverse(k,self.N)] for k in range(self.N)]
+  33 class Triple:
+  34  def __init__(self,a,b,c,eta,p,omit_extra_identity=False):
+  35   self.val={'a':a,'b':b,'c':c};self.p=p;half=pow(2,-1,p);self.u=-half%p;self.v=(eta-eta*eta)*half%p;self.adds=self.muls=0;self.opt=omit_extra_identity
+  36  def get(self,name):
+  37   if isinstance(name,int):name='y'+str(name)
+  38   if name in self.val:return self.val[name]
+  39   def plus(a,b,sgn=1):self.adds+=1;return (self.get(a)+sgn*self.get(b))%self.p
+  40   def mul(c,a):
+  41    if self.opt and c==1:return self.get(a)
+  42    self.muls+=1
+  43    return c*self.get(a)%self.p
+  44   if name=='t':v=plus('b','c')
+  45   elif name=='d':v=plus('b','c',-1)
+  46   elif name=='u':v=mul(self.u,'t')
+  47   elif name=='mid':v=plus('a','u')
+  48   elif name=='z':v=mul(self.v,'d')
+  49   elif name=='y0':v=plus('a','t')
+  50   elif name=='y1':v=plus('mid','z')
+  51   elif name=='y2':v=plus('mid','z',-1)
+  52   else:raise AssertionError(name)
+  53   self.val[name]=v;return v
+  54  def full(self):return [self.get(k) for k in range(3)]
+  55 
+  56 def table(n,w,p):
+  57  x=[1]*n
+  58  for j in range(1,n):x[j]=x[j-1]*w%p
+  59  return x
+  60 class GT:
+  61  def __init__(self,x,w,p):
+  62   self.N=len(x);self.G=self.N//3;self.w=w;self.p=p;G=self.G;assert G>=2 and G&(G-1)==0
+  63   self.a=pow(3,-1,G);self.b=pow(G,-1,3);self.e=pow(w,G,p);self.W=table(G,pow(w,3,p),p)
+  64   self.rows=[Tight([x[(3*self.a*j+G*self.b*k)%self.N] for j in range(G)],self.W,p) for k in range(3)];self.tr={};self.done=False
+  65  def coords(self,k):return k*self.a%self.G,k*self.b%3
+  66  def code(self,j,vals):
+  67   if j not in self.tr:self.tr[j]=Triple(*[vals[r][j] for r in range(3)],self.e,self.p)
+  68   return self.tr[j]
+  69  def preview(self,Q):
+  70   if self.done:raise ValueError('completed graph')
+  71   J={self.coords(k)[0] for k in Q};vals=[r.preview(J) for r in self.rows]
+  72   out={k:self.code(self.coords(k)[0],vals).get(self.coords(k)[1]) for k in Q}
+  73   assert sum(r.peak for r in self.rows)==self.N-3*len(J)
+  74   return out
+  75  def full(self):
+  76   vals=[r.full() for r in self.rows];out=[0]*self.N
+  77   for j in range(self.G):
+  78    y=self.code(j,vals).full()
+  79    for k in range(3):out[(3*j+self.G*k)%self.N]=y[k]
+  80   self.done=True;assert self.cost()==9*self.G*(self.G.bit_length()-1)//2+5*self.G+3
+  81   return out
+  82  def cost(self):return sum(r.adds+r.muls for r in self.rows)+sum(t.adds+t.muls for t in self.tr.values())
+  83 
+  84 def CT(x,w,p):
+  85  N=len(x);G=N//3;W=table(G,pow(w,3,p),p);cost=0;row=[]
+  86  for k in range(3):
+  87   s=Tight(x[k::3],W,p);row.append(s.full());cost+=s.adds+s.muls
+  88  out=[0]*N;eta=pow(w,G,p)
+  89  for j in range(G):
+  90   a,b,c=(row[k][j] for k in range(3))
+  91   if j:b=b*pow(w,j,p)%p;c=c*pow(w,2*j,p)%p;cost+=2
+  92   tr=Triple(a,b,c,eta,p);v=tr.full();cost+=tr.adds+tr.muls
+  93   for k in range(3):out[j+G*k]=v[k]
+  94  return out,cost
+  95 
+  96 def root(N,p,g):
+  97  w=pow(g,(p-1)//N,p);assert (p-1)%N==0 and pow(w,N,p)==1 and pow(w,N//2,p)!=1 and pow(w,N//3,p)!=1;return w
+  98 
+  99 def algebra():
+ 100  rows=[];basis=0;subset=0;badlayout=0
+ 101  for p,g,lengths in [(97,5,[6,12,24,48,96]),(2013265921,31,[6,12,24,48,96,192])]:
+ 102   for N in lengths:
+ 103    w=root(N,p,g);x=[RNG.randrange(p) for _ in range(N)];truth=M.dft(x,w,p);G=N//3
+ 104    queries=[[0],[N-1],list(range(N)),list(range(min(10,N)))+[N-1]]
+ 105    if N==6:queries += [[k for k in range(N) if mask>>k&1] for mask in range(1,2**N)]
+ 106    else:queries += [RNG.sample(range(N),RNG.randrange(1,N+1)) for _ in range(10)]
+ 107    for Q in queries:
+ 108     s=GT(x,w,p);v=s.preview(set(Q));assert all(v[k]==truth[k] for k in Q);assert s.full()==truth;cost=s.cost();assert s.full()==truth and s.cost()==cost;subset+=1
+ 109    ct,c=CT(x,w,p);assert ct==truth and c-cost==2*(G-1)
+ 110    if N<=96:
+ 111     for j in range(N):
+ 112      x=[int(i==j) for i in range(N)];s=GT(x,w,p);Q=list(range(min(10,N)))+[N-1];v=s.preview(set(Q));target=[pow(w,j*k,p) for k in range(N)];assert all(v[k]==target[k] for k in Q);assert s.full()==target;basis+=1
+ 113    # Correct input/output CRT maps must not be interchanged.
+ 114    f=GT(list(range(N)),w,p);actual=f.full();wrong=[0]*N
+ 115    for j in range(G):
+ 116     for k in range(3):wrong[(3*f.a*j+G*f.b*k)%N]=f.tr[j].get(k)
+ 117    if wrong!=actual:badlayout+=1
+ 118    rows.append({'N':N,'p':p,'GT':cost,'CT':c,'saving':c-cost})
+ 119  # Exceptional field coefficient equals 1, despite the declared skip-one model.
+ 120  N=6;p=7;w=5;eta=pow(w,2,p);assert eta==4
+ 121  tr=Triple(1,2,3,eta,p);tc=Triple(1,2,3,eta,p,True);assert tr.full()==tc.full()==M.dft([1,2,3],eta,p)
+ 122  assert (tr.adds,tr.muls)==(6,2) and (tc.adds,tc.muls)==(6,1)
+ 123  s=GT(list(range(N)),w,p);assert s.full()==M.dft(list(range(N)),w,p);assert s.cost()==22
+ 124  return {'cases':rows,'full_basis_vectors':basis,'query_set_cases':subset,'wrong_output_CRT_controls':badlayout,'identity_codelet_exception':{'N':6,'p':7,'primitive_root':5,'eta':eta,'coefficient':tr.v,'literal_source_codelet_cost':8,'skip_all_identity_cost':7,'literal_full_GT':22,'skip_all_identity_full_GT':20}}
+ 125 
+ 126 def codelets():
+ 127  count=0
+ 128  for p,eta in [(7,2),(7,4),(13,3),(97,35),(2013265921,pow(31,(2013265921-1)//3,2013265921))]:
+ 129   assert eta!=1 and pow(eta,3,p)==1
+ 130   for _ in range(5):
+ 131    a=[RNG.randrange(p) for k in range(3)];truth=M.dft(a,eta,p)
+ 132    for order in itertools.permutations(range(3)):
+ 133     tr=Triple(*a,eta,p)
+ 134     for k in order:assert tr.get(k)==truth[k]
+ 135     before=tr.adds+tr.muls;assert tr.full()==truth and tr.adds+tr.muls==before==8;count+=1
+ 136  return count
+ 137 
+ 138 def integrate(x,w,p):
+ 139  N=len(x);W=table(N,w,p);L,P=H.matrices(N,W,p);s=GT(x,w,p);q=list(range(10))+[N-1];v=s.preview(q)
+ 140  prefix=[((7+W[k])*v[k]+2*v[(k-1)%N])%p for k in range(10)]
+ 141  assert prefix==M.dft(H.mult(P,x,p),w,p,10)
+ 142  forcing,meta=H.discover(prefix,lambda:H.mult(P,x,p),N,w,p)
+ 143  y=s.full() if forcing is None else M.solve(L,forcing,p)
+ 144  assert y==M.dft(x,w,p);return meta
+ 145 
+ 146 def integrations():
+ 147  out=[]
+ 148  for N in [12,24,48]:
+ 149   p,w=M.field(N);W=table(N,w,p);L,P=H.matrices(N,W,p);assert M.determinant(P,p) and M.determinant(L,p)
+ 150   for trial in range(100):
+ 151    A={j:RNG.randrange(1,p) for j in [0,1,3,7]};Ah=M.sparse_eval(A,w,N,p)
+ 152    if not all(Ah):continue
+ 153    alpha=RNG.randrange(1,p);R=[(1-alpha*pow(w,k,p))*pow(Ah[k],-1,p)%p for k in range(N)];r=M.idft(R,w,p);x=M.solve(P,r,p);pos=integrate(x,w,p)
+ 154    if pos['reason']=='accepted':break
+ 155   else:raise AssertionError('fixture search')
+ 156   bad=[(r[j]+pow(w,-10*j,p))%p for j in range(N)];neg=integrate(M.solve(P,bad,p),w,p);assert neg['failed_checks']==2 and neg['residual_calls']==1
+ 157   generic=integrate([RNG.randrange(p) for j in range(N)],w,p);assert generic['reason']!='accepted'
+ 158   out.append({'N':N,'p':p,'accepted':pos,'adversary':neg,'generic':generic})
+ 159  # Mixed-length Green constructor hole; GT remains valid.
+ 160  N=12;p=13;w=2;W=table(N,w,p);L,P=H.matrices(N,W,p);assert M.determinant(L,p)==M.determinant(P,p)==12
+ 161  zL=[i for i in range(N) if L[i][i]%p==0];zP=[i for i in range(N) if P[i][i]%p==0];assert zL==[5] and zP==[8]
+ 162  s=GT([1]+[0]*11,w,p);assert s.full()==[1]*12
+ 163  return {'cases':out,'Green_constructor_hole':{'N':12,'p':13,'omega':2,'L_det':12,'P_det':12,'L_zero_diagonal':zL,'P_zero_diagonal':zP}}
+ 164 
+ 165 def entropy():
+ 166  rows=[]
+ 167  for N in [2,4,8,16,32]:
+ 168   A=[[complex(i==j) for j in range(N)] for i in range(N)];levels=[0.0];steps=[];size=N
+ 169   phi=lambda X:-sum(abs(z)**2*math.log2(abs(z)**2) for r in X for z in r if abs(z)>1e-13)
+ 170   while size>1:
+ 171    h=size//2
+ 172    for start in range(0,N,size):
+ 173     for j in range(h):
+ 174      before=phi(A);u=A[start+j][:];v=A[start+h+j][:];phase=cmath.exp(-2j*math.pi*j/size)
+ 175      A[start+j]=[(a+b)/math.sqrt(2) for a,b in zip(u,v)];A[start+h+j]=[phase*(a-b)/math.sqrt(2) for a,b in zip(u,v)];change=phi(A)-before;assert abs(change-2)<1e-9;steps.append(change)
+ 176    levels.append(phi(A));size=h
+ 177   F=[[cmath.exp(-2j*math.pi*i*j/N)/math.sqrt(N) for j in range(N)] for i in range(N)]
+ 178   error=max(abs(A[H.reverse(i,N)][j]-F[i][j]) for i in range(N) for j in range(N));assert error<1e-12
+ 179   if N>=4:assert any(abs(A[i][j]-F[i][j])>1e-3 for i in range(N) for j in range(N))
+ 180   assert all(abs(v-N*i)<1e-9 for i,v in enumerate(levels))
+ 181   rows.append({'N':N,'gate_count':len(steps),'levels':levels,'canonical_F_requires_output_bitreversal':N>=4,'max_reordered_error':error})
+ 182  return rows
+ 183 
+ 184 if __name__=='__main__':
+ 185  out={'status':'passed','uploaded_code_executed':False,'GT_CT':algebra(),'codelet_order_cases':codelets(),'integration':integrations(),'entropy':entropy()}
+ 186  Path('INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2,sort_keys=True)+'\n');print(json.dumps({'status':'passed','GT_CT':out['GT_CT'],'codelet_order_cases':out['codelet_order_cases'],'integration':out['integration']},sort_keys=True))

@@ -1,0 +1,219 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh independent controls; source programs are neither executed nor imported."""
+   3 import json,math,random,hashlib
+   4 from pathlib import Path
+   5 
+   6 def eye(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+   7 def mm(A,B,p):return [[sum(x*y for x,y in zip(row,col))%p for col in zip(*B)] for row in A]
+   8 def mv(A,x,p):return [sum(a*b for a,b in zip(row,x))%p for row in A]
+   9 def add(A,B,p,k=1):return [[(x+k*y)%p for x,y in zip(a,b)] for a,b in zip(A,B)]
+  10 def scale(A,k,p):return [[k*x%p for x in row] for row in A]
+  11 def inv(A,p):
+  12     n=len(A);R=[a[:]+b for a,b in zip(A,eye(n))]
+  13     for j in range(n):
+  14         k=next((k for k in range(j,n) if R[k][j]),None)
+  15         if k is None:return None
+  16         R[j],R[k]=R[k],R[j];t=pow(R[j][j],-1,p);R[j]=[x*t%p for x in R[j]]
+  17         for k in range(n):
+  18             if k!=j:
+  19                 t=R[k][j];R[k]=[(x-t*y)%p for x,y in zip(R[k],R[j])]
+  20     return [row[n:] for row in R]
+  21 def det(A,p):
+  22     R=[r[:] for r in A];v=1
+  23     for j in range(len(R)):
+  24         k=next((k for k in range(j,len(R)) if R[k][j]),None)
+  25         if k is None:return 0
+  26         if k!=j:R[j],R[k]=R[k],R[j];v=-v
+  27         v=v*R[j][j]%p;t=pow(R[j][j],-1,p)
+  28         for k in range(j+1,len(R)):
+  29             z=R[k][j]*t%p;R[k]=[(x-z*y)%p for x,y in zip(R[k],R[j])]
+  30     return v%p
+  31 def rank(A,p):
+  32     basis={}
+  33     for row in A:
+  34         row=row[:]
+  35         for k in sorted(basis):
+  36             z=row[k]
+  37             if z:row=[(a-z*b)%p for a,b in zip(row,basis[k])]
+  38         j=next((j for j,x in enumerate(row) if x),None)
+  39         if j is not None:
+  40             z=pow(row[j],-1,p);basis[j]=[x*z%p for x in row]
+  41     return len(basis)
+  42 def root(n,p):
+  43     for a in range(2,p):
+  44         w=pow(a,(p-1)//n,p)
+  45         if pow(w,n,p)==1 and all(pow(w,j,p)!=1 for j in range(1,n)):return w
+  46     raise AssertionError('root')
+  47 def denominator(n,p,w,a,b,stride=1,delta=1):
+  48     A=eye(n)
+  49     for j in range(n):A[j][j]=(A[j][j]-b*pow(w,delta*j,p))%p;A[(j+stride)%n][j]=(A[(j+stride)%n][j]-a)%p
+  50     return A
+  51 def coeff(A,w,p):
+  52     n=len(A);ni=pow(n,-1,p)
+  53     return [[sum(A[(j+a)%n][j]*pow(w,-b*j,p) for j in range(n))*ni%p for b in range(n)] for a in range(n)]
+  54 def cuts(A,p,omitted_middle=False):
+  55     n=len(A);m=n//2;L=list(range(m));R=list(range(n-m if omitted_middle else m,n))
+  56     return [rank([[A[i][j] for j in L] for i in R],p),rank([[A[i][j] for j in R] for i in L],p)]
+  57 def batch(xs,p):
+  58     pre=[1]
+  59     for x in xs:
+  60         if not x:raise ValueError('pole')
+  61         pre.append(pre[-1]*x%p)
+  62     z=pow(pre[-1],-1,p);out=[0]*len(xs)
+  63     for i in range(len(xs)-1,-1,-1):out[i]=z*pre[i]%p;z=z*xs[i]%p
+  64     return out
+  65 class Solver:
+  66     def __init__(self,n,p,w,a,b,s=1,delta=1):
+  67         self.n=n;self.p=p;self.a=a%p;self.cy=[];self.di=[];phase=1;q=w if delta==1 else pow(w,-1,p)
+  68         for _ in range(n):self.di.append((1-b*phase)%p);phase=phase*q%p
+  69         if not a%p:self.tab=batch(self.di,p);return
+  70         self.tab=None;self.ai=pow(a,-1,p);seen=set();den=[]
+  71         for j in range(n):
+  72             if j in seen:continue
+  73             ids=[];k=j
+  74             while k not in seen:seen.add(k);ids.append(k);k=(k+s)%n
+  75             assert k==j
+  76             ratios=[self.di[i]*self.ai%p for i in ids];prod=1
+  77             for rr in ratios[1:]:prod=prod*rr%p
+  78             d=(self.di[j]*prod-a)%p
+  79             if not d:raise ValueError('pole')
+  80             self.cy.append((ids,ratios));den.append(d)
+  81         self.closure=batch(den,p)
+  82     def apply(self,x):
+  83         n=self.n;p=self.p
+  84         if self.tab is not None:return [a*b%p for a,b in zip(x,self.tab)]
+  85         y=[0]*n
+  86         for (ids,rr),din in zip(self.cy,self.closure):
+  87             B=0
+  88             for k in range(len(ids)-1,0,-1):B=(rr[k]*B-self.ai*x[ids[k]])%p
+  89             y[ids[-1]]=(x[ids[0]]-self.di[ids[0]]*B)*din%p
+  90             for k in range(len(ids)-1,0,-1):y[ids[k-1]]=(rr[k]*y[ids[k]]-self.ai*x[ids[k]])%p
+  91         return y
+  92 
+  93 def twirl(x,n,p,w,a,b,axis):
+  94     D=(1-pow(a,n,p)-pow(b,n,p))%p;di=pow(D,-1,p)
+  95     if axis=='T':
+  96         bn=pow(b,n,p)
+  97         if bn==1:
+  98             phase=1;y=[0]*n
+  99             for j in range(n):
+ 100                 if b*phase%p==1:y[j]=n*di*x[j]%p
+ 101                 phase=phase*w%p
+ 102             return y
+ 103         z=Solver(n,p,w,0,b).apply(x);return [(1-bn)*di*v%p for v in z]
+ 104     an=pow(a,n,p)
+ 105     if an==1:
+ 106         ai=pow(a,-1,p);t=1;total=0
+ 107         for v in x:total=(total+t*v)%p;t=t*ai%p
+ 108         t=1;y=[]
+ 109         for _ in x:y.append(t*total*di%p);t=t*a%p
+ 110         return y
+ 111     z=Solver(n,p,w,a,0).apply(x);return [(1-an)*di*v%p for v in z]
+ 112 
+ 113 def main():
+ 114     rng=random.Random(14101026);out={'policy':'No uploaded code executed or imported','small':[],'span_checks':[],'mixed_depth':[],'strides':[]};basis=0;coefs=0;twirls=0;qpoly=0;guards=0
+ 115     cases=[(2,17),(3,31),(4,41),(5,101),(6,73),(7,113),(8,113),(9,109),(10,241),(12,157),(16,193)]
+ 116     signs=[(1,1),(1,-1),(-1,1),(-1,-1)]
+ 117     for n,p in cases:
+ 118         w=root(n,p);F=[[pow(w,i*j,p) for j in range(n)] for i in range(n)];FC=coeff(F,w,p);G=sum(pow(w,j*j,p) for j in range(n))%p;Gi=sum(pow(w,-j*j,p) for j in range(n))%p
+ 119         if n%2:assert G*Gi%p==n%p and all(all(row) for row in FC)
+ 120         elif n%4==0:assert G*Gi%p==2*n%p and FC[n//2][n//2]
+ 121         else:assert G==0 and FC[n//2][n//2]==0
+ 122         assert cuts(F,p)==[n//2]*2
+ 123         supports=[];matrices=[]
+ 124         for eps,delta in signs:
+ 125             support={((eps*a)%n,(delta*b)%n) for a in range(n) for b in range(n) if a+b<n};supports.append(support)
+ 126             for a,b in [(2,3),(2,1),(0,3),(1,0),(0,1),(0,0)]:
+ 127                 A=denominator(n,p,w,a,b,eps,delta);D=(1-pow(a,n,p)-pow(b,n,p))%p;assert det(A,p)==D
+ 128                 H=inv(A,p)
+ 129                 if not D:
+ 130                     assert H is None
+ 131                     try:Solver(n,p,w,a,b,eps,delta);raise AssertionError('pole missed')
+ 132                     except ValueError:pass
+ 133                     guards+=1;continue
+ 134                 op=Solver(n,p,w,a,b,eps,delta);C=coeff(H,w,p);nonzero={(i,j) for i in range(n) for j in range(n) if C[i][j]}
+ 135                 assert nonzero<=support
+ 136                 if a and b:assert nonzero==support
+ 137                 assert max(cuts(H,p))<=1
+ 138                 for j in range(n):
+ 139                     x=[int(k==j) for k in range(n)];assert op.apply(x)==[row[j] for row in H];basis+=1
+ 140                 coefs+=n*n
+ 141                 if n<=10:
+ 142                     W=add(eye(n),A,p,-1);P=eye(n);total=[[0]*n for _ in range(n)]
+ 143                     for _ in range(n):total=add(total,P,p);P=mm(W,P,p)
+ 144                     assert P==scale(eye(n),(pow(a,n,p)+pow(b,n,p))%p,p)
+ 145                     assert scale(total,pow(D,-1,p),p)==H;qpoly+=1
+ 146                 if eps==delta==1:
+ 147                     x=[rng.randrange(p) for _ in range(n)]
+ 148                     for axis in ['S','T']:
+ 149                         target=[[0]*n for _ in range(n)];ni=pow(n,-1,p)
+ 150                         for i in range(n):
+ 151                             for j in range(n):
+ 152                                 val=sum(H[(i-k)%n][(j-k)%n] if axis=='S' else pow(w,k*(i-j),p)*H[i][j] for k in range(n))
+ 153                                 target[i][j]=val*ni%p
+ 154                         assert twirl(x,n,p,w,a,b,axis)==mv(target,x,p);twirls+=1
+ 155                 matrices.append(H)
+ 156         union=set.union(*supports);missing={(i,j) for i in range(n) for j in range(n)}-union
+ 157         assert missing==({(n//2,n//2)} if n%2==0 else set())
+ 158         if n%2:
+ 159             for omitted in range(4):
+ 160                 missing={(i,j) for i in range(n) for j in range(n)}-set.union(*[S for k,S in enumerate(supports) if k!=omitted]);assert any(FC[i][j] for i,j in missing)
+ 161         # Genuine partition tested for the product law; the old separated blocks are submatrices.
+ 162         for trial in range(12):
+ 163             total=[[0]*n for _ in range(n)];budget=0
+ 164             for _ in range(1+trial%3):
+ 165                 M=eye(n);depth=1+rng.randrange(3);budget+=depth
+ 166                 for _ in range(depth):
+ 167                     H=rng.choice(matrices);diag=[rng.randrange(p) for _ in range(n)];H=[[diag[i]*x%p for x in row] for i,row in enumerate(H)];M=mm(H,M,p)
+ 168                 total=add(total,M,p)
+ 169             assert max(cuts(total,p))<=budget and max(cuts(total,p,True))<=budget
+ 170             out['mixed_depth'].append({'n':n,'field':p,'budget':budget,'true_cut_ranks':cuts(total,p)})
+ 171         # All physical strides, including stride zero and zero local diagonal pivots.
+ 172         for stride in range(n):
+ 173             for a,b in [(2,3),(2,1),(0,3)]:
+ 174                 A=denominator(n,p,w,a,b,stride);H=inv(A,p)
+ 175                 try:op=Solver(n,p,w,a,b,stride)
+ 176                 except ValueError:assert H is None;guards+=1;continue
+ 177                 assert H is not None;x=[rng.randrange(p) for _ in range(n)];assert op.apply(x)==mv(H,x,p)
+ 178                 out['strides'].append({'n':n,'field':p,'stride':stride,'alpha':a,'beta':b})
+ 179         out['small'].append({'n':n,'field':p,'omega':w,'Gauss':G,'span_dimension_formula':n*n-int(n%2==0)})
+ 180     # Actual inverse-matrix sampled spans, independent of counting support masks.
+ 181     for n,p in cases[:9]:
+ 182         w=root(n,p);rows=[];expected=n*n-int(n%2==0)
+ 183         for eps,delta in signs:
+ 184             for a in range(n+2):
+ 185                 for b in range(n+2):
+ 186                     H=inv(denominator(n,p,w,a,b,eps,delta),p)
+ 187                     if H is not None:rows.append([x for row in H for x in row])
+ 188         rr=rank(rows,p);assert rr==expected;out['span_checks'].append({'n':n,'field':p,'sampled_inverse_matrices':len(rows),'rank':rr})
+ 189     A=eye(3);B=eye(3);A[2][1]=1;B[1][0]=1;AB=mm(A,B,101)
+ 190     assert cuts(A,101,True)==cuts(B,101,True)==[0,0] and cuts(AB,101,True)==[1,0]
+ 191     assert max(cuts(AB,101))<=max(cuts(A,101))+max(cuts(B,101))
+ 192     out['odd_cut_counterexample']={'N':3,'field':101,'A':A,'B':B,'old_ranks':[cuts(M,101,True) for M in [A,B,AB]],'correct_partition_ranks':[cuts(M,101) for M in [A,B,AB]]}
+ 193     # Prior noncoprime-resonance false-rejection control must be accepted.
+ 194     n=8;p=97;w=64;a=64;s=2;x=[1,50,64,96,22,33,50,75];op=Solver(n,p,w,a,0,s);A=denominator(n,p,w,a,0,s);y=op.apply(x)
+ 195     assert pow(a,n,p)==1 and pow(a,n//math.gcd(n,s),p)!=1 and mv(A,y,p)==x
+ 196     out['noncoprime_no_pole_control']={'n':n,'field':p,'alpha':a,'stride':s,'alpha_to_N':1,'alpha_to_cycle_length':pow(a,4,p),'accepted':True}
+ 197     n=65536;p=998244353;w=pow(3,(p-1)//n,p);x=[rng.randrange(p) for _ in range(n)];a=17;b=23;op=Solver(n,p,w,a,b);y=op.apply(x);zp=Solver(n,p,w,2,1).apply(x);phase=1
+ 198     for i in range(n):
+ 199         assert ((1-b*phase)*y[i]-a*y[i-1])%p==x[i]
+ 200         assert ((1-phase)*zp[i]-2*zp[i-1])%p==x[i]
+ 201         phase=phase*w%p
+ 202     ys=twirl(x,n,p,w,a,b,'S');yt=twirl(x,n,p,w,a,b,'T');D=(1-pow(a,n,p)-pow(b,n,p))%p;rs=(1-pow(a,n,p))*pow(D,-1,p)%p;rt=(1-pow(b,n,p))*pow(D,-1,p)%p;phase=1
+ 203     for i in range(n):assert (ys[i]-a*ys[i-1])%p==rs*x[i]%p and (1-b*phase)*yt[i]%p==rt*x[i]%p;phase=phase*w%p
+ 204     long=Solver(n,p,w,2,0,n//2).apply(x);di=pow(-3,-1,p)
+ 205     assert all(long[i]==(x[i]+2*x[(i-n//2)%n])*di%p for i in range(n))
+ 206     mismatch=0
+ 207     for k in [0,1,7,123,n//2,n-1]:
+ 208         wk=pow(w,k,p);pw=1;val=0
+ 209         for xx in x:val=(val+pw*xx)%p;pw=pw*wk%p
+ 210         mismatch+=int(val!=y[k])
+ 211     assert mismatch==6
+ 212     P=lambda k:k.bit_length()-1+k.bit_count()
+ 213     prep_source=5*n+5+2*P(n)+P(n-1);prep_correct=prep_source+1;online=6*n-3
+ 214     assert prep_source==327750 and prep_correct+online==720964
+ 215     out['source_counter_correction']={'reason':'unmetered multiplication in normal Python assert den * pow_count(alpha,N-1)','reported_prep':prep_source,'corrected_prep':prep_correct,'online':online,'reported_total':prep_source+online,'corrected_total':prep_correct+online,'reported_S_twirl':786538,'corrected_S_twirl':786539,'T_twirl_unchanged':524364,'long_stride_unchanged':753666,'memory_counters':'partial vector-access instrumentation; table preparation and many coefficient reads not counted'}
+ 216     out['large']={'N':n,'field':p,'magnetic_equations':2*n,'twirl_equations':2*n,'long_stride_closed_form_outputs':n,'DFT_bins_distinct':mismatch,'output_sha256':hashlib.sha256(json.dumps(y).encode()).hexdigest()}
+ 217     out['summary']={'basis_inputs':basis,'full_matrix_coefficients':coefs,'q_polynomial_identities':qpoly,'twirl_matrix_checks':twirls,'singular_guard_checks':guards,'stride_cases':len(out['strides']),'mixed_depth_cases':len(out['mixed_depth'])};out['result']='PASS'
+ 218     Path(__file__).with_name('INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out['summary']|{'result':'PASS'}))
+ 219 if __name__=='__main__':main()

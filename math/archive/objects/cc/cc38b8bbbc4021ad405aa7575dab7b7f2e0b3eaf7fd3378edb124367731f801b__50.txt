@@ -1,0 +1,184 @@
+0001 #!/usr/bin/env python3
+0002 """Cancellation-free circuit for all pair sums avoiding two specified points.
+0003 
+0004 Every addition has disjoint input supports. Node interning shares equal sums;
+0005 support tracking verifies the full linear map, not sampled input values.
+0006 """
+0007 from itertools import combinations
+0008 from hashlib import sha256
+0009 import json
+0010 
+0011 
+0012 class ExclusionCircuit:
+0013     def __init__(self,n):
+0014         assert n>=4
+0015         self.n=n
+0016         self.inputs=list(combinations(range(n),2))
+0017         self.support=[0]+[1<<i for i in range(len(self.inputs))]
+0018         self.args=[None]*len(self.support)
+0019         self.lookup={s:i for i,s in enumerate(self.support)}
+0020         self.variables={p:i+1 for i,p in enumerate(self.inputs)}
+0021         _,_,self.outputs=self.pair(list(range(n)))
+0022         self.active=set()
+0023         stack=list(self.outputs.values())
+0024         while stack:
+0025             x=stack.pop()
+0026             if not x or x in self.active:continue
+0027             self.active.add(x)
+0028             if self.args[x]:stack.extend(self.args[x])
+0029         self.additions=sum(self.args[x] is not None for x in self.active)
+0030 
+0031     def add(self,a,b):
+0032         if not a:return b
+0033         if not b:return a
+0034         assert not self.support[a]&self.support[b], 'Cancellation is forbidden'
+0035         s=self.support[a]|self.support[b]
+0036         if s in self.lookup:return self.lookup[s]
+0037         node=len(self.support)
+0038         self.lookup[s]=node;self.support.append(s);self.args.append((a,b))
+0039         return node
+0040 
+0041     def total(self,values):
+0042         if not values:return 0
+0043         if len(values)==1:return values[0]
+0044         m=len(values)//2
+0045         return self.add(self.total(values[:m]),self.total(values[m:]))
+0046 
+0047     def vector(self,values,two=True):
+0048         """Return total, leave-one-out sums, and optional leave-two-out sums."""
+0049         n=len(values)
+0050         if not two:
+0051             prefix=[0]
+0052             for x in values:prefix.append(self.add(prefix[-1],x))
+0053             suffix=[0]*(n+1)
+0054             for i in range(n-1,-1,-1):suffix[i]=self.add(values[i],suffix[i+1])
+0055             return prefix[-1],[self.add(prefix[i],suffix[i+1]) for i in range(n)],{}
+0056         if n<2:return (values[0] if n else 0),[0]*n,{}
+0057         l=n//2
+0058         tl,ul,wl=self.vector(values[:l]);tr,ur,wr=self.vector(values[l:])
+0059         total=self.add(tl,tr)
+0060         one=[self.add(x,tr) for x in ul]+[self.add(tl,x) for x in ur]
+0061         two={ij:self.add(x,tr) for ij,x in wl.items()}
+0062         two.update({(i+l,j+l):self.add(tl,x) for (i,j),x in wr.items()})
+0063         two.update({(i,j+l):self.add(x,y) for i,x in enumerate(ul) for j,y in enumerate(ur)})
+0064         return total,one,two
+0065 
+0066     def pair(self,points):
+0067         """Pair-input totals after deleting zero, one, or two vertices."""
+0068         n=len(points)
+0069         if n<2:return 0,{i:0 for i in points},{}
+0070         if n==2:
+0071             a,b=points
+0072             return self.variables[a,b],{a:0,b:0},{(a,b):0}
+0073         l=n//2;left=points[:l];right=points[l:]
+0074         tl,ul,wl=self.pair(left);tr,ur,wr=self.pair(right)
+0075         matrix=[[self.variables[a,b] for b in right] for a in left]
+0076         rows=[self.total(row) for row in matrix]
+0077         cols=[self.total(list(col)) for col in zip(*matrix)]
+0078         tc,row_one,row_two=self.vector(rows)
+0079         _,col_one,col_two=self.vector(cols)
+0080         omit_col=[self.vector(row,two=False)[1] for row in matrix]
+0081         omit_both=[self.vector(list(col),two=False)[1] for col in zip(*omit_col)]
+0082         total=self.total([tl,tr,tc]);one={};two={}
+0083         for i,a in enumerate(left):one[a]=self.total([ul[a],tr,row_one[i]])
+0084         for j,b in enumerate(right):one[b]=self.total([tl,ur[b],col_one[j]])
+0085         for (i,j),x in row_two.items():
+0086             two[left[i],left[j]]=self.total([wl[left[i],left[j]],tr,x])
+0087         for (i,j),x in col_two.items():
+0088             two[right[i],right[j]]=self.total([tl,wr[right[i],right[j]],x])
+0089         for i,a in enumerate(left):
+0090             for j,b in enumerate(right):
+0091                 two[a,b]=self.total([ul[a],ur[b],omit_both[j][i]])
+0092         return total,one,two
+0093 
+0094     def verify(self):
+0095         for node in sorted(self.active):
+0096             if self.args[node]:
+0097                 a,b=self.args[node]
+0098                 assert a<node and b<node
+0099                 assert not self.support[a]&self.support[b]
+0100                 assert self.support[node]==self.support[a]|self.support[b]
+0101         for (a,b),node in self.outputs.items():
+0102             expected=sum(1<<i for i,p in enumerate(self.inputs) if a not in p and b not in p)
+0103             assert self.support[node]==expected
+0104         encoded=json.dumps({'inputs':self.inputs,
+0105             'nodes':[(i,self.args[i]) for i in sorted(self.active)],
+0106             'outputs':sorted(self.outputs.items())},separators=(',',':')).encode()
+0107         return dict(n=self.n,inputs=len(self.inputs),outputs=len(self.outputs),
+0108                     additions=self.additions,scratch_roles=self.additions+len(self.outputs),
+0109                     nonzero_coefficients=sum(self.support[x].bit_count() for x in self.outputs.values()),
+0110                     all_output_supports_exact=True,all_additions_disjoint=True,
+0111                     circuit_sha256=sha256(encoded).hexdigest())
+0112 
+0113     def compile(self):
+0114         """Reversible embedding with additions+outputs roles.
+0115 
+0116         Gates are (input slots, output slots), sharing their first pivot slot.
+0117         All extra output slots are allocated fresh; nonpivot inputs retire.
+0118         """
+0119         users={x:[] for x in self.active}
+0120         for node in sorted(self.active):
+0121             if self.args[node]:
+0122                 for pos,x in enumerate(self.args[node]):users[x].append(('gate',node,pos))
+0123         for target,node in sorted(self.outputs.items()):users[node].append(('output',target))
+0124         edge={};source_slots={};output_slots={};gates=[];size=0
+0125         for node in sorted(self.active):
+0126             if self.args[node]:
+0127                 ins=(edge[node,0],edge[node,1]);pivot=ins[0]
+0128             else:
+0129                 pivot=size;size+=1;ins=(pivot,)
+0130                 source_slots[self.inputs[node-1]]=pivot
+0131             assert users[node]
+0132             outs=(pivot,)+tuple(range(size,size+len(users[node])-1))
+0133             size+=len(users[node])-1
+0134             assert len(set(ins))==len(ins) and set(ins)&set(outs)=={pivot}
+0135             gates.append((node,ins,outs))
+0136             for user,slot in zip(users[node],outs):
+0137                 if user[0]=='gate':edge[user[1],user[2]]=slot
+0138                 else:output_slots[user[1]]=slot
+0139         assert size==self.additions+len(self.outputs)
+0140         return dict(roles=size,gates=gates,sources=source_slots,outputs=output_slots)
+0141 
+0142     def verify_embedding(self):
+0143         """Check scalar coefficients and both directions' frame support nesting."""
+0144         code=self.compile();gates=code['gates'];size=code['roles']
+0145         values=[0]*size;frames=[0]*size
+0146         for pair,slot in code['sources'].items():
+0147             values[slot]=frames[slot]=self.support[self.variables[pair]]
+0148         for node,ins,outs in gates:
+0149             frame=self.support[node]
+0150             for slot in set(ins+outs):
+0151                 assert frames[slot]&~frame==0
+0152                 frames[slot]=frame
+0153             for slot in ins[1:]:values[ins[0]]^=values[slot]
+0154             for slot in outs[1:]:values[slot]^=values[ins[0]]
+0155         for pair,slot in code['outputs'].items():
+0156             assert values[slot]==frames[slot]==self.support[self.outputs[pair]]
+0157         descendants={node:0 for node in self.active}
+0158         target_index={pair:i for i,pair in enumerate(sorted(self.outputs))}
+0159         reverse_frames=[0]*size
+0160         for pair,node in self.outputs.items():
+0161             bit=1<<target_index[pair];descendants[node]|=bit
+0162             reverse_frames[code['outputs'][pair]]=bit
+0163         for node in sorted(self.active,reverse=True):
+0164             if self.args[node]:
+0165                 for parent in self.args[node]:descendants[parent]|=descendants[node]
+0166         for node,ins,outs in reversed(gates):
+0167             frame=descendants[node]
+0168             assert frame
+0169             for slot in set(ins+outs):
+0170                 assert reverse_frames[slot]&~frame==0
+0171                 reverse_frames[slot]=frame
+0172         for source,slot in code['sources'].items():
+0173             expected=sum(1<<i for target,i in target_index.items()
+0174                          if not set(source)&set(target))
+0175             assert reverse_frames[slot]==expected
+0176         return dict(reversible_roles=size,forward_coefficient_map_exact=True,
+0177                     forward_support_frames_nested=True,reverse_support_frames_nested=True,
+0178                     no_forbidden_source_target_path=True)
+0179 
+0180 
+0181 if __name__=='__main__':
+0182     c=ExclusionCircuit(45)
+0183     print(c.verify())
+0184     print('Reversible roles:',c.compile()['roles'])

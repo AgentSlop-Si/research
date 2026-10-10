@@ -1,0 +1,242 @@
+0001 #!/usr/bin/env python3
+0002 """Independent v15 audit. Reads uploaded archives as bytes only; never imports them.
+0003 
+0004 Run: OPENBLAS_NUM_THREADS=1 python3 audit/independent_checks.py
+0005 Only the standard library and installed NumPy are imported. All paths are relative
+0006 to this script, and no original master tree is needed to reproduce the results.
+0007 """
+0008 from pathlib import Path, PurePosixPath
+0009 import hashlib, io, json, math, stat, zipfile
+0010 import numpy as np
+0011 
+0012 BASE = Path(__file__).resolve().parent.parent
+0013 OUT = BASE / 'audit' / 'INDEPENDENT_RESULTS.json'
+0014 
+0015 def sha(b):
+0016     return hashlib.sha256(b).hexdigest()
+0017 
+0018 def inventory_zip(data):
+0019     """Bounded inert reader, including nested ZIPs and source checksum records."""
+0020     z = zipfile.ZipFile(io.BytesIO(data))
+0021     infos = z.infolist()
+0022     assert len(infos) < 10000 and sum(i.file_size for i in infos) < 100_000_000
+0023     files = {}; seen = set()
+0024     for i in infos:
+0025         p = PurePosixPath(i.filename)
+0026         assert not p.is_absolute() and '..' not in p.parts and '\\' not in i.filename
+0027         assert p not in seen and not stat.S_ISLNK(i.external_attr >> 16)
+0028         assert not i.flag_bits & 1
+0029         seen.add(p)
+0030         if not i.is_dir():
+0031             files[str(p)] = z.read(i)
+0032     checked = 0; nested = []
+0033     for name, b in files.items():
+0034         if name.endswith('.zip'):
+0035             nested.append({'path': name, 'sha256': sha(b), 'inventory': inventory_zip(b)})
+0036         if name.rsplit('/', 1)[-1] == 'SHA256SUMS.json':
+0037             prefix = str(PurePosixPath(name).parent)
+0038             for rel, rec in json.loads(b).items():
+0039                 data = files[str(PurePosixPath(prefix) / rel)]
+0040                 assert sha(data) == rec['sha256'] and len(data) == rec['bytes']
+0041                 checked += 1
+0042         if name.rsplit('/', 1)[-1] in ('MANIFEST.sha256', 'SHA256SUMS', 'SHA256SUMS.txt'):
+0043             prefix = str(PurePosixPath(name).parent)
+0044             for line in b.decode().splitlines():
+0045                 if not line.strip(): continue
+0046                 h, rel = line.split(maxsplit=1)
+0047                 rel = rel.lstrip('*')
+0048                 p = str(PurePosixPath(prefix) / rel)
+0049                 assert p in files, (name, rel)
+0050                 assert sha(files[p]) == h, (name, rel)
+0051                 checked += 1
+0052     return {'files': len(files), 'manifest_entries_checked': checked, 'nested': nested}
+0053 
+0054 def archive_checks():
+0055     records = []
+0056     for p in sorted((BASE / 'originals').rglob('*.zip')):
+0057         b = p.read_bytes()
+0058         records.append({'path': str(p.relative_to(BASE)), 'bytes': len(b),
+0059                         'sha256': sha(b), 'inventory': inventory_zip(b)})
+0060     assert records[1]['sha256'] == records[2]['sha256']
+0061     assert records[0]['sha256'] == '7547bd349f84ac7256fe7fdf612011cf8148adc53873db8abd5a53a0b9bd952d'
+0062     assert records[1]['sha256'] == 'd14e9f44365af9ed3141f3a0325b5523a5a48201ecbb7253e6978ac322a08992'
+0063     return records
+0064 
+0065 def prime_factors(n):
+0066     out=[]; d=2
+0067     while d*d<=n:
+0068         if n%d==0:
+0069             out.append(d)
+0070             while n%d==0:n//=d
+0071         d+=1
+0072     if n>1:out.append(n)
+0073     return out
+0074 
+0075 def exact_checks():
+0076     """Finite-field factor-chain checks; Python integers prevent overflow.
+0077 
+0078     These are independently built linear maps, with every basis vector checked
+0079     at the small sizes, plus dense controls at the source's four test sizes.
+0080     Modular inverse replaces conjugation; no complex positivity is inferred.
+0081     """
+0082     p=998244353
+0083     for prime,gen0 in [(13,2),(998244353,3)]:
+0084         assert all(prime % d for d in range(2,math.isqrt(prime)+1))
+0085         for d in prime_factors(prime-1): assert pow(gen0,(prime-1)//d,prime)!=1
+0086     inv=lambda a:pow(a,p-2,p)
+0087     def mat(w,n): return [[pow(w,-i*j,p) for j in range(n)] for i in range(n)]
+0088     def mv(A,x): return [sum(a*b for a,b in zip(row,x))%p for row in A]
+0089     cases=[(1,1),(4,1),(4,4),(6,3),(7,7),(8,2),(8,4),(14,7),(16,4),(28,4),
+0090            (56,7),(119,7),(136,8),(238,14)]
+0091     rows=[]; outputs=0; phase_relations=0; frame_entries=0
+0092     for q,m in cases:
+0093         p = 13 if q == 6 else 998244353
+0094         gen = 2 if q == 6 else 3
+0095         k=q//m; assert q%m==0 and (p-1)%(2*q)==0
+0096         z=pow(gen,(p-1)//q,p); eta=pow(gen,(p-1)//(2*q),p)
+0097         for d in prime_factors(q):assert pow(z,q//d,p)!=1
+0098         FK=mat(pow(z,m,p),k); FM=mat(pow(z,k,p),m); FQ=mat(z,q)
+0099         slopes=sorted(set([0,1,2,q-1]))
+0100         total_vectors=0
+0101         for a in slopes:
+0102             beta=3%q if q>1 else 0
+0103             c=[pow(z,a*t*(t-1)//2+beta*t,p)*pow(eta,(q%2)*t,p)%p for t in range(m)]
+0104             w=pow(z,k,p)
+0105             s=[[c[t]*pow(z,a*m*b*t,p)%p for t in range(m)] for b in range(k)]
+0106             for b in range(k):
+0107                 for t in range(m):
+0108                     for r in range(m):
+0109                         lhs=pow(z,a*t*(t-1)//2+(a*m*b+beta+r*k)*t,p)*pow(eta,(q%2)*t,p)%p
+0110                         assert lhs==s[b][t]*pow(w,r*t,p)%p
+0111                         phase_relations+=1
+0112             # Complete frame on one block, using inverses rather than conjugates.
+0113             for u in range(m):
+0114                 for t in range(m):
+0115                     v=sum(inv(s[0][u]*pow(w,r*u,p)%p)*s[0][t]*pow(w,r*t,p) for r in range(m))*inv(m)%p
+0116                     assert v==int(u==t)
+0117                     frame_entries+=1
+0118             vectors=[]
+0119             if q<=28:
+0120                 vectors += [[int(i==j) for i in range(q)] for j in range(q)]
+0121             else:
+0122                 vectors += [[int(i==j) for i in range(q)] for j in sorted(set([0,1,q//2,q-1]))]
+0123             vectors += [[(i*i*17+(i+1)*seed+5)%p for i in range(q)] for seed in (3,11)]
+0124             for x in vectors:
+0125                 # Raw summary map, directly expressed from phase characters.
+0126                 D=[[sum(s[b][t]*x[b*m+t]*pow(w,r*t,p) for t in range(m))%p for b in range(k)] for r in range(m)]
+0127                 F=[mv(FK,d) for d in D]
+0128                 # Invert local Fourier mixing after commuting past block Fourier.
+0129                 G=[[sum(F[r][j]*pow(w,-r*t,p) for r in range(m))*inv(m)%p for j in range(k)] for t in range(m)]
+0130                 H=[[G[t][(j+a*t)%k]*inv(c[t])%p for j in range(k)] for t in range(m)]
+0131                 direct_H=[mv(FK,x[t::m]) for t in range(m)]
+0132                 assert H==direct_H
+0133                 y=[0]*q
+0134                 for j in range(k):
+0135                     v=mv(FM,[H[t][j]*pow(z,-j*t,p)%p for t in range(m)])
+0136                     for r in range(m):y[j+k*r]=v[r]
+0137                 assert y==mv(FQ,x)
+0138                 outputs+=q; total_vectors+=1
+0139         rows.append({'Q':q,'M':m,'K':k,'field':p,'generator':gen,'slopes':slopes,'vectors':total_vectors})
+0140     return {'fields':[13,998244353],'cases':rows,'exact_output_entries':outputs,
+0141             'exact_phase_relations':phase_relations,'exact_frame_entries':frame_entries}
+0142 
+0143 def normalization_checks():
+0144     rec=[]
+0145     for q,m in [(6,3),(12,3),(15,5),(20,4),(24,4),(28,7)]:
+0146         k=q//m; a=2; beta=3
+0147         i=np.arange(q); U=np.exp(-2j*np.pi*np.outer(i,i)/q)/math.sqrt(q)
+0148         A=np.zeros((q,q),complex)
+0149         for b in range(k):
+0150             for r in range(m):
+0151                 for t in range(m):
+0152                     exponent=a*t*(t-1)/2+(a*m*b+beta)*t+(q%2)*t/2+r*k*t
+0153                     A[b*m+r,b*m+t]=np.exp(2j*np.pi*exponent/q)
+0154         normalized=A/math.sqrt(m)
+0155         gram=float(np.max(abs(normalized.conj().T@normalized-np.eye(q))))
+0156         synthesis=U@A.conj().T/m
+0157         sv=np.linalg.svd(synthesis,compute_uv=False)
+0158         singular=float(np.max(abs(sv-1/math.sqrt(m))))
+0159         # Raw single block to selected frequencies ell+s*K.
+0160         selected=U[np.arange(m)*k+1 if k>1 else np.arange(m), :m]
+0161         physical=float(np.max(abs(np.linalg.svd(selected,compute_uv=False)-1/math.sqrt(k))))
+0162         assert max(gram,singular,physical)<1e-11
+0163         rec.append({'Q':q,'M':m,'analysis_unitarity_residual':gram,'summary_synthesis_sv_residual':singular,'physical_block_sv_residual':physical})
+0164     return rec
+0165 
+0166 def covariance_checks():
+0167     """Full enumeration for the actual unnormalized Green projector.
+0168 
+0169     At every fixed input coordinate the diagonal has been subtracted. Compares
+0170     the directly averaged quadratic-form matrix to an independently grouped
+0171     character Gram matrix, retaining Gaussian weights and fractional frequency.
+0172     """
+0173     rec=[]
+0174     for n,q,m in [(3,14,2),(4,20,2),(5,21,3),(7,35,5),(7,28,4)]:
+0175         c=(n-1)//2; idx=(np.arange(n)-c)%q
+0176         ti=np.where(np.arange(q)<q/2,np.arange(q)/q,np.arange(q)/q-1)
+0177         tau=float(np.max(abs(ti[idx]))); sig2=3.; xi=1.375
+0178         gg=np.exp(np.pi*sig2*ti*ti)/math.sqrt(sig2)
+0179         units=[a for a in range(1,q) if math.gcd(a,q)==1]
+0180         cov=np.zeros((n,n),complex); mean=np.zeros(n,complex)
+0181         for a in units:
+0182             for beta in range(q):
+0183                 coeff=np.zeros(n,complex)
+0184                 for jn,j in enumerate(idx):
+0185                     b,t=divmod(int(j),m)
+0186                     st=np.exp(2j*np.pi*(a*t*(t-1)/2+(a*m*b+beta)*t+(q%2)*t/2)/q)
+0187                     for u in range(m):
+0188                         l=b*m+u
+0189                         if l==j:continue
+0190                         su=np.exp(2j*np.pi*(a*u*(u-1)/2+(a*m*b+beta)*u+(q%2)*u/2)/q)
+0191                         coeff[jn]+=gg[j]/gg[l]*np.exp(-2j*np.pi*xi*ti[l])*st*np.conj(su)/math.sqrt(n)
+0192                 cov+=np.outer(np.conj(coeff),coeff)
+0193                 mean+=coeff
+0194         cov/=q*len(units); mean/=q*len(units)
+0195         grouped=np.zeros((n,n),complex)
+0196         for d in range(1-m,m):
+0197             if d==0:continue
+0198             v=[]
+0199             for j in idx:
+0200                 l=int(j)+d
+0201                 valid=0<=l<q and int(j)//m==l//m
+0202                 v.append(gg[j]/gg[l]*np.exp(-2j*np.pi*xi*ti[l]) if valid else 0)
+0203             v=np.array(v)
+0204             for a in units:
+0205                 w=v*np.exp(-2j*np.pi*a*d*idx/q)/math.sqrt(n)
+0206                 grouped+=np.outer(np.conj(w),w)/len(units)
+0207         residual=float(np.max(abs(cov-grouped))); eig=float(np.linalg.eigvalsh(cov)[-1])
+0208         R=math.exp(math.pi*sig2*(2*tau*m/q+(m/q)**2))
+0209         rough=all(math.gcd(q,d)==1 for d in range(1,m))
+0210         bound=q/n*R*R*(m-1)/len(units) if rough else q/n*R*R*m*(m-1)/len(units)
+0211         assert residual<1e-11 and eig<=bound+1e-11 and np.max(abs(mean))<1e-11
+0212         rec.append({'N':n,'Q':q,'M':m,'states':q*len(units),'rough':rough,'grouped_residual':residual,'mean_residual':float(np.max(abs(mean))),'top_eigenvalue':eig,'analytic_bound':bound})
+0213     return rec
+0214 
+0215 def sampler_checks():
+0216     rec=[]
+0217     for q in (14,21,35,55,77):
+0218         bits=(q-1).bit_length(); accepted=[]
+0219         for a in range(1<<bits):
+0220             for b in range(1<<bits):
+0221                 if 1<=a<q and math.gcd(a,q)==1 and b<q:accepted.append((a,b))
+0222         phi=sum(math.gcd(a,q)==1 for a in range(1,q))
+0223         assert len(accepted)==phi*q and len(set(accepted))==len(accepted)
+0224         slope_counts={a:sum(aa==a for aa,_ in accepted) for a in range(1,q) if math.gcd(a,q)==1}
+0225         beta_counts={b:sum(bb==b for _,bb in accepted) for b in range(q)}
+0226         assert set(slope_counts.values())=={q} and set(beta_counts.values())=={phi}
+0227         rec.append({'Q':q,'bits_per_pair':2*bits,'accepted_pairs':len(accepted),'possible_pairs':1<<(2*bits)})
+0228     return rec
+0229 
+0230 def main():
+0231     result={'source_policy':'Uploaded Python, bytecode and logs are data only; no source imports or execution.',
+0232             'archives':archive_checks(),'exact_factorization':exact_checks(),
+0233             'normalization':normalization_checks(),'covariance':covariance_checks(),
+0234             'bounded_fair_bit_sampler':sampler_checks()}
+0235     OUT.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+0236     print(json.dumps({'exact_outputs':result['exact_factorization']['exact_output_entries'],
+0237                       'phase_relations':result['exact_factorization']['exact_phase_relations'],
+0238                       'frame_entries':result['exact_factorization']['exact_frame_entries'],
+0239                       'covariance_states':sum(x['states'] for x in result['covariance']),
+0240                       'all_passed':True},indent=2))
+0241 
+0242 if __name__=='__main__':main()

@@ -1,0 +1,242 @@
+   1 """Proved reciprocal-resultant compression for blind 2/s sparse-rational FFTs.
+   2 
+   3 For Hankel order m=s+1, the fixed-degree Sylvester resultant satisfies
+   4   T(w)=w^v (w-1)^(m^2) U(w),
+   5   v=s(s+1)(4s+5)/6,
+   6   U(w)=w^b V(w+1/w), b=sum_{j=1}^s j^2.
+   7 The identity is universal, not a fitted degree/palindrome assumption.
+   8 It is proved in THEOREM.md by Cauchy-Binet, Newton polygons and reciprocity.
+   9 
+  10 Only b+1 exact determinant evaluations recover V, versus the D+1
+  11 naive samples of the conservative degree bound D=m^2(2m-1).
+  12 Full cyclic convolution certification and an ordinary FFT fallback remain.
+  13 """
+  14 from dataclasses import dataclass
+  15 from math import comb
+  16 from annihilator_engine import Work, direct_one_frequency, batch_inverse_nonzero
+  17 from resultant_pattern import res_at
+  18 from resultant_gate import sparse_group_eval
+  19 from reciprocal_union import discover_reciprocal_union, factor_sparse_hypercube
+  20 from rational_forcing import bluestein_transform
+  21 from trace_subgroup import trace_subgroup_sieve,shifts_from_linear_trace_gcd,shifts_from_trace_gcd_scan
+  22 
+  23 @dataclass
+  24 class CompressedMeta:
+  25     dot_probes:int=0
+  26     resultant_samples:int=0
+  27     witness_samples:int=0
+  28     compressed_degree:int=0
+  29     compressed_terms:int=0
+  30     zero_factor:int=0
+  31     one_factor:int=0
+  32     root_candidates:int=0
+  33     selected:str='fallback'
+  34     reason:str='not-certified'
+  35     full_certificates:int=0
+  36     full_certificate_entries:int=0
+  37     interpolation_distinct:bool=False
+  38     trace_gcd_degree:int=-1
+  39     trace_removed_identity:int=0
+  40     trace_sieve_ops:int=0
+  41     trace_rejected:bool=False
+  42     trace_linear_extracted:bool=False
+  43     exhaustive_group_scan:bool=False
+  44     trace_half_scan:bool=False
+  45 
+  46 
+  47 def charged_pow(x,e,p,co):
+  48     """Square-and-multiply with every modular product counted."""
+  49     v=1;b=x%p
+  50     while e:
+  51         if e&1:
+  52             v=v*b%p;co.multiplies+=1
+  53         e>>=1
+  54         if e:
+  55             b=b*b%p;co.multiplies+=1
+  56     return v
+  57 
+  58 
+  59 def interpolate_nodes(xs,ys,p,co):
+  60     """Exact Newton interpolation at arbitrary distinct x nodes."""
+  61     n=len(xs)
+  62     if len(ys)!=n or len(set(xs))!=n:
+  63         raise ValueError('non-distinct interpolation nodes')
+  64     inverses=[];denoms=[]
+  65     for j in range(1,n):
+  66         for i in range(j,n):
+  67             denoms.append((xs[i]-xs[i-j])%p);co.additions+=1
+  68     inverses=batch_inverse_nonzero(denoms,p,co)
+  69     dd=ys[:];q=0
+  70     for j in range(1,n):
+  71         for i in range(n-1,j-1,-1):
+  72             dd[i]=(dd[i]-dd[i-1])*inverses[q+(i-j)]%p
+  73             co.multiplies+=1;co.additions+=1
+  74         q+=n-j
+  75     # Above inverse-index ordering is j-specific ascending i, safe.
+  76     out=[0]*n
+  77     basis=[1]
+  78     for j in range(n):
+  79         for i,c in enumerate(basis):
+  80             out[i]=(out[i]+c*dd[j])%p
+  81             co.multiplies+=1;co.additions+=1
+  82         if j==n-1:break
+  83         nx=[0]*(len(basis)+1)
+  84         for i,c in enumerate(basis):
+  85             nx[i]=(nx[i]-xs[j]*c)%p
+  86             nx[i+1]=(nx[i+1]+c)%p
+  87             co.multiplies+=1;co.additions+=2
+  88         basis=nx
+  89     return out
+  90 
+  91 
+  92 def eval_horner(coeff,t,p,co):
+  93     v=0
+  94     for c in coeff[::-1]:
+  95         v=(v*t+c)%p
+  96         co.multiplies+=1;co.additions+=1
+  97     return v
+  98 
+  99 
+ 100 def to_palindromic_coeff(V,p,co):
+ 101     """w^b V(w+1/w), linear combination of short binomial expansions."""
+ 102     b=len(V)-1
+ 103     U=[0]*(2*b+1)
+ 104     for j,v in enumerate(V):
+ 105         for k in range(j+1):
+ 106             exponent=b+j-2*k
+ 107             U[exponent]=(U[exponent]+v*comb(j,k))%p
+ 108             co.multiplies+=1;co.additions+=1
+ 109     return U
+ 110 
+ 111 
+ 112 def sample_distinct_reciprocals(count,p,co):
+ 113     """Pick w !=0,1 with distinct w+w^-1; bound 2*count+constant trials."""
+ 114     wlist=[];nodes=[];seen=set();w=2
+ 115     while len(wlist)<count and w<p:
+ 116         inv=pow(w,-1,p);co.inversions+=1
+ 117         node=(w+inv)%p;co.additions+=1
+ 118         if node not in seen:
+ 119             seen.add(node);wlist.append(w);nodes.append(node)
+ 120         w+=1
+ 121     if len(wlist)<count:return None,None
+ 122     return wlist,nodes
+ 123 
+ 124 
+ 125 def compressed_U_from_inverse_probes(T,p,s,co,extra_witness=3):
+ 126     """Construct exact U coefficients from b+1 determinant values.
+ 127 
+ 128     The factor structure is mathematical, not a heuristic extrapolation.
+ 129     Extra independent evaluations defend against implementation bugs.
+ 130     """
+ 131     m=s+1;q=m*m
+ 132     v=s*(s+1)*(4*s+5)//6
+ 133     b=s*(s+1)*(2*s+1)//6
+ 134     wlist,ts=sample_distinct_reciprocals(b+1+extra_witness,p,co)
+ 135     if not wlist:return None,None
+ 136     denoms=[];resvals=[]
+ 137     for w in wlist:
+ 138         rw=res_at(T,w,p,co,s)
+ 139         den=charged_pow(w,v+b,p,co)*charged_pow((w-1)%p,q,p,co)%p
+ 140         co.multiplies+=1
+ 141         if den==0:raise AssertionError('nonzero interpolation denominator')
+ 142         denoms.append(den);resvals.append(rw)
+ 143     invs=batch_inverse_nonzero(denoms,p,co)
+ 144     vals=[(r*iv)%p for r,iv in zip(resvals,invs)]
+ 145     co.multiplies+=len(vals)
+ 146     V=interpolate_nodes(ts[:b+1],vals[:b+1],p,co)
+ 147     for j in range(b+1,len(wlist)):
+ 148         if eval_horner(V,ts[j],p,co)!=vals[j]:
+ 149             raise AssertionError('universal resultant factorization / implementation error')
+ 150     U=to_palindromic_coeff(V,p,co)
+ 151     if any(U[j]!=U[-1-j] for j in range(len(U)//2)):
+ 152         raise AssertionError('recovered residual polynomial not palindromic')
+ 153     return U,{'v':v,'q':q,'b':b,'samples':b+1,
+ 154               'witnesses':extra_witness,'symmetric_degree':2*b,
+ 155               'nonzero_coefficients':sum(x!=0 for x in U), 'V':V}
+ 156 
+ 157 
+ 158 def discover_compressed_reciprocal(r,engine,co=None,s=4):
+ 159     if co is None:co=Work()
+ 160     meta=CompressedMeta()
+ 161     n,p=engine.n,engine.p
+ 162     b=s*(s+1)*(2*s+1)//6
+ 163     if not 1<=s<=8 or n<4*s or p<=4*b+20:
+ 164         meta.reason='invalid-size-or-field';return None,meta
+ 165     R=[direct_one_frequency(r,engine.powers[k],p,co) for k in range(4*s)]
+ 166     meta.dot_probes=4*s
+ 167     if not all(R):
+ 168         meta.reason='zero-Fourier-probe';return None,meta
+ 169     T=batch_inverse_nonzero(R,p,co)
+ 170     U,detail=compressed_U_from_inverse_probes(T,p,s,co)
+ 171     if U is None or not any(U):
+ 172         meta.reason='identically-zero-resultant';return None,meta
+ 173     meta.resultant_samples=detail['samples']
+ 174     meta.witness_samples=detail['witnesses']
+ 175     meta.compressed_degree=detail['symmetric_degree']
+ 176     meta.compressed_terms=detail['nonzero_coefficients']
+ 177     meta.zero_factor=detail['v'];meta.one_factor=detail['q']
+ 178     meta.interpolation_distinct=True
+ 179     # Phase22: deterministic Chebyshev/Dickson trace subgroup sieve.
+ 180     # If this gcd is 1, no nontrivial Nth root can be a shift root.
+ 181     # In that case do not perform the expensive N-point resultant root scan.
+ 182     trace=trace_subgroup_sieve(detail['V'],n,p,co)
+ 183     meta.trace_gcd_degree=trace.gcd_degree
+ 184     meta.trace_removed_identity=trace.removed_identity_factors
+ 185     meta.trace_sieve_ops=trace.incremental_ops
+ 186     if not trace.possible:
+ 187         meta.trace_rejected=True
+ 188         meta.reason='trace-subgroup-gcd-one'
+ 189         return None,meta
+ 190     # Roots of U at the Nth roots correspond exactly to admissible w roots of
+ 191     # the full resultant, since w^v(w-1)^q is invertible for 1<=delta<N.
+ 192     if trace.gcd_degree==1:
+ 193         candidates=shifts_from_linear_trace_gcd(trace,engine,co)
+ 194         meta.trace_linear_extracted=True
+ 195         if not candidates:
+ 196             meta.trace_rejected=True
+ 197             meta.reason='trace-no-nonidentity-subgroup-roots'
+ 198             return None,meta
+ 199     else:
+ 200         # Exact general-degree route. Work on gcd in the half-degree trace
+ 201         # quotient and exploit the w <-> w^-1 pairing of subgroup roots.
+ 202         # This does not assume cost-free finite-field factorization.
+ 203         candidates=shifts_from_trace_gcd_scan(trace,engine,co)
+ 204         meta.trace_half_scan=True
+ 205     meta.root_candidates=len(candidates)
+ 206     # After removing universal factors, a nonzero U has degree <= 2*b.
+ 207     if len(candidates)>2*b:
+ 208         meta.reason='candidate-bound';return None,meta
+ 209     found,detail2=discover_reciprocal_union(r,engine,co,probes=R,
+ 210                           max_terms=s,candidate_shifts=candidates)
+ 211     meta.selected='certified' if found else 'fallback'
+ 212     meta.reason=detail2.reason
+ 213     meta.full_certificates=detail2.full_certificates
+ 214     meta.full_certificate_entries=detail2.full_certificate_entries
+ 215     return found,meta
+ 216 
+ 217 
+ 218 def transform_compressed_reciprocal(engine,x,s=4):
+ 219     n,p=engine.n,engine.p
+ 220     if len(x)!=n:raise ValueError('wrong input')
+ 221     co=Work();r=engine.P.apply(x)
+ 222     co.multiplies+=2*n;co.additions+=n;co.reads+=2*n;co.writes+=n
+ 223     found,meta=discover_compressed_reciprocal(r,engine,co,s)
+ 224     if found is None:
+ 225         forcing,_=bluestein_transform(r,n,engine.omega,p,engine.primitive_gen,co.sparse)
+ 226         selection='fallback';factors=None
+ 227     else:
+ 228         A,delta,alpha,Ahat=found
+ 229         factors=factor_sparse_hypercube(A,delta,alpha,n,p,
+ 230                 (len(A).bit_length()-1),co) if len(A) in (2,4,8,16) else None
+ 231         b=[];wk=1;w=engine.powers[delta]
+ 232         for k in range(n):
+ 233             b.append((1-alpha*wk)%p)
+ 234             wk=wk*w%p
+ 235             co.multiplies+=2;co.additions+=1
+ 236         inv=batch_inverse_nonzero(Ahat,p,co)
+ 237         forcing=[b[k]*inv[k]%p for k in range(n)]
+ 238         co.multiplies+=n;co.writes+=n
+ 239         selection='compressed-reciprocal-certified'
+ 240     y=engine.L.solve(forcing)
+ 241     co.multiplies+=3*n+1;co.additions+=2*n;co.reads+=3*n;co.writes+=2*n
+ 242     return y,{'selected':selection,'meta':meta,'work':co,'graph_factors':factors}

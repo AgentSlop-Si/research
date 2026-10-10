@@ -1,0 +1,180 @@
+# Phase 11 — Mathematical proof certificate
+
+**Date:** October 10, 2026.  **Subject:** Lazy Fourier spectral-refinement graph and a sharp rank-distance gate for bounded-degree rational cyclic Green filters.  **Status:** exact identities, executable finite-field verification, restricted circuit conclusions. **No universal O(N) FFT claim.**
+
+## Model
+
+Let `N=2^L` for the lazy executor. Fix a field `F` with `N` invertible and a primitive `N`th root `w`, and let
+
+\[
+  (F_Nx)[k]=\sum_{j=0}^{N-1}w^{-kj}x[j].
+\]
+
+The program uses `F_p` with a supplied certified prime `p` and primitive root `w` (`p-1` divisible by `N`). Arithmetic operations and table preparation are charged; computation of an arbitrary suitable prime, primality certification and the supplied root's discovery are not part of the declared input contract. Root *order validation* is charged. The field identity also holds over exact complex arithmetic. The program does not rely on a prior transform, nonuniform lookup tables, or parallel work.
+
+## Theorem 1: compressed spectral-projector states
+
+For `d | N`, `m=N/d` define
+
+\[
+ C_{d,r}[t]=\sum_{u=0}^{d-1}x_{t+um}w^{-r u m},
+ \quad 0\le r<d,\ 0\le t<m.
+\]
+
+Let `P_(d,r) = F_N^{-1} diag(1_{k mod d=r}) F_N`. Then for every time index `j=t+a m` with `0<=t<m`,
+
+\[
+ (P_{(d,r)}x)[t+a m]=\frac{1}{d}w^{r a m}C_{d,r}[t]. \tag{1}
+\]
+
+**Proof:** From character orthogonality, the projector is the `d`-tap cyclic comb
+
+\[
+ (P_{(d,r)}x)[j]=\frac1d\sum_{u=0}^{d-1}w^{-r u m}x[j+u m\bmod N].
+\]
+
+Put `j=t+am`, replace the summation index by `v=a+u mod d`, and factor out `w^{ram}`. The remaining sum is `C_(d,r)[t]`. This proves (1). The entire `N`-coordinate set of projected vectors therefore has only `d*m=N` distinct quotient coordinates at a fixed level. QED.
+
+## Theorem 2: exact lazy refinement is radix-2 FFT
+
+Let `d=2^h` and `m=N/d`, with `h<L`. Put `m'=m/2`. For `r<d`, `t<m'`, write
+
+\[
+ a=C_{d,r}[t],\quad b=C_{d,r}[t+m'],\quad z=w^{-r m'}b.
+\]
+
+Then
+
+\[
+ C_{2d,r}[t]=a+z,\qquad C_{2d,r+d}[t]=a-z.\tag{2}
+\]
+
+**Proof:** Split the defining sum of `C_(2d,r)[t]` according to whether its `u` index is even or odd. Even positions are `t+v m` and contribute `a`. Odd positions are `t+m'+v m` and contribute `w^{-r m'}b`. Replacing `r` by `r+d` multiplies the odd contribution by `w^{-d m'}=w^{-N/2}=-1` but leaves the even term unchanged. QED.
+
+At `d=1`, `m=N`, we have `C_(1,0)[t]=x[t]`. At `d=N`, `m=1`, equation (2) produces
+
+\[
+ C_{N,k}[0]=(F_Nx)[k]
+\]
+
+for every `k`. Each of the `L` refinements contains `N/2` butterflies, each performing one multiplication and two additions/subtractions. Thus the fully online arithmetic count of this **particular circuit** is exactly
+
+\[
+  \frac{3N}{2}\log_2 N
+\]
+
+field operations, plus `N-1` root-table products, `O(log N)` additional verification field operations, and integer indexing / state moves. Its retained field-word storage is at most `3N+O(1)` (twiddle table, previous layer, next layer). The implementation writes `N` quotient coordinates per layer, not `N` coordinates for *each* projector. This is the familiar radix-2 FFT in frequency-residue coordinates and **is not a sub-`N log N` construction**.
+
+## Theorem 3: no literal symbolic node collisions
+
+Treat the input variables `x_0,...,x_(N-1)` as algebraically independent indeterminates. Each `C_(d,r)[t]` is a linear polynomial with exactly `d` nonzero coefficients. If two such polynomials have different `d`, their support sizes differ. If `d` is the same but `t` differs, their supports are disjoint (distinct congruence classes mod `m=N/d`). If the same `d,t` but different `r` are chosen, their coefficient of `x_t` is 1, while the coefficient of `x_(t+m)` is `w^{-rm}`, which differs because `w^m` has exact order `d` (for `d>1`). Thus all nodes across all levels are distinct, even up to nonzero scalar multiples.
+
+For each fixed `d`, the `N` symbolic states form a basis of `F^N`: after reordering by `t`, their coefficient matrix is block diagonal with `m` invertible `d`-point Fourier matrices. This proves rank `N` at every level. **Consequently, literal hash-consing or union-find of equal symbolic states does not eliminate any of the butterflies of (2)** for arbitrary formal input. It is not a lower bound for more general algebraic circuits or cross-level cancellations.
+
+## Theorem 4: sharp rational Green rank-distance gate
+
+Now permit any `N>=2` with primitive `N`th root; power-of-two is not necessary. Define the cyclic shift `Sx[j]=x[j+1 mod N]`. It is diagonal in the Fourier basis with eigenvalues `w^k`. Let `K` be a proper nonempty subset of frequencies, and `P_K=F_N^{-1}diag(1_K)F_N`.
+
+Choose `p(z),q(z) in F[z]` of degree at most `d`, requiring `q(w^k) != 0` for all `k`. The rational cyclic operator
+
+\[
+  R(S)=p(S)q(S)^{-1}
+\]
+
+has Fourier eigenvalues `p(w^k)/q(w^k)`. Therefore
+
+\[
+  \operatorname{rank}(P_K-R(S))
+  = \left|\left\{k:\frac{p(w^k)}{q(w^k)} \ne 1_K(k)\right\}\right|.\tag{3}
+\]
+
+**Case 1:** If `p` is the zero polynomial, the rank equals `|K|`.
+
+**Case 2:** If `p=q`, the rank equals `N-|K|`.
+
+**Case 3:** If both `p` and `p-q` are nonzero, agreement with the mask outside `K` requires a root of `p`, and agreement inside `K` requires a root of `p-q`. Each polynomial has at most `d` distinct roots. Consequently, there are at most `2d` matching frequencies and
+
+\[
+  \boxed{\operatorname{rank}(P_K-R(S))\ge N-2d.}\tag{4}
+\]
+
+This holds over any such field, including exact complex numbers, and is restricted to rational functions of one *fixed local cyclic shift*.
+
+### Sharpness of (4)
+
+Assume `1<=d<=min(|K|,N-|K|)` and `F` contains the `N` distinct roots. Select `d` Fourier roots outside `K` and `d` inside `K`; call the corresponding sets `U` and `V`. Set
+
+\[
+  A(z)=\prod_{u\in U}(z-u),\qquad
+  B(z)=\prod_{v\in V}(z-v),\qquad
+  p(z)=A(z),\quad q(z)=A(z)-\lambda B(z).
+\]
+
+At the chosen `2d` roots, `q` is nonzero for every `lambda!=0` because the two sets are disjoint. At each of the other `N-2d` roots, the equation `q(z)=0` excludes at most one nonzero `lambda`. Since a field with `N` distinct `N`th roots has at least `N+1` elements, there are at least `N` available nonzero values of `lambda`; at most `N-2d` are forbidden. Pick an allowed value. Then `q` is nonvanishing on all Fourier roots; `p/q` agrees with the mask at exactly the selected `2d` roots, since `p` and `p-q=lambda B` have exactly those `d` roots apiece. Therefore
+
+\[
+  \boxed{\operatorname{rank}(P_K-R(S))=N-2d.}\tag{5}
+\]
+
+This proves exact sharpness for the **nontrivial** rational-filter class and is constructively implemented in `sharp_rational_rank_witness()`.
+
+### Consequence for Green + bounded-rank union
+
+For a balanced mask `|K|=N/2`, if `d<=N/4`, **every** degree-`d` rational cyclic filter has rank error at least `N/2`, with equality already achieved by `R=0` or `R=I`. Thus a single bounded-degree local Green operator plus any rank-`o(N)` correction cannot equal a balanced Fourier spectral projector. Products of a bounded number of commuting rational functions of `S` have rational degree bounded by the sum of their degrees and obey the same gate.
+
+**Crucial limitation:** this is *not* a lower bound on FFT algorithms, high-degree *sparse* polynomial shifts, unrelated full-rank noncommuting Green operators or nonstationary permutations. Indeed, for even `N`, the simple exact identity
+
+\[
+ P_{\mathrm{even}}=\frac12(I+S^{N/2})
+\]
+
+applies a balanced projector in `O(N)` work using a polynomial of degree `N/2` but only **two** nonzero monomials, fully outside the low-degree assumption.
+
+## Theorem 5: binary mask labels versus amplitude recovery
+
+If a method reads only one scalar `e_0^T P_(K_i)x` per binary mask, then
+
+\[
+  e_0^T P_{K_i}x=\frac1N\sum_{k\in K_i} (F_Nx)[k].
+\]
+
+`B` such scalar observations are `B` linear equations in `N` unknown Fourier amplitudes; their coefficient matrix has rank at most `B`. Even if the `B` binary membership strings distinguish all frequency *indices* (`B>=ceil(log_2 N)`), recovery of every arbitrary amplitude from these scalars still needs at least `N` linearly independent observations. This **does not apply** to algorithms that retain full projected vectors or arbitrary other intermediate information; it is a correction to a simplistic inference from distinct mask signatures.
+
+## Verification and originality boundary
+
+All identities were tested over exact modular arithmetic. Independent audits reconstruct full DFTs by a different algorithm, individual bins by direct summation, and correction ranks by explicit matrices and Gaussian elimination. The proof uses standard root counting, Fourier character orthogonality, elementary polynomial interpolation, and commuting circulant algebra; **historical novelty is not asserted**.
+
+The existing 2026 specialized exact complex-arithmetic uniform DFT bound `O(N (log N)^(1-10^-13))` is not challenged by a lower bound scoped to this restricted circuit family.
+
+## Theorem 6: a full-rank correction with O(N) execution
+
+Let `N` be even, `alpha != 0`, `alpha^N != 1`, and `Sx[j]=x[j+1 mod N]`. Define
+
+\[
+ G=(I-\alpha S)^{-1}.
+\]
+
+The finite geometric identity
+
+\[
+ (I-\alpha S)\left(\sum_{t=0}^{N-1}\alpha^t S^t\right)
+   =(1-\alpha^N)I
+\]
+
+implies the exact dense circulant representation
+
+\[
+ G=\frac{1}{1-\alpha^N}\sum_{t=0}^{N-1}\alpha^t S^t.
+\]
+
+All `N` cyclic shift coefficients are nonzero, so every entry of `G` is nonzero. Nevertheless, it can be applied in `O(N)` charged field operations: first calculate `z=sum_(j=0)^(N-1) alpha^j x[j]` by backward Horner recurrence, then set `y[0]=z/(1-alpha^N)`, calculate `y[N-1]=x[N-1]+alpha*y[0]`, and work backward through `y[j]=x[j]+alpha*y[j+1]` for `j=N-2,...,1`. This solves `(I-alpha*S)y=x` with cyclic boundary. The field inverse and `alpha^N` are prepared via charged binary exponentiation; `apply_one_pole_green()` performs these steps explicitly.
+
+The eigenvalues of `G` in the Fourier basis are `1/(1-alpha*w^k)`. They are always nonzero; they never equal 1 because `alpha*w^k` is nonzero. Thus for **every** frequency mask `K` (including the empty or complete mask)
+
+\[
+ \boxed{\operatorname{rank}(P_K-G)=N.}
+\]
+
+Choose the even-frequency projector `P_even=(I+S^(N/2))/2` (assuming the field has characteristic different from 2, which follows from existence of primitive even-order roots). Both `P_even` and `G` apply in `O(N)` work, so their difference has **full rank** but can *also* be applied to every fresh vector in `O(N)` work. This is a constructive counterexample to the informal assertion that full-rank additive correction forces superlinear execution time. Theorem 4 is a **rank-distance restriction in one representation**, not a direct arithmetic lower bound.
+
+Exact tests verify the dense Green recurrence, all Fourier eigenvalues, full-rank difference matrices, and an `O(N)` executor. Historical priority is not claimed; cyclic first-order resolvents and circulant diagonalization are classical.

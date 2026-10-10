@@ -1,0 +1,41 @@
+1: #include <cstdio>
+2: #include <cstdlib>
+3: #include <vector>
+4: #include <cstdint>
+5: #include <chrono>
+6: #include <fstream>
+7: #include <algorithm>
+8: #include <iostream>
+9: using namespace std;
+10: static inline int inverse(int a,int p){int64_t x=1,b=a,e=p-2;while(e){if(e&1)x=x*b%p;b=b*b%p;e>>=1;}return (int)x;}
+11: int main(int argc,char**argv){
+12:  if(argc<5){cerr<<"rankmod <raw_int32_bin> rows cols prime\n";return 1;}
+13:  const int rows=atoi(argv[2]),cols=atoi(argv[3]),p=atoi(argv[4]);
+14:  ifstream f(argv[1],ios::binary);if(!f.good()){cerr<<"file missing";return 1;}
+15:  vector<int32_t>a((size_t)rows*cols);f.read((char*)a.data(),a.size()*sizeof(int32_t));
+16:  if(f.gcount()!=long(a.size()*sizeof(int32_t))){cerr<<"short matrix";return 1;}
+17:  int rank=0,det=1,sgn=1;vector<int>pivs;
+18:  const auto start=chrono::steady_clock::now();
+19:  for(int c=0;c<cols && rank<rows;c++){
+20:   int pivot=rank;while(pivot<rows && a[(size_t)pivot*cols+c]%p==0)pivot++;
+21:   if(pivot==rows)continue;
+22:   if(pivot!=rank){for(int j=0;j<cols;j++)swap(a[(size_t)rank*cols+j],a[(size_t)pivot*cols+j]);sgn=-sgn;}
+23:   int v=a[(size_t)rank*cols+c]%p; if(v<0)v+=p;
+24:   det=(int)((int64_t)det*v%p);
+25:   const int inv=inverse(v,p);
+26:   for(int j=c;j<cols;j++)a[(size_t)rank*cols+j]=(int)((int64_t)a[(size_t)rank*cols+j]*inv%p);
+27:   for(int i=rank+1;i<rows;i++){
+28:     int alpha=a[(size_t)i*cols+c];if(!alpha)continue;
+29:     int32_t*row=&a[(size_t)i*cols]; const int32_t*pp=&a[(size_t)rank*cols];
+30:     for(int j=c+1;j<cols;j++){
+31:       int64_t z=(int64_t)row[j]-(int64_t)alpha*pp[j];
+32:       z%=p;if(z<0)z+=p;row[j]=(int32_t)z;
+33:     }
+34:     row[c]=0;
+35:   }
+36:   pivs.push_back(c); rank++;
+37:  }
+38:  const auto secs=chrono::duration<double>(chrono::steady_clock::now()-start).count();
+39:  cout<<"rank="<<rank<<" full_rows="<<rows<<" det="<<(rank==rows?(det*sgn%p+p)%p:0)<<" secs="<<secs<<"\n";
+40:  cout<<"pivots=";for(size_t j=0;j<pivs.size();j++){if(j)cout<<",";cout<<pivs[j];}cout<<"\n";
+41: }

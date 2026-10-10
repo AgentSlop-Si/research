@@ -1,0 +1,64 @@
+import torch, random, math, json, time
+
+torch.set_default_dtype(torch.float64); cdtype=torch.complex128
+bpow=5; n=1<<bpow; a=(1+1j)/2; bb=(1-1j)/2
+C=torch.tensor([[a,bb],[bb,a]],dtype=cdtype); T=C
+for _ in range(bpow-1): T=torch.kron(T,C)
+Tnorm=torch.linalg.norm(T)
+standard=[]
+for bit in range(bpow):
+ step=1<<bit
+ for block in range(0,n,2*step):
+  for off in range(step): standard.append((block+off,block+off+step))
+assert len(standard)==80
+
+def supp(seq):
+ S=[1<<i for i in range(n)]; full=(1<<n)-1
+ for p,q in seq:
+  u=S[p]|S[q]; S[p]=u;S[q]=u
+ return sum(x.bit_count() for x in S),sum(x==full for x in S)
+
+def find_full(seed,attempts=60000):
+ rng=random.Random(seed); rem=rng.randrange(80); seq=[e for i,e in enumerate(standard) if i!=rem]; rng.shuffle(seq); sc=supp(seq); temp=20.0
+ for it in range(attempts):
+  i,j=rng.sample(range(79),2); seq[i],seq[j]=seq[j],seq[i]; ns=supp(seq)
+  delta=(ns[1]-sc[1])*5000+(ns[0]-sc[0])
+  if delta>=0 or rng.random()<math.exp(delta/max(temp,1e-9)): sc=ns
+  else: seq[i],seq[j]=seq[j],seq[i]
+  temp*=.9998
+  if sc[1]==n: return rem,seq,sc,it
+ return rem,None,sc,attempts
+
+def fit(seq,seed,steps=500):
+ torch.manual_seed(seed); g=len(seq)
+ z=torch.zeros((g,3,2),requires_grad=True); di=torch.zeros((n,2),requires_grad=True); do=torch.zeros((n,2),requires_grad=True)
+ with torch.no_grad():
+  vals=[a,bb,bb]
+  for j,v in enumerate(vals): z[:,j,0].fill_(math.log(abs(v))); z[:,j,1].fill_(math.atan2(v.imag,v.real))
+  z.add_(.04*torch.randn_like(z)); di.normal_(0,.02);do.normal_(0,.02)
+ pars=[z,di,do]
+ def ex(u): return torch.exp(u[...,0]+1j*u[...,1])
+ def build():
+  M=torch.diag(ex(di)); pv=ex(z)
+  for j,(x,y) in enumerate(seq):
+   p,q,r=pv[j,0],pv[j,1],pv[j,2]; s=-q*r/p
+   ox=M[x,:];oy=M[y,:];nx=p*ox+q*oy;ny=r*ox+s*oy
+   M=M.clone();M[x,:]=nx;M[y,:]=ny
+  return torch.diag(ex(do))@M
+ opt=torch.optim.Adam(pars,lr=.02);best=9.
+ for it in range(steps):
+  opt.zero_grad();rel=torch.linalg.norm(build()-T)/Tnorm;(rel*rel).backward();torch.nn.utils.clip_grad_norm_(pars,40);opt.step();best=min(best,rel.item())
+  if it in (280,400):
+   for pg in opt.param_groups:pg['lr']*=.3
+  if it%100==0: print('iter',it,'best',best,flush=True)
+ return best
+
+for schedseed in range(3):
+ rem,seq,sc,it=find_full(50000+schedseed)
+ print('SCHEDULE',schedseed,'removed',rem,'support',sc,'anneal_it',it,flush=True)
+ if seq:
+  err=fit(seq,60000+schedseed)
+  rec={'schedule_seed':schedseed,'removed':rem,'support':sc,'error':err,'schedule':seq}
+  print('RESULT', {k:v for k,v in rec.items() if k!='schedule'},flush=True)
+  json.dump(rec,open('adaptive_fft_cpp/c_b5_79_candidate.json','w'),indent=2)
+  break

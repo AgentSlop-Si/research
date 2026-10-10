@@ -1,0 +1,101 @@
+import unittest
+import numpy as np
+from scipy import fft
+from lazy_fft import LazyRealFFT, PreparedDenseFFT, exact_modular_check
+
+class LazyFFTTests(unittest.TestCase):
+    def test_repeated_updates_and_inverses(self):
+        rng=np.random.default_rng(1234)
+        for n in [1,2,3,7,8,15,16,64,255,1024]:
+            a=rng.standard_normal(n)
+            state=LazyRealFFT(a)
+            edited=a.copy()
+            for i in range(30):
+                pos=int(rng.integers(n)); delta=float(rng.standard_normal())
+                state.edit(pos,delta); edited[pos]+=delta
+                if i%5==0:
+                    ref=fft.rfft(edited)
+                    np.testing.assert_allclose(state.materialize_direct(),ref,rtol=3e-11,atol=1e-9)
+                    np.testing.assert_allclose(state.materialize_fresh(),ref,rtol=3e-11,atol=1e-9)
+                    freqids=sorted(set([0,n//2,int(rng.integers(n//2+1))]))
+                    np.testing.assert_allclose(state.frequencies(freqids),ref[freqids],rtol=3e-11,atol=1e-9)
+                    for q in freqids:
+                        self.assertAlmostEqual(state.frequency(q).real,ref[q].real,delta=1e-9)
+                        self.assertAlmostEqual(state.frequency(q).imag,ref[q].imag,delta=1e-9)
+            state.commit(direct_threshold=0)
+            self.assertEqual(state.distinct_edits,0)
+            np.testing.assert_allclose(state.base_spectrum,fft.rfft(edited),rtol=3e-11,atol=1e-9)
+
+    def test_coalescing(self):
+        s=LazyRealFFT([1,2,3,4,5,6,7,8])
+        s.edit(3,2);s.edit(3,3);s.edit(3,-5)
+        self.assertEqual(s.distinct_edits,0)
+        np.testing.assert_allclose(s.materialize_direct(),fft.rfft([1,2,3,4,5,6,7,8]))
+
+    def test_prepared_dense(self):
+        rng=np.random.default_rng(11)
+        for n in [3,4,64,1024]:
+            a=rng.standard_normal(n)
+            idx=int(rng.integers(n))
+            dense=PreparedDenseFFT.from_signal(a,idx)
+            for _ in range(40):
+                delta=float(rng.normal());a[idx]+=delta
+                out=dense.edit(delta)
+                np.testing.assert_allclose(out,fft.rfft(a),rtol=3e-11,atol=2e-9)
+
+    def test_exact_modular(self):
+        for n in [2,4,8,16,32]:
+            self.assertTrue(exact_modular_check(n))
+
+
+class TrackedTests(unittest.TestCase):
+    def test_tracked(self):
+        from lazy_fft import TrackedFrequencies
+        rng = np.random.default_rng(716)
+        for n in [1,7,8,32,100,128,1024]:
+            x = rng.normal(size=n)
+            qs = [0,n//2,min(3,n//2)]
+            positions = [0,n//2,n-1]
+            tracked = TrackedFrequencies(x,qs,positions)
+            for i in range(40):
+                p=positions[i%len(positions)]
+                d=float(rng.normal())
+                x[p]+=d
+                obs=tracked.edit(p,d)
+                np.testing.assert_allclose(obs,fft.rfft(x)[qs],rtol=2e-11,atol=2e-9)
+
+class PhaseTests(unittest.TestCase):
+    def test_phase_tiled(self):
+        from phase import phases_tiled
+        for n in [1,2,3,7,8,13,64,128,1000,8192,65536]:
+            for p in [0,n//7,n//2,n-1]:
+                for tile in [1,4,31,256,1024]:
+                    actual=phases_tiled(n,p,tile)
+                    qs=np.arange(n//2+1,dtype=np.int64)
+                    expected=np.exp((-2j*np.pi/n)*((qs*p)%n))
+                    np.testing.assert_allclose(actual,expected,rtol=2e-12,atol=2e-12)
+
+class PersistenceTests(unittest.TestCase):
+    def test_forks_share_base_and_independent_edits(self):
+        rng=np.random.default_rng(999)
+        base=rng.normal(size=256)
+        root=LazyRealFFT(base)
+        b1=root.fork();b2=root.fork()
+        self.assertIs(b1.base_spectrum,b2.base_spectrum)
+        self.assertIs(b1.base_spectrum,root.base_spectrum)
+        b1.edit(5,1.0)
+        b2.edit(11,-2.0)
+        self.assertEqual(root.distinct_edits,0)
+        self.assertEqual(b1.distinct_edits,1)
+        self.assertEqual(b2.distinct_edits,1)
+        x1=base.copy();x1[5]+=1.0
+        x2=base.copy();x2[11]-=2.0
+        np.testing.assert_allclose(b1.materialize_direct(),fft.rfft(x1),atol=2e-10)
+        np.testing.assert_allclose(b2.materialize_direct(),fft.rfft(x2),atol=2e-10)
+        b1.commit()
+        np.testing.assert_allclose(b1.base_spectrum,fft.rfft(x1),atol=2e-10)
+        np.testing.assert_allclose(root.base_spectrum,fft.rfft(base),atol=2e-10)
+        np.testing.assert_allclose(b2.materialize_direct(),fft.rfft(x2),atol=2e-10)
+
+if __name__ == "__main__":
+    unittest.main()

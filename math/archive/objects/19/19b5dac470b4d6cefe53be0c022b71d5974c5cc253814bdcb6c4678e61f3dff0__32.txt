@@ -1,0 +1,160 @@
+   1 #!/usr/bin/env python3
+   2 """Independent nonlinear routing rank checks; source scripts never imported."""
+   3 from pathlib import Path
+   4 from itertools import combinations
+   5 import json,random
+   6 from exact_utils import Field,prime_by_trial_division
+   7 from flow_utils import network_bound
+   8 BASE=Path(__file__).parent
+   9 
+  10 def affine(cols,offset=0):
+  11  p=[]
+  12  for v in range(1<<len(cols)):
+  13   out=offset
+  14   for j,c in enumerate(cols):
+  15    if (v>>j)&1:out^=c
+  16   p.append(out)
+  17  assert sorted(p)==list(range(len(p)));return p
+  18 
+  19 def mcnot(k,cs,t):
+  20  assert len(set(cs))==len(cs) and t not in cs and all(0<=j<k for j in [*cs,t])
+  21  return [v^(1<<t) if all(v&(1<<c) for c in cs) else v for v in range(1<<k)]
+  22 def compose(a,b):return [a[v] for v in b]
+  23 def cycle_rank(p,a):
+  24  inv=[0]*len(a)
+  25  for i,j in enumerate(a):inv[j]=i
+  26  rel=[inv[v] for v in p];seen=set();cc=0
+  27  for v in range(len(p)):
+  28   if v in seen:continue
+  29   cc+=1
+  30   while v not in seen:seen.add(v);v=rel[v]
+  31  return len(p)-cc
+  32 
+  33 def parity(n,a):return [v for v in range(n) if (v&a).bit_count()%2==0]
+  34 def boundary(n,s):
+  35  s=set(s);return sum((v in s)!=(v+1 in s) for v in range(n-1))
+  36 def oracle(n,h,m,rows):
+  37  counts=[0]*(n//h)
+  38  for r in rows:counts[r%(n//h)]+=1
+  39  return sum(min(m,c) for c in counts)
+  40 def moving(n,perms,mask):
+  41  a=set(parity(n,mask));bs=[boundary(n,a)]
+  42  for p in perms:a={j for j in range(n) if p[j] in a};bs.append(boundary(n,a))
+  43  rows=sorted(set(range(n))-a);h=1<<mask.bit_length()
+  44  return rows,bs,oracle(n,h,h//2,rows)
+  45 def primitive(n,p):
+  46  assert prime_by_trial_division(p) and (p-1)%n==0
+  47  for g in range(2,p):
+  48   w=pow(g,(p-1)//n,p)
+  49   if pow(w,n//2,p)!=1:return w
+  50  raise AssertionError
+  51 
+  52 def rank_f(n,R,C,p):
+  53  if not R or not C:return 0
+  54  w=primitive(n,p);powers=[pow(w,j,p) for j in range(n)]
+  55  return Field(p).rank([[powers[i*j%n] for j in C] for i in R])
+  56 
+  57 def core_certificates():
+  58  src=json.loads((BASE/'sources/EXACT_CERTIFICATES.json').read_text());r=src['nonaffine_256'];n=256
+  59  ps=[affine(c) for c in r['affine_shuffle_columns']];base=moving(n,ps,112)
+  60  assert base[1]==[11,53,43,60] and base[2]==128 and sum(base[1])==167
+  61  changed=[p[:] for p in ps];progress=[]
+  62  for gate in r['toffoli_gate_sequence_in_shuffle_2']:
+  63   changed[2]=compose(changed[2],mcnot(8,gate['controls'],gate['target']))
+  64   R,bs,rank=moving(n,changed,112);progress.append({'boundaries':bs,'rank':rank,'gap':rank-sum(bs)})
+  65  R,bs,rank=moving(n,changed,112);assert R==r['witness']['output_rows'] and bs==[11,53,43,17] and rank==128
+  66  p=changed[2];offset=p[0];linear=affine([p[1<<j]^offset for j in range(8)],offset)
+  67  mismatches=sum(a!=b for a,b in zip(p,linear));assert mismatches==160
+  68  mr=[rank_f(n,R,parity(n,112),p) for p in (12289,65537)];assert mr==[128,128]
+  69  flow=network_bound(n,changed,parity(n,112),R);assert flow==124
+  70  robust=[]
+  71  for ns,r in src['edit_robust'].items():
+  72   n=int(ns);k=r['k'];ps=[affine(c) for c in r['affine_shuffle_columns']];R,bs,rank=moving(n,ps,r['base_input_mask'])
+  73   assert bs==r['base_stage_boundaries'] and sum(bs)==r['base_capacity'] and rank==r['exact_complex_fourier_rank']==n//2
+  74   assert R==[v for v in range(n) if (v&r['base_output_mask']).bit_count()%2]
+  75   edits=[]
+  76   for gate in r['nonlinear_edits']:
+  77    j=gate['shuffle_index'];changed=compose(ps[j],mcnot(k,gate['controls'],gate['target']));edits.append(cycle_rank(changed,ps[j]))
+  78   assert edits==r['edit_ranks']==[n//8]*2
+  79   cap=sum(bs)+sum(edits);assert cap==r['perturbed_network_rank_bound_on_original_endpoint_sets'] and rank-cap==r['strict_gap']>0
+  80   robust.append({'N':n,'baseline_boundaries':bs,'edit_ranks':edits,'rank':rank,'cap':cap,'gap':rank-cap})
+  81  return {'nonaffine_256':{'boundaries':[11,53,43,17],'rank':128,'flow':flow,'active_graph_vertices_excluding_source_sink':4*(8*256-4),'nonaffine_mismatches':mismatches,'modular_ranks':mr,'fixed_mask_progress':progress},'two_Toffoli_robustness':robust}
+  82 
+  83 def rank_oracle_controls():
+  84  parity_count=0;rng=random.Random(17332)
+  85  for k in range(3,7):
+  86   n=1<<k
+  87   for a in range(1,n):
+  88    h=1<<a.bit_length();C=parity(n,a)
+  89    for _ in range(5):
+  90     R=rng.sample(range(n),rng.randrange(n+1));wanted=oracle(n,h,h//2,R)
+  91     for p in (12289,65537):assert rank_f(n,R,C,p)==wanted
+  92     parity_count+=1
+  93  rng=random.Random(15889);universal_count=0
+  94  for k in range(3,7):
+  95   n=1<<k
+  96   for h in (1<<j for j in range(1,k+1)):
+  97    m=h//2
+  98    for _ in range(20):
+  99     flags=[rng.randrange(2) for j in range(m)];E=[j+m*flags[j] for j in range(m)]
+ 100     for d in (1<<j for j in range(h.bit_length())):
+ 101      counts=[sum(e%d==r for e in E) for r in range(d)];assert max(counts)-min(counts)<=1
+ 102     C=[e+h*j for e in E for j in range(n//h)];R=rng.sample(range(n),rng.randrange(n+1));wanted=oracle(n,h,m,R)
+ 103     for p in (12289,65537):assert rank_f(n,R,C,p)==wanted
+ 104     universal_count+=1
+ 105  oldpairs=0
+ 106  for k in range(2,8):
+ 107   n=1<<k
+ 108   for a in range(1,n):
+ 109    h=1<<a.bit_length()
+ 110    for b in range(1,n):
+ 111     R=[v for v in range(n) if (v&b).bit_count()%2]
+ 112     wanted=n//(4 if a.bit_length()+b.bit_length()<=k else 2)
+ 113     assert oracle(n,h,h//2,R)==wanted;oldpairs+=1
+ 114  assert (parity_count,universal_count,oldpairs)==(580,360,21342)
+ 115  # Characteristic-zero full spark need not survive a chosen finite field.
+ 116  E=[0,1,2,3,4,13,6,7];R=[0,1,2,3,4,6,7,12]
+ 117  assert oracle(16,16,8,R)==8
+ 118  bad=[rank_f(16,R,E,p) for p in (12289,65537)];assert bad==[7,8]
+ 119  return {'parity_arbitrary_row_cases_each_of_two_fields':parity_count,'universal_transversal_cases_each_of_two_fields':universal_count,'parity_pair_formula_cases':oldpairs,'bad_specialization_control':{'complex_rank':8,'modular_ranks':bad,'primes':[12289,65537]}}
+ 120 
+ 121 def edit_controls():
+ 122  count=0;matrix_count=0;rng=random.Random(798)
+ 123  for k in range(3,8):
+ 124   n=1<<k
+ 125   for m in range(1,min(k,4)):
+ 126    for _ in range(12):
+ 127     cs=rng.sample(range(k),m);t=next(j for j in range(k) if j not in cs);g=mcnot(k,cs,t);wanted=n//(1<<(m+1))
+ 128     assert cycle_rank(g,list(range(n)))==wanted;count+=1
+ 129     if n<=64:
+ 130      mat=[[int(g[i]==j)-int(i==j) for j in range(n)] for i in range(n)]
+ 131      for p in (2,12289):assert Field(p).rank(mat)==wanted;matrix_count+=1
+ 132  # Fresh actual products; generator zeros and singular stages are allowed.
+ 133  product_results=[]
+ 134  for p in (12289,65537):
+ 135   f=Field(p);n=64;rng=random.Random(9536);stages=[]
+ 136   for ell in range(4):
+ 137    a,b,c,d,e=[[rng.randrange(1,p) for i in range(n)] for _ in range(5)]
+ 138    stages.append([[(a[i]*b[j] if i>j else c[i]*d[j] if i<j else e[i])%p for j in range(n)] for i in range(n)])
+ 139   old=stages[0];new=stages[0]
+ 140   for ell in range(1,4):
+ 141    old=f.mul(stages[ell],old)
+ 142    if ell<3:
+ 143     perm=mcnot(6,([0,2] if ell==1 else [1,3]),5);new=[new[v] for v in perm]
+ 144    new=f.mul(stages[ell],new)
+ 145   base=f.rank([row[:32] for row in old[32:]]);edited=f.rank([row[:32] for row in new[32:]])
+ 146   defect=f.rank([[(a-b)%p for a,b in zip(r,s)] for r,s in zip(new,old)])
+ 147   assert base<=4 and defect<=16 and edited<=base+defect<32 and rank_f(n,list(range(32,64)),list(range(32)),p)==32
+ 148   product_results.append({'p':p,'base_cross_rank':base,'edited_cross_rank':edited,'full_defect_rank':defect,'Fourier_rank':32})
+ 149  thresholds=[]
+ 150  for t in range(1,9):
+ 151   for r in range(1,5):
+ 152    q=(8*r*t-1).bit_length();k=t*q+1;n=1<<k;bound=r*t*(n//(1<<q)-1)+n//8
+ 153    assert bound<n//4;thresholds.append({'t':t,'r':r,'q':q,'first_k':k,'strict_margin':n//4-bound})
+ 154  return {'gate_cycle_cases':count,'direct_matrix_gate_cases':matrix_count,'fresh_actual_QS_products':product_results,'uniform_single_Toffoli_thresholds':thresholds}
+ 155 
+ 156 if __name__=='__main__':
+ 157  core=core_certificates();print('Core certificates and maxflow PASS',flush=True)
+ 158  ranks=rank_oracle_controls();print('940 two-field oracle cases and 21342 parity pairs PASS',flush=True)
+ 159  edits=edit_controls();print('Permutation edits and fresh products PASS',flush=True)
+ 160  (BASE/'VERIFIED_RESULTS.json').write_text(json.dumps({'status':'PASS','core':core,'rank_oracles':ranks,'edits':edits,'source_programs_executed':False},indent=2,sort_keys=True)+'\n')

@@ -1,0 +1,292 @@
+
+===== SOURCE 31 7af063ded73b34d4475fc5658f85b4b4edf1b28e6abf5304849fc153a7693878 fft_materials_extension_20261009/fft_tail_fusion_research/run_audit.py | 4453 bytes 85 lines =====
+   1 """Exact fused noncommuting-tail aggregate verification."""
+   2 import json
+   3 import random
+   4 from pathlib import Path
+   5 from fused_modulated import (prepare_fused,apply_fused,expected_preparation,expected_online,
+   6     prepare_independent,apply_independent,expected_independent_preparation,expected_independent_online)
+   7 from operators import prepare_sparse,horner_c
+   8 from fixed_kernel import lower_convolution
+   9 from prior_exact_arithmetic import PrimeField,CyclotomicField
+  10 
+  11 
+  12 def literal(field,plan,sparse,x):
+  13     out=[field.zero]*plan.n
+  14     current=list(x)
+  15     diagonal=[field.one]*plan.n
+  16     for p in plan.polynomials:
+  17         tail,_=horner_c(field,sparse,[field.zero]*(plan.n-plan.r)+p,current)
+  18         out=[field.add(a,field.mul(b,d)) for a,b,d in zip(out,tail,diagonal)]
+  19         current=[field.mul(a,b) for a,b in zip(plan.roots,current)]
+  20         diagonal=[field.mul(a,b) for a,b in zip(plan.roots,diagonal)]
+  21     return out
+  22 
+  23 
+  24 def audit(field,n,r,s,name,rng):
+  25     q=field.root(n)
+  26     assert field.power(q,n)==field.one and field.power(q,n//2)!=field.one
+  27     polynomials=[[field.integer((j+2)*(k+1)-k*k) for k in range(r)] for j in range(s)]
+  28     plan=prepare_fused(field,n,r,q,polynomials)
+  29     baseline=prepare_independent(field,n,r,q,polynomials)
+  30     sparse=prepare_sparse(field,n,q)
+  31     assert plan.preparation==expected_preparation(n,r,s),(plan.preparation,expected_preparation(n,r,s))
+  32     assert baseline['preparation']==expected_independent_preparation(n,r,s)
+  33     vectors=[[field.one if i==j else field.zero for i in range(n)] for j in range(n)]
+  34     vectors.append([field.integer(rng.randrange(-4,5)) for _ in range(n)])
+  35     for x in vectors:
+  36         got,count=apply_fused(field,plan,x)
+  37         expected=literal(field,plan,sparse,x)
+  38         separately,separate_count=apply_independent(field,baseline,x)
+  39         assert got==expected==separately,(name,n,r,s)
+  40         assert count['field_operations']==expected_online(n,r,s),(n,r,s,count,expected_online(n,r,s))
+  41         assert separate_count['field_operations']==expected_independent_online(n,r,s)
+  42         # Independent conjugacy: T D = Q T, tested without the aggregate.
+  43         dx=[field.mul(plan.roots[0],x[0])]
+  44         dx.extend(field.sub(field.mul(plan.roots[i],x[i]),field.mul(plan.roots[i-1],x[i-1]))
+  45                   for i in range(1,n))
+  46         lhs=lower_convolution(field,plan.projection.kernel.kernel,dx)
+  47         tx=lower_convolution(field,plan.projection.kernel.kernel,x)
+  48         assert lhs==[field.mul(a,b) for a,b in zip(plan.roots,tx)]
+  49     return dict(field=name,n=n,r=r,steps=s,window=plan.window,
+  50                 basis_vectors=n,mixed_vectors=1,preparation=plan.preparation,
+  51                 online=count['field_operations'],independent_preparation=baseline['preparation'],
+  52                 independent_online=separate_count['field_operations'],
+  53                 fused_cold=sum(plan.preparation.values())+sum(count['field_operations'].values()),
+  54                 independent_cold=sum(baseline['preparation'].values())+sum(separate_count['field_operations'].values()),
+  55                 full_output_terms_materialized=count['full_output_terms_materialized'],status='PASS')
+  56 
+  57 
+  58 def main():
+  59     rng=random.Random(20261009)
+  60     cases=[]
+  61     pairs=((1,1),(1,2),(1,3),(2,2),(2,3),(4,2),(2,4),(4,4),(8,4))
+  62     for prime in (65537,998244353):
+  63         field=PrimeField(prime)
+  64         for n in (2,4,8,16,32,64):
+  65             for r,s in pairs:
+  66                 if 1<<(r+s-2).bit_length()<=n//2:
+  67                     cases.append(audit(field,n,r,s,f'F_{prime}',rng))
+  68     for n in (2,4,8):
+  69         field=CyclotomicField(n)
+  70         for r,s in pairs:
+  71             if 1<<(r+s-2).bit_length()<=n//2:
+  72                 cases.append(audit(field,n,r,s,f'Q(zeta_{n})',rng))
+  73     result=dict(status='PASS',configurations=len(cases),
+  74                 basis_vectors=sum(a['basis_vectors'] for a in cases),
+  75                 mixed_vectors=len(cases),
+  76                 scope='exact noncommuting modulated-tail aggregates; not full H_q(C)',cases=cases)
+  77     directory=Path(__file__).parent/'results';directory.mkdir(exist_ok=True)
+  78     (directory/'fusion_audit.json').write_text(json.dumps(result,indent=2)+'\n')
+  79     print(json.dumps({k:v for k,v in result.items() if k!='cases'},indent=2))
+  80     for case in cases:
+  81         if case['field']=='F_65537' and case['n']==64:
+  82             print(json.dumps({k:case[k] for k in ('n','r','steps','window','fused_cold','independent_cold','online','independent_online')}))
+  83 
+  84 
+  85 if __name__=='__main__':main()
+
+===== SOURCE 32 245e03299ac3903abb0371d07e42e4a31eb38506c544bdc83e1dcf3a418e5e67 fft_materials_extension_20261009/fft_tail_fusion_research/run_orbit_audit.py | 7562 bytes 159 lines =====
+   1 """Exact audit of pruned orbit fusion and short Fourier-description weights."""
+   2 import json
+   3 import random
+   4 from pathlib import Path
+   5 from rank_one_orbit import (prepare_orbit,apply_orbit,expected_preparation,expected_online,
+   6     prepare_modes,apply_modes,expected_modes_preparation,expected_modes_online,
+   7     partial_forward,partial_transpose,Counted)
+   8 from fused_modulated import prepare_fused,apply_fused
+   9 from operators import prepare_sparse,horner_c
+  10 from prior_exact_arithmetic import PrimeField,CyclotomicField
+  11 
+  12 
+  13 def direct(field,plan,x,coefficients):
+  14     n=plan.n
+  15     bx=[field.mul(a,b) for a,b in zip(plan.right,x)]
+  16     moments=[]
+  17     for j in range(len(coefficients)):
+  18         value=field.zero
+  19         for k,a in enumerate(bx):
+  20             value=field.add(value,field.mul(plan.roots[(j*k)%n],a))
+  21         moments.append(field.mul(coefficients[j],value))
+  22     result=[]
+  23     for i,a in enumerate(plan.left):
+  24         value=field.zero
+  25         for j,b in enumerate(moments):
+  26             value=field.add(value,field.mul(plan.roots[(i*j)%n],b))
+  27         result.append(field.mul(a,value))
+  28     return result
+  29 
+  30 
+  31 def audit(field,n,s,name,rng):
+  32     q=field.root(n)
+  33     assert field.power(q,n)==field.one and field.power(q,n//2)!=field.one
+  34     coefficients=[field.integer(j+1) for j in range(s)]
+  35     plan=prepare_orbit(field,n,q,coefficients)
+  36     sparse=prepare_sparse(field,n,q)
+  37     assert plan.preparation==expected_preparation(n)
+  38     vectors=[[field.one if i==j else field.zero for i in range(n)] for j in range(n)]
+  39     vectors.append([field.integer(rng.randrange(-4,5)) for _ in range(n)])
+  40     highest=[field.zero]*(n-1)+[field.one]
+  41     for x in vectors:
+  42         y,count=apply_orbit(field,plan,x)
+  43         assert y==direct(field,plan,x,coefficients),(name,n,s)
+  44         assert count['field_operations']==expected_online(n,s),(n,s,count,expected_online(n,s))
+  45         actual,_=horner_c(field,sparse,highest,x)
+  46         scalar=field.zero
+  47         for a,b in zip(plan.right,x):
+  48             scalar=field.add(scalar,field.mul(a,b))
+  49         assert actual==[field.mul(a,scalar) for a in plan.left]
+  50     # Explicitly check both pruned graph orientations on a mixed vector.
+  51     x=vectors[-1]
+  52     frequencies=[]
+  53     for j in range(plan.rounded):
+  54         a=field.zero
+  55         for k,v in enumerate(x):
+  56             a=field.add(a,field.mul(plan.roots[j*k%n],v))
+  57         frequencies.append(a)
+  58     assert partial_forward(Counted(field),plan,x)==frequencies
+  59     expected=[]
+  60     for k in range(n):
+  61         a=field.zero
+  62         for j,v in enumerate(frequencies):
+  63             a=field.add(a,field.mul(plan.roots[j*k%n],v))
+  64         expected.append(a)
+  65     assert partial_transpose(Counted(field),plan,frequencies)==expected
+  66     generic=None
+  67     if plan.rounded<=n//2:
+  68         generic_plan=prepare_fused(field,n,1,q,[[a] for a in coefficients])
+  69         value,stats=apply_fused(field,generic_plan,x)
+  70         assert value==apply_orbit(field,plan,x)[0]
+  71         generic=dict(preparation=generic_plan.preparation,online=stats['field_operations'])
+  72     return dict(field=name,n=n,s=s,rounded=plan.rounded,basis_vectors=n,mixed_vectors=1,
+  73                 preparation=plan.preparation,online=count['field_operations'],
+  74                 generic_fusion_comparator=generic,status='PASS')
+  75 
+  76 
+  77 def audit_modes(field,n,name,rng):
+  78     q=field.root(n)
+  79     descriptions=[[(0,field.one)],[(1,field.integer(2))],
+  80                   [(0,field.one),(1,field.integer(3))],
+  81                   [(0,field.one),(1,field.integer(3)),(2,field.integer(9))]]
+  82     records=[]
+  83     sparse=prepare_sparse(field,n,q)
+  84     for modes in descriptions:
+  85         plan=prepare_modes(field,n,q,modes)
+  86         assert plan.preparation==expected_modes_preparation(n,len(modes))
+  87         coefficients=[]
+  88         for j in range(n):
+  89             a=field.zero
+  90             for mode,gamma in modes:
+  91                 a=field.add(a,field.mul(gamma,plan.base.roots[mode*j%n]))
+  92             coefficients.append(a)
+  93         # These chosen examples have full rank: all Fourier diagonal entries
+  94         # are nonzero. This checks a stated property of these examples only.
+  95         assert all(a!=field.zero for a in coefficients)
+  96         vectors=[[field.one if i==j else field.zero for i in range(n)] for j in range(n)]
+  97         vectors.append([field.integer(rng.randrange(-4,5)) for _ in range(n)])
+  98         for x in vectors:
+  99             y,count=apply_modes(field,plan,x)
+ 100             assert y==direct(field,plan.base,x,coefficients)
+ 101             assert count['field_operations']==expected_modes_online(n,len(modes))
+ 102         records.append(dict(field=name,n=n,modes=len(modes),basis_vectors=n,mixed_vectors=1,
+ 103                             rank=n,preparation=plan.preparation,online=count['field_operations'],
+ 104                             transform_calls=count['transform_calls'],status='PASS'))
+ 105     # Last-column closure obstruction for the complete H_q(C).
+ 106     last=[field.zero]*(n-1)+[field.one]
+ 107     hlast,_=horner_c(field,sparse,plan.base.left,last)
+ 108     a=plan.base.left
+ 109     # Normalized last column is a nonzero geometric sequence q^-i.
+ 110     normalized=[field.mul(value,field.inv(left)) for value,left in zip(hlast,a)]
+ 111     assert normalized[0]!=field.zero
+ 112     assert normalized==[field.mul(normalized[0],plan.base.roots[(-i)%n]) for i in range(n)]
+ 113     if n>=4:
+ 114         previous=[field.zero]*n;previous[n-2]=field.one
+ 115         hprevious,_=horner_c(field,sparse,plan.base.left,previous)
+ 116         # The entries used in this certificate are off both altered diagonals,
+ 117         # so the same mismatch excludes H-alpha*I for every scalar alpha.
+ 118         actual=[];predicted=[]
+ 119         for i in (1,n-1):
+ 120             actual.append(field.mul(hprevious[i],field.inv(
+ 121                 field.mul(plan.base.left[i],plan.base.right[n-2]))))
+ 122             predicted.append(field.mul(hlast[i-1],field.inv(
+ 123                 field.mul(plan.base.left[i-1],plan.base.right[n-1]))))
+ 124         assert actual!=predicted
+ 125     return records
+ 126 
+ 127 
+ 128 def main():
+ 129     rng=random.Random(20261009)
+ 130     orbit=[];modes=[]
+ 131     for prime in (65537,998244353):
+ 132         field=PrimeField(prime)
+ 133         for n in (2,4,8,16,32,64):
+ 134             for s in sorted({1,2,min(3,n),n//2,n}):
+ 135                 orbit.append(audit(field,n,s,f'F_{prime}',rng))
+ 136             modes.extend(audit_modes(field,n,f'F_{prime}',rng))
+ 137     for n in (2,4,8):
+ 138         field=CyclotomicField(n)
+ 139         for s in sorted({1,2,min(3,n),n//2,n}):
+ 140             orbit.append(audit(field,n,s,f'Q(zeta_{n})',rng))
+ 141         modes.extend(audit_modes(field,n,f'Q(zeta_{n})',rng))
+ 142     result=dict(status='PASS',orbit_configurations=len(orbit),mode_configurations=len(modes),
+ 143                 orbit_basis_vectors=sum(a['basis_vectors'] for a in orbit),
+ 144                 orbit_mixed_vectors=len(orbit),mode_basis_vectors=sum(a['basis_vectors'] for a in modes),
+ 145                 mode_mixed_vectors=len(modes),full_rank_mode_examples=len(modes),
+ 146                 scope='exact noncommuting orbit families; full rank permitted; not H_q(C)',
+ 147                 orbit_cases=orbit,mode_cases=modes)
+ 148     out=Path(__file__).parent/'results';out.mkdir(exist_ok=True)
+ 149     (out/'orbit_audit.json').write_text(json.dumps(result,indent=2)+'\n')
+ 150     print(json.dumps({k:v for k,v in result.items() if k not in ('orbit_cases','mode_cases')},indent=2))
+ 151     for a in orbit:
+ 152         if a['field']=='F_65537' and a['n']==64:
+ 153             print(json.dumps({k:a[k] for k in ('n','s','preparation','online')}))
+ 154     for a in modes:
+ 155         if a['field']=='F_65537' and a['n']==64:
+ 156             print(json.dumps({k:a[k] for k in ('n','modes','rank','preparation','online')}))
+ 157 
+ 158 
+ 159 if __name__=='__main__':main()
+
+===== SOURCE 33 e006507ad72452bfb56659c84932c487dadc4699bd556570706b4df4f82ff56f fft_materials_extension_20261009/run_all.py | 1930 bytes 42 lines =====
+   1 """Portable checks for this continuation only; earlier benchmarks stay historical."""
+   2 from concurrent.futures import ThreadPoolExecutor
+   3 import hashlib,json
+   4 from pathlib import Path
+   5 import subprocess,sys,time
+   6 
+   7 ROOT=Path(__file__).resolve().parent
+   8 CHECKS=[
+   9     ('fft_recurrence_extension_research','audit.py'),
+  10     ('fft_recurrence_extension_research','independent_checks.py'),
+  11     ('fft_qlinear_recurrence_research','run_audit.py'),
+  12     ('fft_joint_decode_research','run_audit.py'),
+  13     ('fft_joint_decode_research','run_hybrid_audit.py'),
+  14     ('fft_joint_decode_research','review_edge_checks.py'),
+  15     ('fft_joint_sideinfo_research','run_audit.py'),
+  16     ('fft_joint_sideinfo_research/tensor','run_audit.py'),
+  17     ('fft_inverse_support_research','run_audit.py'),
+  18 ]
+  19 
+  20 
+  21 def run_one(item):
+  22     folder,script=item;start=time.monotonic()
+  23     result=subprocess.run([sys.executable,script],cwd=ROOT/folder,capture_output=True,text=True)
+  24     log=ROOT/'verification_logs'/f'{folder.replace("/","_")}__{Path(script).stem}.txt'
+  25     log.write_text(result.stdout+result.stderr)
+  26     return dict(component=folder,script=script,exit_code=result.returncode,
+  27                 elapsed_seconds=round(time.monotonic()-start,3),
+  28                 source_sha256=hashlib.sha256((ROOT/folder/script).read_bytes()).hexdigest(),
+  29                 log=str(log.relative_to(ROOT)))
+  30 
+  31 
+  32 def main():
+  33     (ROOT/'verification_logs').mkdir(exist_ok=True)
+  34     with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(run_one,CHECKS))
+  35     passed=all(r['exit_code']==0 for r in results)
+  36     report=dict(status='PASS' if passed else 'FAIL',checks=results,
+  37                 note='New correctness and integration checks; elapsed times are not performance benchmarks.')
+  38     (ROOT/'verification_summary.json').write_text(json.dumps(report,indent=2)+'\n')
+  39     print(json.dumps(report,indent=2));return 0 if passed else 1
+  40 
+  41 
+  42 if __name__=='__main__':raise SystemExit(main())

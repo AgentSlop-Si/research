@@ -1,0 +1,54 @@
+   1 """Create checkable rank-cut + two-prime Fourier minor certificates."""
+   2 import json,sys,time
+   3 from pathlib import Path
+   4 from research_gate import bitrev, root, det_mod, rank_mod
+   5 import networkx as nx
+   6 HERE=Path(__file__).resolve().parent
+   7 sys.path.insert(0,str(HERE/'fft_scan_network_gate_2026-10-09'))
+   8 from scan_flow import make_graph,mincut_bound
+   9 from fast_mincut import ScanFlowOracle
+  10 
+  11 def encode(node):
+  12     return list(node)
+  13 
+  14 def decode(obj):
+  15     return tuple(obj)
+  16 
+  17 def get_witness(n):
+  18     if n==64:return list(range(38,64)),list(range(26))
+  19     if n==128:return list(range(43)),list(range(85,128))
+  20     raise ValueError
+  21 
+  22 def certificate(n):
+  23     P=bitrev(n);R,C=get_witness(n);G,big=make_graph(n,[1,1,1],[P,P]);source=('SRC',);sink=('SINK',)
+  24     for j in C:G.add_edge(source,(0,'x',j,'i'),capacity=big)
+  25     for j in R:G.add_edge((2,'y',j,'o'),sink,capacity=big)
+  26     val,(source_part,sink_part)=nx.minimum_cut(G,source,sink,capacity='capacity',flow_func=nx.algorithms.flow.preflow_push)
+  27     val=int(val)
+  28     cap=sum(G[u][v]['capacity'] for u,v in G.edges if u in source_part and v in sink_part)
+  29     assert cap==val
+  30     # Independent graph engine and explicit cut-value reconstruction.
+  31     G2,big2=make_graph(n,[1,1,1],[P,P]);assert big2==big
+  32     fast=ScanFlowOracle(n,[1,1,1],[P,P]).bound(R,C)
+  33     assert fast==val,(n,fast,val)
+  34     assert len(R)==len(C)
+  35     detail=[]
+  36     for p in (12289,65537):
+  37         omega=root(n,p)
+  38         M=[[pow(omega,i*j,p) for j in C] for i in R]
+  39         d=det_mod(M,p);r=rank_mod(M,p)
+  40         assert r==len(R) and d!=0,(n,p,r,d)
+  41         detail.append({'prime':p,'primitive_root':omega,'determinant':d,'rank':r})
+  42     # Store a complete source side partition, smaller than edge enumeration.
+  43     obj={'n':n,'ranks':[1,1,1],'perm':'bit_reversal','rows':R,'columns':C,
+  44          'large_capacity':big,'rank_upper_bound':val,'source_partition':[encode(z) for z in sorted(source_part,key=str)],
+  45          'crossing_edges':[{'u':encode(u),'v':encode(v),'capacity':G[u][v]['capacity']}
+  46              for u,v in G.edges if u in source_part and v in sink_part],
+  47          'primes':detail}
+  48     out=HERE/f'NETWORK_CERTIFICATE_N{n}.json'
+  49     out.write_text(json.dumps(obj,indent=2)+'\n')
+  50     print('N',n,'source_part',len(source_part),'cut',val,'rank',len(R),'primes',detail,'cross_edges',len(obj['crossing_edges']),'bytes',out.stat().st_size,flush=True)
+  51     return obj
+  52 
+  53 if __name__=='__main__':
+  54     certificate(64);certificate(128)

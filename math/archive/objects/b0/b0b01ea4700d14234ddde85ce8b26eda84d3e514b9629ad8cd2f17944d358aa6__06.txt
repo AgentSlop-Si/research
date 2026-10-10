@@ -1,0 +1,149 @@
+1: #!/usr/bin/env python3
+2: """Automated consistency tests for predecode-median v6."""
+3: from __future__ import annotations
+4: 
+5: import math
+6: import unittest
+7: 
+8: import numpy as np
+9: 
+10: from prototype import (
+11:     build_compressed_rows,
+12:     compressed_memory_proxy,
+13:     decode_local_spectra,
+14:     draw_randomness,
+15:     exact_local_spectra,
+16:     exact_unitary_dft,
+17:     local_estimate_from_row,
+18:     local_sparse_failure_bound,
+19:     local_variance_vector,
+20:     make_local_sparse_signal,
+21:     one_row_full_estimate,
+22:     postdecode_cost_proxy,
+23:     predecode_cost_proxy,
+24:     predecode_median_fft,
+25:     predecode_median_from_compressed,
+26:     predecode_median_uniform_bound,
+27:     simulate_tone_moments,
+28:     tone_moment_theory,
+29:     unitary_ifft,
+30: )
+31: 
+32: 
+33: class PredecodeMedianTests(unittest.TestCase):
+34:     def test_exact_local_decoder(self) -> None:
+35:         rng = np.random.default_rng(1)
+36:         for k, m in [(7, 3), (16, 8), (31, 5)]:
+37:             x = rng.normal(size=k * m) + 1j * rng.normal(size=k * m)
+38:             got = decode_local_spectra(exact_local_spectra(x, m))
+39:             ref = exact_unitary_dft(x)
+40:             self.assertLess(float(np.max(np.abs(got - ref))), 1e-11)
+41: 
+42:     def test_one_row_deferred_path(self) -> None:
+43:         from prototype import compress_one_row
+44: 
+45:         rng = np.random.default_rng(2)
+46:         k, m = 32, 8
+47:         x = rng.normal(size=k * m) + 1j * rng.normal(size=k * m)
+48:         state = draw_randomness(k, m, rng)
+49:         direct = one_row_full_estimate(x, m, state)
+50:         matched = decode_local_spectra(
+51:             local_estimate_from_row(compress_one_row(x, m, state), state)
+52:         )
+53:         self.assertLess(float(np.max(np.abs(direct - matched))), 1e-12)
+54: 
+55:     def test_local_variance_identity(self) -> None:
+56:         from prototype import compress_one_row
+57: 
+58:         rng = np.random.default_rng(3)
+59:         k, m = 48, 8
+60:         x = rng.normal(size=k * m) + 1j * rng.normal(size=k * m)
+61:         ref = exact_local_spectra(x, m)
+62:         predicted = local_variance_vector(x, m)
+63:         observed = np.zeros(m)
+64:         trials = 400
+65:         for _ in range(trials):
+66:             state = draw_randomness(k, m, rng)
+67:             est = local_estimate_from_row(compress_one_row(x, m, state), state)
+68:             observed += np.mean(np.abs(est - ref) ** 2, axis=0)
+69:         observed /= trials
+70:         self.assertLess(float(np.max(np.abs(observed / predicted - 1.0))), 0.12)
+71: 
+72:     def test_exhaustive_small_local_variance(self) -> None:
+73:         from itertools import product
+74:         from prototype import SketchRandomness, compress_one_row
+75: 
+76:         k, m = 3, 2
+77:         x = np.asarray([1+2j, -1+0.5j, 0.25-0.75j, 2-1j, -0.5+0.25j, 1.5+0j])
+78:         ref = exact_local_spectra(x, m)
+79:         accum = np.zeros((k, m), dtype=float)
+80:         count = 0
+81:         roots = [1.0, -1.0, 1.0j, -1.0j]
+82:         for q in product(range(k), repeat=m):
+83:             for phases in product(roots, repeat=m):
+84:                 state = SketchRandomness(
+85:                     shifts=np.asarray(q, dtype=np.int64),
+86:                     phases=np.asarray(phases, dtype=np.complex128),
+87:                 )
+88:                 est = local_estimate_from_row(compress_one_row(x, m, state), state)
+89:                 accum += np.abs(est - ref) ** 2
+90:                 count += 1
+91:         exact_average = accum / count
+92:         predicted = np.broadcast_to(local_variance_vector(x, m), (k, m))
+93:         self.assertLess(float(np.max(np.abs(exact_average - predicted))), 1e-12)
+94: 
+95:     def test_m_equals_one_is_exact(self) -> None:
+96:         rng = np.random.default_rng(4)
+97:         x = rng.normal(size=128) + 1j * rng.normal(size=128)
+98:         got = predecode_median_fft(x, 1, 5, rng)
+99:         self.assertLess(float(np.max(np.abs(got - exact_unitary_dft(x)))), 1e-11)
+100: 
+101:     def test_compressed_interface_and_bound(self) -> None:
+102:         rng = np.random.default_rng(5)
+103:         x = rng.normal(size=512) + 1j * rng.normal(size=512)
+104:         rows = build_compressed_rows(x, 8, 5, rng)
+105:         got = predecode_median_from_compressed(rows)
+106:         self.assertEqual(got.shape, x.shape)
+107:         bound = predecode_median_uniform_bound(x, 8, 5, 0.05)
+108:         self.assertTrue(math.isfinite(bound) and bound > 0.0)
+109: 
+110:     def test_local_sparse_exact_recovery(self) -> None:
+111:         rng = np.random.default_rng(6)
+112:         k, m, h = 2048, 8, 1
+113:         x, a = make_local_sparse_signal(k, m, h, rng)
+114:         # Construction really has h local Fourier entries per column.
+115:         recovered_a = exact_local_spectra(x, m)
+116:         self.assertLess(float(np.max(np.abs(recovered_a - a))), 1e-11)
+117:         got = predecode_median_fft(x, m, 7, rng)
+118:         self.assertLess(float(np.max(np.abs(got - exact_unitary_dft(x)))), 1e-10)
+119:         self.assertLess(local_sparse_failure_bound(k * m, m, 7, h), 0.01)
+120: 
+121:     def test_tone_fourth_moment_formula(self) -> None:
+122:         theory = tone_moment_theory(256, 16)
+123:         self.assertAlmostEqual(theory["kurtosis"], theory["closed_form_kurtosis"], places=12)
+124:         empirical = simulate_tone_moments(256, 16, 80000, np.random.default_rng(7))
+125:         self.assertLess(abs(empirical["empirical_kurtosis"] / theory["kurtosis"] - 1.0), 0.08)
+126: 
+127:     def test_deferred_decoder_cost_and_memory(self) -> None:
+128:         n, m, rows = 1 << 20, 32, 101
+129:         self.assertLess(predecode_cost_proxy(n, m, rows), postdecode_cost_proxy(n, m, rows))
+130:         # Store compressed K-spectra rather than R full N-vectors.
+131:         self.assertLess(compressed_memory_proxy(n, m, rows), 5 * n)
+132: 
+133:     def test_asymptotic_ratio_decreases(self) -> None:
+134:         ratios = []
+135:         memory = []
+136:         for l in [64, 128, 256, 512, 1024, 2048, 4096]:
+137:             ll = math.log2(l)
+138:             rows = int(math.ceil(l / ll)) | 1
+139:             m = 1 << int(math.floor(math.log2(l)))
+140:             per_n = rows * (2.0 + (l - math.log2(m)) / m) + math.log2(m)
+141:             ratios.append(per_n / l)
+142:             # N itself is symbolic; R*K/N = R/M.
+143:             memory.append(1.0 + rows / m)
+144:         self.assertLess(ratios[-1], ratios[0])
+145:         self.assertLess(memory[-1], 2.0)
+146: 
+147: 
+148: if __name__ == "__main__":
+149:     unittest.main(verbosity=2)

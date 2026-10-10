@@ -1,0 +1,319 @@
+0001 """Exact arithmetic experiments: one-way scans, arbitrary internal shuffles,
+0002 low-rank broadcasts and the full, fresh discrete Fourier transform.
+0003 
+0004 The scan+shuffle / rank-broadcast lower bounds are rigorously proved in
+0005 RESEARCH.md. This file is an independently runnable finite verification, not a
+0006 new FFT algorithm. All matrices are over a prime field; the proofs also work
+0007 in characteristic zero with a primitive Nth root.
+0008 """
+0009 from __future__ import annotations
+0010 from dataclasses import dataclass
+0011 import random
+0012 
+0013 P = 998244353
+0014 G = 3
+0015 
+0016 
+0017 def identity(n: int) -> list[list[int]]:
+0018     return [[int(i == j) for j in range(n)] for i in range(n)]
+0019 
+0020 
+0021 def matrix_mul(a: list[list[int]], b: list[list[int]], p: int = P) -> list[list[int]]:
+0022     n = len(a)
+0023     out = [[0] * n for _ in range(n)]
+0024     for i in range(n):
+0025         for k, ak in enumerate(a[i]):
+0026             if ak:
+0027                 for j, bkj in enumerate(b[k]):
+0028                     out[i][j] = (out[i][j] + ak * bkj) % p
+0029     return out
+0030 
+0031 
+0032 def matrix_sub(a: list[list[int]], b: list[list[int]], p: int = P) -> list[list[int]]:
+0033     return [[(u - v) % p for u, v in zip(rowa, rowb)] for rowa, rowb in zip(a, b)]
+0034 
+0035 
+0036 def matvec(a: list[list[int]], x: list[int], p: int = P) -> list[int]:
+0037     return [sum(u * v for u, v in zip(row, x)) % p for row in a]
+0038 
+0039 
+0040 def rank_mod(a: list[list[int]], p: int = P) -> int:
+0041     if not a:
+0042         return 0
+0043     rows, cols = len(a), len(a[0])
+0044     x = [[int(z) % p for z in row] for row in a]
+0045     r = 0
+0046     for c in range(cols):
+0047         pivot = next((i for i in range(r, rows) if x[i][c]), None)
+0048         if pivot is None:
+0049             continue
+0050         x[r], x[pivot] = x[pivot], x[r]
+0051         scale = pow(x[r][c], -1, p)
+0052         x[r] = [t * scale % p for t in x[r]]
+0053         for j in range(r + 1, rows):
+0054             v = x[j][c]
+0055             if v:
+0056                 x[j] = [(z - v * w) % p for z, w in zip(x[j], x[r])]
+0057         r += 1
+0058         if r == rows:
+0059             break
+0060     return r
+0061 
+0062 
+0063 def invert_mod(a: list[list[int]], p: int = P) -> list[list[int]]:
+0064     n = len(a)
+0065     x = [[z % p for z in a[i]] + identity(n)[i] for i in range(n)]
+0066     for k in range(n):
+0067         r = next((j for j in range(k, n) if x[j][k]), None)
+0068         if r is None:
+0069             raise ValueError('singular matrix')
+0070         x[k], x[r] = x[r], x[k]
+0071         v = pow(x[k][k], -1, p)
+0072         x[k] = [z * v % p for z in x[k]]
+0073         for j in range(n):
+0074             if j == k:
+0075                 continue
+0076             s = x[j][k]
+0077             if s:
+0078                 x[j] = [(u - s * v) % p for u, v in zip(x[j], x[k])]
+0079     return [row[n:] for row in x]
+0080 
+0081 
+0082 def root_of_unity(n: int, p: int = P, generator: int = G) -> int:
+0083     if n <= 0 or (p-1) % n:
+0084         raise ValueError('need N dividing p-1')
+0085     omega = pow(generator, (p-1)//n, p)
+0086     # Proper primitiveness check for power-of-two n only (test domain).
+0087     if n & (n-1) or pow(omega, n, p) != 1 or (n > 1 and pow(omega, n//2, p) == 1):
+0088         raise ValueError('require power-of-two N and primitive root')
+0089     return omega
+0090 
+0091 
+0092 def dft_direct(x: list[int], p: int = P, generator: int = G) -> list[int]:
+0093     n = len(x)
+0094     w = root_of_unity(n, p, generator)
+0095     return [sum(int(x[j]) * pow(w, (k*j) % n, p) for j in range(n)) % p for k in range(n)]
+0096 
+0097 
+0098 def scan_vector(x: list[int], direction: str, a: list[int], b: list[int], p: int = P) -> list[int]:
+0099     n = len(x)
+0100     if len(a) != n or len(b) != n or direction not in {'forward', 'backward'}:
+0101         raise ValueError('invalid scan parameters')
+0102     y = [0] * n
+0103     if direction == 'forward':
+0104         for i in range(n):
+0105             y[i] = (b[i] * x[i] + (a[i] * y[i-1] if i else 0)) % p
+0106     else:
+0107         for i in range(n-1, -1, -1):
+0108             y[i] = (b[i] * x[i] + (a[i] * y[i+1] if i+1 < n else 0)) % p
+0109     return y
+0110 
+0111 
+0112 def inverse_scan_vector(y: list[int], direction: str, a: list[int], b: list[int], p: int = P) -> list[int]:
+0113     n = len(y)
+0114     if any(not z % p for z in b):
+0115         raise ValueError('an invertible scan requires all nonzero b')
+0116     if direction == 'forward':
+0117         return [((y[i] - (a[i] * y[i-1] if i else 0)) * pow(b[i], -1, p)) % p for i in range(n)]
+0118     if direction == 'backward':
+0119         return [((y[i] - (a[i] * y[i+1] if i+1 < n else 0)) * pow(b[i], -1, p)) % p for i in range(n)]
+0120     raise ValueError('invalid direction')
+0121 
+0122 
+0123 def matrix_from_action(n: int, action) -> list[list[int]]:
+0124     cols = []
+0125     for j in range(n):
+0126         v = [0] * n
+0127         v[j] = 1
+0128         cols.append(action(v))
+0129     return [[cols[j][i] for j in range(n)] for i in range(n)]
+0130 
+0131 
+0132 def permutation_matrix(order: list[int]) -> list[list[int]]:
+0133     n = len(order)
+0134     if sorted(order) != list(range(n)):
+0135         raise ValueError('not a permutation')
+0136     return [[int(j == order[i]) for j in range(n)] for i in range(n)]
+0137 
+0138 
+0139 def broadcast_matrix(u: list[int], v: list[int], p: int = P) -> list[list[int]]:
+0140     n = len(u)
+0141     if len(v) != n:
+0142         raise ValueError('different lengths')
+0143     if (1 + sum(x*y for x,y in zip(u,v))) % p == 0:
+0144         raise ValueError('broadcast I+uv^T is singular')
+0145     return [[(int(i == j) + u[i]*v[j]) % p for j in range(n)] for i in range(n)]
+0146 
+0147 
+0148 def fft_via_two_scans(x: list[int], p: int = P, generator: int = G):
+0149     """Ordinary radix-2 FFT re-expressed as TWO one-way scans per butterfly level.
+0150 
+0151     This demonstrates a matching O(log N)-stage control, NOT a faster FFT.
+0152     All shuffles, diagonal twiddles, and O(N)-work scans remain explicit.
+0153     """
+0154     n = len(x)
+0155     if n == 0 or n & (n-1):
+0156         raise ValueError('power-of-two N required')
+0157     w = root_of_unity(n, p, generator)
+0158     levels = n.bit_length() - 1
+0159     inv2 = pow(2, -1, p)
+0160     data = [int(x[int(f'{i:0{levels}b}'[::-1], 2)] if levels else x[0]) % p for i in range(n)]
+0161     operations = {'one_way_scans':0, 'pair_shuffles':0, 'scalar_multiplications':0,
+0162                   'additions':0, 'moved_words':n, 'twiddle_table_entries':0,
+0163                   'twiddle_prep_multiplications':0, 'stage_root_powers':0}
+0164     for level in range(1, levels + 1):
+0165         span = 1 << level
+0166         half = span >> 1
+0167         order = [j for start in range(0,n,span)
+0168                  for k in range(half) for j in (start+k, start+k+half)]
+0169         reordered = [data[i] for i in order]
+0170         operations['pair_shuffles'] += 2
+0171         operations['moved_words'] += 2*n
+0172         stage_root = pow(w, n//span, p)
+0173         twiddles = [1]
+0174         for _ in range(1,half):
+0175             twiddles.append(twiddles[-1]*stage_root % p)
+0176         operations['twiddle_prep_multiplications'] += half-1
+0177         operations['stage_root_powers'] += 1
+0178         operations['twiddle_table_entries'] += half
+0179         for pair in range(n//2):
+0180             reordered[2*pair+1] = (-2*twiddles[pair % half]*reordered[2*pair+1]) % p
+0181         operations['scalar_multiplications'] += n//2
+0182         # First (backward) scan: even := even - odd/2; odds unchanged.
+0183         a_back = [(-inv2 if j % 2 == 0 else 0) for j in range(n)]
+0184         temp = scan_vector(reordered, 'backward', a_back, [1]*n, p)
+0185         # Second (forward) scan: odd := odd + previous even.
+0186         a_forward = [(1 if j % 2 else 0) for j in range(n)]
+0187         transformed = scan_vector(temp, 'forward', a_forward, [1]*n, p)
+0188         operations['one_way_scans'] += 2
+0189         operations['scalar_multiplications'] += n//2  # backward -1/2 weight
+0190         operations['additions'] += n                  # half each scan
+0191         for j, original_index in enumerate(order):
+0192             data[original_index] = transformed[j]
+0193     return data, operations
+0194 
+0195 
+0196 def inverse_row_support_bound(scan_count: int, n: int) -> int:
+0197     return min(n, 1 << scan_count)
+0198 
+0199 
+0200 def minimum_broadcast_rank_budget(n: int, scan_count: int) -> int:
+0201     """If F_N = product of scans/shuffles/diagonals/(I+UV^T),
+0202     total broadcast rank >= floor(N/(2**t+1)).
+0203     """
+0204     if n < 2 or scan_count < 0:
+0205         raise ValueError('N>=2, t>=0 required')
+0206     return n // (inverse_row_support_bound(scan_count, n) + 1)
+0207 
+0208 
+0209 @dataclass
+0210 class ExactFactor:
+0211     kind: str
+0212     matrix: list[list[int]]
+0213     rank_budget: int = 0
+0214 
+0215 
+0216 def random_word(n: int, scans: int, broadcasts: int, seed: int, p: int = P) -> list[ExactFactor]:
+0217     randomizer = random.Random(seed)
+0218     if scans < 0 or broadcasts < 0:
+0219         raise ValueError('negative number of stages')
+0220     kinds = ['forward' if i%2==0 else 'backward' for i in range(scans)] + ['broadcast']*broadcasts
+0221     kinds += ['perm', 'diag']
+0222     randomizer.shuffle(kinds)
+0223     word = []
+0224     for kind in kinds:
+0225         if kind in {'forward','backward'}:
+0226             a = [randomizer.randrange(0,7) for _ in range(n)]
+0227             b = [randomizer.randrange(1,7) for _ in range(n)]
+0228             mat = matrix_from_action(n, lambda x, d=kind, aa=a, bb=b: scan_vector(x,d,aa,bb,p))
+0229         elif kind == 'broadcast':
+0230             u = [randomizer.randrange(0, 9) for _ in range(n)]
+0231             v = [randomizer.randrange(0, 9) for _ in range(n)]
+0232             mat = broadcast_matrix(u,v,p)
+0233         elif kind == 'perm':
+0234             order = list(range(n)); randomizer.shuffle(order)
+0235             mat = permutation_matrix(order)
+0236         else:
+0237             diag = [randomizer.randrange(1,8) for _ in range(n)]
+0238             mat = [[diag[i] if i==j else 0 for j in range(n)] for i in range(n)]
+0239         word.append(ExactFactor(kind,mat,int(kind=='broadcast')))
+0240     return word
+0241 
+0242 
+0243 def word_certificate(word: list[ExactFactor], p: int = P) -> dict:
+0244     """Independently invert all factors, erase broadcast factors, then audit
+0245     inverse Fourier rigidity invariant: A^-1 = row-sparse S + rank-B E.
+0246     """
+0247     n = len(word[0].matrix)
+0248     total = identity(n)
+0249     for factor in word:
+0250         total = matrix_mul(factor.matrix, total, p)
+0251     inverse = invert_mod(total,p)
+0252     sparse = identity(n)
+0253     for factor in word:
+0254         mat = identity(n) if factor.kind=='broadcast' else invert_mod(factor.matrix,p)
+0255         sparse = matrix_mul(sparse,mat,p)
+0256     difference = matrix_sub(inverse,sparse,p)
+0257     t = sum(f.kind in {'forward','backward'} for f in word)
+0258     budget = sum(f.rank_budget for f in word)
+0259     support = max(sum(v!=0 for v in row) for row in sparse)
+0260     total_support = sum(sum(v != 0 for v in row) for row in sparse)
+0261     mass_bound = n if t == 0 else min(n*n, (2*n-1)*(1 << (t-1)))
+0262     if total_support > mass_bound:
+0263         raise AssertionError('boundary-row support-mass bound failed')
+0264     err_rank = rank_mod(difference,p)
+0265     if support > min(n,2**t) or err_rank > budget:
+0266         raise AssertionError('inverse sparsity or low-rank telescoping failed')
+0267     if matrix_mul(total,inverse,p)!=identity(n):
+0268         raise AssertionError('inverse is incorrect')
+0269     return {'size':n,'scans':t,'broadcast_budget':budget,
+0270             'max_sparse_row_support':support,'max_allowed_row_support':min(n,2**t),
+0271             'sparse_total_nonzeros':total_support,'sparse_total_bound':mass_bound,
+0272             'difference_rank':err_rank, 'certified_rank_upper_bound':budget,
+0273             'forward_invertible':True}
+0274 
+0275 
+0276 def vander_certificate(n: int, s: int, b: int, rows_support: list[set[int]], p: int=P,
+0277                        generator: int=G) -> dict:
+0278     """Witness: if (b+1)(s+1)<=N, deleting row-sparse S from F cannot
+0279     leave rank <=b: choose b+1 zero-S columns for consecutive b+1 rows.
+0280     """
+0281     if (b+1)*(s+1)>n or len(rows_support)<b+1:
+0282         raise ValueError('invalid witness parameters')
+0283     if any(len(row)>s or any(j<0 or j>=n for j in row) for row in rows_support):
+0284         raise ValueError('invalid support')
+0285     union = set().union(*rows_support[:b+1])
+0286     cols = [j for j in range(n) if j not in union][:b+1]
+0287     if len(cols)!=b+1:
+0288         raise AssertionError('cardinality count failed')
+0289     w = root_of_unity(n,p,generator)
+0290     minor = [[pow(w,i*j,p) for j in cols] for i in range(b+1)]
+0291     mrank = rank_mod(minor,p)
+0292     if mrank!=b+1:
+0293         raise AssertionError('Vandermonde determinant should be nonzero')
+0294     return {'n':n,'s':s,'b':b,'rows':list(range(b+1)),
+0295             'columns':cols,'minor_rank':mrank,'union_support_size':len(union),
+0296             'exact_rank_contradiction':True}
+0297 
+0298 
+0299 def bidirectional_sum_escape(n: int, p: int = P) -> dict:
+0300     """Counterexample to extending scan inverse sparsity to SUMS of scans.
+0301 
+0302     H = (weighted forward scan) + (weighted backward scan), evaluated in
+0303     O(N) arithmetic; at tested sizes its inverse is completely dense and
+0304     usually is not an I+rank-one update. This is NOT a Fourier evaluator.
+0305     """
+0306     if n < 2:
+0307         raise ValueError('N>=2 required')
+0308     fwd = matrix_from_action(n,lambda x: scan_vector(
+0309         x,'forward',[0]+[j+2 for j in range(1,n)],[1]*n,p))
+0310     bwd = matrix_from_action(n,lambda x: scan_vector(
+0311         x,'backward',[j+3 for j in range(n-1)]+[0],[1]*n,p))
+0312     mat = [[(fwd[i][j]+bwd[i][j])%p for j in range(n)] for i in range(n)]
+0313     inv = invert_mod(mat,p)
+0314     return {'N':n,'inverse_nnz':sum(bool(z) for row in inv for z in row),
+0315             'inverse_all_entries_nonzero':all(z for row in inv for z in row),
+0316             'inverse_minus_diagonal_rank':rank_mod(
+0317                 matrix_sub(inv,[[inv[i][i] if i==j else 0 for j in range(n)]for i in range(n)],p),p),
+0318             'work':'two O(N) weighted scans plus N scalar additions',
+0319             'computes_Fourier':False}

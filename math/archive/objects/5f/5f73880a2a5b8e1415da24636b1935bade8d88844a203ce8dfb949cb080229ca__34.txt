@@ -1,0 +1,72 @@
+1: """Separate numerical, threshold, underflow and complete-basis verification."""
+2: import json
+3: from pathlib import Path
+4: import numpy as np
+5: from benchmark import build,load,error_ratio
+6: 
+7: 
+8: def main():
+9:     build();transform,_=load();rng=np.random.default_rng(845)
+10:     basis_count=0;vector_count=0;maximum_exact_error=0.
+11:     for n in (1,2,4,8,16,32,64):
+12:         for j in range(n):
+13:             x=np.zeros(n,dtype=complex);x[j]=1
+14:             expected=np.fft.fft(x,norm='ortho')
+15:             for alg,eps in ((0,0),(1,0),(2,0),(2,.125),(2,.25),(2,.5)):
+16:                 out,stats=transform(x,alg,eps,instrument=True)
+17:                 bare,_=transform(x,alg,eps,instrument=False)
+18:                 assert np.array_equal(out,bare)
+19:                 err=error_ratio(out,expected,x)
+20:                 assert err<=eps+2e-14,(n,j,alg,eps,err)
+21:                 assert stats['computed_outputs']+stats['pruned_outputs']==n
+22:                 assert stats['full_output_writes']==n
+23:                 if eps==0:maximum_exact_error=max(maximum_exact_error,err)
+24:                 vector_count+=1
+25:             basis_count+=1
+26:     # All sixty-four coefficients lie on or just either side of eps=.125.
+27:     # This is numerical evidence only; threshold decisions are not interval certified.
+28:     boundary=[]
+29:     n=1024
+30:     for perturbation in (-1e-12,0.,1e-12):
+31:         spectrum=np.zeros(n,dtype=complex)
+32:         spectrum[:64]=np.exp(1j*rng.uniform(-np.pi,np.pi,64))
+33:         spectrum[0]*=1+perturbation
+34:         x=np.fft.ifft(spectrum,norm='ortho')
+35:         out,stats=transform(x,2,.125,instrument=True)
+36:         err=error_ratio(out,spectrum,x)
+37:         assert err<=.125+3e-14
+38:         boundary.append({'perturbation':perturbation,'error_ratio':err,
+39:                          'computed_outputs':stats['computed_outputs']})
+40:     x=np.zeros(8,dtype=complex);x[0]=x[4]=1.;x[1]=1e-200;x[5]=-1e-200
+41:     out,stats=transform(x,2,0.,instrument=True)
+42:     reference=np.fft.fft(x,norm='ortho')
+43:     assert np.all(out[1::2]!=0)
+44:     assert np.max(np.abs((out[1::2]-reference[1::2])/1e-200))<1e-14
+45:     # Exact constants and sign-alternating constants expose representable zero subtrees.
+46:     for n in (16,1024,65536):
+47:         for sign in (1,-1):
+48:             x=np.ones(n,dtype=complex)
+49:             if sign==-1:x[1::2]=-1
+50:             out,stats=transform(x,2,0.,instrument=True)
+51:             assert np.array_equal(out,np.fft.fft(x,norm='ortho'))
+52:             assert stats['computed_outputs']==1
+53:             assert stats['butterflies']==n-1
+54:     # Scaling must not erase a representable result for minimum subnormals.
+55:     n=1024;x=np.full(n,np.nextafter(0.,1.)+0j,dtype=complex)
+56:     for algorithm in (0,1,2):
+57:         out,_=transform(x,algorithm,0.)
+58:         assert out[0].real==np.nextafter(0.,1.)*32
+59:         assert np.count_nonzero(out)==1
+60:     report={'status':'PASS','basis_vectors':basis_count,'basis_method_comparisons':vector_count,
+61:             'maximum_zero_tolerance_error_ratio':maximum_exact_error,
+62:             'near_threshold_controls':boundary,
+63:             'underflow_prone_nonzero_odd_outputs_preserved':4,
+64:             'exact_representable_single_tone_controls':6,
+65:             'subnormal_rescaling_controls':3,
+66:             'instrumented_uninstrumented_identical':True,
+67:             'scope':'Numerical verification. Approximate error theorem assumes ideal arithmetic.'}
+68:     Path(__file__).with_name('verification.json').write_text(json.dumps(report,indent=2)+'\n')
+69:     print(json.dumps(report,indent=2))
+70: 
+71: 
+72: if __name__=='__main__':main()

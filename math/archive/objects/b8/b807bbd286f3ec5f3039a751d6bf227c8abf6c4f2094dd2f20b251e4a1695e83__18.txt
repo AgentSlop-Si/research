@@ -1,0 +1,487 @@
+0001 """Random input sparsification followed by a classical input-pruned full DFT.
+0002 
+0003 Research target
+0004 ---------------
+0005 For a fresh arbitrary dense vector x in C^N (N a power of two), construct a
+0006 k-sparse unbiased surrogate y, then compute *all* N Fourier coefficients of y
+0007 with the existing sparse DFT decomposition.
+0008 
+0009 The theorem is for the unitary DFT U_N = F_N / sqrt(N):
+0010 
+0011     P[ ||U_N y - U_N x||_inf > eps ||x||_2 ] <= delta
+0012 
+0013 provided
+0014 
+0015     k >= 4*tau2(x)/eps^2 * log(4N/delta),
+0016     tau2(x) = ||x||_1^2 / (N ||x||_2^2) <= 1.
+0017 
+0018 The proof is coordinatewise Hoeffding + a union bound.  The sparsification
+0019 lemma is a standard Maurey/importance-sampling phenomenon; the research
+0020 question is the algorithmic composition with the input-pruned full-output DFT.
+0021 """
+0022 from __future__ import annotations
+0023 
+0024 from dataclasses import dataclass
+0025 import math
+0026 from typing import Sequence
+0027 import numpy as np
+0028 
+0029 from hybrid_sparse import sparse_dft
+0030 
+0031 
+0032 @dataclass(frozen=True)
+0033 class SurrogatePlan:
+0034     n: int
+0035     epsilon: float
+0036     delta: float
+0037     l1: float
+0038     l2: float
+0039     tau2: float
+0040     requested_samples: int
+0041     actual_draws: int
+0042     support_size: int
+0043     sparse_b: int | None
+0044     method: str
+0045 
+0046 
+0047 def _as_complex_vector(x: Sequence[complex]) -> np.ndarray:
+0048     a = np.asarray(x, dtype=np.complex128)
+0049     if a.ndim != 1 or a.size < 1:
+0050         raise ValueError("x must be a nonempty 1-D vector")
+0051     if not np.all(np.isfinite(a.real)) or not np.all(np.isfinite(a.imag)):
+0052         raise ValueError("x must be finite")
+0053     n = int(a.size)
+0054     if n & (n - 1):
+0055         raise ValueError("current sparse DFT backend requires power-of-two length")
+0056     return a
+0057 
+0058 
+0059 def flatness_tau2(x: Sequence[complex]) -> float:
+0060     a = _as_complex_vector(x)
+0061     l1 = float(np.sum(np.abs(a)))
+0062     l2 = float(np.linalg.norm(a))
+0063     if l2 == 0.0:
+0064         return 0.0
+0065     return (l1 * l1) / (a.size * l2 * l2)
+0066 
+0067 
+0068 def universal_sample_count(n: int, epsilon: float, delta: float) -> int:
+0069     """Samples for error <= epsilon * ||x||_1/sqrt(N), independent of x."""
+0070     n=int(n); eps=float(epsilon); d=float(delta)
+0071     if n<1: raise ValueError("n must be positive")
+0072     if not (0.0 < eps < 1.0): raise ValueError("epsilon must lie in (0,1)")
+0073     if not (0.0 < d < 1.0): raise ValueError("delta must lie in (0,1)")
+0074     return max(1, math.ceil((4.0/(eps*eps))*math.log(4.0*n/d)))
+0075 
+0076 
+0077 def sufficient_sample_count(x: Sequence[complex], epsilon: float, delta: float) -> int:
+0078     """Samples for the weaker adaptive error <= epsilon * ||x||_2."""
+0079     a = _as_complex_vector(x)
+0080     eps = float(epsilon); d = float(delta)
+0081     if not (0.0 < eps < 1.0):
+0082         raise ValueError("epsilon must lie in (0,1)")
+0083     if not (0.0 < d < 1.0):
+0084         raise ValueError("delta must lie in (0,1)")
+0085     l2 = float(np.linalg.norm(a))
+0086     if l2 == 0.0:
+0087         return 0
+0088     t2 = flatness_tau2(a)
+0089     return max(1, math.ceil((4.0 * t2 / (eps * eps)) * math.log(4.0 * a.size / d)))
+0090 
+0091 
+0092 def _draw_importance_indices(weights: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
+0093     """Draw iid indices proportional to nonnegative weights.
+0094 
+0095     Uses one cumulative scan plus binary searches.  The theoretical algorithm
+0096     can equivalently sort k uniforms and merge them with the cumulative scan in
+0097     O(N + k log k) time.
+0098     """
+0099     if k <= 0:
+0100         return np.empty(0, dtype=np.intp)
+0101     total = float(weights.sum())
+0102     if total <= 0.0:
+0103         return np.empty(0, dtype=np.intp)
+0104     cdf = np.cumsum(weights, dtype=np.float64)
+0105     # Guard the final endpoint against accumulated roundoff.
+0106     cdf[-1] = total
+0107     u = rng.random(k) * total
+0108     return np.searchsorted(cdf, u, side="right").astype(np.intp, copy=False)
+0109 
+0110 
+0111 def sparsify_input(
+0112     x: Sequence[complex],
+0113     epsilon: float,
+0114     delta: float,
+0115     *,
+0116     rng: np.random.Generator | None = None,
+0117     samples: int | None = None,
+0118 ) -> tuple[dict[int, complex], SurrogatePlan]:
+0119     """Return the sampled k-sparse surrogate as an index->value dictionary."""
+0120     a = _as_complex_vector(x)
+0121     eps = float(epsilon); d = float(delta)
+0122     if rng is None:
+0123         rng = np.random.default_rng()
+0124     l1 = float(np.sum(np.abs(a)))
+0125     l2 = float(np.linalg.norm(a))
+0126     if l2 == 0.0:
+0127         plan = SurrogatePlan(a.size, eps, d, 0.0, 0.0, 0.0, 0, 0, 0, None, "zero")
+0128         return {}, plan
+0129     tau2 = (l1*l1)/(a.size*l2*l2)
+0130     k = sufficient_sample_count(a, eps, d) if samples is None else int(samples)
+0131     if k < 1:
+0132         raise ValueError("samples must be positive for nonzero input")
+0133 
+0134     weights = np.abs(a)
+0135     draws = _draw_importance_indices(weights, k, rng)
+0136     idx, counts = np.unique(draws, return_counts=True)
+0137     values: dict[int, complex] = {}
+0138     scale = l1 / k
+0139     for j, count in zip(idx.tolist(), counts.tolist()):
+0140         z = a[j]
+0141         # j cannot have zero weight if it was sampled.
+0142         phase = z / abs(z)
+0143         values[int(j)] = complex(count * scale * phase)
+0144 
+0145     plan = SurrogatePlan(
+0146         n=a.size, epsilon=eps, delta=d, l1=l1, l2=l2, tau2=tau2,
+0147         requested_samples=k, actual_draws=k, support_size=len(values),
+0148         sparse_b=None, method="importance-with-replacement",
+0149     )
+0150     return values, plan
+0151 
+0152 
+0153 def approximate_dft_all(
+0154     x: Sequence[complex],
+0155     epsilon: float,
+0156     delta: float,
+0157     *,
+0158     rng: np.random.Generator | None = None,
+0159     samples: int | None = None,
+0160     backend: str = "scipy",
+0161     scale: str = "l2",
+0162     exact_sparse_bypass: bool = True,
+0163     fallback_dense_if_k_ge_n: bool = True,
+0164     return_plan: bool = False,
+0165 ):
+0166     """Approximate every unitary DFT coefficient of a fresh dense input.
+0167 
+0168     If the sufficient number of draws reaches N, the default implementation
+0169     falls back to a complete numerical FFT.  This does not affect the fixed-
+0170     epsilon asymptotic result, for which k=O(log N).
+0171     """
+0172     a = _as_complex_vector(x)
+0173     if scale not in ("l2","l1_ceiling"):
+0174         raise ValueError("scale must be 'l2' or 'l1_ceiling'")
+0175     requested = samples
+0176     if requested is None and scale == "l1_ceiling":
+0177         requested = universal_sample_count(a.size, epsilon, delta)
+0178 
+0179     # The O(N) scan needed for norms also reveals exact support.  If that
+0180     # support is already smaller than the Monte-Carlo budget, do no sampling.
+0181     nz = np.flatnonzero(a != 0)
+0182     budget = sufficient_sample_count(a,epsilon,delta) if requested is None else int(requested)
+0183     if exact_sparse_bypass and 0 < nz.size <= budget:
+0184         exact = {int(j):complex(a[j]) for j in nz}
+0185         raw,spl = sparse_dft(a.size, exact.items(), backend=backend, return_plan=True)
+0186         l1=float(np.sum(np.abs(a))); l2=float(np.linalg.norm(a)); tau2=(l1*l1)/(a.size*l2*l2) if l2 else 0.0
+0187         plan=SurrogatePlan(a.size,float(epsilon),float(delta),l1,l2,tau2,budget,0,int(nz.size),spl.b,"exact-sparse-bypass")
+0188         out=raw/math.sqrt(a.size)
+0189         return (out,plan) if return_plan else out
+0190 
+0191     sparse, plan0 = sparsify_input(a, epsilon, delta, rng=rng, samples=requested)
+0192     k = plan0.requested_samples
+0193     if plan0.method == "zero":
+0194         out = np.zeros(a.size, dtype=np.complex128)
+0195         return (out, plan0) if return_plan else out
+0196 
+0197     if fallback_dense_if_k_ge_n and k >= a.size:
+0198         try:
+0199             from scipy import fft as sp_fft
+0200             out = sp_fft.fft(a, norm="ortho")
+0201         except Exception:
+0202             out = np.fft.fft(a, norm="ortho")
+0203         plan = SurrogatePlan(**{**plan0.__dict__, "method":"dense-fallback"})
+0204         return (out, plan) if return_plan else out
+0205 
+0206     raw, spl = sparse_dft(a.size, sparse.items(), backend=backend, return_plan=True)
+0207     out = raw / math.sqrt(a.size)
+0208     plan = SurrogatePlan(**{**plan0.__dict__, "sparse_b":spl.b, "method":"sparse-pruned"})
+0209     return (out, plan) if return_plan else out
+0210 
+0211 
+0212 def theorem_failure_bound(n: int, epsilon: float, tau2: float, k: int) -> float:
+0213     """The explicit union-bound upper bound 4N exp(-k eps^2/(4 tau^2))."""
+0214     if tau2 <= 0.0:
+0215         return 0.0
+0216     return min(1.0, 4.0*n*math.exp(-k*epsilon*epsilon/(4.0*tau2)))
+0217 
+0218 
+0219 # ---------------------------------------------------------------------------
+0220 # Stronger v2 tradeoffs: vanishing accuracy, heavy+tail sparsification,
+0221 # and a rigorous ceiling for every time-domain sparse surrogate.
+0222 # ---------------------------------------------------------------------------
+0223 
+0224 @dataclass(frozen=True)
+0225 class AccuracyTradeoff:
+0226     n: int
+0227     epsilon: float
+0228     delta: float
+0229     samples: int
+0230     sparse_b: int
+0231     inner_log2: int
+0232     full_log2: int
+0233     depth_ratio: float
+0234     asymptotic_log_cost: float
+0235 
+0236 
+0237 @dataclass(frozen=True)
+0238 class HeadTailPlan:
+0239     n: int
+0240     epsilon: float
+0241     delta: float
+0242     head_size: int
+0243     head_l1: float
+0244     tail_l1: float
+0245     total_l1: float
+0246     tail_ratio: float
+0247     requested_samples: int
+0248     tail_nnz: int
+0249     support_upper_bound: int
+0250     method: str
+0251 
+0252 
+0253 def accuracy_tradeoff(n: int, epsilon: float, delta: float) -> AccuracyTradeoff:
+0254     """Operation-count proxy for the universal sparse-surrogate theorem.
+0255 
+0256     If ``k = Theta(epsilon^-2 log(N/delta))``, the existing sparse-input
+0257     full-output DFT needs ``O(N log(k+2))`` arithmetic.  This helper reports
+0258     the exact theorem sample count, the next radix-2 inner width and the
+0259     corresponding radix-depth ratio.
+0260     """
+0261     n = int(n); eps=float(epsilon); d=float(delta)
+0262     k = universal_sample_count(n, eps, d)
+0263     b = 1 << (max(1, k)-1).bit_length()
+0264     inner = b.bit_length()-1
+0265     full = max(1, n.bit_length()-1) if n > 0 and not (n & (n-1)) else max(1, math.ceil(math.log2(n)))
+0266     return AccuracyTradeoff(
+0267         n=n, epsilon=eps, delta=d, samples=k, sparse_b=b,
+0268         inner_log2=inner, full_log2=full,
+0269         depth_ratio=inner/full,
+0270         asymptotic_log_cost=math.log(max(2.0, k), 2.0),
+0271     )
+0272 
+0273 
+0274 def head_tail_sample_count_from_norms(
+0275     n: int,
+0276     total_l1: float,
+0277     tail_l1: float,
+0278     epsilon: float,
+0279     delta: float,
+0280 ) -> int:
+0281     """Samples needed after keeping a head exactly.
+0282 
+0283     Target guarantee:
+0284 
+0285         ||U_N y - U_N x||_inf <= epsilon * ||x||_1 / sqrt(N).
+0286 
+0287     Only the residual tail is randomized.  If its entire deterministic Fourier
+0288     contribution is already below the target (tail_l1 <= epsilon*total_l1),
+0289     zero random samples suffice.
+0290     """
+0291     n=int(n); L=float(total_l1); T=float(tail_l1); eps=float(epsilon); d=float(delta)
+0292     if n < 1: raise ValueError("n must be positive")
+0293     if L < 0 or T < 0 or T > L*(1+1e-12): raise ValueError("bad l1 norms")
+0294     if not (0.0 < eps < 1.0): raise ValueError("epsilon must lie in (0,1)")
+0295     if not (0.0 < d < 1.0): raise ValueError("delta must lie in (0,1)")
+0296     if L == 0.0 or T == 0.0 or T <= eps*L:
+0297         return 0
+0298     rho=T/L
+0299     return max(1, math.ceil((4.0*rho*rho/(eps*eps))*math.log(4.0*n/d)))
+0300 
+0301 
+0302 def _top_s_indices(a: np.ndarray, s: int) -> np.ndarray:
+0303     s=int(s)
+0304     if s <= 0:
+0305         return np.empty(0,dtype=np.intp)
+0306     if s >= a.size:
+0307         return np.arange(a.size,dtype=np.intp)
+0308     mag=np.abs(a)
+0309     # argpartition is expected linear time and does not fully sort the input.
+0310     return np.argpartition(mag, a.size-s)[a.size-s:].astype(np.intp,copy=False)
+0311 
+0312 
+0313 def _head_tail_stats(a: np.ndarray, s: int) -> tuple[np.ndarray,float,float,int]:
+0314     idx=_top_s_indices(a,s)
+0315     total=float(np.sum(np.abs(a)))
+0316     if idx.size == 0:
+0317         return idx,0.0,total,int(np.count_nonzero(a))
+0318     head_l1=float(np.sum(np.abs(a[idx])))
+0319     tail_l1=max(0.0,total-head_l1)
+0320     tail_nnz=int(np.count_nonzero(a)) - int(np.count_nonzero(a[idx]))
+0321     return idx,head_l1,tail_l1,max(0,tail_nnz)
+0322 
+0323 
+0324 def make_head_tail_plan(
+0325     x: Sequence[complex],
+0326     epsilon: float,
+0327     delta: float,
+0328     head_size: int,
+0329 ) -> HeadTailPlan:
+0330     a=_as_complex_vector(x)
+0331     s=min(max(0,int(head_size)),a.size)
+0332     idx,head_l1,tail_l1,tail_nnz=_head_tail_stats(a,s)
+0333     total=head_l1+tail_l1
+0334     k=head_tail_sample_count_from_norms(a.size,total,tail_l1,epsilon,delta) if total else 0
+0335     if tail_nnz <= k:
+0336         method="exact-tail"
+0337         support=s+tail_nnz
+0338         k=tail_nnz
+0339     elif k == 0:
+0340         method="head-only"
+0341         support=s
+0342     else:
+0343         method="sample-tail"
+0344         support=s+k
+0345     return HeadTailPlan(
+0346         n=a.size,epsilon=float(epsilon),delta=float(delta),head_size=s,
+0347         head_l1=head_l1,tail_l1=tail_l1,total_l1=total,
+0348         tail_ratio=(tail_l1/total if total else 0.0),
+0349         requested_samples=k,tail_nnz=tail_nnz,
+0350         support_upper_bound=min(a.size,support),method=method,
+0351     )
+0352 
+0353 
+0354 def plan_head_tail(
+0355     x: Sequence[complex],
+0356     epsilon: float,
+0357     delta: float,
+0358     *,
+0359     candidates: Sequence[int] | None = None,
+0360     max_head: int | None = None,
+0361 ) -> HeadTailPlan:
+0362     """Choose a head size by minimizing the certified sparse-support budget.
+0363 
+0364     The default candidate family is ``0,1,2,4,...`` up to a polylogarithmic
+0365     head budget.  Each candidate uses an expected-linear ``argpartition``;
+0366     hence the default planning work is ``O(N log log N)`` and remains within
+0367     the target transform bound.
+0368     """
+0369     a=_as_complex_vector(x); n=a.size
+0370     if candidates is None:
+0371         if max_head is None:
+0372             max_head=min(n, max(1, int(math.ceil(math.log2(max(2,n))**2))))
+0373         else:
+0374             max_head=min(n,max(0,int(max_head)))
+0375         vals=[0]
+0376         p=1
+0377         while p < max_head:
+0378             vals.append(p); p*=2
+0379         if max_head not in vals: vals.append(max_head)
+0380         candidates=vals
+0381     plans=[]
+0382     for s in dict.fromkeys(int(v) for v in candidates):
+0383         if 0 <= s <= n:
+0384             plans.append(make_head_tail_plan(a,epsilon,delta,s))
+0385     if not plans: raise ValueError("no valid head candidates")
+0386     return min(plans,key=lambda p:(p.support_upper_bound,p.requested_samples,p.head_size))
+0387 
+0388 
+0389 def sparsify_head_tail(
+0390     x: Sequence[complex],
+0391     epsilon: float,
+0392     delta: float,
+0393     *,
+0394     head_size: int | None = None,
+0395     plan: HeadTailPlan | None = None,
+0396     rng: np.random.Generator | None = None,
+0397 ) -> tuple[dict[int,complex],HeadTailPlan]:
+0398     """Keep the largest coordinates exactly and sample only the l1 tail."""
+0399     a=_as_complex_vector(x)
+0400     if rng is None: rng=np.random.default_rng()
+0401     if plan is None:
+0402         plan = plan_head_tail(a,epsilon,delta) if head_size is None else make_head_tail_plan(a,epsilon,delta,head_size)
+0403     if plan.n != a.size: raise ValueError("plan length mismatch")
+0404     idx=_top_s_indices(a,plan.head_size)
+0405     chosen=np.zeros(a.size,dtype=bool); chosen[idx]=True
+0406     out={int(j):complex(a[j]) for j in idx if a[j] != 0}
+0407     residual=a.copy(); residual[chosen]=0
+0408     tail_nz=np.flatnonzero(residual != 0)
+0409     if plan.method == "exact-tail" or tail_nz.size <= plan.requested_samples:
+0410         for j in tail_nz:
+0411             out[int(j)]=complex(a[j])
+0412         return out, HeadTailPlan(**{**plan.__dict__,"method":"exact-tail","requested_samples":int(tail_nz.size),"support_upper_bound":len(out)})
+0413     if plan.requested_samples == 0 or plan.tail_l1 == 0.0:
+0414         return out, plan
+0415     draws=_draw_importance_indices(np.abs(residual),plan.requested_samples,rng)
+0416     jj,counts=np.unique(draws,return_counts=True)
+0417     scale=plan.tail_l1/plan.requested_samples
+0418     for j,c in zip(jj.tolist(),counts.tolist()):
+0419         z=residual[j]
+0420         if z != 0:
+0421             out[int(j)]=out.get(int(j),0j)+complex(c*scale*(z/abs(z)))
+0422     return out, HeadTailPlan(**{**plan.__dict__,"support_upper_bound":len(out)})
+0423 
+0424 
+0425 def approximate_dft_all_head_tail(
+0426     x: Sequence[complex],
+0427     epsilon: float,
+0428     delta: float,
+0429     *,
+0430     head_size: int | None = None,
+0431     plan: HeadTailPlan | None = None,
+0432     rng: np.random.Generator | None = None,
+0433     backend: str = "scipy",
+0434     return_plan: bool = False,
+0435 ):
+0436     """All-bin unitary DFT using exact heavy coordinates + sampled residual."""
+0437     a=_as_complex_vector(x)
+0438     sparse,hplan=sparsify_head_tail(a,epsilon,delta,head_size=head_size,plan=plan,rng=rng)
+0439     if len(sparse) >= a.size:
+0440         try:
+0441             from scipy import fft as sp_fft
+0442             out=sp_fft.fft(a,norm="ortho")
+0443         except Exception:
+0444             out=np.fft.fft(a,norm="ortho")
+0445         return (out,hplan) if return_plan else out
+0446     raw,spl=sparse_dft(a.size,sparse.items(),backend=backend,return_plan=True)
+0447     out=raw/math.sqrt(a.size)
+0448     return (out,hplan) if return_plan else out
+0449 
+0450 
+0451 def best_k_term_l2_tail(x: Sequence[complex], k: int) -> float:
+0452     """Exact best k-term time-domain l2 approximation error."""
+0453     a=_as_complex_vector(x); k=max(0,min(int(k),a.size))
+0454     if k >= a.size: return 0.0
+0455     sq=np.abs(a)**2
+0456     if k == 0: return float(math.sqrt(float(np.sum(sq))))
+0457     # Keep the k largest magnitudes; sum the rest without a full sort.
+0458     cut=a.size-k
+0459     part=np.partition(sq,cut)
+0460     return float(math.sqrt(float(np.sum(part[:cut]))))
+0461 
+0462 
+0463 def sparse_surrogate_linf_lower_bound(x: Sequence[complex], k: int) -> float:
+0464     """Universal lower bound for *any* k-sparse surrogate y.
+0465 
+0466     Since U_N is unitary,
+0467         ||U_N(y-x)||_inf >= ||y-x||_2/sqrt(N)
+0468     and every k-sparse y has l2 error at least the best k-term tail of x.
+0469     This bound permits arbitrary signed/complex surrogate weights.
+0470     """
+0471     a=_as_complex_vector(x)
+0472     return best_k_term_l2_tail(a,k)/math.sqrt(a.size)
+0473 
+0474 
+0475 def flat_natural_scale_support_lower_bound(n: int, eta: float) -> int:
+0476     """Support necessary for natural-scale l_inf accuracy on flat inputs.
+0477 
+0478     For constant-modulus x, any k-sparse y satisfying
+0479 
+0480         ||U_N(y-x)||_inf <= eta * ||x||_2/sqrt(N)
+0481 
+0482     must obey k >= N(1-eta^2).
+0483     """
+0484     n=int(n); eta=float(eta)
+0485     if n < 1: raise ValueError("n must be positive")
+0486     if not (0.0 <= eta <= 1.0): raise ValueError("eta must lie in [0,1]")
+0487     return max(0,math.ceil(n*(1.0-eta*eta)-1e-12))

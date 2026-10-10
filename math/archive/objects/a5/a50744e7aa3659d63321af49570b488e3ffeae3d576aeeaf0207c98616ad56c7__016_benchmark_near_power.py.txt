@@ -1,0 +1,36 @@
+"""Exact Python bignum benchmarks for A=2**n-1 times fresh arbitrary B.
+
+No FFT, cache or parallelism. Speedups are workload-specific; Python's built-in
+int multiplication is already highly optimized native code.
+"""
+import json,random,statistics,time
+from pathlib import Path
+from fresh_factor import multiply_near_power
+
+def median(f,reps):
+    out=[];v=None
+    for _ in range(reps):
+        st=time.perf_counter_ns()
+        v=f()
+        out.append((time.perf_counter_ns()-st)/1e6)
+    return round(statistics.median(out),6),v
+
+def run():
+    r=random.Random(9090);rows=[]
+    for bits in [1024,4096,16384,65536,262144]:
+        b=(1<<(bits-1))|r.getrandbits(bits-1)
+        for kind in ['near_power','unrelated']:
+            a=((1<<bits)-1) if kind=='near_power' else (1<<(bits-1))|r.getrandbits(bits-1)
+            reps=13 if bits<65536 else 5
+            baseline,res0=median(lambda:a*b,reps)
+            hybrid,ret=median(lambda:multiply_near_power(a,b),reps)
+            result,mode=ret
+            assert result==res0
+            rows.append(dict(bits=bits,kind=kind,baseline_ms=baseline,hybrid_ms=hybrid,
+                             speedup=round(baseline/hybrid,2),mode=mode))
+    fp=Path(__file__).with_name('benchmark_near_power_results.json')
+    fp.write_text(json.dumps(rows,indent=2)+'\n')
+    for x in rows:
+        print(x)
+    print('SAVED',fp)
+if __name__=='__main__':run()

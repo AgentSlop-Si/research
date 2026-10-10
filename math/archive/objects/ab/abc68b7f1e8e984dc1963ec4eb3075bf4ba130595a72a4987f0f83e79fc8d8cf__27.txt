@@ -1,0 +1,45 @@
+0001 """Fresh zero-weight, multi-cycle and outer-gauge controls for additive exclusion."""
+0002 from pathlib import Path
+0003 import json,random
+0004 from independent_checks import inv,mul,rank,ident
+0005 
+0006 def cycle_order(perm):
+0007  unseen=set(range(len(perm)));out=[]
+0008  while unseen:
+0009   k=min(unseen)
+0010   while k in unseen:unseen.remove(k);out.append(k);k=perm[k]
+0011  return out
+0012 
+0013 def separator(orders):
+0014  n=len(orders[0]);m=n//2;R=set(orders[0][:m]);C=set(orders[0][-m:])
+0015  for order in orders[1:]:
+0016   selected=[j for j in order if j in R or j in C];left=set(selected[:len(R)]);right=set(selected[len(R):]);a=(R&left,C&right);b=(R&right,C&left);R,C=max((a,b),key=lambda pair:len(pair[0]))
+0017  return sorted(R),sorted(C)
+0018 
+0019 def main():
+0020  p=998244353;out=[]
+0021  for n in [4,8,16,30,31,32,33,34,35,36,64]:
+0022   rng=random.Random(5900+n)
+0023   for trial in range(5):
+0024    G=[];orders=[];spec=[]
+0025    for term in range(2):
+0026     perm=list(range(n));rng.shuffle(perm)
+0027     if trial%2==0:
+0028      order=list(range(n));rng.shuffle(order);perm=[0]*n
+0029      for k in range(n):perm[order[k]]=order[(k+1)%n]
+0030     weights=[rng.randrange(1,p) for k in range(n)]
+0031     if trial in (1,4):weights[0]=0
+0032     A=ident(n)
+0033     for j in range(n):A[perm[j]][j]=(A[perm[j]][j]-weights[perm[j]])%p
+0034     g=inv(A,p);order=cycle_order(perm);orders.append(order)
+0035     left=[rng.randrange(1,p) for _ in range(n)];right=[rng.randrange(1,p) for _ in range(n)]
+0036     g=[[g[i][j]*left[i]*right[j]%p for j in range(n)]for i in range(n)]
+0037     for k in range(1,n):
+0038      for I,J in ((order[:k],order[k:]),(order[k:],order[:k])):assert rank([[g[i][j]for j in J]for i in I],p)<=1
+0039     G.append(g);spec.append({'permutation':perm,'zero_weights':weights.count(0)})
+0040    R,C=separator(orders);assert len(R)==len(C) and len(R)>=(n//2+1)//2
+0041    block=[[(G[0][i][j]+G[1][i][j])%p for j in C]for i in R];rr=rank(block,p);assert rr<=2
+0042    out.append({'n':n,'trial':trial,'size':len(R),'rank':rr,'weighted_cycle_specs':spec})
+0043  result={'cases':len(out),'all_cut_and_separator_ranks_pass':True,'zero_weight_and_multicycle_controls':True,'all_length_necessary_condition':'ceil(floor(N/2)/2)^2 <= 2N','small_excluded_by_bound':[n for n in range(2,65) if ((n//2+1)//2)**2>2*n],'samples':out}
+0044  Path(__file__).with_name('SEPARATOR_RESULTS.json').write_text(json.dumps(result,indent=2));print('PASS',len(out),'independent weighted-cycle pair controls')
+0045 if __name__=='__main__':main()

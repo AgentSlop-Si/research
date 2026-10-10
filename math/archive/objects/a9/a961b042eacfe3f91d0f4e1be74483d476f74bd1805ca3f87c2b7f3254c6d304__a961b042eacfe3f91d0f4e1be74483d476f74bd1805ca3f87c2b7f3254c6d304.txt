@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Independent exact checks. No imports or execution of uploaded source."""
+import json, math, random
+from pathlib import Path
+
+COUNTS={}
+def isprime(n):
+    if n<2:return False
+    return all(n%d for d in range(2,math.isqrt(n)+1))
+def root_of_order(order,p):
+    factors=[]; r=order; d=2
+    while d*d<=r:
+        if r%d==0:
+            factors.append(d)
+            while r%d==0:r//=d
+        d+=1
+    if r>1:factors.append(r)
+    for a in range(2,p):
+        x=pow(a,(p-1)//order,p)
+        if pow(x,order,p)==1 and all(pow(x,order//d,p)!=1 for d in factors):return x
+    raise ValueError('no root')
+def field_for(m):
+    n=m*m; L=1
+    while L<3*m-2:L*=2
+    l=math.lcm(n,L); p=l+1
+    while not isprime(p):p+=l
+    return p,root_of_order(n,p),L,root_of_order(L,p)
+def ntt(a,w,p,inverse=False):
+    a=list(a); n=len(a); j=0
+    for i in range(1,n):
+        bit=n>>1
+        while j&bit:j^=bit;bit>>=1
+        j^=bit
+        if i<j:a[i],a[j]=a[j],a[i]
+    if inverse:w=pow(w,-1,p)
+    width=2
+    while width<=n:
+        ws=pow(w,n//width,p)
+        for start in range(0,n,width):
+            phase=1
+            for off in range(width//2):
+                u=a[start+off];v=a[start+off+width//2]*phase%p
+                a[start+off]=(u+v)%p;a[start+off+width//2]=(u-v)%p
+                phase=phase*ws%p
+        width*=2
+    if inverse:
+        ni=pow(n,-1,p);a=[x*ni%p for x in a]
+    return a
+def conv(a,b,p,L,w):
+    assert len(a)+len(b)-1<=L
+    aa=ntt(a+[0]*(L-len(a)),w,p);bb=ntt(b+[0]*(L-len(b)),w,p)
+    return ntt([x*y%p for x,y in zip(aa,bb)],w,p,True)[:len(a)+len(b)-1]
+def geom_forward(b,q,p,L,w):
+    m=len(b)
+    c=[pow(q,r*(r-1)//2,p) for r in range(2*m-1)]
+    a=[b[j]*pow(c[j],-1,p)%p for j in range(m)]
+    z=conv(a[::-1],c,p,L,w)
+    return [z[t+m-1]*pow(c[t],-1,p)%p for t in range(m)]
+def inv_geom(c,q,p,L,w):
+    m=len(c); fact=[1]
+    for r in range(1,m):fact.append(fact[-1]*(1-pow(q,r,p))%p)
+    assert all(fact)
+    fi=[pow(x,-1,p) for x in fact]
+    tri=[pow(q,r*(r-1)//2,p) for r in range(m)]
+    left=[c[t]*(-1 if t%2 else 1)*fi[t]%p for t in range(m)]
+    kernel=[tri[s]*fi[s]%p for s in range(m)]
+    d=conv(left,kernel,p,L,w)
+    a=[d[r]*pow(tri[r],-1,p)%p for r in range(m)]
+    bkernel=[(-1 if s%2 else 1)*tri[s]*fi[s]%p for s in range(m)]
+    rev=[a[r]*fact[r]%p for r in range(m)][::-1]
+    e=conv(rev,bkernel,p,L,w)
+    return [e[m-1-j]*fi[j]%p for j in range(m)]
+def dense_geom(b,q,p):
+    return [sum(b[j]*pow(q,t*j,p) for j in range(len(b)))%p for t in range(len(b))]
+def direct_dft(x,omega,p):
+    return [sum(v*pow(omega,-k*r,p) for r,v in enumerate(x))%p for k in range(len(x))]
+def batch_inverse(values,p):
+    prefix=[1]
+    for v in values:
+        assert v
+        prefix.append(prefix[-1]*v%p)
+    z=pow(prefix[-1],-1,p);out=[0]*len(values)
+    for i in range(len(values)-1,-1,-1):
+        out[i]=z*prefix[i]%p;z=z*values[i]%p
+    return out
+
+def run():
+    rng=random.Random(202610092156)
+    out={'field_cases':[], 'convolution_checks':0, 'vandermonde_inverse_cases':0,
+         'raw_full_transform_cases':0,'full_output_bins':0,'batch_inverse_values':0,
+         'layout':'x[t+M*u] = y_t[u]; Fourier uses omega^(-k*n)',
+         'scope':'Exact finite controls corroborate the separate all-size proof; no uploaded source executed.'}
+    for m in [2,3,4,5,6,7,8,9,10,12,16,20,24,32]:
+        p,omega,L,w=field_for(m);eta=pow(omega,m,p);n=m*m
+        out['field_cases'].append({'M':m,'N':n,'p':p,'omega':omega,'L':L,'fft_root':w})
+        facts=[]
+        for h in range(m):
+            q=omega*pow(eta,-h,p)%p;f=1
+            for r in range(m):
+                if r:f=f*(1-pow(q,r,p))%p
+                facts.append(f)
+            for repeat in range(4):
+                b=[rng.randrange(p) for _ in range(m)]
+                c=geom_forward(b,q,p,L,w)
+                assert c==dense_geom(b,q,p)
+                assert inv_geom(c,q,p,L,w)==b
+                out['vandermonde_inverse_cases']+=1
+        invs=batch_inverse(facts,p)
+        assert all(a*b%p==1 for a,b in zip(facts,invs))
+        out['batch_inverse_values']+=len(facts)
+        # Three arbitrary fresh dense raw inputs, all explicit output coordinates.
+        for repeat in range(3):
+            raw=[rng.randrange(p) for _ in range(n)]
+            rows=[[raw[t+m*u] for u in range(m)] for t in range(m)]
+            C=[geom_forward(row,pow(eta,-1,p),p,L,w) for row in rows]
+            B=[]
+            for h in range(m):
+                q=omega*pow(eta,-h,p)%p
+                B.append(inv_geom([C[t][h] for t in range(m)],q,p,L,w))
+            recoveredC=[]
+            for h in range(m):
+                q=omega*pow(eta,-h,p)%p
+                recoveredC.append(geom_forward(B[h],q,p,L,w))
+                assert recoveredC[-1]==[C[t][h] for t in range(m)]
+            output=[0]*n
+            for h in range(m):
+                z=[recoveredC[h][t]*pow(omega,-h*t,p)%p for t in range(m)]
+                ff=geom_forward(z,pow(eta,-1,p),p,L,w)
+                for s in range(m):output[h+s*m]=ff[s]
+            assert output==direct_dft(raw,omega,p)
+            out['raw_full_transform_cases']+=1;out['full_output_bins']+=n
+        # Test generic convolution against a separate direct product.
+        for repeat in range(4):
+            a=[rng.randrange(p) for _ in range(m)];b=[rng.randrange(p) for _ in range(m)]
+            expected=[sum(a[i]*b[k-i] for i in range(m) if 0<=k-i<m)%p for k in range(2*m-1)]
+            assert conv(a,b,p,L,w)==expected
+            out['convolution_checks']+=1
+    return out
+
+if __name__=='__main__':
+    result=run()
+    p=Path(__file__).with_name('CHECK_RESULTS.json')
+    p.write_text(json.dumps(result,indent=2)+'\n')
+    print(json.dumps(result,indent=2))

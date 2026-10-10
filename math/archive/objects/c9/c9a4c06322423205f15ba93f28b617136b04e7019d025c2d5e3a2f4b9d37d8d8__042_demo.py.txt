@@ -1,0 +1,26 @@
+import numpy as np
+from cost_aware_fft import RelationFFT
+from relational_convolution import RelationalConvolver, subscribe_convolution, DynamicBitProduct
+
+engine=RelationFFT()
+a=engine.register(np.array([1.,2.,3.,4.,0.,0.,0.,0.]))
+b=engine.register(np.array([5.,6.,7.,8.,0.,0.,0.,0.]))
+convolver=RelationalConvolver()
+
+# Three different products, all using the same cached base product.
+for delta in [0.,1.,-2.]:
+    version=a.fork().edit(2,delta)
+    result=convolver.product(version,b).full('auto')
+    print('Edit at position 2',delta,'->',np.rint(result).astype(int).tolist())
+
+# Time-domain subscriptions need no entire spectrum after every edit.
+sub=subscribe_convolution(convolver.product(a,b),[0,1,2])
+sub.edit('left',2,3).edit('right',4,-1)
+print('Three subscribed product coefficients:',sub.values().tolist())
+print('Base-pair cache:',convolver.memory_report())
+
+# Exact integer multiplication updates, including both operands.
+p=DynamicBitProduct(1234,5678,32)
+p.flip('a',3)
+p.flip('b',9)
+print('Exact updated integer product:',p.product,'matches fresh multiply?',p.verify())

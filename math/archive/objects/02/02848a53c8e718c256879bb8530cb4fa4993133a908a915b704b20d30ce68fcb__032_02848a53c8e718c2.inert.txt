@@ -1,0 +1,105 @@
+# Cancellation aware synthetic transform search
+
+Research pass dated 8 October 2026
+
+## Result
+
+No cheaper circuit was found for the same eight-coordinate, two-round synthetic transform tested previously. A deterministic search compiled 37,144 circuits from all 3,280 nonzero ternary anchors modulo sign. Its best circuit uses 16 additions, matching the staged baseline. Its best circuit that actually uses cancellation costs 17 operations: 16 additions and one doubling.
+
+The broader solver search for a circuit using at most 15 operations timed out. This is inconclusive, not an optimality proof. The separate exhaustive single-anchor template has minimum 24 operations, but that template excludes the baseline's useful subexpression sharing. Its negative result applies only to that template.
+
+This pass produces exact identities, operation counts, independently checked certificates and reproducible search code. It does not improve the earlier dirty-scratch implementation, the source frame recurrence, or any FFT exponent. No novelty is claimed for common-sum cancellation or the reproduced Walsh-Hadamard controls.
+
+## Exact target and fair comparison
+
+The input is eight independent rational coordinates: four polynomial records of degree less than two in Q[y]/(y^2+1). Two consecutive normalized synthetic DIF rounds give Mx/4, where M has rows
+
+    1 0  1  0  1  0  1  0
+    0 1  0  1  0  1  0  1
+    1 0 -1  0  1  0 -1  0
+    0 1  0 -1  0  1  0 -1
+    1 0  0  1 -1  0  0 -1
+    0 1 -1  0  0 -1  1  0
+    1 0  0 -1 -1  0  0  1
+    0 1  1  0  0 -1 -1  0
+
+The independent verifier reconstructs this matrix by polynomial butterfly simulation rather than importing the search target. The bipartite nonzero-support graph is connected, so signed row/column permutations cannot split it into two independent H4 blocks. The same matrix was the smallest previous test; no target has been substituted to manufacture a saving.
+
+The arithmetic model uses immutable inputs and one new scalar per gate. Binary signed addition/subtraction, doubling and exact halving each cost one operation. Unary signs and permutations are signed operand/output metadata, as in a conventional arithmetic-circuit model. They are not an assertion of free physical routing. Every use of a shared result is charged as an operand read. No multiplication by an arbitrary constant is permitted in the search.
+
+All compared synthetic circuits compute Mx before a common output scaling by 1/4. Charging that scaling gives:
+
+- Staged baseline: 16 additions, 8 quarter-scalings, 24 arithmetic operations; 40 scalar reads and 24 scalar writes.
+- Best generated circuit: the same counts as the baseline.
+- Best genuinely cancelling generated circuit: 16 additions, 1 doubling, 8 quarter-scalings, 25 operations; 41 scalar reads and 25 scalar writes.
+
+A binary gate has two reads and one write; a dyadic scaling has one read and one write. Result delivery is those eight final scaling writes, not a free extra copy. Instruction/address fetches are additional. The DAG representation retains all generated temporaries; no claim of minimum register count, routing cost, or elapsed-time improvement is made. Imaginary parts of complex polynomial coefficients are a separate identical real computation.
+
+## Three distinct search conclusions
+
+### Deterministic search with subexpression sharing
+
+For each of all 3,280 ternary anchors, the algorithm constructs several explicit output representations: direct output sums, anchor-plus-correction forms with either sign, and one-output bypass variants. The mode policies are fixed in the source; duplicate policies are removed. It then greedily factors repeated signed pairs across the anchor and outputs, merges exactly equal computed linear forms up to sign, and removes dead gates.
+
+The search compiled 37,144 synthetic circuits. It permits real cancellation of coefficients, doubled inputs, anchor-prefix sharing, correction sharing, and reuse of equal linear forms. The best arithmetic cost is 16; the best circuit with an opposite-sign overlap in an addition is 17. Exact emitted certificates are included for both, together with the staged circuit.
+
+Enumerating every anchor is not enumerating every circuit. Output-mode choices, pair-factorization orders, more than one anchor, arbitrary coefficients, fractional forms, and all general straight-line programs were not exhaustively explored here. The result is only a no-gain outcome for this deterministic construction procedure.
+
+### Exhaustive restricted template
+
+The exact template computes one nonzero anchor a dot x, with a in {-1,0,1}^8 modulo a global sign. Each output independently chooses direct summation, +anchor plus its correction, or -anchor plus its correction. Each correction is summed afresh. Only the complete anchor and individually doubled inputs can be shared; proper subexpressions are not shared. At least one output must contain a truly cancelling anchor/correction coordinate.
+
+A dynamic program keeps the mask of doubled inputs, whether the anchor is used, and whether genuine cancellation occurs. For each output it considers all three modes. Equal-mask states are compared only by addition cost, so paying once for a shared doubled input is exact. The full search covers all 3,280 anchors and all 3^8 mode assignments per anchor implicitly.
+
+The minimum is 24 operations: 23 additions and one doubling. An independent implementation fixes the allowed doubled-input mask, minimizes each output independently and pays the smallest extra cost needed to force cancellation. It reproduces the entire cost histogram, not just the minimum. This is a finite optimality result for that narrow template only. In particular, the template cannot express the ordinary 16-addition staged DAG with its sharing.
+
+### General bounded solver attempt
+
+The SMT encoding allows up to 15 gates of the forms plus or minus u plus or minus v, 2u, and u/2. All intermediate coefficients lie on the half-integer grid in [-2,2]. Same-predecessor operands and signed outputs are allowed. There is no cancellation-free support restriction. Final normalization by 1/4 is outside this budget and common to competitors.
+
+Coefficients are stored as twice their values. Five-bit signed expressions safely hold every intermediate sum or doubled value in [-8,8]; the constrained node values are in [-4,4]. Exact halving is imposed as 2v=u. Thus the bit-vector encoding introduces no wraparound solution under these bounds. This is a finite coefficient-grid model, not arbitrary rational circuits.
+
+An initial 120-second attempt returned unknown/timeout; the wrapper then requested an unavailable model and exited. After fixing conditional model extraction, the reproducible 30-second run again returned unknown/timeout. Neither is a lower bound. A pinned 16-operation staged positive control returns SAT and its emitted circuit is independently verified. No UNSAT proof or shorter SAT witness was obtained.
+
+## Published cancellation controls and hidden scaling costs
+
+Alman and Rao's published Algorithm 5 combines an H8 block with 22 additions and one halving when seven inputs arrive doubled. Applying that literal kernel to ordinary inputs adds seven doublings, giving 30 standalone operations versus the ordinary 24. The paper also describes a 29-operation unscaled variant. Its asymptotic improvement relies on recursively carrying scaling states; a 23-operation kernel is not a standalone 23-operation H8 transform. [1]
+
+The bundle verifies the literal 30-operation Algorithm 5 circuit exactly. It also verifies the familiar H4 common-sum identity using seven additions and three doublings, total ten, versus the ordinary eight additions. These controls are prior-art reproductions and cost checks. They do not contradict the earlier cancellation-free lower bound because they use cancellation and scaling.
+
+The narrow template's H4 and H8 minima are 11 and 37 respectively. Those are not best-known transform costs. The broader heuristic recovers the ordinary eight-addition H4 circuit and a genuinely cancelling nine-operation example, showing the verifier does distinguish an actual cancelling DAG from a cancellation-capable search space.
+
+## Verification and remaining interfaces
+
+The independent verifier imports neither search implementation. It reconstructs the synthetic transform separately, replays every emitted instruction using rational coefficient vectors, checks output order/signs/normalization, counts gate types and reads/writes, and records intermediate magnitude and denominator bounds. It independently recomputes all three narrow-template histograms. Deliberately corrupted sign, output and forward-reference certificates must be rejected.
+
+These certificates prove exact linear identities for arbitrary rational inputs, hence the corresponding real/complex identities. They do not prove bit-for-bit equality when truncation is inserted at each original round boundary. The earlier rounded counterexample continues to apply. Dyadic operations here are exact, not integer rounding or a promise about floating-point stability.
+
+The new circuits are ordinary out-of-place arithmetic DAGs. Dirty scratch restoration, all-role endpoint identities, projector/frame assignments, recursive child-rank histograms, fixed-tape layout and precision propagation are not supplied for them. The source weighted recurrence test is therefore not defined for these candidates. The previous verified baseline dirty lift remains unchanged; this pass does not claim a faster replacement.
+
+## Reproduce
+
+Python 3.11+ and the standard library suffice for enumeration, controls and verification. The optional SMT attempt uses the installed Z3 shared library libz3.so.4 through its public C API; it performs no package installation. Wall-clock times vary. Exact integer/rational search results and emitted circuit identities are deterministic.
+
+Run from this directory:
+
+    python3 anchor_search.py
+    python3 heuristic_search.py
+    python3 controls.py
+    python3 audit_verify.py
+    python3 smt_search.py --gates 15 --timeout-ms 30000
+    python3 verify_smt_control.py
+
+The first three commands regenerate certificates and search summaries. The fourth independently checks them. The last two are optional solver checks; their status may vary with runtime and solver version. An SMT SAT model would still need decoding and independent replay before use. The finite search and verification are not a proof-assistant formalization.
+
+## Sources
+
+[1] Josh Alman and Kevin Rao, Faster Walsh-Hadamard and Discrete Fourier Transforms From Matrix Non-Rigidity, arXiv:2211.06459v2, Sections 2.2 and 6. Their algorithms and scaling mechanism are prior work.
+https://arxiv.org/html/2211.06459v2#S2.SS2
+https://arxiv.org/html/2211.06459v2#S6
+
+[2] OpenAI, pinned synthetic-transform specification, commit adc7f1241b42e322a6451854ab7e4b4c146bf78a, section 06-transforms.tex. Target inherited from the preceding exact experiment and reconstructed independently here.
+https://github.com/openai/math/blob/adc7f1241b42e322a6451854ab7e4b4c146bf78a/preprints/Integer-multiplication-below-n-log-n-September-23-2026/build/sections/06-transforms.tex
+
+[3] CrocSwap, weighted pair-assembly certificate and scope, pinned commit 56b66d58297deca1d7dd130247d720e960f77a37. This provides the downstream recurrence obligations, not a result verified in this pass.
+https://github.com/CrocSwap/integer-mult-bounds/blob/56b66d58297deca1d7dd130247d720e960f77a37/research/pair-assembly/verify.py

@@ -1,0 +1,97 @@
+0001 #!/usr/bin/env python3
+0002 """New exact modular Jacobian controls for the four-stage R-G-R image."""
+0003 import json,pathlib,random
+0004 ROOT=pathlib.Path(__file__).resolve().parent;P=1009;rng=random.Random(109092259)
+0005 def mm(a,b):
+0006  bt=list(zip(*b));return [[sum(x*y for x,y in zip(row,col))%P for col in bt] for row in a]
+0007 def identity(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+0008 def pm(q):return [[int(i==q[j]) for j in range(len(q))] for i in range(len(q))]
+0009 def rank(a):
+0010  a=[row[:] for row in a];rr=0
+0011  for j in range(len(a[0])):
+0012   k=next((i for i in range(rr,len(a)) if a[i][j]%P),None)
+0013   if k is None:continue
+0014   a[rr],a[k]=a[k],a[rr];iv=pow(a[rr][j],-1,P);a[rr]=[x*iv%P for x in a[rr]]
+0015   for i in range(rr+1,len(a)):
+0016    z=a[i][j]
+0017    if z:a[i]=[(x-z*y)%P for x,y in zip(a[i],a[rr])]
+0018   rr+=1
+0019   if rr==len(a):break
+0020  return rr
+0021 def minor_certificate(matrix):
+0022  a=[row[:] for row in matrix];rows=list(range(len(a)));selected=[];cols=[];rr=0
+0023  for j in range(len(a[0])):
+0024   k=next((i for i in range(rr,len(a)) if a[i][j]%P),None)
+0025   if k is None:continue
+0026   a[rr],a[k]=a[k],a[rr];rows[rr],rows[k]=rows[k],rows[rr]
+0027   selected.append(rows[rr]);cols.append(j)
+0028   iv=pow(a[rr][j],-1,P);a[rr]=[x*iv%P for x in a[rr]]
+0029   for i in range(rr+1,len(a)):
+0030    z=a[i][j]
+0031    if z:a[i]=[(x-z*y)%P for x,y in zip(a[i],a[rr])]
+0032   rr+=1
+0033   if rr==len(a):break
+0034  b=[[matrix[i][j] for j in cols] for i in selected];det=1
+0035  for j in range(rr):
+0036   k=next(i for i in range(j,rr) if b[i][j]%P)
+0037   if k!=j:b[j],b[k]=b[k],b[j];det=-det
+0038   pivot=b[j][j];det=det*pivot%P;iv=pow(pivot,-1,P)
+0039   for i in range(j+1,rr):
+0040    z=b[i][j]*iv%P
+0041    if z:b[i]=[(x-z*y)%P for x,y in zip(b[i],b[j])]
+0042  assert det%P
+0043  return {'rows_in_order':selected,'columns_in_order':cols,'determinant_mod_1009':det%P}
+0044 def stage(n):
+0045  d,a,b,g,h=[[rng.randrange(1,P) for _ in range(n)] for _ in range(5)]
+0046  s=[[d[i] if i==j else(a[i]*b[j]%P if i>j else g[i]*h[j]%P) for j in range(n)] for i in range(n)]
+0047  deriv=[]
+0048  for i in range(n):
+0049   z=[[0]*n for _ in range(n)];z[i][i]=1;deriv.append(z)
+0050  for i in range(1,n):
+0051   z=[[0]*n for _ in range(n)]
+0052   for j in range(i):z[i][j]=b[j]
+0053   deriv.append(z)
+0054  for j in range(n-1):
+0055   z=[[0]*n for _ in range(n)]
+0056   for i in range(j+1,n):z[i][j]=a[i]
+0057   deriv.append(z)
+0058  for i in range(n-1):
+0059   z=[[0]*n for _ in range(n)]
+0060   for j in range(i+1,n):z[i][j]=h[j]
+0061   deriv.append(z)
+0062  for j in range(1,n):
+0063   z=[[0]*n for _ in range(n)]
+0064   for i in range(j):z[i][j]=g[i]
+0065   deriv.append(z)
+0066  assert len(deriv)==5*n-4
+0067  return s,deriv
+0068 
+0069 out=[]
+0070 for m in [2,3,4]:
+0071  n=1<<m;r=pm([int(format(i,f'0{m}b')[::-1],2) for i in range(n)]);g=pm([i^(i>>1) for i in range(n)]);perms=[r,g,r]
+0072  for trial in range(2):
+0073   while True:
+0074    data=[stage(n) for _ in range(4)];s=[x[0] for x in data]
+0075    if all(rank(x)==n for x in s):break
+0076   left=[None]*4;right=[None]*4;left[3]=identity(n);right[0]=identity(n)
+0077   for i in range(1,4):right[i]=mm(mm(perms[i-1],s[i-1]),right[i-1])
+0078   for i in range(2,-1,-1):left[i]=mm(mm(left[i+1],s[i+1]),perms[i])
+0079   cols=[]
+0080   for i in range(4):
+0081    for ds in data[i][1]:cols.append(sum(mm(mm(left[i],ds),right[i]),[]))
+0082   jac=list(map(list,zip(*cols)));actual=rank(jac);bound=min(n*n,17*n-26)
+0083   assert actual<=bound
+0084   # Exact gauge tangent cancellation at all three interfaces.
+0085   gauges=0
+0086   for i in range(3):
+0087    for j in range(n):
+0088     d=[[0]*n for _ in range(n)];d[j][j]=1
+0089     di=mm(d,s[i]);dj=mm(mm(mm(s[i+1],perms[i]),d),list(map(list,zip(*perms[i]))))
+0090     a=mm(mm(left[i],di),right[i]);b=mm(mm(left[i+1],dj),right[i+1])
+0091     assert a==b;gauges+=1
+0092   cert=minor_certificate(jac) if n==16 else None
+0093   if cert:assert len(cert['rows_in_order'])==246
+0094   out.append({'N':n,'trial':trial,'raw_separated_chart_variables':len(cols),'target_entries':n*n,
+0095    'exact_modular_jacobian_rank':actual,'dimension_bound_including_middle_GL2_gauge':bound,'gauge_tangent_cancellations':gauges,'nonzero_minor_certificate':cert})
+0096 res={'field':P,'reproducibility_seed':109092259,'integer_parameter_range':[1,1008],'cases':out,'uploaded_code_executed':False,'interpretation':'Generic parameter-image controls only; these random targets are not Fourier compatibility solutions.'}
+0097 (ROOT/'JACOBIAN_RESULTS.json').write_text(json.dumps(res,indent=2)+'\n');print(json.dumps(res,indent=2))

@@ -1,0 +1,458 @@
+   1 """Input-independent FFT arithmetic DAG and finite-field WHT tabulation research.
+   2 
+   3 Complex-FFT part is a symbolic, reusable, static circuit implementing classic
+   4 radix-2 and split-radix DFTs.  It does NOT achieve sub-O(N log N).
+   5 
+   6 Finite-field part is an independently correct tabulated Walsh-Hadamard transform
+   7 with reusable tables compiled using smaller precomputed tables, following the
+   8 algorithmic principle of Josh Alman's 2023 work. It is a DIFFERENT transform.
+   9 
+  10 All accounting uses an explicitly stated RAM/arithmetic model. This is
+  11 research/proof education code, not a faster production FFT implementation.
+  12 """
+  13 from __future__ import annotations
+  14 
+  15 from dataclasses import dataclass
+  16 from functools import lru_cache
+  17 import cmath
+  18 import math
+  19 import sys
+  20 import time
+  21 from typing import Sequence
+  22 
+  23 
+  24 def _is_power_two(n: int) -> bool:
+  25     return n > 0 and (n & (n - 1)) == 0
+  26 
+  27 
+  28 @dataclass(frozen=True, slots=True)
+  29 class Instruction:
+  30     op: str
+  31     a: int
+  32     b: int = -1
+  33     constant: complex = 0j
+  34 
+  35 
+  36 class FFTGraph:
+  37     """Static arithmetic DAG for any complex-valued input of length N=2^L.
+  38 
+  39     Nodes 0..N-1 are input reads; higher nodes are operations.  Equivalent
+  40     expressions are interned by stable symbolic keys, not by input values.
+  41     Twiddle factors are computed once at compile time and kept with nodes.
+  42     Compilation and execution take O(N log N) time, independent of input data.
+  43     """
+  44 
+  45     def __init__(self, n: int, method: str = "split_radix") -> None:
+  46         if not _is_power_two(n):
+  47             raise ValueError("FFT length must be a positive power of two")
+  48         if method not in ("radix2", "split_radix"):
+  49             raise ValueError("method must be 'radix2' or 'split_radix'")
+  50         self.n = n
+  51         self.method = method
+  52         self.instructions: list[Instruction] = []
+  53         self._interned: dict[tuple, int] = {}
+  54         self._twiddle_cache: dict[tuple[int, int], complex] = {}
+  55         self._attempted_nodes = 0
+  56         self.compile_seconds = 0.0
+  57         t0 = time.perf_counter()
+  58         indices = tuple(range(n))
+  59         if method == "radix2":
+  60             self.outputs = tuple(self._build_radix2(indices))
+  61         else:
+  62             self.outputs = tuple(self._build_split_radix(indices))
+  63         self.compile_seconds = time.perf_counter() - t0
+  64 
+  65     def _new(self, op: str, a: int, b: int = -1,
+  66              constant: complex = 0j, key: tuple | None = None) -> int:
+  67         if key is None:
+  68             key = (op, a, b)
+  69         self._attempted_nodes += 1
+  70         result = self._interned.get(key)
+  71         if result is not None:
+  72             return result
+  73         result = self.n + len(self.instructions)
+  74         self.instructions.append(Instruction(op, a, b, constant))
+  75         self._interned[key] = result
+  76         return result
+  77 
+  78     def _add(self, a: int, b: int) -> int:
+  79         # Exploit universal commutativity of complex addition.
+  80         return self._new("add", a, b, key=("add", min(a, b), max(a, b)))
+  81 
+  82     def _sub(self, a: int, b: int) -> int:
+  83         return self._new("sub", a, b)
+  84 
+  85     def _rotate(self, node: int, n: int, exponent: int) -> int:
+  86         e = exponent % n
+  87         if e == 0:
+  88             return node
+  89         # +/-1 and +/-i need only sign changes/exchanges, not a generic
+  90         # complex multiply. Their work is still counted as an instruction.
+  91         if 4 * e == n:
+  92             return self._new("neg_i", node)
+  93         if 2 * e == n:
+  94             return self._new("neg", node)
+  95         if 4 * e == 3 * n:
+  96             return self._new("pos_i", node)
+  97         factor = self._twiddle_cache.get((n, e))
+  98         if factor is None:
+  99             factor = cmath.exp(-2j * math.pi * e / n)
+ 100             self._twiddle_cache[(n, e)] = factor
+ 101         return self._new("mul", node, constant=factor, key=("mul", node, n, e))
+ 102 
+ 103     def _build_radix2(self, idx: tuple[int, ...]) -> list[int]:
+ 104         n = len(idx)
+ 105         if n == 1:
+ 106             return [idx[0]]
+ 107         even = self._build_radix2(idx[::2])
+ 108         odd = self._build_radix2(idx[1::2])
+ 109         result = [0] * n
+ 110         for k in range(n // 2):
+ 111             t = self._rotate(odd[k], n, k)
+ 112             result[k] = self._add(even[k], t)
+ 113             result[k + n // 2] = self._sub(even[k], t)
+ 114         return result
+ 115 
+ 116     def _build_split_radix(self, idx: tuple[int, ...]) -> list[int]:
+ 117         n = len(idx)
+ 118         if n == 1:
+ 119             return [idx[0]]
+ 120         if n == 2:
+ 121             return [self._add(idx[0], idx[1]),
+ 122                     self._sub(idx[0], idx[1])]
+ 123         even = self._build_split_radix(idx[::2])
+ 124         odd1 = self._build_split_radix(idx[1::4])
+ 125         odd3 = self._build_split_radix(idx[3::4])
+ 126         q = n // 4
+ 127         result = [0] * n
+ 128         for k in range(q):
+ 129             u = self._rotate(odd1[k], n, k)
+ 130             v = self._rotate(odd3[k], n, 3 * k)
+ 131             summed = self._add(u, v)
+ 132             difference = self._sub(u, v)
+ 133             # X[k+N/4] = E[k+N/4] - i*(u-v).
+ 134             minus_i_difference = self._new("neg_i", difference)
+ 135             result[k] = self._add(even[k], summed)
+ 136             result[k + 2 * q] = self._sub(even[k], summed)
+ 137             result[k + q] = self._add(even[k + q], minus_i_difference)
+ 138             result[k + 3 * q] = self._sub(even[k + q], minus_i_difference)
+ 139         return result
+ 140 
+ 141     def execute(self, a: Sequence[complex]) -> list[complex]:
+ 142         if len(a) != self.n:
+ 143             raise ValueError(f"expected {self.n} coefficients")
+ 144         values = [complex(v) for v in a]
+ 145         for ins in self.instructions:
+ 146             x = values[ins.a]
+ 147             if ins.op == "add":
+ 148                 result = x + values[ins.b]
+ 149             elif ins.op == "sub":
+ 150                 result = x - values[ins.b]
+ 151             elif ins.op == "mul":
+ 152                 result = x * ins.constant
+ 153             elif ins.op == "neg_i":
+ 154                 # x=(a+bi) -> b-ai, no general complex multiplication
+ 155                 result = complex(x.imag, -x.real)
+ 156             elif ins.op == "pos_i":
+ 157                 result = complex(-x.imag, x.real)
+ 158             elif ins.op == "neg":
+ 159                 result = -x
+ 160             else:
+ 161                 raise RuntimeError(f"unknown op {ins.op}")
+ 162             values.append(result)
+ 163         return [values[j] for j in self.outputs]
+ 164 
+ 165     def execute_two_real(self, a: Sequence[float], b: Sequence[float]
+ 166                          ) -> tuple[list[complex],list[complex]]:
+ 167         """Two arbitrary *real* transforms in one compiled complex FFT.
+ 168 
+ 169         The packing identity is classic, not a new algorithm. Each recovered
+ 170         length-N output is explicitly materialized in O(N) work.
+ 171         """
+ 172         if len(a) != self.n or len(b) != self.n:
+ 173             raise ValueError(f"both arrays must have length {self.n}")
+ 174         z = [complex(x, y) for x,y in zip(a,b)]
+ 175         Z = self.execute(z)
+ 176         A=[]
+ 177         B=[]
+ 178         for k in range(self.n):
+ 179             u = Z[k]
+ 180             v = Z[(-k) % self.n].conjugate()
+ 181             A.append((u+v)/2)
+ 182             B.append((u-v)/(2j))
+ 183         return A,B
+ 184 
+ 185     def stats(self) -> dict[str, int | float | str]:
+ 186         op_types: dict[str, int] = {}
+ 187         for ins in self.instructions:
+ 188             op_types[ins.op] = op_types.get(ins.op, 0) + 1
+ 189         fanout = [0] * (self.n + len(self.instructions))
+ 190         for ins in self.instructions:
+ 191             fanout[ins.a] += 1
+ 192             if ins.op in ("add", "sub"):
+ 193                 fanout[ins.b] += 1
+ 194         for i in self.outputs:
+ 195             fanout[i] += 1
+ 196         # A rough Python-object footprint (not full RSS or all allocator overhead).
+ 197         footprint = (sys.getsizeof(self.instructions) +
+ 198                      sum(sys.getsizeof(x) for x in self.instructions) +
+ 199                      sys.getsizeof(self._interned) +
+ 200                      sys.getsizeof(self.outputs) +
+ 201                      sys.getsizeof(self._twiddle_cache))
+ 202         return {
+ 203             "n": self.n,
+ 204             "method": self.method,
+ 205             "nodes": len(self.instructions) + self.n,
+ 206             "internal_nodes": len(self.instructions),
+ 207             "duplicate_symbolic_operations_eliminated":self._attempted_nodes-len(self.instructions),
+ 208             "complex_add_sub": op_types.get("add", 0) + op_types.get("sub", 0),
+ 209             "nontrivial_complex_multiplies": op_types.get("mul", 0),
+ 210             "trivial_rotations": sum(op_types.get(op, 0) for op in ("neg_i", "pos_i", "neg")),
+ 211             "shared_nodes_fanout_gt1": sum(f > 1 for f in fanout),
+ 212             "twiddle_constants": len(self._twiddle_cache),
+ 213             "compile_seconds": self.compile_seconds,
+ 214             "approx_plan_bytes": footprint,
+ 215         }
+ 216 
+ 217 
+ 218 class CompactSplitRadix:
+ 219     """Implicit, static split-radix computation graph with O(N) twiddle storage.
+ 220 
+ 221     The recursive *template* is constant size.  Twiddle tables for all sizes
+ 222     4,8,...,N together use O(N) stored complex constants; no O(N log N)-node
+ 223     expanded DAG is materialized.  Online execution is still O(N log N).
+ 224     """
+ 225     def __init__(self, n: int) -> None:
+ 226         if not _is_power_two(n):
+ 227             raise ValueError("n must be a positive power of two")
+ 228         self.n = n
+ 229         self.twiddles: dict[int, tuple[tuple[complex,complex],...]] = {}
+ 230         start = time.perf_counter()
+ 231         size = 4
+ 232         while size <= n:
+ 233             self.twiddles[size] = tuple((
+ 234                 cmath.exp(-2j * math.pi * k / size),
+ 235                 cmath.exp(-2j * math.pi * 3*k / size),
+ 236             ) for k in range(size//4))
+ 237             size *= 2
+ 238         self.compile_seconds = time.perf_counter()-start
+ 239 
+ 240     def execute(self, a: Sequence[complex]) -> list[complex]:
+ 241         if len(a) != self.n:
+ 242             raise ValueError(f"expected {self.n} values")
+ 243         def compute(sub: Sequence[complex]) -> list[complex]:
+ 244             m = len(sub)
+ 245             if m == 1:
+ 246                 return [complex(sub[0])]
+ 247             if m == 2:
+ 248                 u,v = complex(sub[0]),complex(sub[1])
+ 249                 return [u+v,u-v]
+ 250             e = compute(sub[::2])
+ 251             o1 = compute(sub[1::4])
+ 252             o3 = compute(sub[3::4])
+ 253             q = m//4
+ 254             out = [0j]*m
+ 255             for k,(w1,w3) in enumerate(self.twiddles[m]):
+ 256                 if k == 0:
+ 257                     u,v = o1[k],o3[k]
+ 258                 else:
+ 259                     u,v = w1*o1[k],w3*o3[k]
+ 260                 plus = u+v
+ 261                 minus = u-v
+ 262                 minus_i = complex(minus.imag,-minus.real)
+ 263                 out[k] = e[k]+plus
+ 264                 out[k+2*q] = e[k]-plus
+ 265                 out[k+q] = e[k+q]+minus_i
+ 266                 out[k+3*q] = e[k+q]-minus_i
+ 267             return out
+ 268         return compute(a)
+ 269 
+ 270     def stats(self) -> dict[str, float | int]:
+ 271         twiddle_pairs = sum(len(v) for v in self.twiddles.values())
+ 272         return {
+ 273             "n":self.n,
+ 274             "twiddle_pairs":twiddle_pairs,
+ 275             "twiddle_complex_values":2*twiddle_pairs,
+ 276             "compile_seconds":self.compile_seconds,
+ 277             "approx_python_twiddle_bytes":(
+ 278                 sys.getsizeof(self.twiddles) +
+ 279                 sum(sys.getsizeof(table) + sum(sys.getsizeof(pair) +
+ 280                     sys.getsizeof(pair[0])+sys.getsizeof(pair[1]) for pair in table)
+ 281                     for table in self.twiddles.values())
+ 282             ),
+ 283             "nontrivial_complex_multiplies":count_nontrivial_twiddles(self.n,"split_radix"),
+ 284             "complex_add_sub":self.n*(self.n.bit_length()-1),
+ 285         }
+ 286 
+ 287 
+ 288 def count_nontrivial_twiddles(n: int, method: str = "split_radix") -> int:
+ 289     """Proven recurrence of the graph's generic complex multiplication count.
+ 290 
+ 291     A radix-2 stage has n/2-2 nontrivial multipliers (0 and n/4 are
+ 292     trivial) for n>=4. A split-radix stage has two per k except k=0.
+ 293     """
+ 294     if not _is_power_two(n):
+ 295         raise ValueError("n must be a power of two")
+ 296     if method not in ("radix2", "split_radix"):
+ 297         raise ValueError("unknown method")
+ 298     @lru_cache(None)
+ 299     def count(m: int) -> int:
+ 300         if m <= 2:
+ 301             return 0
+ 302         own = m // 2 - 2
+ 303         if method == "radix2":
+ 304             return 2 * count(m // 2) + own
+ 305         return count(m // 2) + 2 * count(m // 4) + own
+ 306     return count(n)
+ 307 
+ 308 
+ 309 def fwht_mod(values: Sequence[int], p: int = 3) -> list[int]:
+ 310     """Standard in-place butterfly Walsh-Hadamard transform modulo odd p."""
+ 311     n = len(values)
+ 312     if not _is_power_two(n) or p < 3 or p % 2 == 0:
+ 313         raise ValueError("n must be power of two; p must be odd >=3")
+ 314     out = [int(v) % p for v in values]
+ 315     half = 1
+ 316     while half < n:
+ 317         width = half * 2
+ 318         for start in range(0, n, width):
+ 319             for j in range(half):
+ 320                 a, b = out[start+j], out[start+j+half]
+ 321                 out[start+j] = (a+b) % p
+ 322                 out[start+j+half] = (a-b) % p
+ 323         half *= 2
+ 324     return out
+ 325 
+ 326 
+ 327 class SharedLookupTable:
+ 328     """Uniform table across ALL possible block inputs; input-independent build.
+ 329 
+ 330     b=2^t, entries=p^b; using smaller tables reduces compilation work to
+ 331     Theta(b*p^b) modular additions at the largest size (versus naive
+ 332     Theta(b log b*p^b) computing each table entry independently).
+ 333     """
+ 334     def __init__(self, p: int = 3, max_entries: int = 250_000) -> None:
+ 335         if p < 3 or p % 2 == 0:
+ 336             raise ValueError("p must be odd >= 3")
+ 337         self.p = p
+ 338         self.max_entries = max_entries
+ 339         self.tables: dict[int, list[tuple[int,...]]] = {1: [(i,) for i in range(p)]}
+ 340         self.modular_add_sub_build = 0
+ 341         self.build_seconds = 0.0
+ 342 
+ 343     def ensure(self, b: int) -> list[tuple[int,...]]:
+ 344         if not _is_power_two(b):
+ 345             raise ValueError("block length must be a power of two")
+ 346         if b in self.tables:
+ 347             return self.tables[b]
+ 348         if self.p ** b > self.max_entries:
+ 349             raise ValueError(f"table too large: {self.p}^{b} entries; adjust max_entries deliberately")
+ 350         prev = self.ensure(b//2)
+ 351         p = self.p
+ 352         table: list[tuple[int,...]] = []
+ 353         t0 = time.perf_counter()
+ 354         for code in range(p**b):
+ 355             code_copy = code
+ 356             even_code = 0
+ 357             odd_code = 0
+ 358             place = 1
+ 359             # Convert base-p digits into child subproblem IDs.
+ 360             for _ in range(b//2):
+ 361                 even_code += (code_copy % p) * place
+ 362                 code_copy //= p
+ 363                 odd_code += (code_copy % p) * place
+ 364                 code_copy //= p
+ 365                 place *= p
+ 366             even, odd = prev[even_code], prev[odd_code]
+ 367             output = [0] * b
+ 368             for k in range(b//2):
+ 369                 output[2*k] = (even[k] + odd[k]) % p
+ 370                 output[2*k+1] = (even[k] - odd[k]) % p
+ 371             table.append(tuple(output))
+ 372         self.tables[b] = table
+ 373         self.modular_add_sub_build += b*(p**b)
+ 374         self.build_seconds += time.perf_counter() - t0
+ 375         return table
+ 376 
+ 377     def stats(self) -> dict[str, int | float]:
+ 378         return {
+ 379             "p": self.p,
+ 380             "largest_block": max(self.tables),
+ 381             "total_table_entries": sum(len(t) for t in self.tables.values()),
+ 382             "total_stored_field_elements": sum(b*len(t) for b,t in self.tables.items()),
+ 383             "build_modular_add_sub": self.modular_add_sub_build,
+ 384             "build_seconds": self.build_seconds,
+ 385             "approx_python_table_bytes": sum(
+ 386                 sys.getsizeof(tab) + sum(sys.getsizeof(row) for row in tab)
+ 387                 for tab in self.tables.values()),
+ 388         }
+ 389 
+ 390 
+ 391 def tabulated_fwht_mod(values: Sequence[int], p: int = 3,
+ 392                        block: int = 8,
+ 393                        cache: SharedLookupTable | None = None
+ 394                        ) -> tuple[list[int], dict[str, int]]:
+ 395     """Exact Walsh-Hadamard transform with grouped bit-axis lookup passes.
+ 396 
+ 397     No assumption about input repetition. Each compiled table represents all
+ 398     p^b possible block values. The online passes take O(N*ceil(log N/log b))
+ 399     word-RAM operations, assuming constant-time indexed accesses and
+ 400     constant-size field arithmetic. Table preprocessing is accounted separately.
+ 401     """
+ 402     n = len(values)
+ 403     if not _is_power_two(n) or p < 3 or p % 2 == 0 or not _is_power_two(block):
+ 404         raise ValueError("bad length, modulus or block length")
+ 405     if cache is None:
+ 406         cache = SharedLookupTable(p)
+ 407     if cache.p != p:
+ 408         raise ValueError("cache and modulus differ")
+ 409     out = [int(x) % p for x in values]
+ 410     nbits = n.bit_length()-1
+ 411     blockbits = block.bit_length()-1
+ 412     if blockbits == 0:
+ 413         raise ValueError("block must be >=2")
+ 414     processed = 0
+ 415     lookups = 0
+ 416     passes = 0
+ 417     while processed < nbits:
+ 418         bits = min(blockbits, nbits-processed)
+ 419         b = 1 << bits
+ 420         table = cache.ensure(b)
+ 421         stride = 1 << processed
+ 422         jump = stride * b
+ 423         for base in range(0, n, jump):
+ 424             for low in range(stride):
+ 425                 # The b entries with all nonselected bit coordinates held fixed.
+ 426                 code = 0
+ 427                 power = 1
+ 428                 for t in range(b):
+ 429                     code += out[base + low + t*stride]*power
+ 430                     power *= p
+ 431                 result = table[code]
+ 432                 for t in range(b):
+ 433                     out[base + low + t*stride] = result[t]
+ 434                 lookups += 1
+ 435         processed += bits
+ 436         passes += 1
+ 437     return out, {
+ 438         "n": n,
+ 439         "p": p,
+ 440         "block": block,
+ 441         "passes": passes,
+ 442         "lookups": lookups,
+ 443         "online_field_reads": n*passes,
+ 444         "online_field_writes": n*passes,
+ 445         "baseline_modular_add_sub": n*nbits,
+ 446     }
+ 447 
+ 448 
+ 449 def asymptotic_block_length(n: int, p: int = 3, fraction: float = .25) -> int:
+ 450     """A theoretical b(N)=Theta(log N) whose table remains sublinear in N.
+ 451 
+ 452     For realistic N, the returned block may be 2; this function illustrates
+ 453     an asymptotic family, not an effective practical heuristic.
+ 454     """
+ 455     if not _is_power_two(n) or p < 3 or not (0 < fraction < 1):
+ 456         raise ValueError("invalid arguments")
+ 457     cap = max(2, int(fraction * math.log(n) / math.log(p)))
+ 458     return 1 << (cap.bit_length()-1)

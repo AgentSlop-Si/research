@@ -1,0 +1,312 @@
+===== SOURCE 42 fft_multilevel_quantized_tabulation/benchmark.py SHA256 8b22abcc0b704129a7c7757472d55fd160d554dc9561a77e62fe170eab8e793d =====
+   1 """Reproducible exploratory benchmarks (no claim to outperform SciPy)."""
+   2 import json,time,statistics
+   3 from pathlib import Path
+   4 import numpy as np
+   5 from lookup_fft import normalized_fft_quantized,QuantizedDFTTable
+   6 from sampled_pruned_fft import approximate_normalized_fft
+   7 from cost_model import summary
+   8 
+   9 def run(seed=20261009):
+  10     rng=np.random.default_rng(seed)
+  11     results={'seed':seed,'quantized':[],'sampled':[],'precomputation':[],
+  12              'symbolic_table_model':summary([8,12,20,64,128,256,1024,8192,65536])}
+  13     for K,R in [(2,4),(4,1)]:
+  14         t0=time.perf_counter();tbl=QuantizedDFTTable(K,R,'full');dt=time.perf_counter()-t0
+  15         results['precomputation'].append({'K':K,'R':R,'table_entries':tbl.possible,
+  16                                           'output_values':tbl.possible*K,'seconds':dt,
+  17                                           'dense_numpy_bytes':tbl.complete.nbytes})
+  18     for N in (256,1024,4096):
+  19         x=(rng.normal(size=N)+1j*rng.normal(size=N))
+  20         x=x/np.maximum(1,abs(x))
+  21         ref=np.fft.fft(x)/N
+  22         for t in (1,2,3):
+  23             R=256
+  24             start=time.perf_counter()
+  25             output,stats,tables=normalized_fft_quantized(x,t,R,table_mode='lazy')
+  26             dt=time.perf_counter()-start
+  27             results['quantized'].append({'N':N,'grouped_layers':t,'R':R,
+  28                     'max_abs_error':float(np.max(abs(output-ref))),
+  29                     'safe_error_bound_with_exact_phases':(2*stats.group_count+1)/R,
+  30                     'table_hits':stats.hits,'table_misses':stats.misses,
+  31                     'time_ms':dt*1000,'warning':'lazy misses compute FFT kernels and are NOT O(1) precomputed-table lookups'})
+  32         for eps in (.25,.5):
+  33             start=time.perf_counter()
+  34             approx,s=approximate_normalized_fft(x,epsilon=eps,failure_probability=.01,seed=seed+N)
+  35             dt=time.perf_counter()-start
+  36             results['sampled'].append({'N':N,'epsilon':eps,'sample_count':s['samples'],
+  37                     'unique_samples':s['unique_sample_positions'],
+  38                     'max_abs_error':float(np.max(abs(approx-ref))),
+  39                     'butterfly_slots':s['butterfly_slots'],
+  40                     'ordinary_butterfly_slots':s['standard_butterfly_slots'],
+  41                     'time_ms':dt*1000,'guarantee':'For each fixed |x[j]|<=1, failure <= 0.01 by union Hoeffding'})
+  42     path=Path(__file__).parent/'benchmark_results.json'
+  43     path.write_text(json.dumps(results,indent=2),encoding='utf8')
+  44     for r in results['quantized']:
+  45         if r['N'] in (256,4096) and r['grouped_layers']==2:
+  46             print('QUANT',r['N'],'max err',f"{r['max_abs_error']:.6g}",
+  47                   'hits/misses',r['table_hits'],r['table_misses'],'ms',round(r['time_ms'],2))
+  48     for r in results['sampled']:
+  49         if r['N'] in (256,4096) and r['epsilon']==.5:
+  50             print('SAMPLE',r['N'],'error',f"{r['max_abs_error']:.6g}",
+  51                   'samples',r['sample_count'],'pruned/full slots',r['butterfly_slots'],r['ordinary_butterfly_slots'])
+  52     print('Wrote:',path)
+  53     return results
+  54 if __name__=='__main__':run()
+===== END SOURCE 42; 3085 bytes; 54 lines =====
+===== SOURCE 43 fft_multilevel_quantized_tabulation/cost_model.py SHA256 cc86ee5e82a2021b2be0434c4555b653d72b2503659f7c0e0cc310469ff323db =====
+   1 """Transparent asymptotic and finite-size table cost accounting."""
+   2 from dataclasses import dataclass,asdict
+   3 from math import ceil,log2
+   4 
+   5 @dataclass
+   6 class Accounting:
+   7     log2_N:int
+   8     epsilon:float
+   9     cap_fraction:float
+  10     quantization_R:int
+  11     states_per_component:int
+  12     states_per_complex:int
+  13     grouped_block_K:int
+  14     grouped_levels:int
+  15     passes:int
+  16     full_table_entries:int
+  17     full_table_output_words:int
+  18     normalized_error_bound:float
+  19     log2_table_entries:float
+  20     preprocessing_below_N:bool
+  21 
+  22 
+  23 def model(log2_N:int,epsilon:float=0.05,cap_fraction:float=0.5)->Accounting:
+  24     if log2_N<1 or epsilon<=0 or not (0<cap_fraction<1):
+  25         raise ValueError("invalid log N, error or table exponent fraction")
+  26     # This conservative R depends on L rather than group count so is easier
+  27     # to choose before K, and ensures rounded error O(epsilon).
+  28     R=ceil(8*(log2_N+1)/epsilon)
+  29     q=2*R+1
+  30     max_key_bits=cap_fraction*log2_N
+  31     K=1
+  32     while (2*(2*K))*log2(q)+log2(2*K)<=max_key_bits:
+  33         K*=2
+  34     t=K.bit_length()-1
+  35     groups=ceil(log2_N/t) if t>=1 else log2_N
+  36     table_entries=q**(2*K) if t>=1 else 0
+  37     words=K*table_entries
+  38     bound=(4*groups+1)/R
+  39     return Accounting(log2_N,epsilon,cap_fraction,R,q,q*q,K,t,groups,table_entries,words,bound,
+  40                       (2*K*log2(q)) if t>=1 else 0.0,
+  41                       (t>=1 and 2*K*log2(q)+log2(K)<log2_N))
+  42 
+  43 
+  44 def summary(rows):
+  45     result=[]
+  46     for l in rows:
+  47         r=model(l)
+  48         result.append({
+  49           'log2_N':l,'grid_step':1/r.quantization_R,'bits_per_complex':2*log2(r.states_per_component),
+  50           'grouped_K':r.grouped_block_K,'butterflies_per_lookup':r.grouped_levels,
+  51           'passes':r.passes,'ordinary_stages':l,'ideal_stage_reduction_factor':r.grouped_levels,
+  52           'table_entries_log2':r.log2_table_entries,'table_exponent_N':r.log2_table_entries/l,
+  53           'normalization_error_bound':r.normalized_error_bound})
+  54     return result
+  55 
+  56 if __name__=='__main__':
+  57     import json
+  58     print(json.dumps(summary([8,12,20,64,128,256,1024,8192,65536]),indent=2))
+===== END SOURCE 43; 2074 bytes; 58 lines =====
+===== SOURCE 44 fft_multilevel_quantized_tabulation/exact_group_audit.py SHA256 cb42740acb566ae87fed744ae85d4a6db43c1076b58aef6ae6c994f88b0a326c =====
+   1 """Independent finite-field verification of grouped FFT stage identity.
+   2 
+   3 Modulus 998244353 admits all tested power-of-two roots. Arithmetic is exact
+   4 mod p, so no approximate/floating-point equality enters this audit.
+   5 """
+   6 import random
+   7 P=998244353
+   8 GEN=3
+   9 
+  10 def reverse(i,b):
+  11     o=0
+  12     for _ in range(b): o=(o<<1)|(i&1);i>>=1
+  13     return o
+  14 
+  15 def iterative_stage_group(a,s,t):
+  16     a=list(a); n=len(a); inv2=pow(2,-1,P)
+  17     for h in range(s+1,s+t+1):
+  18         span=1<<h;half=span//2
+  19         root=pow(GEN,(P-1)//span,P)
+  20         for base in range(0,n,span):
+  21             w=1
+  22             for j in range(half):
+  23                 u=a[base+j];v=a[base+j+half]*w%P
+  24                 a[base+j]=(u+v)*inv2%P
+  25                 a[base+j+half]=(u-v)*inv2%P
+  26                 w=w*root%P
+  27     return a
+  28 
+  29 def reused_template_stage_group(a,s,t):
+  30     a=list(a);n=len(a);K=1<<t;J=1<<s;M=J*K
+  31     kroot=pow(GEN,(P-1)//K,P)
+  32     mroot=pow(GEN,(P-1)//M,P)
+  33     kinv=pow(K,-1,P)
+  34     res=a[:]
+  35     for base in range(0,n,M):
+  36         for j in range(J):
+  37             z=[0]*K
+  38             for r in range(K):
+  39                 b=reverse(r,t)
+  40                 z[b]=a[base+j+J*r]*pow(mroot,j*b,P)%P
+  41             for k in range(K):
+  42                 wk=pow(kroot,k,P)
+  43                 power=1;tot=0
+  44                 for v in z:
+  45                     tot=(tot+v*power)%P
+  46                     power=power*wk%P
+  47                 res[base+j+J*k]=tot*kinv%P
+  48     return res
+  49 
+  50 def run():
+  51     rng=random.Random(708)
+  52     cases=0;basis_cases=0
+  53     for L in range(2,9):
+  54         n=1<<L
+  55         for s in range(L):
+  56             for t in range(1,L-s+1):
+  57                 values=[rng.randrange(P) for _ in range(n)]
+  58                 a=iterative_stage_group(values,s,t)
+  59                 b=reused_template_stage_group(values,s,t)
+  60                 assert a==b,('random input',n,s,t)
+  61                 cases+=1
+  62                 if n<=32:
+  63                     for i in range(n):
+  64                         basis=[0]*n;basis[i]=1
+  65                         assert iterative_stage_group(basis,s,t)==reused_template_stage_group(basis,s,t),(n,s,t,i)
+  66                         basis_cases+=1
+  67     print(f'PASS exact finite-field stage group: {cases} random vector configurations')
+  68     print(f'PASS full-input-matrix check: {basis_cases} basis vectors')
+  69     print('Scope: finite-size evidence. General all-length formula follows from the Cooley-Tukey factorization.')
+  70     return cases,basis_cases
+  71 if __name__=='__main__':run()
+===== END SOURCE 44; 2413 bytes; 71 lines =====
+===== SOURCE 45 fft_multilevel_quantized_tabulation/tests/test_sampling.py SHA256 dddb69be58e7f1c27e6cc7fdb55c8e76860d2b3a34eaa0367f9bd6bd927f71b0 =====
+   1 import unittest
+   2 import numpy as np
+   3 from sampled_pruned_fft import sparse_fft, approximate_normalized_fft, sample_count
+   4 
+   5 class SamplingTests(unittest.TestCase):
+   6     def test_pruned_matches_dense_fft_for_random_sparse_vectors(self):
+   7         rng=np.random.default_rng(79)
+   8         for N in [1,2,16,64,256,1024]:
+   9             for k in [0,1,2,4,8,16]:
+  10                 ids=rng.integers(0,N,size=k)
+  11                 vals=rng.uniform(-1,1,k)+1j*rng.uniform(-1,1,k)
+  12                 dense=np.zeros(N,complex)
+  13                 np.add.at(dense,ids,vals)
+  14                 result,stats=sparse_fft(N,ids,vals)
+  15                 self.assertTrue(np.allclose(result,np.fft.fft(dense),atol=3e-11,rtol=0), (N,k))
+  16                 self.assertEqual(len(result),N)
+  17 
+  18     def test_sparse_k_bound(self):
+  19         N=4096
+  20         for k in [1,2,4,16,64,128]:
+  21             ids=np.arange(k)*(N//k)
+  22             a,stats=sparse_fft(N,ids,np.ones(k))
+  23             # Derivation: total slots at active recursion depth <= min(2^d,k) * N/(2^(d+1)).
+  24             bound=N*(1+np.log2(k))/2
+  25             self.assertLessEqual(stats.butterfly_slots,bound+N)
+  26 
+  27     def test_sampling_uniform_accuracy_for_fixed_inputs(self):
+  28         rng=np.random.default_rng(53)
+  29         for N in [1024,4096,16384]:
+  30             signals=[]
+  31             signals.append(np.ones(N,dtype=complex))
+  32             signals.append(np.array([(-1)**i for i in range(N)],dtype=complex))
+  33             signals.append(np.exp(2j*np.pi*7*np.arange(N)/N))
+  34             z=rng.normal(size=N)+1j*rng.normal(size=N)
+  35             signals.append(z/np.maximum(1,abs(z)))
+  36             for i,x in enumerate(signals):
+  37                 epsilon=.4
+  38                 y,stats=approximate_normalized_fft(x,epsilon,0.01,seed=87)
+  39                 true=np.fft.fft(x)/N
+  40                 self.assertLessEqual(float(np.max(abs(y-true))),epsilon,(N,i))
+  41                 self.assertEqual(stats['samples'],sample_count(N,epsilon,.01))
+  42 
+  43     def test_sampling_not_exact(self):
+  44         rng=np.random.default_rng(91)
+  45         x=rng.uniform(-1,1,256).astype(complex)
+  46         y,_=approximate_normalized_fft(x,.5,.02,seed=5)
+  47         self.assertGreater(float(np.max(abs(y-np.fft.fft(x)/256))),1e-6)
+  48 
+  49 if __name__=='__main__':unittest.main()
+===== END SOURCE 45; 2198 bytes; 49 lines =====
+===== SOURCE 46 fft_multilevel_quantized_tabulation/tests/test_tabulation.py SHA256 16a82b4f82c7a79fed1b72a81814e4d25df0c371959649fdcff0bed137e06baf =====
+   1 import unittest
+   2 import numpy as np
+   3 from lookup_fft import (QuantizedDFTTable, normalized_fft_quantized,
+   4                         normal_dit_stages, direct_group_matrix)
+   5 from cost_model import model
+   6 
+   7 class TabulationTests(unittest.TestCase):
+   8     def test_exact_grouping_complex_random_all_positions(self):
+   9         rng=np.random.default_rng(91)
+  10         for L in range(2,9):
+  11             N=2**L
+  12             a=rng.uniform(-.7,.7,N)+1j*rng.uniform(-.7,.7,N)
+  13             for s in range(L):
+  14                 for t in range(1,L-s+1):
+  15                     x=normal_dit_stages(a,s,t)
+  16                     y=direct_group_matrix(a,s,t)
+  17                     self.assertTrue(np.allclose(x,y,rtol=0,atol=3e-12),(L,s,t,np.max(abs(x-y))))
+  18 
+  19     def test_full_table_matches_lazy_and_direct_table(self):
+  20         rng=np.random.default_rng(2)
+  21         for t,R in [(1,4),(2,1)]:
+  22             K=2**t
+  23             f=QuantizedDFTTable(K,R,"full")
+  24             l=QuantizedDFTTable(K,R,"lazy")
+  25             d=QuantizedDFTTable(K,R,"direct")
+  26             for _ in range(90):
+  27                 grid=rng.integers(-R,R+1,(K,2))
+  28                 z=(grid[:,0]+1j*grid[:,1])/R
+  29                 a=f.apply(z);b=l.apply(z);c=d.apply(z)
+  30                 self.assertTrue(np.array_equal(a,b), (t,R,a,b))
+  31                 self.assertTrue(np.array_equal(a,c), (t,R,a,c))
+  32             self.assertEqual(f.stats.misses,0)
+  33 
+  34     def test_table_grouped_normalized_fft(self):
+  35         rng=np.random.default_rng(5)
+  36         for L in [4,6,8,10]:
+  37             N=1<<L
+  38             for name in ["random","constant","impulse","alternating"]:
+  39                 if name=="random":
+  40                     raw=rng.normal(size=N)+1j*rng.normal(size=N)
+  41                     raw=raw/np.maximum(1,abs(raw))
+  42                 elif name=="constant":raw=np.ones(N,dtype=complex)
+  43                 elif name=="impulse":
+  44                     raw=np.zeros(N,dtype=complex);raw[19%N]=1
+  45                 else:raw=np.array([1 if j%2==0 else -1 for j in range(N)],dtype=complex)
+  46                 for t in [1,2,3]:
+  47                     R=256
+  48                     out,stats,_=normalized_fft_quantized(raw,t,R,table_mode="lazy")
+  49                     target=np.fft.fft(raw)/N
+  50                     err=float(np.max(abs(out-target)))
+  51                     conservative=(2*stats.group_count+1)/R
+  52                     self.assertLessEqual(err,conservative+1e-12,(L,t,name,err,conservative))
+  53                     self.assertEqual(stats.processed,sum(N//(2**min(t,L-s)) for s in range(0,L,t)))
+  54 
+  55     def test_one_table_across_many_fft_stage_groups(self):
+  56         raw=np.array([.33*np.sin(j)+.16j*np.cos(j) for j in range(64)])
+  57         out,stats,tables=normalized_fft_quantized(raw,2,1,table_mode="full",max_entries=7000)
+  58         self.assertEqual(set(tables),{4})
+  59         self.assertEqual(stats.group_count,3)
+  60         self.assertEqual(stats.processed,3*64//4)
+  61         self.assertLessEqual(float(np.max(abs(out-np.fft.fft(raw)/64))),1.75)
+  62 
+  63     def test_word_cost_model_growing_block(self):
+  64         e=[model(L) for L in (128,256,1024,8192,65536)]
+  65         self.assertTrue(e[-1].grouped_levels>e[0].grouped_levels)
+  66         self.assertLessEqual(e[-1].log2_table_entries, e[-1].cap_fraction*e[-1].log2_N)
+  67         self.assertTrue(e[-1].preprocessing_below_N)
+  68         self.assertLess(e[-1].normalized_error_bound,.05)
+  69 
+  70 if __name__=='__main__':unittest.main()
+===== END SOURCE 46; 3321 bytes; 70 lines =====

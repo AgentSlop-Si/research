@@ -1,0 +1,114 @@
+"""Five-variable exact necessary condition: eliminate beta,gamma1,gamma2.
+
+All coefficients are exact elements of Z[z]/(z^4+1). The result is
+represented by a small determinant arithmetic circuit rather than
+(expensive) dense expansion. It is a necessary condition on the patch
+where beta's quartic coefficient is nonzero, NOT a proof of infeasibility.
+"""
+from __future__ import annotations
+import json,hashlib,random
+from pathlib import Path
+from exact_upper import build as upper_build
+from exact_minor import make_exact
+from inverse_quartic import poly_eval
+from dual_support import primitive_root
+
+
+def split():
+    Q,A,B,C=make_exact()
+    D,R=upper_build()
+    lines=[]
+    for k in (1,2,5):
+        line=[]
+        for gamma_index in (None,6,7):
+            E=[{}, {}, {}]
+            for mon,coef in R[k].items():
+                has1=(6 in mon);has2=(7 in mon)
+                assert not(has1 and has2) and mon.count(6)<=1 and mon.count(7)<=1
+                j=6 if has1 else 7 if has2 else None
+                if j!=gamma_index:continue
+                d=mon.count(5)
+                assert d<=2
+                base=tuple(i for i in mon if i<5)
+                E[d][base]=coef
+            line.append(E)
+        lines.append(line)
+    return A,B,C,lines
+
+def det3(M,p):
+    a,b,c=M[0];d,e,f=M[1];g,h,i=M[2]
+    return (a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g))%p
+
+def compute_h(x,p,w,coefs):
+    # x = five scalars [t,h0,h1,h2,hl]
+    A,B,C,E=coefs
+    tv=x[0]
+    aa=poly_eval(A,x,p,w);bb=poly_eval(B,x,p,w);cc=poly_eval(C,x,p,w)
+    mm=-(tv*aa+cc)%p
+    MM=[]
+    for line in E:
+        vals=[]
+        for entry in line:
+            e0,e1,e2=[poly_eval(z,x,p,w) for z in entry]
+            vals.append((bb*bb*e0+bb*mm*e1+mm*mm*e2)%p)
+        MM.append(vals)
+    return det3(MM,p),bb,mm,MM
+
+def proof_and_export():
+    coefs=split()
+    A,B,C,EE=coefs
+    assert len(EE)==3 and all(len(line)==3 for line in EE)
+    assert all(len(entry)==3 for line in EE for entry in line)
+    sizes=[[list(map(len,entry)) for entry in line] for line in EE]
+    examples=[]
+    for p in (12289,65537):
+        ww=primitive_root(p,8)
+        for w in (ww,pow(ww,3,p)):
+            rng=random.Random(p*17+w)
+            total=0;nonzero=0
+            for rep in range(30):
+                base=[rng.randrange(1,p) for _ in range(5)]
+                H,b,m,_=compute_h(base,p,w,coefs)
+                if not b:continue
+                # Evaluate the original R linear-gamma matrix at beta=m/b,
+                # and compare to H = b^6 det(R_gamma_coefficients).
+                beta=m*pow(b,-1,p)%p
+                aa,bb,cc,lines=coefs
+                M=[]
+                for row in lines:
+                    entries=[]
+                    for ent in row:
+                        ej=[poly_eval(e,base,p,w) for e in ent]
+                        entries.append((ej[0]+beta*ej[1]+beta*beta*ej[2])%p)
+                    M.append(entries)
+                G=det3(M,p)
+                assert H==G*pow(b,6,p)%p,(H,b,G)
+                total+=1;nonzero+=(H!=0)
+            examples.append(dict(prime=p,primitive_root=w,checked=total,nonzero_H=nonzero))
+    # Certify H not the zero polynomial by a finite-field witness;
+    # if H were the zero Z[z]/(z^4+1) polynomial, every embedding vanishes.
+    witness=[10931,3273,7557,2279,5478]
+    p=12289;w=primitive_root(p,8)
+    H,b,m,_=compute_h(witness,p,w,coefs)
+    assert b==12110 and H==1705*pow(b,6,p)%p and H!=0
+    def rec(poly):return [[list(mon),list(v)] for mon,v in sorted(poly.items(),key=lambda kv:(len(kv[0]),kv[0]))]
+    document=dict(name='Five-parameter spectral compatibility necessary condition',
+        variables=['t','h0','h1','h2','hl'],field='Z[z]/(z^4+1)',
+        lower='Q=t*A(h)+beta*B(h)+C(h)=0; let m=-(t*A+C)',
+        upper='R_k=sum_j(E[k][j][0]+beta*E[k][j][1]+beta^2*E[k][j][2])*gamma_j; gamma_j=(1,gamma1,gamma2)',
+        gate='H=det3( B^2*E0 + B*m*E1 + m^2*E2 ) = B^6 det3(R_gamma_coefficients evaluated at beta=m/B)',
+        claim='On B(h)!=0, exact F8 factorization in the regular separated-generator chart implies H=0. Converse false/unproved.',
+        caveat='B=0 branch and earlier t=0/h0=0/B-corner-zero branches require separate treatment. H=0 does not prove full factorization.',
+        beta_polynomial={'A':rec(A),'B':rec(B),'C':rec(C)},
+        upper_matrix=[[[rec(entry[0]),rec(entry[1]),rec(entry[2])] for entry in line] for line in EE],
+        coefficient_sizes=sizes,
+        degree_upper_bound=36,
+        finite_field_checks=examples,
+        witness={'prime':p,'root':w,'x':witness,'beta_coefficient':b,'m':m,'H_nonzero':H})
+    path=Path(__file__).with_name('five_parameter_circuit.json')
+    path.write_text(json.dumps(document,indent=2)+'\n')
+    print('5var gate circuit sha256:',hashlib.sha256(path.read_bytes()).hexdigest())
+    print('coeff sizes:',sizes,'witness:',document['witness'],'checks:',examples)
+    return document
+
+if __name__=='__main__':proof_and_export()

@@ -1,0 +1,186 @@
+0001 /* Binary-input FFT microbenchmark. All public execution methods are single-threaded.
+0002  * Build: gcc -O3 -march=native -DNDEBUG -fno-math-errno -ffp-contract=fast \
+0003  *        -std=c11 -Wall -Wextra -fPIC -shared leaf_fft.c -lm -o libleaf_fft.so
+0004  * Inputs are uint8_t values in {0,1}. Outputs are unnormalized complex128 DFTs.
+0005  */
+0006 #define _POSIX_C_SOURCE 200809L
+0007 #include <math.h>
+0008 #include <stdint.h>
+0009 #include <stdlib.h>
+0010 #include <string.h>
+0011 #include <time.h>
+0012 
+0013 typedef struct { double r, i; } cx;
+0014 typedef struct {
+0015     size_t n;
+0016     uint32_t *perm;
+0017     cx *twiddle; /* stage m occupies [m/2, m), total n complex slots */
+0018 } plan;
+0019 
+0020 static void *amalloc(size_t bytes) {
+0021     void *p = NULL;
+0022     if (posix_memalign(&p, 64, bytes) != 0) return NULL;
+0023     return p;
+0024 }
+0025 
+0026 plan *fft_plan_create(size_t n) {
+0027     if (n < 16 || (n & (n-1)) || n > UINT32_MAX) return NULL;
+0028     plan *p = calloc(1, sizeof(*p));
+0029     if (!p) return NULL;
+0030     p->n=n; p->perm=amalloc(n*sizeof(uint32_t)); p->twiddle=amalloc(n*sizeof(cx));
+0031     if (!p->perm || !p->twiddle) { free(p->perm); free(p->twiddle); free(p); return NULL; }
+0032     unsigned bits=0; for (size_t q=n;q>1;q>>=1) ++bits;
+0033     for(size_t j=0;j<n;++j) {
+0034         uint32_t v=(uint32_t)j, r=0;
+0035         for(unsigned b=0;b<bits;++b) { r=(r<<1)|(v&1); v>>=1; }
+0036         p->perm[j]=r;
+0037     }
+0038     const double tau=6.283185307179586476925286766559;
+0039     for(size_t m=2;m<=n;m<<=1) {
+0040         for(size_t j=0;j<m/2;++j) {
+0041             double a=-tau*(double)j/(double)m;
+0042             p->twiddle[m/2+j]=(cx){cos(a), sin(a)};
+0043         }
+0044     }
+0045     return p;
+0046 }
+0047 void fft_plan_destroy(plan *p) { if(p) {free(p->perm);free(p->twiddle);free(p);} }
+0048 
+0049 /* Same optimized iterative DIT merge code is used after every leaf type. */
+0050 static void merge_stages(const plan *p, cx *restrict y, size_t first_m) {
+0051     const size_t n=p->n;
+0052     if(first_m==4) {
+0053         for(size_t b=0;b<n;b+=4) {
+0054             cx a=y[b], c=y[b+2], d=y[b+1], e=y[b+3];
+0055             y[b]=(cx){a.r+c.r,a.i+c.i}; y[b+2]=(cx){a.r-c.r,a.i-c.i};
+0056             y[b+1]=(cx){d.r+e.i,d.i-e.r}; y[b+3]=(cx){d.r-e.i,d.i+e.r};
+0057         }
+0058         first_m=8;
+0059     }
+0060     for(size_t m=first_m;m<=n;m<<=1) {
+0061         const size_t h=m/2;
+0062         const cx *restrict w=p->twiddle+h;
+0063         for(size_t b=0;b<n;b+=m) {
+0064             cx *restrict a=y+b, *restrict z=y+b+h;
+0065             for(size_t j=0;j<h;++j) {
+0066                 const double zr=z[j].r, zi=z[j].i;
+0067                 const double tr=zr*w[j].r-zi*w[j].i;
+0068                 const double ti=zr*w[j].i+zi*w[j].r;
+0069                 const double ar=a[j].r, ai=a[j].i;
+0070                 a[j]=(cx){ar+tr,ai+ti}; z[j]=(cx){ar-tr,ai-ti};
+0071             }
+0072         }
+0073     }
+0074 }
+0075 
+0076 /* Inputs below are in the bit-reversed order needed by iterative DIT. */
+0077 static inline void real4(double x0,double x1,double x2,double x3,cx *y) {
+0078     double a=x0+x1,b=x0-x1,c=x2+x3,d=x2-x3;
+0079     y[0]=(cx){a+c,0}; y[1]=(cx){b,-d};
+0080     y[2]=(cx){a-c,0}; y[3]=(cx){b,d};
+0081 }
+0082 static inline void real8(const double *x,cx *y) {
+0083     const double s=0.70710678118654752440084436210485;
+0084     double a=x[0]+x[1],b=x[0]-x[1],c=x[2]+x[3],d=x[2]-x[3];
+0085     double e=x[4]+x[5],f=x[4]-x[5],g=x[6]+x[7],h=x[6]-x[7];
+0086     double er0=a+c,er2=a-c,or0=e+g,or2=e-g;
+0087     double tr=s*(f-h),ti=-s*(f+h);
+0088     y[0]=(cx){er0+or0,0}; y[4]=(cx){er0-or0,0};
+0089     y[1]=(cx){b+tr,-d+ti}; y[5]=(cx){b-tr,-d-ti};
+0090     y[2]=(cx){er2,-or2}; y[6]=(cx){er2,or2};
+0091     y[3]=(cx){b-tr,d+ti}; y[7]=(cx){b+tr,d-ti};
+0092 }
+0093 static inline void real16(const double *x,cx *y) {
+0094     cx e[8], o[8]; real8(x,e); real8(x+8,o);
+0095     static const double wr[8]={1,0.92387953251128675613,0.70710678118654752440,0.38268343236508977173,0,-0.38268343236508977173,-0.70710678118654752440,-0.92387953251128675613};
+0096     static const double wi[8]={0,-0.38268343236508977173,-0.70710678118654752440,-0.92387953251128675613,-1,-0.92387953251128675613,-0.70710678118654752440,-0.38268343236508977173};
+0097     for(unsigned j=0;j<8;++j) {
+0098         double tr=o[j].r*wr[j]-o[j].i*wi[j],ti=o[j].r*wi[j]+o[j].i*wr[j];
+0099         y[j]=(cx){e[j].r+tr,e[j].i+ti}; y[j+8]=(cx){e[j].r-tr,e[j].i-ti};
+0100     }
+0101 }
+0102 
+0103 /* Baseline already fuses the input permutation with arithmetic length-2 leaves. */
+0104 void fft_radix2(const plan *p,const uint8_t *restrict x,cx *restrict y) {
+0105     for(size_t b=0;b<p->n;b+=2) {
+0106         double a=x[p->perm[b]],c=x[p->perm[b+1]];
+0107         y[b]=(cx){a+c,0}; y[b+1]=(cx){a-c,0};
+0108     }
+0109     merge_stages(p,y,4);
+0110 }
+0111 void fft_codelet4(const plan *p,const uint8_t *restrict x,cx *restrict y) {
+0112     for(size_t b=0;b<p->n;b+=4)
+0113         real4(x[p->perm[b]],x[p->perm[b+1]],x[p->perm[b+2]],x[p->perm[b+3]],y+b);
+0114     merge_stages(p,y,8);
+0115 }
+0116 void fft_codelet8(const plan *p,const uint8_t *restrict x,cx *restrict y) {
+0117     for(size_t b=0;b<p->n;b+=8) {
+0118         double v[8]; for(unsigned j=0;j<8;++j) v[j]=x[p->perm[b+j]];
+0119         real8(v,y+b);
+0120     }
+0121     merge_stages(p,y,16);
+0122 }
+0123 void fft_codelet16(const plan *p,const uint8_t *restrict x,cx *restrict y) {
+0124     for(size_t b=0;b<p->n;b+=16) {
+0125         double v[16]; for(unsigned j=0;j<16;++j) v[j]=x[p->perm[b+j]];
+0126         real16(v,y+b);
+0127     }
+0128     merge_stages(p,y,32);
+0129 }
+0130 
+0131 /* Each row stores a complete complex-double spectrum. Key bit j is leaf slot j
+0132  * in global bit-reversed input layout. This is deliberately NOT contiguous
+0133  * natural input order; the permutation preserves the radix-2 decimation. */
+0134 void *fft_table_create(unsigned leaf) {
+0135     if(leaf!=4 && leaf!=8 && leaf!=16) return NULL;
+0136     size_t rows=(size_t)1<<leaf;
+0137     cx *t=amalloc(rows*leaf*sizeof(cx));
+0138     if(!t) return NULL;
+0139     for(size_t k=0;k<rows;++k) {
+0140         double x[16]; for(unsigned j=0;j<leaf;++j) x[j]=(double)((k>>j)&1);
+0141         if(leaf==4) real4(x[0],x[1],x[2],x[3],t+k*leaf);
+0142         else if(leaf==8) real8(x,t+k*leaf);
+0143         else real16(x,t+k*leaf);
+0144     }
+0145     return t;
+0146 }
+0147 void fft_table_destroy(void *t) {free(t);}
+0148 
+0149 #define DEFINE_LOOKUP(L) \
+0150 void fft_lookup##L(const plan *p,const uint8_t *restrict x,cx *restrict y,const cx *restrict t) { \
+0151     for(size_t b=0;b<p->n;b+=L) { \
+0152         unsigned key=0; \
+0153         for(unsigned j=0;j<L;++j) key |= (unsigned)x[p->perm[b+j]]<<j; \
+0154         memcpy(y+b,t+(size_t)key*L,L*sizeof(cx)); \
+0155     } \
+0156     merge_stages(p,y,2*L); \
+0157 }
+0158 DEFINE_LOOKUP(4)
+0159 DEFINE_LOOKUP(8)
+0160 DEFINE_LOOKUP(16)
+0161 
+0162 /* Dispatch is outside per-transform loops. Timed batches include key packing,
+0163  * permutation/gathers, output copies, all merge stages, and C function calls.
+0164  * They exclude plan/table creation, input generation, and buffer allocation. */
+0165 void fft_execute(int method,const plan *p,const uint8_t *x,cx *y,const cx *t) {
+0166     switch(method) {
+0167       case 0: fft_radix2(p,x,y); break;
+0168       case 1: fft_codelet4(p,x,y); break;
+0169       case 2: fft_codelet8(p,x,y); break;
+0170       case 3: fft_codelet16(p,x,y); break;
+0171       case 4: fft_lookup4(p,x,y,t); break;
+0172       case 5: fft_lookup8(p,x,y,t); break;
+0173       case 6: fft_lookup16(p,x,y,t); break;
+0174     }
+0175 }
+0176 static double seconds(void) {
+0177     struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
+0178     return (double)t.tv_sec+1e-9*(double)t.tv_nsec;
+0179 }
+0180 double fft_bench(int method,const plan *p,const uint8_t *pool,unsigned pool_count,cx *y,const cx *t,unsigned repeats) {
+0181     double start=seconds();
+0182     for(unsigned r=0;r<repeats;++r)
+0183         fft_execute(method,p,pool+(size_t)(r%pool_count)*p->n,y,t);
+0184     return (seconds()-start)/(double)repeats;
+0185 }
+0186 /* Microbenchmark gather+compute/copy only, optional diagnostic after full FFT. */

@@ -1,0 +1,143 @@
+# Exact orbit compression for the q-factorial convolution graph
+
+This is a positive, conditional graph rewrite valid for **arbitrary fresh input**.
+A complete orbit of b sequential full-length convolution operators collapses to
+b shorter residue-chain convolutions. It does not evaluate an arbitrary Fourier
+transform faster: the Fourier factorization does not contain the needed operator
+pattern. The negative control records the failure of making that substitution.
+
+## Definition and finite identity
+
+Let N=2^L, let q have exact order N in a field of odd characteristic (or
+characteristic zero), and work modulo z^N. Define
+
+    f_j = product_(r=1..j)(1-q^r),  f_0=1
+    H_q(z) = sum_(j=0..N-1) z^j/f_j.
+
+No displayed denominator vanishes. For a power-of-two b dividing N, put
+m=N/b and xi=q^m. Then
+
+    product_(a=0..b-1) H_q(xi^a z) = H_(q^b)(z^b) modulo z^N.       (1)
+
+The right-side kernel has length m. When m=1 it is exactly 1. This is a finite
+q-exponential norm identity; we do not claim that identity as globally new.
+
+Here is an elementary proof that avoids infinite products at roots of unity.
+Coefficientwise, H_q(qz)=(1-z)H_q(z) modulo z^N. The polynomial
+P(z)=H_q(z)H_q(-z) is even, and
+
+    P(qz)=(1-z^2)P(z) modulo z^N.
+
+Writing P(z)=G(z^2) gives G(q^2 u)=(1-u)G(u) modulo u^(N/2).
+Since G(0)=1, its coefficients are uniquely determined by
+
+    (1-q^(2j)) G_j = G_(j-1),   1 <= j < N/2.
+
+Therefore G=H_(q^2). Repeating this dyadic argument proves (1) for every allowed
+b, including the full-orbit identity product H_q(q^a z)=1 modulo z^N. The proof
+applies over the exact complex cyclotomic field and the finite fields in the audit.
+
+## Concrete compiler rule and its cost
+
+For coefficient vector x, let T(q,a) be multiplication modulo z^N by
+H_q(xi^a z). Its convolution kernel is t_j xi^(aj), where t_j=1/f_j. These
+operators commute because all are polynomials in the same nilpotent shift.
+
+If one graph path consists of the complete set of b such operators applied in
+sequence, with no intervening operator, replace that path by:
+
+1. Gather the b input residue chains x[r], x[r+b], ... of length m.
+2. Apply the *same* length-m kernel H_(q^b) to each chain.
+3. Scatter every result into its original index.
+
+Only one smaller kernel needs preparation. No answer from a past input is needed.
+This works for every vector x. It does not identify b transforms of b independent
+vectors with one product, nor does it discard any output coordinate.
+
+If a length-k fixed-kernel application costs C(k), online work changes from
+b C(N) to b C(N/b)+O(N). Recognizing the prescribed symbolic pattern takes O(b)
+word operations; arbitrary graph equivalence search is not assumed free. The
+implementation charges log2(b) scalar squarings to obtain q^b and all O(N) gather,
+scatter, and output traffic. Indices are O(log N)-bit word indices in this count.
+
+Root-dependent preparation of the smaller kernel costs
+6m-4+log2(m) multiplications, m-1 subtractions, m-1 negations, and one constant
+inversion for 1/2, using the previous audited preparation routine. An implementation
+given the constant 1/2 can omit its inversion. Recognition should occur before
+constructing unused full-size kernels; if those were already constructed, their
+cost must also be counted. No bit-complexity or floating-point stability result
+is asserted.
+
+The preparation formula applies to m>1. For m=1 the collapsed operator is the
+identity: the implementation prepares no kernel and performs no convolution,
+while charging root squarings and the complete output copy.
+
+The reference evaluator intentionally uses direct convolution. The collapsed
+implementation then uses b*m*(m+1)/2 multiplications and b*m*(m-1)/2 additions,
+plus preparation; these counts are checked exactly. They describe the verifier,
+not a faster FFT. With an FFT-based C(k), the conditional rewrite saves work in
+the matched graph, but that graph is a special operator class.
+
+The direct-convolution formula likewise applies to m>1; the m=1 identity path
+performs zero field operations on the input.
+
+For b=2, with J=diag((-1)^j), an equivalent useful pattern is
+
+    T_q J T_q = J block_by_parity(T_(q^2), T_(q^2)).
+
+This follows by conjugating a Toeplitz convolution with J to negate its kernel
+argument. It compresses two matched full-length kernels into two half-length
+kernels and parity/sign traffic.
+
+## What the norm does not solve
+
+For a single transform, writing H_q(z)=A(u)+z B(u), u=z^2, gives
+
+    even output = A E + u B O
+    odd output  = B E + A O
+    A^2-u B^2 = H_(q^2)(u) modulo u^(N/2).
+
+The last identity specifies the determinant of the 2-by-2 block action. It does
+not supply A and B as cheap smaller q-kernel operators. A direct parity split
+still requires general polynomial products; using Karatsuba to combine them does
+not establish a closed recurrence in the family H_(q^2).
+
+Rationalization is also circular:
+
+    H_q(z) = H_(q^2)(z^2) / H_q(-z)
+    1/H_q(-z) = H_(q^(-1))(-q^(-1) z) modulo z^N.
+
+The reciprocal is another **full-length, order-N** kernel, not a smaller call.
+Thus replacing a single T_q application by this identity retains the unresolved
+size-N application and adds two size-N/2 calls.
+
+The previously verified Fourier factorization is
+
+    F_N = S T_q diag(d) T_q^transpose S
+        = S T_q diag(d) R T_q R S,
+
+where S=diag(f), d_j=(-1)^j q^(j(j-1)/2)/f_j, and R reverses coordinates.
+Its middle operator is diag(d)R. It is not the alternating-sign diagonal J.
+Consequently the paired norm rule cannot simply replace the middle two kernels.
+`false_fourier_collapse` makes exactly that illegal substitution, and the audit
+exhibits a basis vector on which it gives wrong Fourier outputs.
+
+## Verification and prior work
+
+Run `python run_audit.py`. Results are in `results/orbit_audit.json`.
+This audit checks the new orbit rule against the explicit sequential graph for
+b=2,4,8, full orbits, complete basis sets over two finite fields, small rational
+cyclotomic cases, mixed inputs, and charged direct operation counts. It does not
+rerun the old factorization suite and label it new progress.
+
+The q-factorial kernel and its Fourier factorization are known prior work:
+Alexey Kuznetsov, *Using q-calculus to study LDL^T factorization of a certain
+Vandermonde matrix*, https://arxiv.org/abs/1507.02959 . The present checkpoint
+isolates the exact graph pattern and its costs; it makes no global novelty claim.
+`fixed_kernel.py` and `prior_exact_arithmetic.py` are copied unchanged from the
+previous fixed-kernel checkpoint so that this experiment is reproducible.
+
+The open research step is to construct a Fourier graph with sufficiently many
+complete orbit paths, or another legal rewrite removing its intervening middle
+operators, while charging construction and full output recovery. No such
+arbitrary-input Fourier construction is claimed here.

@@ -1,0 +1,81 @@
+# Recursive amplification audit
+
+8 October 2026. Scope: exact two-round symbolic synthetic transforms and the pinned OpenAI/CrocSwap recursive framework. This is an audit criterion, not a new asymptotic FFT claim.
+
+## Bottom line
+
+A fixed local improvement can improve an exponent only when it changes a recursively reusable cost profile. Tiling a cheaper fixed two-round FFT block through the ordinary stage schedule changes a constant. A finite framed motif that passes the framework's all-role lifting contract and improves its weighted child profile can change an exponent even though the motif itself never grows.
+
+## 1. Ordinary stage replacement versus recursive substitution
+
+If two ordinary radix-two levels cost `(2c - delta) N`, then
+
+`T(N) = 4 T(N/4) + (2c - delta) N`
+
+still gives `Theta(N log N)` for fixed positive `2c - delta`. The gain does not multiply across levels; the work at those levels is added. A fixed-size base-case improvement also changes only a lower-order or constant contribution.
+
+In the framed circuit construction, the size parameter is instead an address/chunk width `e`, and the cost is divided by current logical stream volume. If a parent has `W` physical roles, each recursive child genuinely occupies `1/W` of its logical volume. Its profile is a finite multiset of proper child widths `t`, with multiplicities `n_t` and fixed ambient dimension `m`. The normalized recurrence is
+
+`F(e) <= (1/W) sum_t n_t F(t floor(e/m)) + H(e)`, with `0 < t < m`.
+
+For a target exponent `s = 1-a`, the strict certificate is
+
+`Psi(a) = sum_t (n_t/W) (t/m)^(1-a) < 1`.
+
+When `H(e) = O(e^(1-a))` and base cases are bounded, this has the inductive upper bound `F(e) = O(e^(1-a))`; the positive margin pays the local overhead. Polylogarithmic overhead at the exact target power needs separate absorption/backoff. Failure of the inequality rejects this certificate at that target; it is not a lower bound on every algorithm.
+
+All recursive calls, copied roles, endpoint transforms, restoration and cleanup must appear in this profile or its separately proved overhead. Arithmetic gate count alone is not `n_t`. In particular, reducing a fixed scalar-gate constant while leaving `m, W, n_t` unchanged does not change this recurrence exponent.
+
+For fixed proper children, `Psi(0) = sum_t n_t t/(mW)`. Hence a strict fully charged rank deficit `sum_t n_t t < mW` implies some positive saving `a` by continuity. A single finite motif plus a valid lifting theorem is enough; an independently invented growing family of local motifs is unnecessary. For a specified numerical saving, the whole histogram matters, not just its first moment. One sufficient conservative choice is `0 < a < min(1, -log(Psi(0))/log(m))` when `0 < Psi(0) < 1`.
+
+Sources: [mixed-width recurrence and row construction](https://github.com/CrocSwap/integer-mult-bounds/blob/56b66d58297deca1d7dd130247d720e960f77a37/notes/batched-bit-rows.tex), [exact rational moment checker](https://github.com/CrocSwap/integer-mult-bounds/blob/56b66d58297deca1d7dd130247d720e960f77a37/research/pair-assembly/verify.py).
+
+## 2. Boundary contract that a candidate must supply
+
+- Give the actual complete input/output state and its order. For a synthetic block this includes all polynomial coefficient positions, record addresses, spectator fields, forward/opposite orientation, normalization, and the used work roles. Define whether the target is an overwrite map, an additive-output shear, or another reversible extension.
+- Check the actual emitted operations on every input and every dirty-workspace basis vector. Used scratch must be restored for arbitrary initial values if invoking the framed-motif theorem. A function computed with fresh zero temporaries is not yet that circuit. Merely appending an identity scratch block is not a physical restoration proof.
+- Attach one common frame to every incidence of a scalar gate. The physical operator must telescope to `D_out S D_in^-1` on every role. If the completed scalar circuit is a signed role permutation, check the endpoint frame operator on each route, including scratch routes, and charge its signs and corrections.
+- Extract every frame transition from the emitted circuit, then compile its actual residual blocks. Rational matrix ranks alone do not justify arbitrary large-block batching: the source's basis, pivot/corner conditions and order matter. One simultaneous fixed basis must support all relevant transitions.
+- Prove closure for every allowed recursive width and shape. Integer remainders must be handled, children must strictly shrink, and their complete spectator ranges and exact `V/W` volume must survive. Supply enough row divisibility, bounded outer padding and a fixed-tape depth-first schedule; do not count parked storage as a free reduction of logical volume.
+
+Sources: [upstream common-frame invariant](https://github.com/openai/math/blob/adc7f1241b42e322a6451854ab7e4b4c146bf78a/preprints/Integer-multiplication-below-n-log-n-September-23-2026/build/sections/03-motifs.tex), [upstream transfer and tape schedule](https://github.com/openai/math/blob/adc7f1241b42e322a6451854ab7e4b4c146bf78a/preprints/Integer-multiplication-below-n-log-n-September-23-2026/build/sections/04-swap.tex), [projector-specific batching obligation](https://github.com/CrocSwap/integer-mult-bounds/blob/56b66d58297deca1d7dd130247d720e960f77a37/notes/projector-batching.tex).
+
+## 3. Coefficients, rounding and routing cannot be implicit
+
+The exact two-round experiment can use rational coefficient vectors because synthetic roots act as signed coefficient permutations and each normalized butterfly has dyadic coefficients. This certifies algebra at that fixed shape. It does not make a growing permutation, arbitrary rational multiplication, coefficient access, or precision free.
+
+For the source layer interface, inputs are disk-valued Gaussian dyadic coefficients on the `2^-p` grid, stored as fixed-width signed component words. The entire layer is exact before one truncation. Physical layout and the retained bit-reversed frequency order are part of the interface. Twiddle powers modulo `y^r+1` are implemented by charged signed list moves.
+
+A fused exact map `L2 L1` generally followed by `Q_p` does not equal the old rounded sequence `Q_p L2 Q_p L1`. Either preserve the old rounded map, or explicitly prove a replacement error and disk bound. For two contractive rounds, exact fusion with one final truncation can admit a simple error bound, but the internal word width, norm growth and global assembly still require accounting.
+
+Guard width uses arithmetic dependency along paths, not volume-averaged runtime. The `1/W` factor cannot be inserted into a coefficient-growth recurrence merely because it appears in the time recurrence. Changes to dependency chains may therefore harm precision even when the time moment improves.
+
+Sources: [normalized layer and dependency guard](https://github.com/openai/math/blob/adc7f1241b42e322a6451854ab7e4b4c146bf78a/preprints/Integer-multiplication-below-n-log-n-September-23-2026/build/sections/05-layers.tex), [synthetic transforms, signed twiddles and layouts](https://github.com/openai/math/blob/adc7f1241b42e322a6451854ab7e4b4c146bf78a/preprints/Integer-multiplication-below-n-log-n-September-23-2026/build/sections/06-transforms.tex).
+
+## 4. What would count as an exponent improvement
+
+After finite algebra and physical-profile checks, certify the moment at a proposed improved bit or complex saving using exact rational enclosures. Recompute the semantic coefficient guard, routing, row stock, stopping-leaf and reservation bounds, then the final integer-multiplication assembly inequalities. A better complex-network exponent can be hidden by the bit/routing or another assembly bottleneck. A local scalar arithmetic gain may improve guard constants or practical cost without changing any exponent. The current assembly explicitly checks 47 strict conditions and seven final margins.
+
+For a circuit with multiple boundary modes, do not silently reuse a one-type recurrence. A finite closed mode system has a nonnegative matrix `K_s`, whose `(i,j)` entry sums `volume_fraction * width_ratio^s` over children from mode `i` to `j`. A positive vector `v` with `K_s v < v` supplies the same strict induction; for a finite system this is equivalent to spectral radius below one. This is an accounting generalization, not a claim that the proposed experiment supplies such modes.
+
+Source: [balanced assembly checks](https://github.com/CrocSwap/integer-mult-bounds/blob/56b66d58297deca1d7dd130247d720e960f77a37/research/pair-assembly/balanced_assembly.py).
+
+## 5. Immediate acceptance and failure tests
+
+Accept a local candidate only at the strongest level actually checked: (1) exact functional map; (2) actual full-state implementation; (3) valid finite frames and complete child profile; (4) all-size lifting and numerical/physical interface; (5) strict improved recurrence and final assembly. These are different achievements.
+
+Reject or downgrade on any mismatched output, dirty-state leakage, omitted copy/cleanup/endpoint, shape-specific twiddle shortcut, growing/free coefficient or dispatch table, uncharged movement, incompatible frames, same-width child, invalid volume fraction, excessive guard width, failed strict moment, or a final bottleneck that absorbs the local gain. An unsuccessful heuristic is not an exhaustive lower bound. A rigorous small-grammar obstruction excludes only that grammar unless a uniform proof is supplied.
+
+
+## 6. Review of the completed finite experiment
+
+The audit read `experiment.py`, the independent saved-word replayer and the tests, then independently reran all ten saved-word/incidence checks and all seven unit tests. They passed. Tested configurations are `(t,r,start) = (4,2,0), (4,4,0), (4,8,0), (8,4,0), (8,4,1), (8,8,0), (16,8,0), (16,8,1), (16,8,2), (16,16,0)`.
+
+For each tested two-round map, after factoring out the common quarter scaling, output forms have four distinct signed terms. Signed forms are canonicalized up to global negation. Every compatible signed pair occurs in at most two outputs, every compatible triple in at most one, and outputs are distinct up to sign. If `k` outputs use an unshared triple, there are at least `k` triple gates and `2N-k` pair-use incidences. Therefore the number of additions is at least `N + k + ceil((2N-k)/2) >= 2N`. The staged construction attains `2N`. This proves optimality in the stated cancellation-free signed-addition grammar for these maps, including arbitrary support-consistent sharing. It does not cover cancellations, nontrivial intermediate scaling, or other circuit grammars.
+
+For the smallest case, `t=4, r=2`, exhaustive enumeration covers all `3^8 = 6,561` choices of balanced pair partitions. Its minimum is eight pair gates plus eight output gates, matching sixteen additions. Exactly one pair-partition assignment attains the minimum; this is not a claim of a unique circuit. The analytic incidence bound, rather than that enumeration alone, also handles `3+1` output trees.
+
+The actual dirty-scratch lift realizes `(x,y,s) -> (x,y+A x,s)`, with `A` the normalized two-round map. For the smallest case its 40-coordinate complete linear map restores all 24 scratch coordinates and the eight source coordinates, and uses 160 additive shears, including sixteen quarter-weighted injections. The maximum intermediate induced row-one norm is 14 and the maximum matrix coefficient denominator is four. The quarter weights still need dyadic-shift work in a bit implementation. These counts concern one real component channel; the imaginary channel is identical and independent.
+
+This additive-output extension is not yet the signed-role-permutation circuit required by the cited lifting theorem. No common frames, residual child profile or fixed-tape implementation were constructed. Consequently there is no new moment to evaluate, rather than a proposed moment that failed. The checks found no saving in the tested grammar and supply no asymptotic candidate. The rounding counterexample additionally verifies that the fused exact map with one final truncation is not identical to the old twice-rounded interface.
+

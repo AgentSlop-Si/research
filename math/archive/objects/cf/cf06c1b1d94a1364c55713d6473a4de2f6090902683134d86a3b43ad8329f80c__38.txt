@@ -1,0 +1,93 @@
+1: """Honest O(N log N) comparator for H_q(C), using ordinary radix two.
+2: 
+3: Inputs: a field, N=power of two, and a supplied primitive 2N-th root eta.
+4: This is not an independent sub-N-log-N Fourier algorithm.
+5: """
+6: import sys
+7: from pathlib import Path
+8: from dataclasses import dataclass
+9: from collections import Counter
+10: 
+11: ROOT=Path(__file__).resolve().parent.parent
+12: sys.path.insert(0,str(ROOT/'fft_qbasis_research'))
+13: from orbit_kernel import Counted,FFTPlan,KernelPlan,fft_plan,fft,apply as convolution
+14: 
+15: 
+16: @dataclass
+17: class FastPlan:
+18:     kernel: KernelPlan
+19:     forward: FFTPlan
+20:     t: list
+21:     inverse_gamma: list
+22:     preparation: dict
+23: 
+24: 
+25: def prepare_fast(field,n,eta):
+26:     c=Counted(field)
+27:     padded=fft_plan(c,n,eta)
+28:     factors=[c.sub(c.one,z) for z in padded.powers]
+29:     spectrum=[c.zero]*(2*n)
+30:     # K(z)=(1-z)K(qz)+z^N/N: recurse BACKWARD through each orbit.
+31:     spectrum[0]=padded.inverse_n
+32:     for r in range(n-1,0,-1):
+33:         k=2*r
+34:         spectrum[k]=c.add(c.mul(factors[k],spectrum[(k+2)%(2*n)]),padded.inverse_n)
+35:     b=c.zero
+36:     for r in range(n-1,-1,-1):
+37:         k=2*r+1
+38:         b=c.sub(c.mul(factors[k],b),padded.inverse_n)
+39:     spectrum[1]=c.neg(b)
+40:     for r in range(n-1,0,-1):
+41:         k=2*r+1
+42:         spectrum[k]=c.sub(c.mul(factors[k],spectrum[(k+2)%(2*n)]),padded.inverse_n)
+43:     # t=P^-1, generated backward from t[N-1]=1/N.
+44:     t=[c.zero]*n
+45:     t[-1]=padded.inverse_n
+46:     for j in range(n-1,0,-1):
+47:         t[j-1]=c.mul(factors[2*j],t[j])
+48:     # Gamma^-1[j]=(-1)^j q^(-j(j-1)/2).
+49:     inverse_gamma=[c.one]
+50:     for j in range(n-1):
+51:         inverse_gamma.append(c.neg(c.mul(inverse_gamma[-1],padded.powers[(-2*j)%(2*n)])))
+52:     permutation=[index//2 for index in padded.permutation[:n]]
+53:     forward=FFTPlan(n//2,padded.powers[::2],permutation,padded.inverse_n,padded.inverse_n)
+54:     kernel=KernelPlan(padded,spectrum,{},'inverse-kernel-backward-orbit')
+55:     return FastPlan(kernel,forward,t,inverse_gamma,dict(c.count))
+56: 
+57: 
+58: def apply_hc(field,plan,x):
+59:     """H(C)x=P^-1 F_N Gamma^-1 T^-1 x, retaining every output."""
+60:     n=plan.kernel.fft.n
+61:     z,detail=convolution(field,plan.kernel,x)
+62:     c=Counted(field)
+63:     z=[c.mul(a,b) for a,b in zip(plan.inverse_gamma,z)]
+64:     traffic=Counter(detail['array_traffic'])
+65:     z=fft(c,plan.forward,z,traffic=traffic)
+66:     y=[c.mul(a,b) for a,b in zip(plan.t,z)]
+67:     traffic['outer_diagonal_value_reads']+=4*n
+68:     traffic['outer_diagonal_value_writes']+=2*n
+69:     count=Counter(detail['field_operations'])
+70:     count.update(c.count)
+71:     return y,dict(field_operations=dict(count),logical_array_traffic=dict(traffic))
+72: 
+73: 
+74: def expected_preparation(n):
+75:     l=n.bit_length()-1
+76:     return dict(mul=7*n+l-4,sub=4*n-1,add=n-1,neg=n,constant_inverse=1)
+77: 
+78: 
+79: def expected_online(n):
+80:     l=n.bit_length()-1
+81:     return dict(mul=5*n*l//2+8*n,add=5*n*l//2+2*n,sub=5*n*l//2+2*n)
+82: 
+83: 
+84: def fused_fourier(field,plan,x):
+85:     """Compile P*H(C)*T*Gamma algebraically before evaluation: ordinary F_N.
+86: 
+87: This routine uses the already supplied plan; its count excludes that plan's
+88: preparation. A compiler starting from the fused expression can prepare only an
+89: ordinary length-N FFT plan and need not construct any convolution spectra.
+90: """
+91:     c=Counted(field)
+92:     out=fft(c,plan.forward,x)
+93:     return out,dict(c.count)

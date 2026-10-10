@@ -1,0 +1,48 @@
+FFT bidirectional scan research update
+9 October 2026
+
+Conclusion
+The target remains unmet: this pass does not give a new exact, arbitrary-input, all-output Fourier algorithm below N log N. It produces a checked constructive control and a more precise search problem. The new uploaded scan/broadcast theorem is valid in its stated architecture.
+
+What changed
+1. For serial pure scans and explicit rank-one broadcast passes, the uploaded inequality (B+1)(2^t+1)>N implies t+B >= ceil(log2(N-1)) for N>=3. If each such pass actually costs Theta(N), the architecture still costs Omega(N log N). A high-rank operator with a faster structured implementation is outside that cost inference.
+2. A sum of a forward scan, backward scan, and diagonal action has an exact tridiagonal reduction. This gives a concrete structured family to search, instead of treating a dense inverse as evidence of speed.
+3. The uploaded own-diagonal rank diagnostic was insufficient. We repaired it for the tested matrices: the inverse's even-row/odd-column minor has rank N/2 for N=4,8,16,32,64 over the stated finite field. This proves distance at least N/2 from EVERY diagonal at those sizes. It does not prove distance from arbitrary monomial or row-sparse matrices.
+4. A four-point Fourier transform can be represented by one bidirectional-sum stage after permutations. No Fourier transform of size N>=5 admits a single such stage, even allowing arbitrary endpoint permutations. The companion report supplies the construction and proof. Repeating four-point leaves is classical radix four and retains Theta(N log N) work.
+
+Reset-safe tridiagonal identity
+Write A=I-aZ (lower bidiagonal), C=I-cZ^T (upper bidiagonal), B=diag(b), E=diag(e), D=diag(d). Here the forward scan is A^-1 B and the backward scan C^-1 E; propagation coefficients may vanish. Assume e_i is nonzero so E is invertible.
+
+H = A^-1 B + C^-1 E + D.
+K = A H E^-1 C = B E^-1 C + A + A D E^-1 C.
+
+K is tridiagonal: a lower bidiagonal times a diagonal times an upper bidiagonal has no entries outside the three central diagonals. Hence
+
+H = A^-1 K C^-1 E,
+H^-1 = E^-1 C K^-1 A when H is invertible.
+
+The formulas are algebraic identities; no propagation-weight division is used, so reset boundaries are safe. Backward injection coefficients must be nonzero in this particular representation. They are not a proof that every allowed degenerate stage meets that hypothesis.
+
+If both full scan operators L and U are invertible, a shorter equivalent form uses their actual bidiagonal inverses A=L^-1 and C=U^-1:
+
+H=L+U+D = L(A+C+ADC)U.
+
+The middle matrix is tridiagonal. Finding this representation from supplied scan coefficients takes O(N) field operations and O(N) storage. Applying the original two scans plus diagonal is O(N). Solving the tridiagonal system requires appropriate pivot handling; unguarded Thomas elimination is not justified solely by invertibility. None of these identities supplies a short factorization of a large Fourier matrix.
+
+Independent extension verification
+check_bidiagonal_reduction.py uses no uploaded code. Over prime 998244353 it checked:
+- 240 randomized exact tridiagonal identities, including zero propagation coefficients;
+- 231 invertible cases with the inverse identity checked explicitly;
+- five repaired disjoint-minor certificates, N=4,8,16,32,64.
+The other nine random H matrices were singular; the reduction identity passed for them, and no inverse was asserted.
+The audit includes a separate independent implementation and its exact results.
+
+What would advance the target
+An explicit, uniformly generated family F_N=H_t P_(t-1) ... H_1 with t=o(log N), where each H is an allowed O(N)-cost stage, would be a useful positive result only after coefficient generation, routing, scratch, and all output operations are charged. An isolated small factorization is not such a family. A practical first nontrivial two-stage search size is N=32; N=8 and N=16 already have ordinary mixed-radix two-stage controls. Failure of a finite numerical fit would not prove impossibility.
+
+Exact field-operation, bit-complexity, and stable floating-point targets are different. A finite-prime test checks identities only at supported sizes. No unbounded bit-complexity or stability claim follows from these tests. No priority claim is made for elementary scan normal forms, radix-four factorization, or known quasiseparable structure.
+
+Related primary literature
+Clément Pernet, Computing with quasiseparable matrices, ISSAC 2016: https://arxiv.org/abs/1602.01246
+Raf Vandebril and coauthors, semiseparable and tridiagonal matrix discussion: https://people.cs.kuleuven.be/~raf.vandebril/homepage/publications/papers_html/mtns/node2.html
+The structure and linear-cost use of fixed-order quasiseparable representations are established subjects. This pass specializes elementary identities to our candidate and verifies them; it does not claim to originate that literature.

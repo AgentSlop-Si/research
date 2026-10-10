@@ -1,0 +1,43 @@
+"""Short Phase-8 demonstration."""
+import numpy as np
+from scipy import fft
+from algebra_fft import AlgebraFFT
+
+n=8192
+rng=np.random.default_rng(20261009)
+A,B,C,D,E=[rng.normal(size=n)/np.sqrt(n) for _ in range(5)]
+eng=AlgebraFFT(n)
+a,b,c,d,e=[eng.signal(v) for v in (A,B,C,D,E)]
+
+# The target appears twice in A*A, and another time in A*B.
+root=eng.add(eng.mul(a,b),eng.mul(c,d,e),eng.mul(a,a))
+prepared=eng.prepare(root,a,max_degree=3)
+print('original reachable nodes:',eng.reachable_count(root))
+print('degree in A:',prepared.degree)
+print('symbolically sparse correction kernels:',prepared.sparse_coefficients)
+
+for t,delta in [(19,.1),(8091,-.08)]:
+    out=prepared.single(t,delta)
+    changed=A.copy();changed[t]+=delta
+    reference=fft.irfft(fft.rfft(changed)*fft.rfft(B) + fft.rfft(C)*fft.rfft(D)*fft.rfft(E)+fft.rfft(changed)**2,n=n)
+    print('single edit at',t,'max abs error',np.max(np.abs(out-reference)))
+
+idx=np.array([0,17,127,8191])
+print('Four selected time coefficients:',prepared.single(19,.1,indices=idx))
+
+# Cross-term-safe multi-position corrections, with automatic direct/spectral switch.
+edits={12:.02,19:-.01}
+new_signal=A.copy()
+for t,v in edits.items():new_signal[t]+=v
+expected=fft.irfft(fft.rfft(new_signal)*fft.rfft(B)+fft.rfft(C)*fft.rfft(D)*fft.rfft(E)+fft.rfft(new_signal)**2,n=n)
+print('two edits max abs error:',np.max(np.abs(prepared.many(edits)-expected)))
+
+# Common-factor rewriting is a separate input-independent optimization.
+triple=eng.add(eng.mul(a,b),eng.mul(a,c),eng.mul(a,d))
+factored=eng.factor_common(triple)
+print('pointwise work original:',eng.spectral_operation_estimate(triple))
+print('pointwise work factored:',eng.spectral_operation_estimate(factored))
+print('factor equality error:',np.max(np.abs(eng.evaluate_time(triple)-eng.evaluate_time(factored))))
+
+plan=eng.plan_updates(root,a,expected_versions=48,max_degree=3)
+print('adaptive mode:',plan.mode,plan.reason)

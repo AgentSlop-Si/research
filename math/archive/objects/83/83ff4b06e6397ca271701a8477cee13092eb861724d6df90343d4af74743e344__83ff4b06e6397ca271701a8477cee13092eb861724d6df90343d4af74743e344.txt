@@ -1,0 +1,34 @@
+"""EXACT cyclotomic finite-field covariance audit; no numerical fitting.
+
+For p=998244353 and N dividing p-1, F[k,j] = omega^(k*j).
+Z e_j=e_(j+1), and F Z = D F with D[k]=omega^k.
+In modular mode the stage Q U is unnormalized, deliberately so.
+"""
+import json
+from unitary_mixer import UnitaryGreenMixer,MOD
+
+
+def run(n):
+    assert (MOD-1)%n==0
+    omega=pow(3,(MOD-1)//n,MOD)
+    assert pow(omega,n,MOD)==1 and (n==1 or pow(omega,n//2,MOD)!=1)
+    A=UnitaryGreenMixer(n,seed=20261009+n,p=MOD).dense()
+    defects=0;zero=0;some=None
+    for k in range(n):
+        w=pow(omega,k,MOD)
+        for j in range(n):
+            residual=(A[k][(j+1)%n]-w*A[k][j])%MOD
+            if residual:
+                defects+=1
+                if some is None:some=[k,j,residual]
+            else:zero+=1
+            assert (pow(omega,k*((j+1)%n),MOD)-w*pow(omega,k*j,MOD))%MOD==0
+    root_errors=sum((A[k][0]-1)%MOD!=0 for k in range(n))
+    return dict(n=n,stage_nonzero_covariance_entries=defects,
+                stage_zero_covariance_entries=zero,
+                first_nonzero_entry=some,
+                stage_e0_not_constant_ones=root_errors,
+                actual_modular_fourier_defect_entries=0)
+
+if __name__=='__main__':
+    print(json.dumps([run(n) for n in (8,16,32,64,128)],indent=2))

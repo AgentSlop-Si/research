@@ -1,0 +1,177 @@
+1: from __future__ import annotations
+2: import hashlib
+3: import json
+4: import random
+5: from collections import Counter
+6: from pathlib import Path
+7: from composed_cycle import try_composed_fourier,composed_fft_or_fallback,ordinary_fft,DEPENDENCY
+8: from affine_cycle import try_affine_fourier
+9: from exact_fields import PrimeField,CyclotomicField,fourier,mv,inverse
+10: 
+11: 
+12: class Traced:
+13:     def __init__(self,field):self.field=field;self.calls=Counter()
+14:     def __getattr__(self,name):
+15:         value=getattr(self.field,name)
+16:         if name not in ('add','sub','mul','inv'):return value
+17:         def called(*args):self.calls[name if name!='inv' else 'inverse']+=1;return value(*args)
+18:         return called
+19: 
+20: 
+21: def independent_filter(field,x,q,descriptor,lambdas):
+22:     n=len(x);a,b,shift,index=descriptor;parameter=lambdas[index]
+23:     return [field.sub(x[j],field.mul(parameter,field.mul(field.power(q,b*j%n),x[(a*j+shift)%n])))
+24:             for j in range(n)]
+25: 
+26: 
+27: def generated_input(field,n,q,filters,lambdas,residual,use_gauss=False):
+28:     current=list(residual)
+29:     for descriptor in reversed(filters):
+30:         a,b,shift,index=descriptor;parameter=lambdas[index]
+31:         if use_gauss:
+32:             columns=[]
+33:             for j in range(n):
+34:                 basis=[field.zero]*n;basis[j]=field.one
+35:                 columns.append(independent_filter(field,basis,q,descriptor,lambdas))
+36:             matrix=[list(row) for row in zip(*columns)]
+37:             current=mv(field,inverse(field,matrix),current)
+38:         else:
+39:             # Independent forward recurrence y_next=(y-rhs)/edge with affine closure.
+40:             order=[];j=0
+41:             for _ in range(n):order.append(j);j=(a*j+shift)%n
+42:             assert j==0 and len(set(order))==n
+43:             coefficient=[field.mul(parameter,field.power(q,b*j%n)) for j in range(n)]
+44:             alpha,beta=field.one,field.zero
+45:             for j in order:
+46:                 reciprocal=field.inv(coefficient[j])
+47:                 alpha=field.mul(alpha,reciprocal)
+48:                 beta=field.mul(field.sub(beta,current[j]),reciprocal)
+49:             first=field.mul(beta,field.inv(field.sub(field.one,alpha)))
+50:             output=[field.zero]*n;value=first
+51:             for j in order:
+52:                 output[j]=value
+53:                 value=field.mul(field.sub(value,current[j]),field.inv(coefficient[j]))
+54:             assert value==first
+55:             current=output
+56:     return current
+57: 
+58: 
+59: def checked(field,x,q,filters,lambdas,budget):
+60:     traced=Traced(field)
+61:     y,meta=try_composed_fourier(traced,x,q,filters,lambdas,budget)
+62:     assert dict(traced.calls)==meta['field_operations']
+63:     assert sum((Counter(s) for s in meta['stages'].values()),Counter())==traced.calls
+64:     if y is not None:
+65:         assert y==mv(field,fourier(field,len(x)),x)
+66:         assert sum(traced.calls.values())==meta['expected_total']
+67:     return y,meta
+68: 
+69: 
+70: def main():
+71:     rng=random.Random(53730)
+72:     results={'status':'PASS','scope':'exact supplied composed low-defect family only',
+73:              'accepted_checks':0,'declines':0,'gaussian_generated_checks':0,
+74:              'cyclotomic_checks':0,'fallback_checks':0,'singular_checks':0,
+75:              'zero_parameter_checks':0,'invalid_checks':0,'benchmarks':[]}
+76:     descriptors=[(5,1,1,0),(9,3,5,0),(13,-3,-1,0)]
+77:     for p in (97,257,65537):
+78:         field=PrimeField(p)
+79:         for n in (4,8,16,32):
+80:             q=field.root(n)
+81:             choices=[field.integer(v) for v in range(2,p) if field.power(field.integer(v),n)!=field.integer(-1)]
+82:             for depth in (1,2,3):
+83:                 for pooled in (True,False):
+84:                     lambdas=[choices[0]] if pooled else choices[:depth]
+85:                     filters=[(*item[:3],0 if pooled else i) for i,item in enumerate(descriptors[:depth])]
+86:                     for s in (1,2):
+87:                         residual=[field.zero]*n
+88:                         for j in rng.sample(range(n),s):residual[j]=field.integer(rng.randrange(1,p))
+89:                         gauss=n<=8
+90:                         x=generated_input(field,n,q,filters,lambdas,residual,use_gauss=gauss)
+91:                         y,meta=checked(field,x,q,filters,lambdas,s)
+92:                         assert y is not None
+93:                         assert meta['actual_defects']==s
+94:                         results['accepted_checks']+=1
+95:                         results['gaussian_generated_checks']+=gauss
+96:             for _ in range(2):
+97:                 x=[field.integer(rng.randrange(p)) for _ in range(n)]
+98:                 filters=descriptors[:2];lambdas=[choices[0]]
+99:                 y,meta=checked(field,x,q,filters,lambdas,1)
+100:                 assert y is None;results['declines']+=1
+101:                 traced=Traced(field)
+102:                 y,meta=composed_fft_or_fallback(traced,x,q,filters,lambdas,1)
+103:                 assert y==mv(field,fourier(field,n),x)
+104:                 assert meta['field_operations']==dict(traced.calls)
+105:                 assert sum((Counter(s) for s in meta['stages'].values()),Counter())==traced.calls
+106:                 assert meta['ordinary_fft_calls']==1
+107:                 results['fallback_checks']+=1
+108:             if (p-1)%(2*n)==0:
+109:                 x=[field.integer(rng.randrange(p)) for _ in range(n)]
+110:                 y,meta=checked(field,x,q,descriptors[:2],[field.root(2*n)],1)
+111:                 assert y is None and meta['reason']=='singular_filter'
+112:                 results['singular_checks']+=1
+113:             x=[field.zero]*n;x[0]=field.one
+114:             y,meta=checked(field,x,q,descriptors[:2],[field.zero],1)
+115:             assert y is not None;results['zero_parameter_checks']+=1
+116:     for n in (4,8):
+117:         field=CyclotomicField(n);q=field.root(n)
+118:         for depth in (2,3):
+119:             filters=descriptors[:depth];lambdas=[field.integer(2)]
+120:             residual=[field.zero]*n;residual[0]=field.one
+121:             x=generated_input(field,n,q,filters,lambdas,residual,use_gauss=True)
+122:             y,meta=checked(field,x,q,filters,lambdas,1)
+123:             assert y is not None;results['cyclotomic_checks']+=1
+124:     field=PrimeField(65537);n=32;q=field.root(n)
+125:     filters=descriptors[:2];lambdas=[field.integer(2)]
+126:     residual=[field.zero]*n;residual[0]=field.one
+127:     x=generated_input(field,n,q,filters,lambdas,residual)
+128:     single_support=[];single_declines=[]
+129:     for a,b,shift,index in filters:
+130:         single_support.append(sum(v!=field.zero for v in independent_filter(field,x,q,(a,b,shift,index),lambdas)))
+131:         y,meta=try_affine_fourier(field,x,q,a=a,b=b,shift=shift,max_defects=1)
+132:         single_declines.append(y is None)
+133:     y,meta=try_composed_fourier(field,x,q,filters,lambdas,1)
+134:     left=independent_filter(field,independent_filter(field,x,q,filters[0],lambdas),q,filters[1],lambdas)
+135:     wrong=independent_filter(field,independent_filter(field,x,q,filters[1],lambdas),q,filters[0],lambdas)
+136:     results['composition_witness']={'N':n,'filters':filters,'shared_lambda':2,
+137:         'input_nonzero_entries':sum(v!=field.zero for v in x),
+138:         'single_filter_residual_supports':single_support,
+139:         'single_filter_discovery_declines':single_declines,
+140:         'ordered_composed_residual_support':sum(v!=field.zero for v in left),
+141:         'reversed_composed_residual_support':sum(v!=field.zero for v in wrong),
+142:         'noncommuting_on_this_input':left!=wrong,
+143:         'new_operation_count':sum(meta['field_operations'].values())}
+144:     assert all(single_declines) and min(single_support)>1 and left!=wrong
+145:     for n in (1024,4096,8192,32768):
+146:         q=field.root(n);lambdas=[field.integer(2)]
+147:         residual=[field.zero]*n;residual[0]=field.one
+148:         x=generated_input(field,n,q,filters,lambdas,residual)
+149:         y,meta=try_composed_fourier(field,x,q,filters,lambdas,1)
+150:         baseline,counts=ordinary_fft(field,x,q)
+151:         assert y==baseline and y is not None
+152:         total=sum(meta['field_operations'].values())
+153:         assert total==16*n+n.bit_length()+3
+154:         results['benchmarks'].append({'N':n,'composed_operations':total,
+155:             'ordinary_operations':sum(counts.values()),
+156:             'nonzero_input_entries':sum(v!=field.zero for v in x),
+157:             'intermediate_support':meta['intermediate_support'],
+158:             'field_operations':meta['field_operations'],'stages':meta['stages']})
+159:     for bad_filters,bad_pool,budget in (([],[2],1),([(3,1,1,0)],[2],1),
+160:             ([(5,2,1,0)],[2],1),([(5,1,2,0)],[2],1),([(5,1,1,1)],[2],1),
+161:             ([(5,1,1,0)],[2,3],1),([(5,1,1,0)],[2],-1)):
+162:         try:try_composed_fourier(field,[1]*8,field.root(8),bad_filters,bad_pool,budget)
+163:         except ValueError:results['invalid_checks']+=1
+164:         else:raise AssertionError('invalid descriptor accepted')
+165:     for bad_filters,bad_pool in ((iter(()),[2]),([(5,1,1,0)],iter(()))):
+166:         try:try_composed_fourier(field,[1]*8,field.root(8),bad_filters,bad_pool,1)
+167:         except ValueError:results['invalid_checks']+=1
+168:         else:raise AssertionError('empty generator accepted')
+169:     results['source_sha256']=hashlib.sha256(Path('composed_cycle.py').read_bytes()).hexdigest()
+170:     results['dependency_sha256']={p.name:hashlib.sha256(p.read_bytes()).hexdigest()
+171:                                  for p in (DEPENDENCY/'affine_cycle.py',DEPENDENCY/'exact_fields.py')}
+172:     Path('results.json').write_text(json.dumps(results,indent=2)+'\n')
+173:     print(json.dumps({k:v for k,v in results.items() if k!='benchmarks'},indent=2))
+174:     print('benchmarks:',[(v['N'],v['composed_operations'],v['ordinary_operations']) for v in results['benchmarks']])
+175: 
+176: 
+177: if __name__=='__main__':main()

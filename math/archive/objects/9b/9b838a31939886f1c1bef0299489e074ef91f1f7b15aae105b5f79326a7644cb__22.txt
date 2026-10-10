@@ -1,0 +1,58 @@
+   1 """Independently authored formula controls, using only own earlier matrix helpers."""
+   2 import json, runpy
+   3 from pathlib import Path
+   4 h=runpy.run_path('research_round_2156/feedback_involution/check_two_cayley.py')
+   5 I_fn,add,sub,scale,mul,inv=[h[k] for k in ('ident','add','sub','scale','mul','inv')]
+   6 p=998244353
+   7 for fn in (I_fn,add,sub,scale,mul,inv): fn.__globals__['p']=p
+   8 
+   9 def rank(M):
+  10     M=[row[:] for row in M]; r=0
+  11     if not M:return 0
+  12     for j in range(len(M[0])):
+  13         k=next((i for i in range(r,len(M)) if M[i][j]),None)
+  14         if k is None:continue
+  15         M[r],M[k]=M[k],M[r]; z=pow(M[r][j],-1,p);M[r]=[v*z%p for v in M[r]]
+  16         for i in range(len(M)):
+  17             if i!=r and M[i][j]:
+  18                 z=M[i][j];M[i]=[(u-z*v)%p for u,v in zip(M[i],M[r])]
+  19         r+=1
+  20     return r
+  21 
+  22 cases=[]
+  23 for n in (6,8,10,12,16,32):
+  24     I=I_fn(n);P=[[int(j==(i+1)%n) for j in range(n)] for i in range(n)]
+  25     sigma=list(range(n));sigma[2],sigma[4]=sigma[4],sigma[2]
+  26     Q=[[P[sigma[i]][sigma[j]] for j in range(n)] for i in range(n)]
+  27     J=[[((-1)**i)%p if i==j else 0 for j in range(n)] for i in range(n)]
+  28     assert mul(P,Q)!=mul(Q,P)
+  29     assert mul(J,mul(P,J))==scale(-1,P) and mul(J,mul(Q,J))==scale(-1,Q)
+  30     assert (1-pow(2,n,p))%p and (1-pow(3,n,p))%p
+  31     U=sub(scale(2,inv(sub(I,scale(2,P)))),I)
+  32     Z=sub(scale(2,inv(sub(I,scale(3,Q)))),I)
+  33     assert mul(U,Z)!=mul(Z,U)
+  34     C=mul(U,Z); Ci=inv(C);Ai=inv(U);A=U
+  35     B=scale(2,mul(C,mul(J,mul(Ci,Ai))))
+  36     K=mul(B,A);assert mul(K,K)==scale(4,I)
+  37     assert any(K[i][j]!=(K[0][0] if i==j else 0) for i in range(n) for j in range(n))
+  38     Delta=scale(pow(-3%p,-1,p),add(scale(2,J),scale(4,I)))
+  39     T=mul(inv(sub(I,K)),B)
+  40     assert T==mul(C,mul(Delta,mul(Ci,Ai)))
+  41     assert T==scale(pow(-3%p,-1,p),add(B,mul(K,B)))
+  42     K0=mul(scale(2,mul(Z,J)),U)
+  43     comm=mul(Z,mul(inv(U),mul(inv(Z),U)))
+  44     assert mul(K0,K0)==scale(4,comm)
+  45     assert mul(K0,K0)!=scale(4,I)
+  46     cutrank=rank([row[n//2:] for row in T[:n//2]])
+  47     if n>=10:assert cutrank<=5
+  48     f_rank=None
+  49     if (p-1)%n==0:
+  50         om=pow(3,(p-1)//n,p)
+  51         F=[[pow(om,i*j,p) for j in range(n)] for i in range(n)]
+  52         f_rank=rank([row[n//2:] for row in F[:n//2]])
+  53         assert f_rank==n//2
+  54         if n>=12:assert T!=F and cutrank<f_rank
+  55     cases.append({'N':n,'exact_minimal_degree':2,'direct_ansatz_degree_two_rejected':True,'T_cut_rank':cutrank,'Fourier_cut_rank':f_rank})
+  56 result={'status':'PASS','prime':p,'conjugation_controls':len(cases),'noncommutation_checks':len(cases),'commutator_formula_checks':len(cases),'direct_ansatz_rejections':len(cases),'cut_checks':sum(c['N']>=10 for c in cases),'Fourier_rank_checks':sum(c['Fourier_cut_rank'] is not None for c in cases),'cases':cases}
+  57 Path(__file__).with_name('CONJUGATED_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+  58 print(json.dumps(result,indent=2))

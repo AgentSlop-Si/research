@@ -1,0 +1,40 @@
+"""Record exact witness audits, one cold internal rewrite, and numeric caveats."""
+import json
+from pathlib import Path
+import numpy as np
+from cache_rewrite import CacheRewriteFFT
+from exact_audit import audit_witness
+from tests.test_rewrites import build
+
+
+def main():
+    result={'algebra':'F_p[z]/(z^n-1)','exact_audits':[]}
+    for n in (5,8,13):
+        for seed in range(8):
+            rng=np.random.default_rng(seed);e=CacheRewriteFFT(n)
+            xs=[e.signal(rng.integers(-2,3,n)) for _ in range(9)]
+            g=e.mul(*xs[:7]);b=xs[7];d=xs[8];p=e.mul(g,b)
+            q=e.mul(e.add(g,e.scale(d,seed%3-1),e.const(seed+1)),b)
+            e.evaluate_spectrum(e.add(p,q))
+            for w in e.last_witnesses:
+                for prime in (97,257):
+                    checks=audit_witness(e,w,prime)
+                    assert all(checks.values())
+                    result['exact_audits'].append({'n':n,'seed':seed,'prime':prime,'checks':checks})
+    e,g,b,p,q=build();root=e.add(p,q);e.evaluate_time(root)
+    result['cold_example']={'root':root,'stats':e.last_stats,'witnesses':e.proof_records()}
+    result['cancellation_example']={}
+    for enabled in (False,True):
+        e=CacheRewriteFFT(8,rewrite=enabled);unit=np.zeros(8);unit[0]=1
+        xs=[e.signal(unit*(-1+2**-52))]+[e.signal(unit) for _ in range(7)]
+        b=e.signal(unit*1e16);g=e.mul(*xs);p=e.mul(g,b);q=e.mul(e.add(g,e.one),b)
+        e.evaluate_spectrum(p);value=float(e.evaluate_time(q)[0])
+        result['cancellation_example']['rewrite' if enabled else 'baseline']={'output0':value,'witnesses':e.proof_records()}
+    result['cancellation_example']['exact_rational_output0']=float(1e16/(2**52))
+    result['cancellation_example']['warning']='Exact ring equality does not guarantee floating-point accuracy. No runtime stability certification is implemented.'
+    Path('results/exact_audit.json').write_text(json.dumps(result,indent=2)+'\n')
+    print(f'{len(result["exact_audits"])} exact witness checks passed')
+    print(json.dumps(result['cancellation_example'],indent=2))
+
+
+if __name__=='__main__':main()

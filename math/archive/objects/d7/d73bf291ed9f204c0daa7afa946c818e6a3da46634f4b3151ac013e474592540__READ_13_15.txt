@@ -1,0 +1,409 @@
+
+===== SOURCE 13 924767da2323ca033faaa76eadbb652c1d014e9c113d31c7490e309c2b8d4c9b fft_materials_extension_20261009/fft_polynomial_feedback_research/port_feedback.py | 10220 bytes 237 lines =====
+   1 """Exact rank-d cycle closure and rank-one coupling edits, without clean scratch.
+   2 
+   3 All coefficient arithmetic is counted. The emitted scalar circuit charges every
+   4 first T call. This is a reuse compiler, not a faster fresh Fourier transform.
+   5 """
+   6 from prior_feedback import Counted, add_j_word, rank_one_add
+   7 from prior_affine_reuse import add_t_word
+   8 
+   9 
+  10 def dot(c, x, y):
+  11     value = c.mul(x[0], y[0])
+  12     for a, b in zip(x[1:], y[1:]):
+  13         value = c.add(value, c.mul(a, b))
+  14     return value
+  15 
+  16 
+  17 def mm(c, a, b):
+  18     columns = list(zip(*b))
+  19     return [[dot(c, row, col) for col in columns] for row in a]
+  20 
+  21 
+  22 def mv(c, a, v):
+  23     return [dot(c, row, v) for row in a]
+  24 
+  25 
+  26 def invert(c, a):
+  27     """Counted, pivoted Gauss-Jordan; even zero-factor eliminations are charged."""
+  28     d = len(a)
+  29     work = [row[:] + [int(i == j) for j in range(d)]
+  30             for i, row in enumerate(a)]
+  31     swaps = 0
+  32     for k in range(d):
+  33         pivot = next((i for i in range(k, d) if work[i][k]), None)
+  34         if pivot is None:
+  35             raise ValueError('singular port closure')
+  36         if pivot != k:
+  37             work[pivot], work[k] = work[k], work[pivot]
+  38             swaps += 1
+  39         reciprocal = c.inv(work[k][k])
+  40         work[k] = [c.mul(v, reciprocal) for v in work[k]]
+  41         for i in range(d):
+  42             if i == k:
+  43                 continue
+  44             factor = work[i][k]
+  45             work[i] = [c.sub(v, c.mul(factor, w))
+  46                        for v, w in zip(work[i], work[k])]
+  47     return [row[d:] for row in work], swaps
+  48 
+  49 
+  50 def jt(c, plan, v):
+  51     n = plan['n']
+  52     return [c.add(c.mul(plan['diagonal'][i], v[i]),
+  53                   c.mul(plan['weights'][(i-1) % n], v[(i-1) % n]))
+  54             for i in range(n)]
+  55 
+  56 
+  57 def kt(c, plan, v):
+  58     return [v[0]] + [c.add(v[i], c.mul(plan['weights'][i-1], v[i-1]))
+  59                      for i in range(1, plan['n'])]
+  60 
+  61 
+  62 def j_action(c, plan, v):
+  63     n = plan['n']
+  64     return [c.add(c.mul(plan['diagonal'][i], v[i]),
+  65                   c.mul(plan['weights'][i], v[(i+1) % n]))
+  66             for i in range(n)]
+  67 
+  68 
+  69 def validate_matrix(matrix, rows, cols, name, p):
+  70     if len(matrix) != rows or any(len(row) != cols for row in matrix):
+  71         raise ValueError('invalid ' + name + ' dimensions')
+  72     return [[int(v) % p for v in row] for row in matrix]
+  73 
+  74 
+  75 def prepare_ports(plan, batches, u, coupling, ports):
+  76     """ports[l]=(coordinate,shift) means V_l=(J^T)^shift e_coordinate.
+  77 
+  78     Closure: z_0=b_0+U coupling V^T z_last, z_r=b_r+J z_(r-1).
+  79     Common-coordinate ports share both transpose Krylov walks. No T is called.
+  80     """
+  81     n, p, d = plan['n'], plan['p'], len(ports)
+  82     if not isinstance(batches, int) or batches < 1 or d < 1:
+  83         raise ValueError('positive batch and port counts required')
+  84     if any(not isinstance(j, int) or not isinstance(s, int)
+  85            or not 0 <= j < n or s < 0 for j, s in ports):
+  86         raise ValueError('invalid observation port')
+  87     u = validate_matrix(u, n, d, 'U', p)
+  88     coupling = validate_matrix(coupling, d, d, 'coupling', p)
+  89     c = Counted(p)
+  90     h = batches - 1
+  91     group_limits = {}
+  92     for j, s in ports:
+  93         group_limits[j] = max(group_limits.get(j, 0), h+s)
+  94     walks = {}
+  95     for j, limit in group_limits.items():
+  96         left = [[int(i == j) for i in range(n)]]
+  97         row = [[plan['kernel'][j-i] if i <= j else 0 for i in range(n)]]
+  98         for _ in range(limit):
+  99             left.append(jt(c, plan, left[-1]))
+ 100             row.append(kt(c, plan, row[-1]))
+ 101         walks[j] = (left, row)
+ 102     v_rows = [walks[j][0][s] for j, s in ports]
+ 103     a_rows = [walks[j][0][h+s] for j, s in ports]
+ 104     rows = [[walks[j][1][h-r+s] for r in range(batches)] for j, s in ports]
+ 105     g = mm(c, a_rows, u)
+ 106     glambda = mm(c, g, coupling)
+ 107     schur = [[c.sub(int(i == j), glambda[i][j]) for j in range(d)]
+ 108              for i in range(d)]
+ 109     sinv, swaps = invert(c, schur)
+ 110     factor = mm(c, coupling, sinv)
+ 111     effective = mm(c, u, factor)
+ 112     steps = sum(group_limits.values())
+ 113     assert dict(c.count) == {
+ 114         'mul':steps*(3*n-1)+2*n*d*d+4*d*d*d,
+ 115         'add':steps*(2*n-1)+(n-1)*d*d+2*d*d*(d-1)+n*d*(d-1),
+ 116         'sub':d*d+2*d*d*(d-1), 'constant_inverse':d}
+ 117     return {'n':n, 'p':p, 'q':plan['q'], 'batches':batches, 'd':d, 'u':u,
+ 118             'coupling':coupling, 'ports':list(ports), 'v_rows':v_rows,
+ 119             'a_rows':a_rows, 'rows':rows, 'g':g, 'sinv':sinv,
+ 120             'effective':effective, 'coefficient_preparation':dict(c.count),
+ 121             'preparation_row_swaps':swaps, 'shared_orbit_steps':steps,
+ 122             'unshared_orbit_steps':sum(h+s for j,s in ports),
+ 123             'generated_orbit_field_elements':2*n*sum(v+1 for v in group_limits.values())}
+ 124 
+ 125 
+ 126 def layout(plan, feedback, injections):
+ 127     n, R = plan['n'], feedback['batches']
+ 128     if feedback['n'] != n or feedback['p'] != plan['p'] or feedback['q'] != plan['q']:
+ 129         raise ValueError('plan and feedback mismatch')
+ 130     if not injections:
+ 131         raise ValueError('at least one injection required')
+ 132     if any(not isinstance(vertex, int) or not isinstance(source, int)
+ 133            or not 0 <= vertex < R or source < 0 for vertex, source in injections):
+ 134         raise ValueError('invalid injection')
+ 135     banks = 1 + max(source for vertex, source in injections)
+ 136     return banks, (banks+1)*n
+ 137 
+ 138 
+ 139 def port_functionals(plan, feedback, injections, c):
+ 140     n = plan['n']
+ 141     functionals = []
+ 142     for port_rows in feedback['rows']:
+ 143         values = {}
+ 144         for vertex, source in injections:
+ 145             for i, value in enumerate(port_rows[vertex]):
+ 146                 index = source*n+i
+ 147                 values[index] = c.add(values.get(index, 0), value)
+ 148         functionals.append(values)
+ 149     return functionals
+ 150 
+ 151 
+ 152 def closure_word(plan, feedback, injections):
+ 153     """Add all closed-loop solutions to arbitrary targets; preserve all sources."""
+ 154     n, p, R = plan['n'], plan['p'], feedback['batches']
+ 155     banks, base = layout(plan, feedback, injections)
+ 156     c = Counted(p)
+ 157     functionals = port_functionals(plan, feedback, injections, c)
+ 158     word = []
+ 159     for r in reversed(range(1, R)):
+ 160         word.extend(add_j_word(plan, base+(r-1)*n, base+r*n, -1))
+ 161     for vertex, source in injections:
+ 162         word.extend(add_t_word(plan, source*n, base+vertex*n))
+ 163     rank_costs = []
+ 164     for ell in range(feedback['d']):
+ 165         vector = [row[ell] for row in feedback['effective']]
+ 166         correction, cost = rank_one_add(p, functionals[ell], base, vector)
+ 167         word.extend(correction)
+ 168         rank_costs.append(cost)
+ 169     for r in range(1, R):
+ 170         word.extend(add_j_word(plan, base+(r-1)*n, base+r*n))
+ 171     baseline = 3*len(injections)*n*(n+1)//2+2*(R-1)*(6*n-3)
+ 172     return word, {'source_banks':banks, 'target_base':base,
+ 173                   'ADD_T_calls':len(injections), 'feedback_extra_ADD_T_calls':0,
+ 174                   'acyclic_scalar_instructions':baseline,
+ 175                   'rank_one_corrections':rank_costs,
+ 176                   'scalar_instructions':baseline+sum(x['scalar_instructions'] for x in rank_costs),
+ 177                   'source_pivot_constant_inverses':sum(x['source_pivot_inverse'] for x in rank_costs),
+ 178                   'scalar_expansion_constant_inverses':len({g[3] for g in word if g[0]=='shear' and g[3]}),
+ 179                   'coefficient_preparation':dict(c.count)}
+ 180 
+ 181 
+ 182 def coupling_edit_word(plan, feedback, injections, a, b):
+ 183     """Update coupling by a*b^T using one global rank-one ADD and zero T calls.
+ 184 
+ 185     Return the new prepared state for further edits. Coefficient preparation is
+ 186     charged, including updating its small inverse and effective U factor.
+ 187     """
+ 188     n, p, R, d = plan['n'], plan['p'], feedback['batches'], feedback['d']
+ 189     banks, base = layout(plan, feedback, injections)
+ 190     if len(a) != d or len(b) != d:
+ 191         raise ValueError('invalid edit vector dimensions')
+ 192     a, b = [x % p for x in a], [x % p for x in b]
+ 193     c = Counted(p)
+ 194     z = mv(c, feedback['sinv'], mv(c, feedback['g'], a))
+ 195     theta = c.sub(1, dot(c, b, z))
+ 196     if theta == 0:
+ 197         raise ValueError('singular edited port closure')
+ 198     reciprocal = c.inv(theta)
+ 199     v = [dot(c, b, col) for col in zip(*feedback['sinv'])]
+ 200     lambdaz = mv(c, feedback['coupling'], z)
+ 201     alpha = [c.mul(c.add(x,y), reciprocal) for x,y in zip(a,lambdaz)]
+ 202     direction = mv(c, feedback['u'], alpha)
+ 203     vector = []
+ 204     for r in range(R):
+ 205         vector.extend(direction)
+ 206         if r+1 < R:
+ 207             direction = j_action(c, plan, direction)
+ 208     functionals = port_functionals(plan, feedback, injections, c)
+ 209     functional = {}
+ 210     for ell, values in enumerate(functionals):
+ 211         for i, value in values.items():
+ 212             functional[i] = c.add(functional.get(i,0), c.mul(v[ell], value))
+ 213     word, rank_cost = rank_one_add(p, functional, base, vector)
+ 214     # Keep the next closure compiler ready; no d^3 inversion or dense refactor.
+ 215     new_coupling = [[c.add(feedback['coupling'][i][j], c.mul(a[i],b[j]))
+ 216                      for j in range(d)] for i in range(d)]
+ 217     new_sinv = [[c.add(feedback['sinv'][i][j],
+ 218                       c.mul(c.mul(z[i],v[j]), reciprocal))
+ 219                  for j in range(d)] for i in range(d)]
+ 220     root_direction = vector[:n]
+ 221     new_effective = [[c.add(feedback['effective'][i][j], c.mul(root_direction[i],v[j]))
+ 222                       for j in range(d)] for i in range(n)]
+ 223     m, q = len(injections), len({source for vertex,source in injections})
+ 224     assert dict(c.count) == {
+ 225         'mul':7*d*d+2*d+2*n*d+2*n*(R-1)+d*q*n,
+ 226         'add':6*d*d-2*d-1+n*(2*d+R-2)+d*n*(m+q),
+ 227         'sub':1, 'constant_inverse':1}
+ 228     new = dict(feedback)
+ 229     new.update(coupling=new_coupling, sinv=new_sinv, effective=new_effective)
+ 230     # These report the current edit, not a fresh-inverse preparation claim.
+ 231     new['last_edit_preparation'] = dict(c.count)
+ 232     return word, new, {'source_banks':banks, 'target_base':base, 'theta':theta,
+ 233                        'ADD_T_calls':0, 'rank_one_correction':rank_cost,
+ 234                        'scalar_instructions':rank_cost['scalar_instructions'],
+ 235                        'source_pivot_constant_inverses':rank_cost['source_pivot_inverse'],
+ 236                        'scalar_expansion_constant_inverses':len({g[3] for g in word if g[0]=='shear' and g[3]}),
+ 237                        'coefficient_preparation':dict(c.count)}
+
+===== SOURCE 14 6dbaa5eb7962935f40c3f1aea559b9fcbef56c59f2f33a43fe837b58a3ad8643 fft_materials_extension_20261009/fft_polynomial_feedback_research/prior_feedback.py | 7408 bytes 168 lines =====
+   1 """Exact rank-one cyclic graph feedback with no additional transform call."""
+   2 from collections import Counter
+   3 from prior_affine_reuse import add_t_word,inverse
+   4 
+   5 
+   6 def add_j_word(plan,source,target,sign=1):
+   7     n,p=plan['n'],plan['p']
+   8     result=[]
+   9     for i in range(n):
+  10         value=sign*plan['diagonal'][i]%p
+  11         if value:
+  12             result.append(('shear',target+i,source+i,value))
+  13         result.append(('shear',target+i,source+(i+1)%n,sign*plan['weights'][i]%p))
+  14     return result
+  15 
+  16 
+  17 def rank_one_add(p,functional,target,vector):
+  18     """y += vector*(sum_j functional[j]*register[j]); all sources restored.
+  19 
+  20     Source registers and target registers must be disjoint. No clean scratch.
+  21     A source pivot temporarily stores the linear functional, then is uncomputed.
+  22     """
+  23     functional={i:a%p for i,a in functional.items() if a%p}
+  24     vector=[a%p for a in vector]
+  25     if not functional or not any(vector):
+  26         return [],{'functional_nonzeros':len(functional),'output_nonzeros':sum(bool(a) for a in vector),
+  27                    'scalar_instructions':0,'source_pivot_inverse':0}
+  28     if any(target<=i<target+len(vector) for i in functional):
+  29         raise ValueError('source and target registers must be disjoint')
+  30     pivot=min(functional)
+  31     before=[('scale',pivot,functional[pivot])]
+  32     # Order is immaterial: these source-to-pivot shears commute. Preserve
+  33     # insertion order so preparing a rank-one ADD is linear, without sorting.
+  34     before.extend(('shear',pivot,i,a) for i,a in functional.items() if i!=pivot)
+  35     middle=[('shear',target+i,pivot,a) for i,a in enumerate(vector) if a]
+  36     word=before+middle+inverse(before,p)
+  37     m,k=len(functional),sum(bool(a) for a in vector)
+  38     return word,{'functional_nonzeros':m,'output_nonzeros':k,
+  39                  'scalar_instructions':6*m+3*k-4,'source_pivot_inverse':1}
+  40 
+  41 
+  42 class Counted:
+  43     def __init__(self,p):
+  44         self.p=p
+  45         self.count=Counter()
+  46     def mul(self,a,b):
+  47         self.count['mul']+=1
+  48         return a*b%self.p
+  49     def add(self,a,b):
+  50         self.count['add']+=1
+  51         return (a+b)%self.p
+  52     def sub(self,a,b):
+  53         self.count['sub']+=1
+  54         return (a-b)%self.p
+  55     def inv(self,a):
+  56         self.count['constant_inverse']+=1
+  57         return pow(a,-1,self.p)
+  58 
+  59 
+  60 def prepare_feedback(plan,batches,u,observed):
+  61     """Feedback closes last target to first by u*e_observed^T.
+  62 
+  63     Stores ell_r = (K^T)^(R-1-r) T^T e_observed for every injection vertex r.
+  64     No T action is called: its one needed row is already known kernel data.
+  65     """
+  66     n,p=plan['n'],plan['p']
+  67     if batches<1 or len(u)!=n or not 0<=observed<n:
+  68         raise ValueError('invalid dimensions')
+  69     c=Counted(p)
+  70     a=[int(i==observed) for i in range(n)]
+  71     ell=[plan['kernel'][observed-i] if i<=observed else 0 for i in range(n)]
+  72     rows=[None]*batches
+  73     rows[-1]=ell[:]
+  74     for step in range(batches-1):
+  75         a=[c.add(c.mul(plan['diagonal'][i],a[i]),
+  76                  c.mul(plan['weights'][(i-1)%n],a[(i-1)%n])) for i in range(n)]
+  77         ell=[ell[0]]+[c.add(ell[i],c.mul(plan['weights'][i-1],ell[i-1])) for i in range(1,n)]
+  78         rows[batches-2-step]=ell[:]
+  79     dot=c.mul(a[0],u[0])
+  80     for i in range(1,n):
+  81         dot=c.add(dot,c.mul(a[i],u[i]))
+  82     kappa=c.sub(1,dot)
+  83     if kappa==0:
+  84         raise ValueError('singular feedback: kappa = 0')
+  85     reciprocal=c.inv(kappa)
+  86     output=[c.mul(value,reciprocal) for value in u]
+  87     return {'u':[value%p for value in u],'observed':observed,'batches':batches,
+  88             'a':a,'rows':rows,'kappa':kappa,'output':output,
+  89             'coefficient_preparation':dict(c.count)}
+  90 
+  91 
+  92 def feedback_word(plan,feedback,injections):
+  93     """Each (vertex,source_bank) supplies an independent T*x injection.
+  94 
+  95     Sources precede one arbitrary untouched w bank, then R arbitrary targets.
+  96     Targets solve z_0=T*x_0+u*z_last[observed], z_r=T*x_r+J*z_(r-1),
+  97     with absent injections treated as zero. All original registers are retained
+  98     except additive target increments. Repeated source banks are allowed.
+  99     """
+ 100     n,p=plan['n'],plan['p']
+ 101     batches=feedback['batches']
+ 102     if not injections:
+ 103         raise ValueError('at least one injection required')
+ 104     if any(not 0<=vertex<batches or source<0 for vertex,source in injections):
+ 105         raise ValueError('invalid injection')
+ 106     source_banks=1+max(source for vertex,source in injections)
+ 107     target_base=(source_banks+1)*n
+ 108     word=[]
+ 109     for r in reversed(range(1,batches)):
+ 110         word.extend(add_j_word(plan,target_base+(r-1)*n,target_base+r*n,-1))
+ 111     for vertex,source in injections:
+ 112         word.extend(add_t_word(plan,source*n,target_base+vertex*n))
+ 113     functional={}
+ 114     for vertex,source in injections:
+ 115         for i,value in enumerate(feedback['rows'][vertex]):
+ 116             index=source*n+i
+ 117             functional[index]=(functional.get(index,0)+value)%p
+ 118     correction,rank_cost=rank_one_add(p,functional,target_base,feedback['output'])
+ 119     word.extend(correction)
+ 120     for r in range(1,batches):
+ 121         word.extend(add_j_word(plan,target_base+(r-1)*n,target_base+r*n,1))
+ 122     baseline=3*len(injections)*n*(n+1)//2+2*(batches-1)*(6*n-3)
+ 123     return word,{'source_banks':source_banks,'target_base':target_base,
+ 124                  'ADD_T_calls':len(injections),'feedback_extra_ADD_T_calls':0,
+ 125                  'acyclic_scalar_instructions':baseline,'rank_one_correction':rank_cost,
+ 126                  'scalar_instructions':baseline+rank_cost['scalar_instructions'],
+ 127                  'coefficient_accumulations':len(injections)*n}
+ 128 
+ 129 
+ 130 def gain_update_word(plan,feedback,injections,old_gain,new_gain):
+ 131     """Change only the closing-edge gain, using one exact rank-one correction.
+ 132 
+ 133     No ADD_T is emitted. `feedback` stores the unscaled base edge u*e_j^T;
+ 134     both old and new gains must have nonsingular closed loops.
+ 135     """
+ 136     n,p,R=plan['n'],plan['p'],feedback['batches']
+ 137     if not injections:
+ 138         raise ValueError('at least one injection required')
+ 139     if any(not 0<=vertex<R or source<0 for vertex,source in injections):
+ 140         raise ValueError('invalid injection')
+ 141     c=Counted(p)
+ 142     beta=c.sub(1,feedback['kappa'])
+ 143     old_kappa=c.sub(1,c.mul(old_gain,beta))
+ 144     new_kappa=c.sub(1,c.mul(new_gain,beta))
+ 145     if old_kappa==0 or new_kappa==0:
+ 146         raise ValueError('singular old or new feedback gain')
+ 147     numerator=c.sub(new_gain,old_gain)
+ 148     denominator=c.mul(old_kappa,new_kappa)
+ 149     delta=c.mul(numerator,c.inv(denominator))
+ 150     vector=[]
+ 151     current=feedback['u'][:]
+ 152     for r in range(R):
+ 153         vector.extend(c.mul(delta,value) for value in current)
+ 154         if r+1<R:
+ 155             current=[c.add(c.mul(plan['diagonal'][i],current[i]),
+ 156                            c.mul(plan['weights'][i],current[(i+1)%n])) for i in range(n)]
+ 157     source_banks=1+max(source for vertex,source in injections)
+ 158     target_base=(source_banks+1)*n
+ 159     functional={}
+ 160     for vertex,source in injections:
+ 161         for i,value in enumerate(feedback['rows'][vertex]):
+ 162             index=source*n+i
+ 163             functional[index]=(functional.get(index,0)+value)%p
+ 164     word,rank_cost=rank_one_add(p,functional,target_base,vector)
+ 165     return word,{'old_gain':old_gain,'new_gain':new_gain,'old_kappa':old_kappa,
+ 166                  'new_kappa':new_kappa,'ADD_T_calls':0,'correction_scalar':delta,
+ 167                  'rank_one_correction':rank_cost,'coefficient_preparation':dict(c.count),
+ 168                  'coefficient_accumulations':len(injections)*n}

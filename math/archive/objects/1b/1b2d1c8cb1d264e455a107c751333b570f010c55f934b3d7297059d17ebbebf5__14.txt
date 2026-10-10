@@ -1,0 +1,278 @@
+0001 #!/usr/bin/env python3
+0002 """Independently authored audit. Uploaded programs are NEVER imported or run.
+0003 Finite-field checks use only displayed equations and fresh schoolbook products.
+0004 Numerical covariance checks are diagnostics alongside the report's proofs.
+0005 """
+0006 from pathlib import Path
+0007 from fractions import Fraction as F
+0008 import ast, hashlib, json, math, random
+0009 import numpy as np
+0010 ROOT=Path(__file__).resolve().parents[1]
+0011 RNG=random.Random(94117)
+0012 
+0013 def factors(n):
+0014     f={};p=2
+0015     while p*p<=n:
+0016         while n%p==0:f[p]=f.get(p,0)+1;n//=p
+0017         p+=1
+0018     if n>1:f[n]=1
+0019     return f
+0020 
+0021 def phi(n):
+0022     t=n
+0023     for p in factors(n):t=t//p*(p-1)
+0024     return t
+0025 
+0026 def mu(n):
+0027     f=factors(n)
+0028     return 0 if any(e>1 for e in f.values()) else (-1)**len(f)
+0029 
+0030 def isprime(n):return n>=2 and all(n%d for d in range(2,math.isqrt(n)+1))
+0031 
+0032 def field(n):
+0033     p=2*n+1
+0034     while not isprime(p):p+=2*n
+0035     for eta in range(2,p):
+0036         if pow(eta,2*n,p)==1 and all(pow(eta,2*n//q,p)!=1 for q in factors(2*n)):
+0037             return p,eta
+0038     raise AssertionError('root absent')
+0039 
+0040 def partition(n,b):
+0041     q,r=divmod(n,b)
+0042     return [q+1]*r+[q]*(b-r)
+0043 
+0044 def starts(lens):
+0045     s=[];z=0
+0046     for m in lens:s.append(z);z+=m
+0047     return s
+0048 
+0049 def conv(x,y,p):
+0050     z=[0]*(len(x)+len(y)-1)
+0051     for i,a in enumerate(x):
+0052         for j,b in enumerate(y):z[i+j]=(z[i+j]+a*b)%p
+0053     return z
+0054 
+0055 def seq(nodes,w,n,p):
+0056     b=len(nodes);q=[1]
+0057     for z in nodes:q=conv(q,[1,-z%p],p)
+0058     inv=[1]+[0]*(b-1)
+0059     for i in range(1,b):inv[i]=-sum(q[j]*inv[i-j] for j in range(1,i+1))%p
+0060     power=[1]*b;out=[]
+0061     for k in range(min(b,n)):
+0062         out.append(sum(a*t for a,t in zip(w,power))%p)
+0063         power=[a*t%p for a,t in zip(nodes,power)]
+0064     while len(out)<n:
+0065         cursor=len(out);take=min(b,n-cursor)
+0066         rhs=[-v%p for v in conv(out[-b:],q,p)[b:b+take]]
+0067         out+=conv(rhs,inv,p)[:take]
+0068     direct=[sum(w[j]*pow(nodes[j],k,p) for j in range(b))%p for k in range(n)]
+0069     assert out==direct
+0070     return out
+0071 
+0072 def projected(x,lens,a,beta,p,eta):
+0073     n=len(x);ss=starts(lens);h=n%2;ds=[];ys=[]
+0074     for s,m in zip(ss,lens):
+0075         ph=[pow(eta,(a*t*(t-1)+2*(a*s+beta)*t+h*t)%(2*n),p) for t in range(m)]
+0076         d=sum(ph[t]*x[s+t] for t in range(m))%p;ds.append(d)
+0077         ys.extend(d*pow(v,-1,p)%p for v in ph)
+0078     return ds,ys
+0079 
+0080 def green_case(n,lens,a,beta,p,eta,x):
+0081     ss=starts(lens);b=len(lens);ds,y=projected(x,lens,a,beta,p,eta)
+0082     nodes=[pow(eta,-2*s%(2*n),p) for s in ss];end=[0]*b
+0083     for j,(s,m) in enumerate(zip(ss,lens)):
+0084         c=pow(eta,(-a*m*(m-1)-2*(a*s+beta)*m-(n%2)*m)%(2*n),p)
+0085         end[(j+1)%b]=c*ds[j]%p
+0086     dseq=seq(nodes,ds,n,p);eseq=seq(nodes,end,n,p)
+0087     force=seq(nodes,[(u-v)%p for u,v in zip(ds,end)],n,p)
+0088     assert force==[(u-v)%p for u,v in zip(dseq,eseq)]
+0089     gg=[pow(eta,(a*j*(j-1)+2*beta*j+(n%2)*j)%(2*n),p) for j in range(n+1)]
+0090     assert gg[n]==p-1
+0091     terms=[force[a*j%n]*pow(gg[j],-1,p)%p for j in range(n)]
+0092     seed=sum(terms)*pow(2,-1,p)%p;pref=0;ans=[0]*n
+0093     for j in range(n):
+0094         ans[a*j%n]=gg[j]*(seed-pref)%p;pref=(pref+terms[j])%p
+0095     direct=[sum(y[t]*pow(eta,-2*k*t%(2*n),p) for t in range(n))%p for k in range(n)]
+0096     assert ans==direct
+0097     return n
+0098 
+0099 def masks(lens):
+0100     n=sum(lens);out={}
+0101     for d in range(-max(lens)+1,max(lens)):
+0102         if not d:continue
+0103         out[d]=[int(0<=t+d<m) for m in lens for t in range(m)]
+0104     return out
+0105 
+0106 def cert(n,lens):
+0107     mm=masks(lens)
+0108     vals=[sum((F(mm[d][i],phi(n//math.gcd(n,d))) for d in mm),F(0)) for i in range(n)]
+0109     grouped=sum((F(max(sum(mm[d][i] for d in mm if math.gcd(n,d)==g) for i in range(n)),phi(n//g)) for g in set(math.gcd(n,d) for d in mm)),F(0))
+0110     old=sum((F(1,phi(n//math.gcd(n,d))) for d in mm),F(0))
+0111     return max(vals,default=F(0)),grouped,old
+0112 
+0113 def covariance(n,lens):
+0114     mm=masks(lens);den=n*phi(n)
+0115     def ram(t):
+0116         g=math.gcd(n,t)
+0117         return sum(r*mu(n//r) for r in range(1,g+1) if g%r==0)
+0118     return [[F(sum(mm[d][i]*mm[d][j]*ram(d*(i-j)) for d in mm),den) for j in range(n)] for i in range(n)]
+0119 
+0120 def provenance():
+0121     v=ROOT/'source_extracted/fft_rough_length_green_v14';h=ROOT/'hero0/source_extracted/fft_hero0_phase4_coprime_green'
+0122     checks=[]
+0123     for line in (v/'MANIFEST.sha256').read_text().splitlines():
+0124         digest,path=line.split(None,1);path=path.strip()
+0125         assert hashlib.sha256((v/path).read_bytes()).hexdigest()==digest
+0126         checks.append(path)
+0127     hv=json.loads((h/'SHA256SUMS.json').read_text())
+0128     for path,z in hv.items():
+0129         data=(h/path).read_bytes();assert len(data)==z['bytes'];assert hashlib.sha256(data).hexdigest()==z['sha256']
+0130     static={}
+0131     for base in [v,h]:
+0132         for p in base.glob('*.py'):
+0133             tree=ast.parse(p.read_text())
+0134             static[str(p.relative_to(ROOT))]={'imports':[ast.unparse(x) for x in ast.walk(tree) if isinstance(x,(ast.Import,ast.ImportFrom))],'calls':sorted(set(ast.unparse(x.func) for x in ast.walk(tree) if isinstance(x,ast.Call)))}
+0135     return {'v14_manifest_entries_verified':len(checks),'hero0_manifest_entries_verified':len(hv),'source_static_ast':static}
+0136 
+0137 def exact_checks():
+0138     cases=outputs=averages=frames=kernel_cases=0;primes=set()
+0139     for n in range(3,66):
+0140         p,eta=field(n);primes.add(p);unit=[a for a in range(1,n) if math.gcd(a,n)==1]
+0141         bs=sorted({3,min(4,n),min(7,n),max(3,n//2),n-1,n})
+0142         ls=[partition(n,b) for b in bs]
+0143         if n>=9:
+0144             # Include unbalanced contiguous partitions within the no-alias guard.
+0145             q=n//3;ls.append([q]+[1]*(n-q))
+0146         for lens in ls:
+0147             assert sum(lens)==n and min(lens)>0 and 2*(max(lens)-1)<n
+0148             x=[RNG.randrange(p) for _ in range(n)]
+0149             for a in sorted({unit[0],unit[-1],unit[len(unit)//2]}):
+0150                 outputs+=green_case(n,lens,a,RNG.randrange(n),p,eta,x);cases+=1
+0151             if n<=23:
+0152                 a=unit[-1];s=[0]*n
+0153                 for beta in range(n):
+0154                     _,y=projected(x,lens,a,beta,p,eta)
+0155                     s=[(t+z)%p for t,z in zip(s,y)]
+0156                 assert s==[n*t%p for t in x];averages+=1
+0157     for q in range(4,85):
+0158         p,eta=field(q)
+0159         for m in range(2,math.isqrt(q)+1):
+0160             if q%m:continue
+0161             k=q//m;lens=[m]*k;x=[RNG.randrange(p) for _ in range(q)];total=[0]*q
+0162             for r in range(m):
+0163                 _,y=projected(x,lens,1,(2+r*k)%q,p,eta)
+0164                 total=[(u+v)%p for u,v in zip(total,y)]
+0165             assert total==[m*v%p for v in x];frames+=1
+0166             # Exact nonzero null vector for one row: x0=S1, x1=-S0.
+0167             xx=[0]*q;xx[0]=pow(eta,(4+(q%2))%(2*q),p);xx[1]=p-1
+0168             _,yy=projected(xx,lens,1,2,p,eta);assert not any(yy);assert any(xx);kernel_cases+=1
+0169     return {'green_cases':cases,'all_output_equalities':outputs,'exact_beta_average_cases':averages,'finite_field_primes':sorted(primes),'complete_frame_cases':frames,'one_row_exact_kernel_cases':kernel_cases,'fused_single_forcing_matches_two_streams':True}
+0170 
+0171 def covariance_checks():
+0172     count=0;max_ratio=0;prime_tight=0;unique_long=0;strict=[];small_checks=[]
+0173     for n in range(3,55):
+0174         for b in sorted({3,min(4,n),min(7,n),max(3,n//2),n-1,n}):
+0175             lens=partition(n,b);v,c,t=cert(n,lens);assert v<=c<=t
+0176             q=covariance(n,lens);ar=np.array(q,dtype=float)
+0177             assert sum(q[i][i] for i in range(n))==F(sum(m*(m-1) for m in lens),n)
+0178             eig=float(np.linalg.eigvalsh(ar)[-1]);assert eig<=float(v)+2e-12
+0179             if v:max_ratio=max(max_ratio,eig/float(v))
+0180             if isprime(n):
+0181                 assert v==F(max(lens)-1,n-1)
+0182                 mm=masks(lens);raw=np.diag([(m-1)/(n-1) for m in lens for _ in range(m)])
+0183                 for mask in mm.values():raw-=np.outer(mask,mask)/(n*(n-1))
+0184                 assert np.max(abs(raw-ar))<1e-14
+0185                 longs=lens.count(max(lens))
+0186                 if max(lens)>1:
+0187                     if longs>=2:assert abs(eig-float(v))<1e-12;prime_tight+=1
+0188                     else:assert eig<float(v)-1e-14;unique_long+=1
+0189             if v<c and len(strict)<8:strict.append({'n':n,'blocks':b,'overlap':str(v),'prior_group_max':str(c)})
+0190             count+=1
+0191     # Independent full state averaging, using direct projection matrix rather than shell formula.
+0192     for n,b in [(7,3),(9,4),(10,3),(11,4),(12,5),(15,4),(17,5)]:
+0193         lens=partition(n,b);ss=starts(lens);z=np.exp(2j*np.pi/n);eta=np.exp(1j*np.pi/n)
+0194         qs=np.zeros((n,n),complex);states=0
+0195         for a in range(1,n):
+0196             if math.gcd(a,n)>1:continue
+0197             for beta in range(n):
+0198                 P=np.zeros((n,n),complex)
+0199                 for s,m in zip(ss,lens):
+0200                     ph=np.array([z**((a*t*(t-1)//2+(a*s+beta)*t)%n)*eta**((n%2)*t) for t in range(m)])
+0201                     P[s:s+m,s:s+m]=np.outer(ph.conjugate(),ph)
+0202                 coeff=(np.ones(n)@(P-np.eye(n)))/math.sqrt(n)
+0203                 qs+=np.outer(coeff.conjugate(),coeff);states+=1
+0204         qs/=states;ref=np.array(covariance(n,lens),float);err=float(np.max(abs(qs-ref)))
+0205         assert err<2e-13;small_checks.append({'n':n,'blocks':b,'states':states,'max_entry_discrepancy':err})
+0206     return {'covariance_cases':count,'max_numeric_operator_ratio':max_ratio,'prime_sharp_cases':prime_tight,'prime_unique_long_strict_cases':unique_long,'strict_improvements_over_prior_group_max':strict,'direct_state_covariance_comparisons':small_checks}
+0207 
+0208 def amplification():
+0209     rows=[]
+0210     for n in [101,1009,10007,100003]:
+0211         candidates=sorted({min(n,max(3,round(n**a))) for a in [.1,.2,.3,.4,.5,.6]}|{8,16,32})
+0212         candidate=[]
+0213         for b in candidates:
+0214             if b>n:continue
+0215             v=F((n+b-1)//b-1,n-1);p=2*v
+0216             if p>F(1,8):continue
+0217             for r in range(1,1001,2):
+0218                 h=(r+1)//2;bound=n*math.comb(r,h)*p**h
+0219                 if bound<=F(1,n):break
+0220             else:raise AssertionError('row bound not reached')
+0221             cost=r*(n*math.log2(b)+b*b)
+0222             candidate.append({'b':b,'rows':r,'variance':str(v),'exact_subset_failure_bound':str(bound),'cost_proxy':cost,'ratio_NlogN':cost/(n*math.log2(n))})
+0223         rows.append({'n':n,'target_tolerance':1,'failure_target':str(F(1,n)),'best_sampled_proxy':min(candidate,key=lambda z:z['cost_proxy']),'candidates':candidate})
+0224     return rows
+0225 
+0226 def hero_weighted_covariance():
+0227     rows=[]
+0228     for n,q,m,sigma2,xi in [(7,35,5,4,2.3),(11,55,5,8,15),(11,60,5,8,15),(13,60,4,6,3.75),(17,85,5,8,25)]:
+0229         center=(n-1)//2;src=(np.arange(n)-center)%q;tall=np.where(np.arange(q)<q/2,np.arange(q),np.arange(q)-q)/q
+0230         ga=np.exp(np.pi*sigma2*tall*tall)/math.sqrt(sigma2);units=[a for a in range(1,q) if math.gcd(a,q)==1]
+0231         cov=np.zeros((n,n),complex);diagonal=np.zeros(n)
+0232         for d in range(-m+1,m):
+0233             if not d:continue
+0234             dest=src+d;valid=(dest>=0)&(dest<q)&(dest//m==src//m)
+0235             ids=np.flatnonzero(valid)
+0236             ratio=ga[src[ids]]/ga[dest[ids]]
+0237             diagonal[ids]+=q/n*ratio**2/phi(q//math.gcd(q,d))
+0238             for a in units:
+0239                 v=np.zeros(n,complex)
+0240                 v[ids]=ratio*np.exp(-2j*np.pi*xi*tall[dest[ids]])*np.exp(-2j*np.pi*a*d*src[ids]/q)
+0241                 cov+=np.outer(v.conjugate(),v)/(n*len(units))
+0242         bound=float(max(diagonal));eig=float(np.linalg.eigvalsh(cov)[-1]);assert eig<=bound+2e-12
+0243         tau=max(abs(tall[src]));R=math.exp(math.pi*sigma2*(2*tau*m/q+(m/q)**2))
+0244         ov=cert(q,[m]*(q//m))[0];coarse=q/n*R*R*float(ov);assert bound<=coarse+2e-12
+0245         # Exhaustive independent projector covariance for one fixed input.
+0246         x=np.array([complex(RNG.random(),RNG.random()) for _ in range(n)]);z=np.zeros(q,complex);z[src]=x*ga[src]
+0247         target=np.sum(x*np.exp(-2j*np.pi*xi*tall[src]))/math.sqrt(n);ave=0.;mean=0j
+0248         for a in units:
+0249             for beta in range(q):
+0250                 y=np.zeros(q,complex)
+0251                 for start in range(0,q,m):
+0252                     tt=np.arange(m);ph=np.exp(2j*np.pi*((a*tt*(tt-1)//2+(a*start+beta)*tt)%q)/q)*np.exp(1j*np.pi*(q%2)*tt/q)
+0253                     y[start:start+m]=ph.conjugate()*np.dot(ph,z[start:start+m])
+0254                 er=np.sum(y/ga*np.exp(-2j*np.pi*xi*tall))/math.sqrt(n)-target
+0255                 ave+=abs(er)**2;mean+=er
+0256         states=q*len(units);ave/=states;mean/=states;formula=float(np.vdot(x,cov@x).real)
+0257         assert abs(ave-formula)<2e-11;assert abs(mean)<2e-12
+0258         rows.append({'n':n,'q':q,'m':m,'all_short_displacements_units':all(math.gcd(q,d)==1 for d in range(1,m)),'states':states,'operator_norm_numeric':eig,'weighted_overlap_bound':bound,'coarse_R_squared_overlap_bound':coarse,'direct_average_vs_formula_error':abs(ave-formula),'mean_error':abs(mean)})
+0259     return rows
+0260 
+0261 def static_corrections():
+0262     n=17;v=F(3,16);prob=2*v
+0263     assert prob==F(3,8)
+0264     for h in range(1,101):
+0265         assert 2*n*2**(2*h-1)*prob**h==n*F(3,2)**h>1
+0266     src=(ROOT/'source_extracted/fft_rough_length_green_v14/arbitrary_block_core.py').read_text()
+0267     assert 'vandermonde = lam[None, :] ** exponents' in src
+0268     c=(ROOT/'source_extracted/fft_rough_length_green_v14/covariance.py').read_text()
+0269     assert 'p >= 0.5' in c and '(2.0**rows)' in c
+0270     return {'median_helper':{'n':17,'blocks':5,'variance':'3/16','tolerance':1,'p':'3/8','bound_at_R_2h_minus_1':'17*(3/2)^h','exact_checks':100,'source_executed':False},'memory':{'source':'arbitrary_block_core.py','lines':[226,230],'allocation':'B by B Vandermonde','general_space':'O(N+B^2)','streaming_repair_described':True}}
+0271 
+0272 def main():
+0273     results={}
+0274     for name,fn in [('provenance',provenance),('exact_algebra',exact_checks),('covariance',covariance_checks),('amplification',amplification),('weighted_gaussian_fusion',hero_weighted_covariance),('static_counterexamples',static_corrections)]:
+0275         results[name]=fn();print('PASS',name,flush=True)
+0276     (Path(__file__).parent/'CHECK_RESULTS.json').write_text(json.dumps(results,indent=2)+'\n')
+0277     print(json.dumps({k:({a:b for a,b in v.items() if a!='source_static_ast'} if isinstance(v,dict) else {'cases':len(v)}) for k,v in results.items()},indent=2))
+0278 if __name__=='__main__':main()

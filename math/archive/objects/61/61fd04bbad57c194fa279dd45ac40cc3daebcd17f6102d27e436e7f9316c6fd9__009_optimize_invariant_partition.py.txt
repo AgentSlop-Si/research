@@ -1,0 +1,44 @@
+"""Minimize adjacent color changes among balanced bit-reversal invariant partitions."""
+import sys,time
+from pathlib import Path
+from scipy.optimize import milp,LinearConstraint,Bounds
+import numpy as np
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from central_partition import bitrev,primitive_root_of_unity,rank_mod, partition
+
+def orbit_partition(n,target):
+    rev=bitrev(n);orbits=[]; seen=set();groups={}
+    for i in range(n):
+        if i not in seen:
+            j=rev[i];orbits.append(sorted(set((i,j))))
+            seen.update((i,j))
+    for o,G in enumerate(orbits):
+        for i in G:groups[i]=o
+    h=len(orbits);v=h+n-1
+    eq=np.zeros((1,v));eq[0,:h]=[len(G) for G in orbits]
+    cons=[LinearConstraint(eq,[target],[target])]
+    mat=np.zeros((2*(n-1),v));lb=np.zeros(2*(n-1))
+    for i in range(n-1):
+        u,z=groups[i],groups[i+1]
+        mat[2*i,u]-=1;mat[2*i,z]+=1;mat[2*i,h+i]+=1
+        mat[2*i+1,u]+=1;mat[2*i+1,z]-=1;mat[2*i+1,h+i]+=1
+    cons.append(LinearConstraint(mat,lb,np.full(2*(n-1),np.inf)))
+    c=np.zeros(v);c[h:]=1
+    bounds=Bounds(np.zeros(v),np.ones(v))
+    res=milp(c,integrality=np.ones(v),bounds=bounds,constraints=cons,options={'time_limit':30,'mip_rel_gap':0})
+    if res.x is None:return None
+    A=[j for j in range(n) if round(res.x[groups[j]])==0]
+    B=[j for j in range(n) if round(res.x[groups[j]])==1]
+    d=sum(((j in A)!=(j+1 in A)) for j in range(n-1))
+    return len(A),len(B),d,A,B,res.mip_gap
+
+for n in (32,64,128,256):
+    a,b,cap,meta=partition(n)
+    start=time.time()
+    ans=orbit_partition(n,n//2)
+    if ans:
+        countA,countB,d,A,B,gap=ans
+        w=primitive_root_of_unity(n,65537); p=65537
+        f=rank_mod([[pow(w,i*j,p) for j in B] for i in A],p) if n<=128 else -1
+        print('n',n,'target',n//2,'base transitions',cap,'opt transitions',d,'four-stage bound',4*d,'rank(F_AB)',f,'MIPgap',gap,'time',round(time.time()-start,2),flush=True)
+        print(' A',A[:100],flush=True)

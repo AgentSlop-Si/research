@@ -1,0 +1,211 @@
+1: import copy
+2: import itertools
+3: import math
+4: import unittest
+5: from unittest.mock import patch
+6: 
+7: import numpy as np
+8: from scipy import fft
+9: from projected_circuit import ProjectedCircuit
+10: from modular_bridge import replay, primitive_root, dft, circular, integer_product
+11: 
+12: 
+13: class CircuitTests(unittest.TestCase):
+14:     def test_real_and_complex_registration(self):
+15:         rng = np.random.default_rng(88)
+16:         for n in (1, 2, 17, 32, 63):
+17:             bins = sorted(set([0, n//2, n-1]))
+18:             for complex_input in (False, True):
+19:                 x = rng.normal(size=n)
+20:                 if complex_input:
+21:                     x = x+1j*rng.normal(size=n)
+22:                 e = ProjectedCircuit(n, bins)
+23:                 np.testing.assert_allclose(e.query(e.register(x)), fft.fft(x)[bins], atol=2e-12)
+24: 
+25:     def test_pruned_registration(self):
+26:         rng = np.random.default_rng(17)
+27:         x = rng.normal(size=128)+1j*rng.normal(size=128)
+28:         e = ProjectedCircuit(128, [1, 2, 63, 127], registration='pruned', radix=16)
+29:         node = e.register(x)
+30:         np.testing.assert_allclose(e.query(node), fft.fft(x)[e.bins], atol=2e-11)
+31:         self.assertGreater(e.memory_report()['registration_plan_bytes'], 0)
+32:         e.release_registration_plan()
+33:         self.assertEqual(e.memory_report()['registration_plan_bytes'], 0)
+34: 
+35:     def test_mixed_circuit_against_dense(self):
+36:         rng = np.random.default_rng(812)
+37:         for n in (15, 32, 97):
+38:             ks = sorted(set([0, 3, n//2, n-1]))
+39:             e = ProjectedCircuit(n, ks)
+40:             a, b, c = rng.normal(size=(3, n))/n
+41:             an, bn, cn = map(e.register, (a, b, c))
+42:             r = e.relation([(an, 2-1j, 4), (bn, -.5, -2)], [(3, .25j), (3, -.1j)])
+43:             rtime = (2-1j)*np.roll(a, 4)-.5*np.roll(b, -2)
+44:             rtime[3] += .15j
+45:             node = e.add(e.convolve(r, cn), e.shift(bn, 7))
+46:             actual = e.query(node, ks+ks[:1])
+47:             expected = (fft.fft(rtime)*fft.fft(c)+fft.fft(np.roll(b, 7)))[ks+ks[:1]]
+48:             np.testing.assert_allclose(actual, expected, atol=1e-12)
+49: 
+50:     def test_persistence_random_branching_and_zeros(self):
+51:         rng = np.random.default_rng(411)
+52:         n, m = 32, 13
+53:         x = rng.normal(size=(m, n))*.005
+54:         x[:, 0] += 1
+55:         x[1] = np.ones(n)  # many zero Fourier values: no inverse allowed
+56:         e = ProjectedCircuit(n, range(n), cache_bytes=30000)
+57:         base = e.product(map(e.register, x))
+58:         records = [(base, x.copy())]
+59:         for _ in range(40):
+60:             source, xx = records[int(rng.integers(len(records)))]
+61:             xx = xx.copy()
+62:             at, pos = int(rng.integers(m)), int(rng.integers(n))
+63:             delta = float(rng.normal()*.01)
+64:             newer = source.edit(at, pos, delta)
+65:             xx[at, pos] += delta
+66:             expected = np.prod(fft.fft(xx, axis=1), axis=0)
+67:             np.testing.assert_allclose(newer.frequencies(), expected, rtol=3e-12, atol=3e-12)
+68:             records.append((newer, xx))
+69:         np.testing.assert_allclose(base.frequencies(), np.prod(fft.fft(x, axis=1), axis=0), atol=1e-12)
+70: 
+71:     def test_many_edits_rebuild_only_union_of_paths(self):
+72:         m, n = 64, 64
+73:         e = ProjectedCircuit(n, [0, 3, 7])
+74:         nodes = [e.register_projection([1+i*.001]*3) for i in range(m)]
+75:         old = e.product(nodes)
+76:         old.frequencies()
+77:         for p in (1, 2, 4, 16, 64):
+78:             keys = list(range(0, m, m//p))
+79:             changes = {i: e.scale(nodes[i], 1.01) for i in keys}
+80:             updated = old.replace_many(changes)
+81:             before = e.stats['new_nodes']
+82:             out = updated.frequencies()
+83:             # p leaves plus sum min(2^d,p) internal ancestors.
+84:             bound = p+sum(min(2**d, p) for d in range(int(math.log2(m))))
+85:             self.assertLessEqual(e.stats['last_evaluated_nodes'], bound)
+86:             np.testing.assert_allclose(out, old.frequencies()*1.01**p, rtol=1e-12)
+87:             self.assertEqual(before, e.stats['new_nodes'])
+88: 
+89:     def test_cache_disabled_bounded_and_return_isolation(self):
+90:         for budget in (0, 64, 128, 20000):
+91:             e = ProjectedCircuit(16, [0, 1, 2, 3], cache_bytes=budget)
+92:             a = e.register(np.arange(16)/16)
+93:             shared = e.add(a, e.impulse(3, .1))
+94:             roots = [e.convolve(shared, shared), e.add(shared, a)]
+95:             first = e.query_many(roots)
+96:             second = e.query_many(roots)
+97:             for x, y in zip(first, second):
+98:                 np.testing.assert_allclose(x, y)
+99:             first[0][:] = 0
+100:             np.testing.assert_allclose(e.query(roots[0]), second[0])
+101:             self.assertLessEqual(e.memory_report()['cache_bytes'], budget)
+102: 
+103:     def test_fused_roots_avoid_shared_work_with_no_cache(self):
+104:         e = ProjectedCircuit(8, [0, 1], cache_bytes=0)
+105:         a = e.register_projection([2, 3])
+106:         shared = e.add(a, e.impulse(1))
+107:         roots = [e.scale(shared, 2), e.convolve(shared, shared)]
+108:         fused = e.query_many(roots)
+109:         work = e.stats['last_evaluated_nodes']
+110:         separate_work = 0
+111:         for root, expected in zip(roots, fused):
+112:             np.testing.assert_allclose(e.query(root), expected)
+113:             separate_work += e.stats['last_evaluated_nodes']
+114:         self.assertLess(work, separate_work)
+115: 
+116:     def test_deep_dag_is_iterative(self):
+117:         e = ProjectedCircuit(8, [0, 1])
+118:         node = e.register_projection([1, 1])
+119:         for _ in range(2500):
+120:             node = e.scale(node, 1.00001)
+121:         np.testing.assert_allclose(e.query(node), [1.00001**2500]*2)
+122:         self.assertEqual(len(e.export([node])['nodes']), 2501)
+123: 
+124:     def test_metadata_adapter_keeps_multiple_bases(self):
+125:         from baseline_phase7.cost_aware_fft import RelationFFT
+126:         upstream = RelationFFT()
+127:         a = upstream.register(np.arange(32)/32)
+128:         b = upstream.register(np.sin(np.arange(32)))
+129:         composite = a.shift(3)
+130:         composite.terms.update(b.terms)
+131:         composite.edit(7, .125)
+132:         expected = fft.fft(composite.signal())
+133:         e = ProjectedCircuit(32, [0, 3, 17, 31])
+134:         with patch.object(type(composite), 'signal', side_effect=AssertionError('must not materialize')):
+135:             node, other = e.from_phase5([composite, a])
+136:         np.testing.assert_allclose(e.query(node), expected[e.bins], atol=1e-11)
+137:         self.assertEqual(e.memory_report()['basis_count'], 2)
+138:         self.assertEqual(e.memory_report()['basis_projection_bytes'], 128)
+139: 
+140:     def test_no_dense_input_retention(self):
+141:         import weakref, gc
+142:         x = np.arange(64, dtype=float)
+143:         ref = weakref.ref(x)
+144:         e = ProjectedCircuit(64, [0, 1])
+145:         node = e.register(x)
+146:         del x
+147:         gc.collect()
+148:         self.assertIsNone(ref())
+149:         self.assertEqual(e.memory_report()['basis_projection_bytes'], 32)
+150: 
+151:     def test_invalid_inputs(self):
+152:         for bins in ([1.5], [True], [-1], [8], [1, 1], []):
+153:             with self.assertRaises((ValueError, TypeError)):
+154:                 ProjectedCircuit(8, bins)
+155:         e = ProjectedCircuit(8, [0, 1])
+156:         a = e.register_projection([1, 2])
+157:         with self.assertRaises(ValueError): e.scale(a, float('inf'))
+158:         with self.assertRaises(ValueError): e.query(a, [2])
+159:         with self.assertRaises(ValueError): e.add(a, ProjectedCircuit(8, [0, 1]).impulse())
+160:         with self.assertRaises(TypeError): e.product([a]).replace_many({.5: a})
+161:         with self.assertRaises(ValueError): e.register(np.ones(7))
+162:         with self.assertRaises(FloatingPointError): e.query(e.scale(e.scale(a, 1e300), 1e300))
+163: 
+164: 
+165: class ExactTests(unittest.TestCase):
+166:     def test_export_replays_over_four_fields(self):
+167:         rng = np.random.default_rng(717)
+168:         n = 8
+169:         for p in (17, 97, 193, 257):
+170:             w = primitive_root(p, n)
+171:             for trial in range(50):
+172:                 a, b, c = rng.integers(-3, 4, size=(3, n)).tolist()
+173:                 e = ProjectedCircuit(n, range(n))
+174:                 an, bn, cn = [e.register_projection(np.zeros(n)) for _ in range(3)]
+175:                 relation = e.relation([(an, 2, 3), (bn, -1, 0)], [(4, 3)])
+176:                 product = e.product([relation, cn, an])
+177:                 branch = product.edit(1, 2, -2)
+178:                 out = e.add(branch.root, e.shift(bn, -3))
+179:                 ar = [2*a[(j-3) % n]-b[j]+(3 if j == 4 else 0) for j in range(n)]
+180:                 cc = c[:]; cc[2] -= 2
+181:                 time = circular(circular(ar, cc), a)
+182:                 time = [v+b[(j+3) % n] for j, v in enumerate(time)]
+183:                 schedule = e.export([out])
+184:                 got = replay(schedule, {0: a, 1: b, 2: c}, p, w)[0]
+185:                 self.assertEqual(got, dft(time, range(n), w, p))
+186:                 if trial == 0:
+187:                     bad = copy.deepcopy(schedule)
+188:                     for row in bad['nodes']:
+189:                         if row['op'] == 'scale': row['data'][0] += 1; break
+190:                     self.assertNotEqual(replay(bad, {0: a, 1: b, 2: c}, p, w)[0], got)
+191: 
+192:     def test_exact_integer_bridge(self):
+193:         import random
+194:         r = random.Random(112)
+195:         for bits in (0, 1, 8, 24, 64, 100):
+196:             for _ in range(12):
+197:                 a, b = r.getrandbits(bits), -r.getrandbits(bits)
+198:                 got, cert = integer_product(a, b)
+199:                 self.assertEqual(got, a*b)
+200:                 self.assertGreater(cert['crt_modulus'], cert['coefficient_bound'])
+201:         self.assertEqual(integer_product(-987654321, -123456789)[0], 987654321*123456789)
+202: 
+203:     def test_noninteger_modular_scale_rejected(self):
+204:         e = ProjectedCircuit(8, [0, 1])
+205:         for c in (.5, 1j):
+206:             with self.assertRaises(ValueError):
+207:                 replay(e.export([e.impulse(0, c)]), {}, 17)
+208: 
+209: 
+210: if __name__ == '__main__':
+211:     unittest.main()

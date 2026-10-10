@@ -1,0 +1,236 @@
+# Slow-radix condition reset for sub-`N log N` Fourier transforms
+
+**Date:** 9 October 2026  
+**Status:** new research direction / theorem-form reduction with a verified numerical sanity check.  
+**Main caveat:** this does **not yet prove** that OpenAI #130 itself has a polylogarithmically conditioned implementation. The missing bridge is a clean/transparent implementation of the local #130 block together with a computable finite bound on the condition of its intermediate states.
+
+## 1. Why this direction
+
+The target is the full problem:
+
+- arbitrary fresh dense input;
+- all `N` Fourier outputs;
+- total work `o(N log N)`;
+- numerical conditioning constrained, rather than unrestricted exact complex arithmetic.
+
+This is deliberately different from optimizing the finite rank/certificate network used in current integer-multiplication `kappa` work.
+
+Ailon's well-conditioned lower bound says that in his square layered model an `R`-uniformly well-conditioned Fourier circuit requires `Omega(N log N / R)` steps. Thus a constant-conditioned sub-`N log N` algorithm is excluded in that model, but a slowly growing condition budget is not.
+
+OpenAI #130 supplies an exact all-length `o(N log N)` DFT in a model with unrestricted complex coefficients and no numerical-stability claim. The question here is whether one can use a sub-`B log B` exact transform only as a **slowly growing macro-radix** and isolate its instability locally.
+
+---
+
+## 2. Condition-reset lemma
+
+Let `U_B` be the **normalized** `B x B` Fourier matrix, hence unitary. Suppose a local in-place computation of `U_B` has cumulative prefix matrices
+
+`P_0 = I, P_1, ..., P_s = U_B`
+
+with every `P_t` nonsingular. Define
+
+`K_B = max_t kappa_2(P_t)`.
+
+Consider a global state of length `N`, where `B | N`. A macro-stage applies the same local computation independently on `N/B` fibers, up to coordinate permutations. If `Pi` is the relevant permutation and `Q` is the unitary transformation represented by all previously completed macro-stages, then during local prefix `t` the global defining matrix has the form
+
+`M_t = Pi^* (I_{N/B} tensor P_t) Pi Q`.
+
+Because permutation matrices and `Q` are unitary,
+
+`kappa_2(M_t) = kappa_2(I tensor P_t) = kappa_2(P_t) <= K_B`.
+
+At completion,
+
+`M_s = Pi^* (I tensor U_B) Pi Q`
+
+is unitary, so its condition number is exactly `1`.
+
+### Consequence
+
+The conditioning of successive macro-stages does **not multiply** as
+
+`K_B^(number of stages)`.
+
+Instead, every completed macro-stage resets the global defining matrix to a unitary matrix, so
+
+`max_global_condition <= K_B`.
+
+Unit-modulus twiddle diagonals and permutations between macro-stages preserve this conclusion.
+
+This is the central observation of the new direction.
+
+---
+
+## 3. Macro-radix work bound
+
+Let
+
+`N = 2^k`, `B = 2^b`, with `1 <= b <= k`.
+
+Group `b` radix-two levels into one `B`-point macro-transform. There are roughly `k/b` macro-levels, and each level contains `N/B` independent `B`-point transforms.
+
+Let `s(B)` be the charged work of the local `B`-point primitive. The macro-transform contribution is
+
+`(k/b) (N/B) s(B)`.
+
+Permutations, twiddle passes, array organization and other linear scans contribute `O(N k/b)`. A leftover block of fewer than `b` binary levels contributes at most `O(N b)` with the ordinary stable FFT.
+
+Therefore
+
+`T(N)/(N k) = O( s(B)/(B b) + 1/b + b/k ).`
+
+Since `b = log_2 B` and `k = log_2 N`, this is equivalently
+
+`T(N)/(N log N) = O( s(B)/(B log B) + 1/log B + log B/log N ).`
+
+Hence, if
+
+`s(B) = o(B log B)`
+
+and one chooses
+
+`B(N) -> infinity` but `log B = o(log N)`, then
+
+`T(N) = o(N log N)`.
+
+This remains a **full arbitrary-input, full-output transform**. No input relation, sparse spectrum, query subset or amortization across related signals is assumed.
+
+---
+
+## 4. Slow-radix stability diagonalization
+
+Assume the local family above has a finite condition bound `K_b < infinity` for every fixed `b`, and normalized cost ratio
+
+`rho_b = s(2^b)/(2^b b) -> 0`.
+
+Let `R(N)` be **any nondecreasing unbounded target condition budget**.
+
+Then one can choose a staircase block-size function `b(k)` for `N=2^k` such that simultaneously
+
+- `b(k) -> infinity`;
+- `b(k)/k -> 0`;
+- `rho_{b(k)} -> 0`;
+- `K_{b(k)} <= R(2^k)`.
+
+### Diagonal selection proof
+
+For each integer `t >= 1`, choose a block exponent `b_t` large enough that
+
+`b_t >= t` and `rho_{b_t} <= 1/t`.
+
+`K_{b_t}` is a fixed finite number. Since `R(N) -> infinity`, choose a threshold `N_t=2^{k_t}` so large that for all `N >= N_t`,
+
+`R(N) >= K_{b_t}`
+
+and also `b_t/k_t <= 1/t`.
+
+On the interval `[N_t,N_{t+1})`, use block exponent `b_t`.
+
+The macro work ratio tends to zero, while the condition-reset lemma gives
+
+`max_condition <= K_{b_t} <= R(N)`.
+
+### Interpretation
+
+Subject to the local clean-prefix assumption, **the condition budget may diverge arbitrarily slowly**. Examples include
+
+- `R(N) = log log N`;
+- `R(N) = log log log N` after sufficiently large thresholds;
+- any other prescribed computable unbounded function.
+
+This is qualitative/asymptotic: thresholds can be fantastically large.
+
+---
+
+## 5. How #130 would enter
+
+OpenAI #130 states an exact all-length bound
+
+`A(B) = O(B (log B)^theta (log log B)^(4-theta))`, `theta < 1`,
+
+and the coarser displayed corollary
+
+`A(B) = O(B (log B)^(1-10^-13))`.
+
+Thus
+
+`A(B)/(B log B) -> 0`.
+
+So its **work bound has exactly the local asymptotic property needed above**.
+
+However, the paper explicitly allows unrestricted complex coefficients and intermediate magnitudes and makes no numerical-stability assertion. Therefore the following bridge is still required before claiming a conditioned #130 corollary:
+
+### Missing bridge A: clean local implementation
+
+Turn the local exact `B`-point program/circuit into a macro-primitive whose completed action is the normalized unitary Fourier map and whose temporary workspace is returned to its initial state (or formulate and prove the reset lemma in the paper's extra-space model).
+
+### Missing bridge B: finite computable local condition bound
+
+For each fixed `B`, compute or upper-bound the maximal condition of every intermediate state of that clean local primitive. The bound may be terrible; the slow-radix theorem only needs it to be finite and effectively upper-bounded.
+
+A crude transparent/reversible simulation of a finite linear circuit is a plausible route: compute required linear forms using reversible shears into workspace, use them, and uncompute. But the exact cost/condition accounting must be proved, not assumed.
+
+If A and B are established with only a constant-factor or `o(B log B)`-preserving work overhead, the slow-radix theorem turns #130 into a power-of-two full DFT with `o(N log N)` work and an arbitrarily slowly growing condition budget in the resulting clean-state model.
+
+---
+
+## 6. Numerical sanity check
+
+`condition_reset_experiment.py` deliberately constructs a toy local `B=4` primitive with an intermediate condition number `K` and a unitary completed transform. It then embeds that primitive on disjoint global fibers, inserts arbitrary unitary mixing between macro-levels, and repeats many levels.
+
+Results:
+
+| N | macro-levels | injected local K | maximum global condition | final condition |
+|---:|---:|---:|---:|---:|
+| 16 | 12 | `1e2` | `1e2` | `1` |
+| 16 | 12 | `1e4` | `1e4` | `1` |
+| 16 | 12 | `1e6` | `1e6` | `1` |
+| 64 | 10 | `1e2` | `1e2` | `1` |
+| 64 | 10 | `1e4` | `1e4` | `1` |
+| 64 | 10 | `1e6` | `1e6` | `1` |
+
+The experiment is only a check of the linear-algebra identity. The local toy primitive is not a fast Fourier circuit.
+
+---
+
+## 7. Why this is different from the current `kappa` race
+
+This direction does **not** try to improve:
+
+- the finite tensor certificate;
+- center/side role counts;
+- rank deficits;
+- copied/retained centers;
+- partial-swap batching;
+- the multiplication exponent `kappa`.
+
+It treats an existing sub-`B log B` primitive as a black box and studies a different question:
+
+> Can instability be spatially and temporally isolated inside a slowly growing macro-radix so that the complete full DFT remains sub-`N log N` while the global intermediate condition grows only very slowly?
+
+That is a numerical-stability / complexity tradeoff problem, not another finite-network optimization.
+
+---
+
+## 8. Immediate research tasks
+
+1. **Transparentize a #130 local block.** Extract a finite `B`-point linear program and compile it into compute/use/uncompute form with explicit workspace.
+2. **Define the correct extra-space condition metric.** Match it to Ailon's extra-memory formulation if possible; otherwise state precisely where the models differ.
+3. **Produce a computable `K(B)` bound.** A crude product-of-shear bounds is enough for the first theorem.
+4. **Make the slow-radix schedule effective.** Given printed `K(B)` upper bounds and local cost records, generate the staircase thresholds algorithmically.
+5. **Extend from powers of two to every length.** Audit Bluestein/chirp convolution or the all-length #130 reduction with condition accounting; do not assume that the power-of-two result automatically transfers stably.
+6. **Finite precision.** Once a condition bound is explicit, convert it into a word-precision/error-propagation bound and compare with Ailon's speed/precision lower bounds.
+
+---
+
+## 9. Claim boundary
+
+Current defensible claim:
+
+> A macro-radix composition of clean normalized sub-`B log B` Fourier primitives has a condition-reset property: local condition does not multiply across completed macro-levels. Consequently, if a local sub-`B log B` family has finite effective condition bounds, a sufficiently slowly growing radix yields `o(N log N)` work on power-of-two lengths while fitting inside any prescribed unbounded condition budget.
+
+What is **not yet proved**:
+
+> That the published #130 algorithm satisfies the required clean-local condition assumptions with `o(B log B)`-preserving overhead, or that the resulting construction meets Ailon's exact square-register condition model.
+
+That bridge is now the main research problem.

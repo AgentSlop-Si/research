@@ -1,0 +1,98 @@
+0001 #!/usr/bin/env python3
+0002 """Independent exact algebra/control cases for the inherited ledger and new lemma."""
+0003 from pathlib import Path
+0004 from math import gcd,comb
+0005 import json,random
+0006 import sympy as sp
+0007 HERE=Path(__file__).resolve().parent
+0008 rng=random.Random(9821357)
+0009 def prime_and_root(n):
+0010     k=1
+0011     while not sp.isprime(k*n+1): k+=1
+0012     p=k*n+1;g=int(sp.primitive_root(p));w=pow(g,k,p)
+0013     assert pow(w,n,p)==1 and all(pow(w,n//q,p)!=1 for q in sp.factorint(n))
+0014     return p,w
+0015 cases=[];entries=expanded=0
+0016 for M in [2,3,4,5,6,8,9,10,12,16]:
+0017     N=M*M;p,w=prime_and_root(N);eta=pow(w,M,p)
+0018     data=[[rng.randrange(p) for h in range(M)] for j in range(M)]
+0019     direct=[[sum(pow(w,((1-M*h)*t*j)%N,p)*data[j][h] for j in range(M))%p
+0020              for h in range(M)] for t in range(M)]
+0021     for b in sp.divisors(M):
+0022         m=M//b;zeta=pow(eta,m,p)
+0023         hats=[[[sum(pow(zeta,(-ell*c)%b,p)*data[j][d+c*m] for c in range(b))%p
+0024                 for ell in range(b)] for d in range(m)] for j in range(M)]
+0025         omega_small=pow(w,b*b,p)
+0026         distinct=set()
+0027         for d in range(m):
+0028             q=pow(w,(1-M*d)%N,p);small=pow(q,b*b,p);distinct.add(small)
+0029             assert small==pow(omega_small,(1-M*d)%(m*m),p)
+0030             assert pow(small,m*m,p)==1
+0031             assert all(pow(small,m*m//q0,p)!=1 for q0 in sp.factorint(m*m))
+0032             for t in range(M):
+0033                 r,a=t%b,t//b
+0034                 for ell in range(b):
+0035                     expected=sum(pow(zeta,(-ell*c)%b,p)*direct[t][d+c*m] for c in range(b))%p
+0036                     routed=0
+0037                     for s in range(b):
+0038                         inner=sum(pow(small,a*v,p)*pow(q,b*r*v,p)*hats[s+b*v][d][(ell+r*s)%b] for v in range(m))%p
+0039                         routed+=pow(q,r*s+b*s*a,p)*inner
+0040                     assert routed%p==expected
+0041                     entries+=1
+0042         assert len(distinct)==m//gcd(b,m)
+0043         volume=m*b*b*b*m
+0044         assert volume==N*b
+0045         expanded+=volume
+0046         cases.append({'M':M,'b':int(b),'m':int(m),'prime':int(p),'root':w,
+0047                       'distinct_nodes':len(distinct),'applications':int(m*b**3),'expanded_inputs':int(volume)})
+0048 
+0049 # For arbitrary edge masks, the grid denominator is unit triangular. Validate one
+0050 # nonconstant-mask application directly without relying on constant-weight paths.
+0051 mask_cases=[]
+0052 for M in [2,3,4,5,8]:
+0053     N=M*M;p=1009
+0054     a=[rng.randrange(p) for _ in range(N)];b=[rng.randrange(p) for _ in range(N)]
+0055     x=[rng.randrange(p) for _ in range(N)];y=[]
+0056     for i in range(N):
+0057         t,u=divmod(i,M)
+0058         y.append((x[i]+(a[i]*y[i-M] if t else 0)+(b[i]*y[i-1] if u else 0))%p)
+0059     recovered=[(y[i]-(a[i]*y[i-M] if i//M else 0)-(b[i]*y[i-1] if i%M else 0))%p for i in range(N)]
+0060     assert x==recovered
+0061     mask_cases.append({'M':M,'active_edges':2*M*(M-1),'exact_application_check':True})
+0062 
+0063 def rev(j,bits):
+0064     r=0
+0065     for _ in range(bits):r=2*r+(j&1);j//=2
+0066     return r
+0067 anchors=[];shifted=[]
+0068 for h in range(1,13):
+0069     M=2**h;N=M*M;k=M//2;bits=2*h
+0070     assert rev(N-2,bits)==N//2-1
+0071     assert rev(N-1-M,bits)==N-1-M//2
+0072     delta=2*7**k-5**k-1;gap=2*7**k-3*5**k+5
+0073     assert delta>0 and gap>0
+0074     anchors.append({'M':M,'N':N,'determinant_positive':True,'modulus_gap_positive':True,
+0075                     'selected_routed_path_exponents':[k,k]})
+0076     # pi=T1 R has pi(0)=1 for every number of bits. Thus J row 1 is e_1.
+0077     assert (rev(0,bits)+1)%N==1
+0078     # Ordinary grid row 1 is (t,u)=(0,1), with exactly predecessors 0 and 1.
+0079     assert divmod(1,M)==(0,1)
+0080     degree=int(sp.totient(N));assert degree==N//2
+0081     shifted.append({'M':M,'N':N,'shifted_minimum_vertex':1,
+0082                     'exact_left_row':'3 alpha e_0 + (alpha+beta) e_1',
+0083                     'max_left_row_support':2,'fixed_right_rows_per_selected_row':2,
+0084                     'rational_coordinate_span_upper_bound':4,'fourier_coordinate_span_degree':degree,
+0085                     'excluded_by_degree':degree>4})
+0086 # The first four N=16 Fourier coordinates are not sufficient; an 8-dimensional
+0087 # primitive field is required. Check an explicit coefficient matrix independently.
+0088 z=sp.symbols('z');cyclo=sp.Poly(sp.cyclotomic_poly(16,z),z)
+0089 assert cyclo.as_expr()==z**8+1 and cyclo.is_irreducible
+0090 columns=[sp.Poly(z**j,z).rem(cyclo) for j in range(16)]
+0091 coordinate_matrix=sp.Matrix([[p.nth(i) for p in columns] for i in range(8)])
+0092 assert coordinate_matrix.rank()==8
+0093 result={'growing_radix':{'banks':len(cases),'exact_outputs_checked':entries,'expanded_inputs_counted':expanded,'cases':cases},
+0094         'variable_mask_solve_controls':mask_cases,'anchor_controls':anchors,
+0095         'shifted_symbolic_support_controls':shifted,'N16_fourier_Q_coordinate_rank':8,
+0096         'all_size_proof':'pi(0)=1 forces routed row 1=e_1; grid row 1=3e_0+e_1 for every M>=2. At dyadic square N, Phi_N=z^(N/2)+1, so coordinate Q-span=N/2.'}
+0097 (HERE/'LEDGER_CONTROLS.json').write_text(json.dumps(result,indent=2)+'\n')
+0098 print(json.dumps({'banks':len(cases),'exact_outputs':entries,'expanded_inputs':expanded,'anchor_sizes':len(anchors),'shifted_sizes':len(shifted),'N16_fourier_Q_coordinate_rank':8},indent=2))

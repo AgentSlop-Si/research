@@ -1,0 +1,196 @@
+   1 """An exact finite-field audit of global Fourier/chirp algebra.
+   2 
+   3 All operations take place in F_998244353.  Lengths N are even powers of two
+   4 with 2*N | (P-1).  No floating arithmetic, hashing, or cached input results.
+   5 This is a research verifier, NOT a faster Fourier transform.
+   6 """
+   7 from __future__ import annotations
+   8 
+   9 from dataclasses import dataclass
+  10 from typing import Sequence
+  11 
+  12 P = 998244353
+  13 GENERATOR = 3
+  14 
+  15 
+  16 def _ensure_n(n: int) -> None:
+  17     if n < 2 or (n & (n - 1)) or ((P - 1) % (2 * n)):
+  18         raise ValueError("N must be an even power of two with 2N dividing P-1")
+  19 
+  20 
+  21 @dataclass(frozen=True)
+  22 class Chirp:
+  23     n: int
+  24     zeta: int
+  25     omega: int
+  26     h: tuple[int, ...]
+  27     d: tuple[int, ...]
+  28     g: tuple[int, ...]
+  29 
+  30 
+  31 def make_chirp(n: int) -> Chirp:
+  32     _ensure_n(n)
+  33     z = pow(GENERATOR, (P - 1) // (2 * n), P)
+  34     if pow(z, 2 * n, P) != 1 or pow(z, n, P) != P - 1:
+  35         raise AssertionError("Root must have exact order 2N")
+  36     d = tuple(pow(z, (j * j) % (2 * n), P) for j in range(n))
+  37     h = tuple(pow(t, P - 2, P) for t in d)
+  38     g = tuple(pow(z, (-(2 * k + 1)) % (2 * n), P) for k in range(n))
+  39     return Chirp(n, z, z*z % P, h, d, g)
+  40 
+  41 
+  42 def dft_direct(x: Sequence[int], omega: int) -> list[int]:
+  43     n = len(x)
+  44     return [sum(int(x[j]) * pow(omega, (j*k) % n, P)
+  45                 for j in range(n)) % P for k in range(n)]
+  46 
+  47 
+  48 def dft_ntt(x: Sequence[int], omega: int, inverse: bool = False) -> list[int]:
+  49     """Independent in-place radix-2 NTT. Positive-exponent forward convention."""
+  50     n = len(x)
+  51     if n == 0 or (n & (n-1)):
+  52         raise ValueError("Input length must be a power of two")
+  53     data = [int(v) % P for v in x]
+  54     j = 0
+  55     for i in range(1,n):
+  56         bit = n >> 1
+  57         while j & bit:
+  58             j ^= bit
+  59             bit >>= 1
+  60         j ^= bit
+  61         if i < j:
+  62             data[i],data[j] = data[j],data[i]
+  63     w = pow(omega, P-2, P) if inverse else omega
+  64     size = 2
+  65     while size <= n:
+  66         step_root = pow(w, n // size, P)
+  67         for start in range(0,n,size):
+  68             phase = 1
+  69             half = size // 2
+  70             for k in range(start,start+half):
+  71                 u = data[k]
+  72                 v = data[k+half] * phase % P
+  73                 data[k] = (u+v) % P
+  74                 data[k+half] = (u-v) % P
+  75                 phase = phase * step_root % P
+  76         size *= 2
+  77     if inverse:
+  78         inv_n = pow(n, P-2, P)
+  79         data = [v*inv_n % P for v in data]
+  80     return data
+  81 
+  82 
+  83 def cyclic_convolution(x: Sequence[int],h: Sequence[int]) -> list[int]:
+  84     n=len(x)
+  85     if n!=len(h):
+  86         raise ValueError('Mismatched lengths')
+  87     return [sum(x[j]*h[(k-j)%n] for j in range(n))%P for k in range(n)]
+  88 
+  89 
+  90 def chirp_dft_direct(x: Sequence[int], c: Chirp) -> list[int]:
+  91     if len(x)!=c.n:
+  92         raise ValueError('Mismatched lengths')
+  93     a=[x[j]*c.d[j]%P for j in range(c.n)]
+  94     b=cyclic_convolution(a,c.h)
+  95     return [b[k]*c.d[k]%P for k in range(c.n)]
+  96 
+  97 
+  98 def chirp_convolution_from_ntt(x: Sequence[int], c: Chirp) -> list[int]:
+  99     """C_h(x)=D^-1 F_N D^-1 x; makes its hidden FFT explicit."""
+ 100     if len(x)!=c.n:
+ 101         raise ValueError('Mismatched lengths')
+ 102     a=[x[j]*c.h[j]%P for j in range(c.n)]
+ 103     b=dft_ntt(a,c.omega)
+ 104     return [b[k]*c.h[k]%P for k in range(c.n)]
+ 105 
+ 106 
+ 107 def variable_filter(y: Sequence[int], c: Chirp) -> list[int]:
+ 108     """(Ly)[k]=y[k+1]-zeta^(-2k-1)y[k], indices cyclic."""
+ 109     return [(y[(k+1)%c.n]-c.g[k]*y[k])%P for k in range(c.n)]
+ 110 
+ 111 
+ 112 def modular_rank(matrix: Sequence[Sequence[int]]) -> int:
+ 113     if not matrix: return 0
+ 114     m=[list(int(v)%P for v in row) for row in matrix]
+ 115     cols=len(m[0]);rows=len(m)
+ 116     if any(len(row)!=cols for row in m):
+ 117         raise ValueError('Ragged matrix')
+ 118     rank=0
+ 119     for col in range(cols):
+ 120         pivot=next((i for i in range(rank,rows) if m[i][col]),None)
+ 121         if pivot is None:continue
+ 122         m[rank],m[pivot]=m[pivot],m[rank]
+ 123         inv=pow(m[rank][col],P-2,P)
+ 124         for i in range(rank+1,rows):
+ 125             if not m[i][col]:continue
+ 126             factor=m[i][col]*inv%P
+ 127             # No need to reduce already eliminated columns.
+ 128             for j in range(col,cols):
+ 129                 m[i][j]=(m[i][j]-factor*m[rank][j])%P
+ 130         rank+=1
+ 131         if rank==rows:break
+ 132     return rank
+ 133 
+ 134 
+ 135 def matrix_c_h(c: Chirp) -> list[list[int]]:
+ 136     return [[c.h[(k-j)%c.n] for j in range(c.n)] for k in range(c.n)]
+ 137 
+ 138 
+ 139 def matrix_lc_h(c: Chirp) -> list[list[int]]:
+ 140     return [[(c.h[((k+1)-j)%c.n]-c.g[k]*c.h[(k-j)%c.n])%P
+ 141              for j in range(c.n)] for k in range(c.n)]
+ 142 
+ 143 
+ 144 def moment(x: Sequence[int], c: Chirp, r: int, k: int) -> int:
+ 145     n=c.n
+ 146     return sum(x[j]*pow(c.omega,(r*j)%n,P)*c.h[(k-j)%n]
+ 147                for j in range(n))%P
+ 148 
+ 149 
+ 150 def moment_matrix(c: Chirp) -> list[list[int]]:
+ 151     """M_r(0)=sum_j x_j omega^(rj) h[-j]; independent rows."""
+ 152     return [[pow(c.omega,(r*j)%c.n,P)*c.h[(-j)%c.n]%P
+ 153              for j in range(c.n)] for r in range(c.n)]
+ 154 
+ 155 
+ 156 def cyclic_hankel(y: Sequence[int]) -> list[list[int]]:
+ 157     n=len(y)
+ 158     return [[y[(r+j)%n] for j in range(n)] for r in range(n)]
+ 159 
+ 160 
+ 161 def predicted_full_spectral_probability(n: int, p: int = P) -> float:
+ 162     """For uniform x over F_p^N: Pr(Fx has no zero coordinates)."""
+ 163     return (1.0-1.0/p)**n
+ 164 
+ 165 if __name__=='__main__':
+ 166     import json, random
+ 167     rng=random.Random(20261009)
+ 168     outcome=[]
+ 169     for n in (4,8,16,32,64):
+ 170         c=make_chirp(n)
+ 171         x=[rng.randrange(P) for _ in range(n)]
+ 172         y=cyclic_convolution(x,c.h)
+ 173         xhat=dft_direct(x,c.omega)
+ 174         check=chirp_dft_direct(x,c)
+ 175         assert check==xhat==dft_ntt(x,c.omega)
+ 176         assert chirp_convolution_from_ntt(x,c)==y
+ 177         hhat=dft_ntt(c.h,c.omega)
+ 178         gauss=sum(c.h)%P
+ 179         assert gauss and all(hhat[k]==gauss*c.d[k]%P for k in range(n))
+ 180         assert variable_filter(c.h,c)==[0]*n
+ 181         assert all(moment(x,c,r,(k+1)%n) == c.g[k]*moment(x,c,(r+1)%n,k)%P
+ 182                    for r in range(n) for k in range(n))
+ 183         assert modular_rank(moment_matrix(c))==n
+ 184         assert modular_rank(matrix_c_h(c))==n
+ 185         rank_lch=modular_rank(matrix_lc_h(c))
+ 186         assert rank_lch==n-1
+ 187         filt=variable_filter(y,c)
+ 188         assert all(filt[k]==sum(matrix_lc_h(c)[k][j]*x[j] for j in range(n))%P for k in range(n))
+ 189         nonzeros=sum(v!=0 for v in filt)
+ 190         assert modular_rank(cyclic_hankel(y))==sum(bool(v) for v in dft_ntt(y,c.omega))
+ 191         outcome.append({'n':n,'gauss_nonzero':True,'rank_chirp':n,'rank_filtered_chirp':rank_lch,'moment_rank':n,
+ 192                         'filtered_nonzero':nonzeros,'recurrence_order_periodic':modular_rank(cyclic_hankel(y)),
+ 193                         'full_spectral_probability':predicted_full_spectral_probability(n),
+ 194                         'modular_butterflies':(n//2)*(n.bit_length()-1),
+ 195                         'dense_chirp_products':n*n})
+ 196     print(json.dumps(outcome,indent=2))

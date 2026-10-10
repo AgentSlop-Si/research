@@ -1,0 +1,103 @@
+"""Amortized total-variation extension of the delta-graph transform.
+
+Instead of fixing the per-fiber Fourier-mode bound r, impose a GLOBAL
+budget R on the sum of the supports of all recognized consecutive fiber
+differences.  Each difference is decoded by geometric doubling of BM
+caps, or a direct M^2 transform only when budget remaining is Omega(M).
+
+On every raw input (accepted or rejected), work is
+  O(N + B*M^2 + M*(Q+R) + (B*N+Q*R) [if accepted]),
+for a fixed B-anchor budget, balanced N=Q*M.  Thus R=O(Q) and
+Q,M=Theta(sqrt N), B=O(1) gives uniform O(N) charged WORK,
+with exact outputs only for accepted structured inputs.
+
+The root of unity and finite prime field are supplied, as usual.
+"""
+from __future__ import annotations
+from typing import Optional,Sequence
+from fiber_union import _solve_modes_fast,_direct_modes
+from delta_graph import (
+    balanced_q, direct_row_dft, DenseAnchor, EdgeEvent, DeltaCertificate,
+    transform_certified
+)
+import phase_union_general as phase
+
+
+def modes_with_budget(diff:Sequence[int],subroots:Sequence[int],p:int,budget:int):
+    """Discover Fourier support of diff up to `budget`, with charged work.
+
+    For k <= floor(M/3), k-sparse exponential sums are identified from
+    M >= 3*k consecutive samples by BM + frequency root scan + check.
+    Repeating doubling bounds total work by O(M*(k+1)).
+    For larger k, direct M^2 spectral computation is charged to
+    budget >= M/3.  Failure consumes at most O(M*(budget+1)) work.
+    """
+    m=len(diff)
+    if not any(diff):return ()
+    if budget==0:return None
+    if m<3:
+        return _direct_modes(diff,p,subroots,budget)
+    max_safe=m//3
+    limit=min(max_safe,budget)
+    cap=1
+    while True:
+        r=min(cap,limit)
+        result=_solve_modes_fast(diff,subroots,p,r)
+        if result is not None:
+            return result
+        if r>=limit:break
+        cap*=2
+    if budget<max_safe:
+        return None
+    # >= M/3 modes remain available, so M*M direct computation is
+    # O(M*budget). It also handles rank > M/2, where BM is ambiguous.
+    return _direct_modes(diff,p,subroots,budget)
+
+
+def recognize_budgeted(x:Sequence[int],p:int,omega:int,total_modes:int,
+                       max_anchors:int=1,q:Optional[int]=None,
+                       balance_bound:int=4):
+    n=len(x)
+    if n<1 or total_modes<0 or max_anchors<1 or balance_bound<1:
+        raise ValueError('invalid n, mode budget, anchor count, balance bound')
+    q=balanced_q(n,balance_bound) if q is None else q
+    if q is None:return None
+    if not (1<=q<=n and n%q==0):raise ValueError('q must divide n')
+    m=n//q
+    if q*q>balance_bound*n or m*m>balance_bound*n:
+        raise ValueError('not balanced')
+    roots=phase.phase_table(n,p,omega)
+    subroots=phase.phase_table(m,p,roots[q%n])
+    x=list(z%p for z in x)
+    initial=tuple(x[q*u] for u in range(m))
+    anchors=[];events=[];resets=[0]
+    root_at=0;root_spec=direct_row_dft(initial,p,subroots)
+    prev=initial
+    spent=0
+    for t in range(1,q):
+        row=tuple(x[t+q*u] for u in range(m))
+        diff=tuple((row[u]-prev[u])%p for u in range(m))
+        modes=modes_with_budget(diff,subroots,p,total_modes-spent)
+        if modes is None:
+            if len(resets)>=max_anchors:return None
+            anchors.append(DenseAnchor(root_at,t-1,root_spec))
+            root_at=t;root_spec=direct_row_dft(row,p,subroots)
+            resets.append(t)
+        else:
+            spent+=len(modes)
+            for h,c in modes:events.append(EdgeEvent(t,-1,h,c))
+        prev=row
+    anchors.append(DenseAnchor(root_at,q-1,root_spec))
+    end_by_t=[0]*q
+    for a in anchors:
+        for t in range(a.first,a.last+1):end_by_t[t]=a.last
+    events=tuple(EdgeEvent(d.at,end_by_t[d.at],d.h,d.amplitude) for d in events)
+    assert len(events)<=total_modes
+    return DeltaCertificate(n,q,m,p,omega,total_modes,max_anchors,
+                            tuple(anchors),events,tuple(resets))
+
+
+def transform_if_recognized(x,p,omega,total_modes:int,
+                            max_anchors:int=1,q=None,balance_bound:int=4):
+    cert=recognize_budgeted(x,p,omega,total_modes,max_anchors,q,balance_bound)
+    return (None,None) if cert is None else (transform_certified(cert),cert)

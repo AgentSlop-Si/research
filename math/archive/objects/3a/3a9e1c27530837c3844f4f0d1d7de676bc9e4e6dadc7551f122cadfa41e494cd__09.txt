@@ -1,0 +1,239 @@
+1: """Single fixed-bin relation view with coalesced, snapshot-based changes.
+2: 
+3: This is an independent experimental derivative, not a dense FFT algorithm.
+4: Exact-arithmetic algebra and floating-point implementation are distinct.
+5: See REPORT.md for bounds, ownership, numerical limits and benchmark scope.
+6: """
+7: from __future__ import annotations
+8: 
+9: from dataclasses import dataclass
+10: from typing import Iterable, Sequence
+11: import numpy as np
+12: 
+13: 
+14: def modular_phase(n: int, bins: np.ndarray, j: int) -> np.ndarray:
+15:     """Reduce integer products before floating conversion; never overflow int64.
+16: 
+17:     The fallback handles products outside signed int64 with Python integers.
+18:     Big-integer bit complexity is not included in the fixed-word cost model.
+19:     """
+20:     maximum = int(bins.max(initial=0))
+21:     if j == 0 or maximum <= np.iinfo(np.int64).max // j:
+22:         residue = (bins * j) % n
+23:     else:
+24:         residue = np.fromiter(((int(b) * j) % n for b in bins), dtype=np.int64, count=len(bins))
+25:     return np.exp((-2j*np.pi) * (residue.astype(float) / n))
+26: 
+27: 
+28: @dataclass(frozen=True)
+29: class QueryStats:
+30:     strategy: str
+31:     pending_keys: int
+32:     q: int
+33:     r: int
+34:     k: int
+35:     reclaimed_keys: int
+36: 
+37: 
+38: class RelationState:
+39:     """Owned projection plus mutable producer-supplied relation metadata.
+40: 
+41:     The basis projection must use NumPy's forward, unnormalized DFT convention.
+42:     This API trusts finite input values and assumes no direct external mutation
+43:     of its arrays or dictionaries. Index bounds are checked. Bins may repeat.
+44:     """
+45:     def __init__(self, n: int, bins: Sequence[int], basis_projection: np.ndarray,
+46:                  coefficients: Sequence[complex] | None = None,
+47:                  sparse_residual: Iterable[tuple[int, complex]] = (), *,
+48:                  prepared_positions: Sequence[int] | None = None):
+49:         self.n = int(n)
+50:         if self.n < 1 or self.n > np.iinfo(np.int64).max:
+51:             raise ValueError("n must be a positive signed-int64 value")
+52:         b = np.asarray(bins, dtype=np.int64)
+53:         if b.ndim != 1 or b.size < 1 or np.any(b < 0) or np.any(b >= self.n):
+54:             raise ValueError("bad frequency bins")
+55:         self.bins = b.astype(np.intp, copy=True)
+56:         self.q = len(b)
+57:         p = np.asarray(basis_projection, dtype=np.complex128)
+58:         if p.ndim != 2 or p.shape[1] != self.q:
+59:             raise ValueError("basis_projection must have shape (r,q)")
+60:         # ascontiguousarray alone can retain an r-by-N parent allocation.
+61:         self.projection = np.array(p, dtype=np.complex128, order="C", copy=True)
+62:         self.r = p.shape[0]
+63:         c = np.zeros(self.r, dtype=np.complex128) if coefficients is None else np.asarray(coefficients, dtype=np.complex128)
+64:         if c.shape != (self.r,):
+65:             raise ValueError("bad coefficients")
+66:         self.coefficients = c.copy()
+67:         self.sparse: dict[int, complex] = {}
+68:         for j, value in sparse_residual:
+69:             j = self._point_index(j)
+70:             updated = self.sparse.get(j, 0j) + complex(value)
+71:             if updated == 0j:
+72:                 self.sparse.pop(j, None)
+73:             else:
+74:                 self.sparse[j] = updated
+75:         self._prepared_row = {}
+76:         self._prepared_phase = None
+77:         if prepared_positions is not None:
+78:             unique = list(dict.fromkeys(self._point_index(j) for j in prepared_positions))
+79:             self._prepared_row = {j: i for i, j in enumerate(unique)}
+80:             self._prepared_phase = np.asarray([modular_phase(self.n, self.bins, j) for j in unique], dtype=np.complex128).reshape(len(unique), self.q)
+81:         self.cached = self._rebuild_value()
+82: 
+83:     def _point_index(self, j):
+84:         j = int(j)
+85:         if not 0 <= j < self.n:
+86:             raise ValueError("point outside signal")
+87:         return j
+88: 
+89:     def _coefficient_index(self, i):
+90:         i = int(i)
+91:         if not 0 <= i < self.r:
+92:             raise ValueError("coefficient outside basis")
+93:         return i
+94: 
+95:     def _phase(self, j):
+96:         row = self._prepared_row.get(j)
+97:         if row is not None and self._prepared_phase is not None:
+98:             return self._prepared_phase[row]
+99:         return modular_phase(self.n, self.bins, j)
+100: 
+101:     def _rebuild_value(self):
+102:         y = np.asarray(self.coefficients @ self.projection, dtype=np.complex128)
+103:         for j, value in self.sparse.items():
+104:             y += value * self._phase(j)
+105:         return y
+106: 
+107:     def _set_point(self, j, value):
+108:         if value == 0j:
+109:             self.sparse.pop(j, None)
+110:         else:
+111:             self.sparse[j] = value
+112: 
+113:     @property
+114:     def numeric_payload_bytes(self):
+115:         """Numeric buffers only; excludes dict/tuple/scalar allocator overhead."""
+116:         phase = 0 if self._prepared_phase is None else self._prepared_phase.nbytes
+117:         return self.projection.nbytes + self.coefficients.nbytes + self.bins.nbytes + self.cached.nbytes + phase
+118: 
+119: 
+120: class CoalescedProjectedFourier(RelationState):
+121:     """At most one pending snapshot for each changed coefficient/point.
+122: 
+123:     A snapshot stores the value before the first post-query edit. The replay
+124:     delta is CURRENT - SNAPSHOT, not the sum of the requested update deltas.
+125:     Returning exactly to the snapshot removes the entry immediately.
+126: 
+127:     Expected update cost: O(1), with Python dictionary amortization.
+128:     Query cost: O(q*(1 + min(u,r+k)) + u), including snapshot reclamation.
+129:     Live payload: O(r*q + P*q + r + k + u + q), P prepared positions.
+130:     Python dictionary capacity can follow prior high-water sizes; see report.
+131:     In particular, rebuild is not claimed to have a worst-case O(q*(r+k))
+132:     total latency when u is large. No delayed garbage is hidden off-timer.
+133:     """
+134:     def __init__(self, *args, **kwargs):
+135:         super().__init__(*args, **kwargs)
+136:         self.pending: dict[tuple[str, int], complex] = {}
+137:         self._pending_high_water = 0
+138:         self.last_stats = QueryStats("initial", 0, self.q, self.r, len(self.sparse), 0)
+139: 
+140:     def _remember(self, key, before, after):
+141:         baseline = self.pending.get(key, before)
+142:         if after == baseline:
+143:             removed = self.pending.pop(key, None)
+144:             if removed is not None:
+145:                 size = len(self.pending)
+146:                 # Deletions leave dictionary tombstones. Shrink geometrically
+147:                 # on UPDATE so query clear cannot inherit a much larger table.
+148:                 # The occasional O(size) copy/old-table destruction is charged
+149:                 # to the intervening deletions: amortized O(1) per update.
+150:                 if size == 0:
+151:                     self.pending.clear()
+152:                     self._pending_high_water = 0
+153:                 elif 4*size < self._pending_high_water:
+154:                     self.pending = dict(self.pending)
+155:                     self._pending_high_water = size
+156:         else:
+157:             self.pending[key] = baseline
+158:             self._pending_high_water = max(self._pending_high_water, len(self.pending))
+159: 
+160:     def add_coefficient(self, i, delta):
+161:         i = self._coefficient_index(i)
+162:         z = complex(delta)
+163:         if z == 0j:
+164:             return
+165:         before = complex(self.coefficients[i])
+166:         self.coefficients[i] += z
+167:         self._remember(("c", i), before, complex(self.coefficients[i]))
+168: 
+169:     def add_point(self, j, delta):
+170:         j = self._point_index(j)
+171:         z = complex(delta)
+172:         if z == 0j:
+173:             return
+174:         before = self.sparse.get(j, 0j)
+175:         after = before + z
+176:         self._set_point(j, after)
+177:         self._remember(("p", j), before, after)
+178: 
+179:     def query(self):
+180:         u, k = len(self.pending), len(self.sparse)
+181:         if not u:
+182:             strategy = "cached"
+183:         elif u <= self.r + k:
+184:             strategy = "coalesced"
+185:             for (kind, key), before in self.pending.items():
+186:                 if kind == "c":
+187:                     self.cached += (self.coefficients[key] - before) * self.projection[key]
+188:                 else:
+189:                     self.cached += (self.sparse.get(key, 0j) - before) * self._phase(key)
+190:         else:
+191:             strategy = "rebuild"
+192:             self.cached = self._rebuild_value()
+193:         # CPython clear releases u entries here: O(u), including on rebuild.
+194:         self.pending.clear()
+195:         self._pending_high_water = 0
+196:         self.last_stats = QueryStats(strategy, u, self.q, self.r, k, u)
+197:         return self.cached.copy()
+198: 
+199:     def rebase(self):
+200:         """Explicit O(q*(1+r+k)+u) rebuild to limit accumulated replay drift."""
+201:         u = len(self.pending)
+202:         self.cached = self._rebuild_value()
+203:         self.pending.clear()
+204:         self._pending_high_water = 0
+205:         self.last_stats = QueryStats("explicit_rebase", u, self.q, self.r, len(self.sparse), u)
+206:         return self.cached.copy()
+207: 
+208: 
+209: class AlwaysRebuild(RelationState):
+210:     """Matched-q comparator with O(1) metadata edits and no event logging."""
+211:     def add_coefficient(self, i, delta):
+212:         self.coefficients[self._coefficient_index(i)] += complex(delta)
+213: 
+214:     def add_point(self, j, delta):
+215:         j = self._point_index(j)
+216:         self._set_point(j, self.sparse.get(j, 0j) + complex(delta))
+217: 
+218:     def query(self):
+219:         self.cached = self._rebuild_value()
+220:         return self.cached.copy()
+221: 
+222: 
+223: class EagerProjected(RelationState):
+224:     """Matched-q O(q)-per-edit comparator, based on represented state changes."""
+225:     def add_coefficient(self, i, delta):
+226:         i = self._coefficient_index(i)
+227:         before = complex(self.coefficients[i])
+228:         self.coefficients[i] += complex(delta)
+229:         self.cached += (self.coefficients[i] - before) * self.projection[i]
+230: 
+231:     def add_point(self, j, delta):
+232:         j = self._point_index(j)
+233:         before = self.sparse.get(j, 0j)
+234:         after = before + complex(delta)
+235:         self._set_point(j, after)
+236:         self.cached += (after - before) * self._phase(j)
+237: 
+238:     def query(self):
+239:         return self.cached.copy()

@@ -1,0 +1,93 @@
+1: """Reproducible exact verification; no floating-point tolerances."""
+2: import json
+3: from pathlib import Path
+4: from time import perf_counter
+5: 
+6: from fixed_kernel import apply, prepare, hankel, hankel_determinant_formula
+7: from prior_exact_arithmetic import PrimeField, CyclotomicField, fourier, mv
+8: 
+9: 
+10: def determinant(field, matrix):
+11:     a, out = [row[:] for row in matrix], field.one
+12:     for j in range(len(a)):
+13:         pivot = next((i for i in range(j, len(a)) if a[i][j] != field.zero), None)
+14:         if pivot is None:
+15:             return field.zero
+16:         if pivot != j:
+17:             a[j], a[pivot] = a[pivot], a[j]
+18:             out = field.neg(out)
+19:         value = a[j][j]
+20:         out = field.mul(out, value)
+21:         reciprocal = field.inv(value)
+22:         for i in range(j+1, len(a)):
+23:             scale = field.mul(a[i][j], reciprocal)
+24:             for k in range(j+1, len(a)):
+25:                 a[i][k] = field.sub(a[i][k], field.mul(scale, a[j][k]))
+26:     return out
+27: 
+28: 
+29: def check_case(field, n, label):
+30:     root = field.root(n)
+31:     assert field.power(root, n) == field.one
+32:     assert field.power(root, n//2) != field.one
+33:     plan = prepare(field, n, root)
+34:     assert plan.factorial[-1] == field.integer(n)
+35:     assert all(field.mul(a, b) == field.one for a, b in zip(plan.factorial, plan.kernel))
+36:     assert plan.preparation == {'mul': 6*n-4+n.bit_length()-1,
+37:         'sub': n-1, 'constant_inverse': 1, 'neg': n-1}
+38:     f = fourier(field, n)
+39:     for j in range(n):
+40:         basis = [field.one if i == j else field.zero for i in range(n)]
+41:         result, cost = apply(field, plan, basis)
+42:         assert result == [f[i][j] for i in range(n)], (label, n, j)
+43:         assert cost['field_operations'] == {'mul': n*n+4*n, 'add': n*n-n}
+44:     # A mixed input checks the public call independently of basis-only sparsity.
+45:     x = [field.integer((i*i+3*i+7) % 19-9) for i in range(n)]
+46:     assert apply(field, plan, x)[0] == mv(field, f, x)
+47:     # Coefficients of (1-z)H(z) = H(qz) modulo z^N.
+48:     for j in range(n):
+49:         left = plan.kernel[j] if j == 0 else field.sub(plan.kernel[j], plan.kernel[j-1])
+50:         right = field.mul(field.power(root, j), plan.kernel[j])
+51:         assert left == right
+52:     # Exact convolution inverse is the middle diagonal coefficients.
+53:     for j in range(n):
+54:         total = field.zero
+55:         for k in range(j+1):
+56:             total = field.add(total, field.mul(plan.kernel[k], plan.middle[j-k]))
+57:         assert total == (field.one if j == 0 else field.zero)
+58:     certificates = []
+59:     for shift in (0, 1):
+60:         r = n//2
+61:         actual = determinant(field, hankel(field, plan, r, shift))
+62:         formula = hankel_determinant_formula(field, plan, r, shift)
+63:         assert actual == formula and actual != field.zero
+64:         certificates.append({'shift': shift, 'dimension': r,
+65:                              'determinant': field.encode(actual)})
+66:     return {'field': label, 'n': n, 'basis_vectors_verified': n,
+67:         'preparation': plan.preparation, 'direct_evaluator': cost,
+68:         'hankel_certificates': certificates,
+69:         'q_difference_identity': True, 'inverse_kernel_identity': True}
+70: 
+71: 
+72: def main():
+73:     start = perf_counter()
+74:     rows = []
+75:     for p in (65537, 998244353):
+76:         field = PrimeField(p)
+77:         for n in (2, 4, 8, 16, 32, 64, 128):
+78:             rows.append(check_case(field, n, f'F_{p}'))
+79:     for n in (2, 4, 8, 16):
+80:         rows.append(check_case(CyclotomicField(n), n, f'Q(zeta_{n})'))
+81:     output = {'status': 'PASS', 'case_count': len(rows),
+82:         'basis_vector_count': sum(row['basis_vectors_verified'] for row in rows),
+83:         'hankel_determinants_verified': 2*len(rows),
+84:         'elapsed_seconds': perf_counter()-start,
+85:         'scope': 'Exact factorization and restricted streaming barrier, not a fast FFT claim.',
+86:         'cases': rows}
+87:     path = Path(__file__).parent / 'results' / 'exact_audit.json'
+88:     path.write_text(json.dumps(output, indent=2)+'\n')
+89:     print(json.dumps({k:v for k,v in output.items() if k != 'cases'}, indent=2))
+90: 
+91: 
+92: if __name__ == '__main__':
+93:     main()

@@ -1,0 +1,25 @@
+1: """Fourier phase rows with exact integer exponent reduction before float conversion."""
+2: import numpy as np
+3: 
+4: _SAFE_N = 3037000499  # floor(sqrt(int64 max)); products of residues fit below this.
+5: 
+6: 
+7: def phase_row(n, multiplier, indices):
+8:     """Return exp(-2 pi i * multiplier * indices / n), reducing modulo n first.
+9: 
+10:     The object-integer path prevents overflow for very large logical periods.
+11:     It is slower, but selected-frequency callers need not allocate length-n data.
+12:     """
+13:     n = int(n)
+14:     if n < 1:
+15:         raise ValueError('n must be positive')
+16:     a = np.asarray(indices)
+17:     if a.ndim != 1:
+18:         raise ValueError('indices must be one-dimensional')
+19:     multiplier = int(multiplier) % n
+20:     if n <= _SAFE_N:
+21:         residues = (np.asarray(a, dtype=np.int64) % n * multiplier) % n
+22:     else:
+23:         residues = np.fromiter(((int(k) % n * multiplier) % n for k in a),
+24:                                dtype=np.float64, count=len(a))
+25:     return np.exp((-2j * np.pi / n) * residues.astype(np.float64))

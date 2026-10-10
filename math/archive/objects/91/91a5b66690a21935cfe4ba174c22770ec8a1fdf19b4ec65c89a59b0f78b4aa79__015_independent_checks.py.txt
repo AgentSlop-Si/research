@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Independent exact review checker. Uploaded Python programs remain inert."""
+import collections,hashlib,itertools,json,math,pathlib,random
+ROOT=pathlib.Path(__file__).resolve().parent
+DATA=ROOT/'extracted/fft_four_stage_gate_2026-10-10'
+rng=random.Random(202610092336)
+
+def groups(n):
+    k=n.bit_length()-1;m=k//2
+    labels=[((j>>m)&1) if k%2 else (((j>>m)^(j>>(m-1)))&1) for j in range(n)]
+    A=[j for j,v in enumerate(labels) if not v];B=[j for j,v in enumerate(labels) if v]
+    return A,B,sum(labels[j]!=labels[j+1] for j in range(n-1))
+def reverse(j,k):
+    x=0
+    for _ in range(k):x=2*x+(j&1);j>>=1
+    return x
+
+def elimination(a,p,det=False):
+    a=[list(row) for row in a];nr=len(a);nc=len(a[0]) if a else 0;rr=0;dd=1
+    for col in range(nc):
+        row=next((j for j in range(rr,nr) if a[j][col]%p),None)
+        if row is None:continue
+        if row!=rr:a[row],a[rr]=a[rr],a[row];dd=-dd
+        value=a[rr][col];dd=dd*value%p;iv=pow(value,-1,p)
+        for j in range(rr+1,nr):
+            f=a[j][col]*iv%p
+            if f:a[j]=[(x-f*y)%p for x,y in zip(a[j],a[rr])]
+        rr+=1
+        if rr==nr:break
+    return (dd%p if rr==nr==nc else 0) if det else rr
+
+def primitive(n,p):
+    for a in range(2,p):
+        w=pow(a,(p-1)//n,p)
+        if pow(w,n,p)==1 and pow(w,n//2,p)!=1:return w
+    raise AssertionError('root')
+def block(n,R,C,w,p):return [[pow(w,i*j%n,p) for j in C] for i in R]
+
+partitions=[]
+for k in range(2,14):
+    n=1<<k;A,B,d=groups(n);expected=(1<<((k+1)//2))-1 if k%2 else 1<<(k//2)
+    assert d==expected and len(A)==len(B)==n//2
+    assert {reverse(j,k) for j in A}==set(A)
+    assert {reverse(j,k) for j in B}==set(B)
+    bound=(n//2+d-1)//d
+    if k>=7:assert 4*d<n//2
+    partitions.append({'N':n,'transitions':d,'rank_target':n//2,'minimum_total_QS_order':bound})
+
+fourier_blocks=[]
+for n in (4,8,16,32,64,128,256):
+    A,B,d=groups(n)
+    for p in (12289,65537):
+        w=primitive(n,p)
+        values={str(i)+str(j):elimination(block(n,R,C,w,p),p,True) for i,R in enumerate((A,B)) for j,C in enumerate((A,B))}
+        assert all(values.values())
+        fourier_blocks.append({'N':n,'p':p,'omega':w,'four_block_determinants':values})
+
+# Exhaustive exponent identity for small lengths, samples for larger lengths.
+identity_checks=0;local_determinants=0
+for n in (4,8,16,32,64,128,256,512,1024):
+    k=n.bit_length()-1;m=k//2;radix=2 if k%2 else 4;side=1<<m if k%2 else 1<<(m-1)
+    p=12289;w=primitive(n,p)
+    pairs=itertools.product(range(n),repeat=2) if n<=64 else ((rng.randrange(n),rng.randrange(n)) for _ in range(2000))
+    for i,j in pairs:
+        z,rem=divmod(i,radix*side);u,a=divmod(rem,side)
+        v0,rem=divmod(j,radix*side);v,b=divmod(rem,side)
+        exponent=(radix*side*(z*b+a*v0)+(side*u+a)*(side*v+b))%n
+        assert exponent==i*j%n
+        identity_checks+=1
+    if not k%2:
+        for U in ((0,3),(1,2)):
+            for V in ((0,3),(1,2)):
+                for a in range(side):
+                    for b in range(side):
+                        mat=[[pow(w,(side*u+a)*(side*v+b),p) for v in V] for u in U]
+                        assert (mat[0][0]*mat[1][1]-mat[0][1]*mat[1][0])%p
+                        local_determinants+=1
+
+# General transition-generator stages, including zero transitions and rank-two sums.
+def stage(n,r,p):
+    M=[[0]*n for _ in range(n)]
+    for i in range(n):M[i][i]=rng.randrange(p)
+    for channel in range(r):
+        A,B,C,D=[[rng.randrange(5) for _ in range(n)] for _ in range(4)]
+        f=[rng.randrange(3) for _ in range(n)];b=[rng.randrange(3) for _ in range(n)]
+        for j in range(n):
+            prod=1
+            for i in range(j+1,n):
+                M[i][j]=(M[i][j]+A[i]*B[j]*prod)%p;prod=prod*f[i]%p
+            prod=1
+            for i in range(j-1,-1,-1):
+                M[i][j]=(M[i][j]+C[i]*D[j]*prod)%p;prod=prod*b[i]%p
+    return M
+
+def multiply(A,B,p):return [[sum(x*y for x,y in zip(row,col))%p for col in zip(*B)] for row in A]
+def minor(M,R,C):return [[M[i][j] for j in C] for i in R]
+stage_controls=[]
+for n in (8,16,32,64,128):
+    A,B,d=groups(n);p=12289
+    for orders in ((1,),(2,),(1,1),(1,1,1,1),(0,1,0)):
+        X=stage(n,orders[0],p);parity=0
+        for idx,r in enumerate(orders[1:]):
+            aa=A[:];bb=B[:];rng.shuffle(aa);rng.shuffle(bb);swap=idx%2==0;parity^=swap
+            perm=[None]*n
+            for i,j in enumerate(A):perm[j]=bb[i] if swap else aa[i]
+            for i,j in enumerate(B):perm[j]=aa[i] if swap else bb[i]
+            X=multiply(stage(n,r,p),[X[j] for j in perm],p)
+        target=B if parity else A
+        actual=elimination(minor(X,target,B),p)
+        assert actual<=d*sum(orders)
+        stage_controls.append({'N':n,'orders':orders,'net_swap':bool(parity),'cross_rank':actual,'bound':d*sum(orders)})
+    if n<=16:
+        for r in (0,1,2):
+            M=stage(n,r,p)
+            for c in range(1,n):
+                assert elimination([row[:c] for row in M[c:]],p)<=r
+                assert elimination([row[c:] for row in M[:c]],p)<=r
+
+# Each saved wire cut is checked by independent on-demand graph reachability.
+def certificate_check(path):
+    obj=json.loads(path.read_text());n=obj['n'];k=n.bit_length()-1;m=k//2
+    A,B,d=groups(n);rev=[reverse(j,k) for j in range(n)];kind=obj['permutation']
+    mid=rev[:]
+    if kind=='middle_rotate':mid=[((v<<1)&(n-1))+(v>>(k-1)) for v in rev]
+    if kind=='middle_xor':mid=[v^(((v>>(m-1))&1)<<m) for v in rev]
+    assert kind in ('all_bitrev','middle_rotate','middle_xor')
+    shuffles=[rev,mid,rev];assert obj['shuffles']==shuffles
+    inverses=[]
+    for perm in shuffles:
+        assert sorted(perm)==list(range(n))
+        inv=[0]*n
+        for j,v in enumerate(perm):inv[v]=j
+        inverses.append(inv)
+    cut=set()
+    for edge in obj['cut_edges']:
+        u,v=tuple(edge['from']),tuple(edge['to'])
+        assert len(u)==len(v)==4 and u[:3]==v[:3] and u[3]=='i' and v[3]=='o' and edge['capacity']==1
+        s,kind0,j,_=u
+        assert 0<=s<4 and kind0 in ('x','y','f','b') and 0<=j<n
+        assert kind0!='f' or j>=1
+        assert kind0!='b' or j<n-1
+        assert u not in cut;cut.add(u)
+    assert len(cut)==obj['upper_rank']<n//2
+    def next_nodes(v):
+        s,kind0,j,io=v
+        if io=='i':return [] if v in cut else [(s,kind0,j,'o')]
+        if kind0=='x':return [(s,'y',j,'i')]+([(s,'f',j+1,'i')] if j<n-1 else [])+([(s,'b',j-1,'i')] if j else [])
+        if kind0=='y':return [(s+1,'x',inverses[s][j],'i')] if s<3 else []
+        if kind0=='f':return [(s,'y',j,'i')]+([(s,'f',j+1,'i')] if j<n-1 else [])
+        return [(s,'y',j,'i')]+([(s,'b',j-1,'i')] if j else [])
+    seen={(0,'x',j,'i') for j in B};queue=collections.deque(seen)
+    while queue:
+        for v in next_nodes(queue.popleft()):
+            if v not in seen:seen.add(v);queue.append(v)
+    assert not any((3,'y',j,'o') in seen for j in A)
+    for rec in obj['modular_determinants']:
+        p,w=rec['prime'],rec['omega'];assert pow(w,n,p)==1 and pow(w,n//2,p)!=1
+        assert elimination(block(n,A,B,w,p),p,True)==rec['determinant']!=0
+    return {'N':n,'permutation':kind,'cut_capacity':len(cut),'required_rank':n//2,'unreachable_outputs':len(A),'determinants':obj['modular_determinants']}
+certificates=[certificate_check(p) for p in sorted(DATA.glob('EXACT_NETWORK_CERTIFICATE_*.json'))]
+assert len(certificates)==4
+# Leaving the permutation class can cross rank with zero QS stages.
+n=16;A,B,d=groups(n);perm=list(range(n));perm[A[0]],perm[B[0]]=perm[B[0]],perm[A[0]]
+assert {perm[j] for j in A} not in (set(A),set(B))
+assert sum(perm[j] in B for j in A)==1
+out={'partition_invariance_and_thresholds':partitions,'all_four_fourier_blocks':fourier_blocks,'radix_entry_identities':identity_checks,'even_local_2x2_nonzero_determinants':local_determinants,'zero_transition_and_swapping_stage_controls':stage_controls,'independent_saved_wire_cut_checks':certificates,'mixing_permutation_zero_stage_rank_countercontrol':1,'N64_four_stage_not_excluded':True,'uploaded_code_executed':False,'uploaded_modules_imported':False}
+text=json.dumps(out,indent=2,sort_keys=True)+'\n';(ROOT/'INDEPENDENT_RESULTS.json').write_text(text);print(text,end='')

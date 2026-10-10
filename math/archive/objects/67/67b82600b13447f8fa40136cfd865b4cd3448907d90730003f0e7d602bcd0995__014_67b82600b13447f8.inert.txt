@@ -1,0 +1,185 @@
+# FFT research continuation: arbitrary endpoint permutations, two-stage obstructions, and multicut exact certificates
+
+**Research date:** 2026-10-09. **Status:** reproducible structural theorems, exact full-vector constructions, certified rank witnesses and arithmetic audits. **NO** `O(N)` exact FFT, **NO** `o(N log N)` general FFT, and **NO** new general lower bound on unrestricted linear circuits.
+
+## 0. Preserve our precise target
+
+Compute every output of an exact complex DFT of *arbitrary fresh* length-`N` input, on one processor, with generator synthesis and all elementary arithmetic/data movement charged. The aspirational goal is `o(N log N)`, ideally `O(N)` operations over a scalable unbounded family. We do **not** count cached input collisions, changing the arithmetic problem, changing integer factors via `((A-k)B+kB)` without charging both operations, parallel threads, tabulating exponentially many inputs, or racing exponent-certification parameters as FFT improvements. See `prior_checkpoint/` for the earlier global Green-stage, norm-budget and rank-one gauge negative controls.
+
+## 1. Baseline independently verified
+
+The uploaded `fft_nonunitary_global_green_research_2026-10-09 (1).zip` contains the earlier `fft_global_green_gauge` project. Extracted as `prior_checkpoint/fft_global_green_gauge`. Its **11 tests pass** and its **19 recorded file checksums pass**. It establishes concrete scoped obstructions: one Green solve per stage has a sparse inverse; the two-Green sum escapes inverse sparsity but has a bounded 1-condition; dense stages can be pure cancelling gauges. Our continuation does not mistake any of these controls for improvements.
+
+## 2. Precise two-stage model
+
+Consider
+
+```
+Q_out F_N Q_in = S2 P S1
+```
+
+where all `Q_out`, `Q_in`, `P` are arbitrary permutations; `S1, S2` are **quasiseparable**, in their own fixed coordinate order. The two off-diagonal cuts at every `k` have rank at most `r_i`:
+
+```
+rank(Si[:k, k:]) <= r_i,
+rank(Si[k:, :k]) <= r_i.
+```
+
+No unitary, condition-number, invertibility, bounded-coefficient, norm or real-only restriction is needed for the following rank inequalities. Write `q=r1+r2`.
+
+### 2.1 The general four-corner cut certificate
+
+For a cut `k` in the `S2` coordinate order, a cut `m` in the `S1` order, let `a` be the number of the first `k` intermediate positions in `S2` that permutation `P` maps into the first `m` intermediate positions in `S1`.
+
+The four Fourier rectangles in **permuted endpoint order** obey:
+
+```
+rank(F_00) <= a                  + q
+rank(F_01) <= k - a              + q
+rank(F_10) <= m - a              + q
+rank(F_11) <= N - k - m + a      + q
+```
+
+This follows by splitting the middle wires according to the two ordered cuts. The freely passing middle wires give the intersection size, while the two crossed blocks contribute ranks at most `r1` and `r2`. The `cut_rank_gate.py` exact field checker verifies this formula for arbitrary permutations. For unitary Fourier matrices, the bottom two conditions mirror the top two due to complementary-minor rank relations; the implementation nevertheless checks all four.
+
+### 2.2 **New scoped theorem here**: prime-length obstruction even with ALL permutations
+
+Let `N=p` be an odd **prime**, and let the target be the complex DFT matrix. Then **every** factorization in this two-stage model obeys
+
+```
+                     r1 + r2 >= ceil((p - 1) / 4).
+```
+
+**Proof.** Let `p=2h+1`, and set `k=m=h`. Chebotarëv's known theorem states that **every** square minor of a prime-size complex Fourier matrix is nonzero. Therefore every rectangular Fourier minor has full possible rank, *regardless of the two endpoint permutations*. The four corner ranks are `h,h,h,h+1`. Their free-middle-wire counts are `a,h-a,h-a,1+a`. Using the first two inequalities above,
+
+```
+q >= h-a,      q >= a,
+q >= max(a,h-a) >= ceil(h/2) = ceil((p-1)/4).
+```
+
+QED. All conditioning and coefficient size are irrelevant. The step from nonzero square minors to full rectangular rank is standard.
+
+**Provenance:** the Chebotarëv full-minor property is classical (and appears in Tao, *An uncertainty principle for cyclic groups of prime order*, https://arxiv.org/abs/math/0308286; and Garcia/Karaali/Katz, https://doi.org/10.1016/j.jalgebra.2021.07.017). The present inequality is a straightforward consequence within the **specified** factorization class. We claim neither a new Chebotarëv theorem nor an unrestricted FFT lower bound. Exact modular sanity checks used prime Fourier sizes 5,7,11,17,19, each with 30 independent triples of permutations. Those checks are *not* a substitute for the complex full-minor theorem: finite fields can behave differently.
+
+**Why this does NOT close the main power-of-two gate:** composite Fourier matrices do have singular minors, and the full-minor property fails for `2^m`. For `N=16,32,64`, taking both endpoint orders to be even-indices-then-odd-indices produces four balanced Fourier rectangles of rank `N/4`. Choosing a middle permutation with exactly `N/4` free connections for each rectangle makes the half-cut certificate identically **zero**. Other cuts can still detect a restriction, so one must NOT interpret a zero half-cut as evidence of an actual factorization. See `prime_gate.py`.
+
+## 3. A *valid exact* two-stage power-of-two control with two freely reordered endpoints
+
+Let `N=a*b` for powers-of-two `a,b`. Identify input index `n=n1+a*n2` and output index `k=k2+b*k1`. The Fourier character identity is
+
+```
+omega_N**(k*n) = omega_b**(n2*k2) * omega_N**(n1*k2) * omega_a**(n1*k1)
+```
+
+because the fourth cross-factor is `omega_N**(N*n2*k1)=1`. Thus:
+
+* Stage 1: blocks of `F_b`, grouped by `n1`.
+* Permutation: transpose `(n1,k2)` to `(k2,n1)`.
+* Stage 2: blocks of `F_a` applied after diagonal twiddle weights `omega_N**(n1*k2)`, grouped by `k2`.
+* Endpoint coordinate reorders: input grouping `n1+a*n2`; output grouping `k2+b*k1`.
+
+Each block of `F_b` has maximal quasiseparable off-diagonal rank `floor(b/2)`; the stage-2 block has order `floor(a/2)`. The formulas are certified by `two_stage_ct.py`, which applies the implementation to all standard basis vectors and seven independent random inputs at `N=4,16,32,64,256`.
+
+| N | (a,b) | Stage r1 | Stage r2 |
+|---:|---:|---:|---:|
+|16|(4,4)|2|2|
+|32|(4,8)|4|2|
+|64|(8,8)|4|4|
+|256|(16,16)|8|8|
+
+This is **classical Cooley–Tukey** regrouped into two factors, not a new FFT, and it disproves attempts to extend the old natural-endpoint lower bound to *all* endpoint orderings. Directly evaluating these dense small Fourier blocks is `Theta(N(a+b))`, balanced `Theta(N sqrt(N))`, **worse** than FFT. The control is important specifically because any claimed permutation-invariant impossibility theorem must allow it.
+
+## 4. **New multi-interval rank certificate** for the power-of-two case
+
+For an arbitrary set `A` of coordinate positions in `[0,N)`, define its **boundary count**
+
+```
+b(A) = number of i in {0,...,N-2} where [i in A] != [i+1 in A].
+```
+
+**Lemma.** For a quasiseparable order-`r` matrix `S`,
+
+```
+rank(S[A, A_complement]) <= b(A)*r.
+```
+
+**Proof.** Write `A` as a union of disjoint maximal contiguous intervals. For each interval, the columns in `A_complement` to the left lie in one lower off-diagonal cut block (rank <=r), and those to the right in one upper cut block (rank <=r). If an interval touches an endpoint there is only one side. Subadditivity of rank across the interval-row pieces yields the stated `b(A)r` bound.
+
+**Theorem.** For **arbitrary** subsets `R` (stage-2 row positions) and `C` (stage-1 column positions), and middle permutation map `P` (stage-2 position to stage-1 position),
+
+```
+rank((S2 P S1)[R,C])
+  <= |P(R) intersection C| + b(R)*r2 + b(C)*r1.
+```
+
+**Proof.** Split the stage-2 intermediate columns into `R` and its complement. The complement has rank contribution <= `b(R)r2`. Within `R`, split the positions transported through `P` into `C` and its complement. The first part has rank at most `|P(R) ∩ C|`; the other at most `b(C)r1`. Sum the rank bounds. QED.
+
+Thus each Fourier minor supplies a **fully exact necessary** certificate. For intervals `R,C`, the boundary counts are at most two, so rank witnesses can be checked at reasonable computational cost. This is broader than a single prefix/suffix cut. Its statement and proof are elementary rank algebra; **not** a general computation lower bound.
+
+### 4.1 Computation in adversarial bit-reversed order
+
+`rank_profile_optimizer.py` precomputes **all** standard prefix cuts exactly over `F_998244353`, then uses a seeded, reproducible swap heuristic to find hard-to-detect intermediate permutations (no optimality claim). Among those **particular** permutations:
+
+| N | Best prefix certificate found by heuristic | Extra single-interval certificate |
+|---:|---:|---:|
+|16|2|2|
+|32|2|3|
+|64|3|4|
+
+Numbers bound `r1+r2` and **do not imply existence** of such low-rank stages. The separate randomized interval search (20,000 samples per tested size) did not force equal ranks above 2 at `N=64` for this particular internally chosen permutation. Those negative search outcomes are heuristic, not impossibility claims.
+
+### 4.2 Explicit nonzero minor certificate for N=64
+
+Use the `N=64` optimized input/output **bit-reversal** orders and exact middle permutation from `rank_profiles_results.json`. Set `R=[6,38)` in stage-2 order and `C=[11,43)` in stage-1 order. Then `|P(R)∩C|=14`, while `b(R)=b(C)=2`. An **exact 21×21 nonzero Fourier minor** in that rectangle was extracted in each of two finite fields:
+
+```
+q=998244353:     rank=21, selected determinant=649213010 mod q
+q=2013265921:    rank=21, selected determinant=21920338 mod q
+```
+
+The actual selected row and column indices are in `minor_certificate_N64.json`, with a standalone verification script (`rank_certificate.py`). Each field root is explicitly checked to have order 64.
+
+**Why a modular NONZERO minor certifies complex nonzero:** the minor determinant is an integer polynomial `d(x)` in the primitive 64th root. If its complex value at `zeta_64` vanished, cyclotomic irreducibility and Gauss's lemma would imply `Phi_64(x)` divides `d(x)` over the integers. It would then vanish when evaluated at **every** primitive 64th root mod a prime. The nonzero modular evaluations contradict that. Hence the complex Fourier minor is nonzero, giving complex rank >=21.
+
+Substitution in the multi-interval inequality gives:
+
+```
+21 <= 14 + 2*r1 + 2*r2,    hence r1+r2 >= 4.
+```
+
+This is an **exact certificate for a specifically recorded** endpoint/shuffle triple—not all endpoint/shuffle triples and not an impossibility proof for general rank-2 stages.
+
+## 5. Full arithmetic cost audit (no false stage-count win)
+
+`cost_audit.py` uses the *same exact finite field and fresh inputs* for a prepared two-factor dense Cooley–Tukey executor and a prepared radix-2 NTT. It counts actual modular additions and multiplications, including some easily optimized trivial operations (multiplication by 1, accumulation into 0), so ratios refer to these **reference executors**, not to minimal algorithmic costs. It additionally reports modular multiplications needed for preparing twiddle and small-DFT coefficient arrays **including explicit binary modular exponentiation of primitive roots** (O(N + log(p) log(N)) for the radix-2 engine and O(N + log p) for the balanced two-factor plan). The comparison of transform operations deliberately omits these initialization counts because they are shown separately. The output JSON contains full cold-operation totals that include them.
+
+| N | Two-factor total adds+muls | Radix-2 total adds+muls | Two-factor / radix-2 |
+|---:|---:|---:|---:|
+|16|272|96|2.833|
+|32|800|240|3.333|
+|64|2,112|576|3.667|
+|256|16,640|3,072|5.417|
+|1024|132,096|15,360|8.600|
+
+For example at N=1024, plan multiplications are 3,253 for the two-factor executor and 1,318 for radix-2. Their **cold** arithmetic totals are therefore 135,349 versus 16,678, a ratio of roughly 8.12x; all preparation counted. All tested input outputs are bit-for-bit equal in the modular field. This **rejects** a two-factor grouping as an FFT speedup. It says nothing about all possible ways to apply a high-quasiseparable-rank matrix (which might themselves contain faster subroutines).
+
+## 6. Verification and what we did NOT establish
+
+1. The old full Green/gauge package: all 11 unit tests and 19 stored hashes verified.
+2. The new package: all 6 additional `unittest` cases pass, including independent exact random-matrix stress tests of the multi-interval theorem, basis-by-basis exact Cooley–Tukey identities, prime-cut checks, a two-modulus minor certificate, and charged-operation audit.
+3. No exact, scalable two-factor construction with constant quasiseparable rank was found for power-of-two sizes.
+4. A low lower-bound certificate (e.g., 2) absolutely **does not** show an actual factorization of rank 1+1 exists.
+5. No `O(N)` or `o(N log N)` exact fresh-input FFT was discovered. General FFT lower bounds outside restricted circuit models remain open; e.g. Morgenstern (bounded coefficients) and Ailon (well-conditioned model) have assumptions not satisfied by the proposed unrestricted nonunitary search.
+
+## 7. Next genuine open gate
+
+The endpoint permutation freedom is *not* merely technical: an exact classical control can have `r1+r2≈sqrt(N)`, while ordinary cut-rank tests can be fooled by a specially chosen power-of-two ordering and middle permutation into requiring only **constant** rank. Our stronger interval tests still leave rank-2+rank-2 unresolved in one 64-point **necessary-condition** example.
+
+The next hard task is **nonlinear compatibility of quasiseparable generators across two arbitrary permuted stages**. A genuine candidate should:
+
+* Provide an exact `N`-parametric identity `F_N=Q_out^-1 S_t P...S_1 Q_in^-1` for every `N=2^m` with `t=o(log N)` and every stage an **explicit executable** `O(N)` algorithm independent of data.
+* Explicitly charge all generator construction, twiddles, arithmetic, memory, and unusual growth of coefficient size/bit precision. Ensure it is not a telescoping diagonal/rank-one gauge.
+* Either find an exact algebraic obstruction on higher-order / Plücker-compatible minors for rank-2 generators **for all** middle shuffles, or a constructive recurrence demonstrably reducing charged work for unbounded `N`.
+* Do not mistake the small numerical fit of the earlier 8-point optimizer for an exact solution, and do not return to cached, thread-based or integer-factor-change tricks without a model-changing theorem.
+
+**External literature:** Chebotarëv/Tao prime Fourier minors https://arxiv.org/abs/math/0308286; quasiseparable matrices https://arxiv.org/abs/1602.01246; existing tridiagonal Fourier factorizations (Gader, 1988) https://doi.org/10.1016/0024-3795(88)90325-4; Ailon conditioned FFT lower bound https://arxiv.org/abs/1403.1307; restrictions on generic linear-circuit superlinear lower bounds https://eccc.weizmann.ac.il/report/2026/008/ .

@@ -1,0 +1,486 @@
+#!/usr/bin/env python3
+"""Global quadratic-chirp median Fourier sketch (v7 research prototype).
+
+This prototype implements a randomized rank-one projection in each contiguous
+length-M block.  A global quadratic chirp couples the block projections so the
+N Fourier outputs can be recovered from K=N/M block summaries by
+
+    * one length-K FFT,
+    * two directly evaluated cycle seeds, and
+    * O(N) first-order recurrence steps.
+
+For power-of-two N=K*M with K >= 2*M, averaging over a uniformly random odd
+quadratic coefficient and a uniformly random linear coefficient gives the
+exact worst-case per-output variance bound
+
+    Var[Xhat_m] <= (2*M/N) * ||x||_2^2.
+
+Coordinatewise medians of a constant number of independent rows therefore give
+an O(N)-time, full-output approximate DFT with a polynomially shrinking
+energy-relative error bound.  This is an algebraic/numerical research
+prototype, not a machine-precision FFT replacement.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable
+
+import numpy as np
+import numpy.typing as npt
+
+ComplexArray = npt.NDArray[np.complex128]
+FloatArray = npt.NDArray[np.float64]
+
+
+def is_power_of_two(n: int) -> bool:
+    return n > 0 and (n & (n - 1)) == 0
+
+
+def unitary_fft(x: ComplexArray, axis: int = -1) -> ComplexArray:
+    x = np.asarray(x, dtype=np.complex128)
+    n = x.shape[axis]
+    if n <= 0:
+        raise ValueError("FFT axis must be non-empty")
+    return np.fft.fft(x, axis=axis) / math.sqrt(n)
+
+
+def exact_unitary_dft(x: ComplexArray) -> ComplexArray:
+    x = np.asarray(x, dtype=np.complex128)
+    if x.ndim != 1 or x.size == 0:
+        raise ValueError("x must be a non-empty vector")
+    return unitary_fft(x)
+
+
+@dataclass(frozen=True)
+class ChirpState:
+    a: int
+    beta: int
+
+    def validate(self, n: int) -> None:
+        if not is_power_of_two(n):
+            raise ValueError("n must be a power of two")
+        if self.a <= 0 or self.a >= n or self.a % 2 != 1:
+            raise ValueError("a must be an odd residue in {1,...,n-1}")
+        if self.beta < 0 or self.beta >= n:
+            raise ValueError("beta must be in Z_n")
+
+
+def draw_state(n: int, rng: np.random.Generator) -> ChirpState:
+    if not is_power_of_two(n):
+        raise ValueError("n must be a power of two")
+    # Uniform over all N/2 odd residues modulo N.
+    a = int(2 * rng.integers(0, n // 2) + 1)
+    beta = int(rng.integers(0, n))
+    return ChirpState(a=a, beta=beta)
+
+
+def _dimensions(n: int, m: int) -> tuple[int, int]:
+    if not is_power_of_two(n) or not is_power_of_two(m):
+        raise ValueError("n and m must be powers of two")
+    if m <= 0 or n % m:
+        raise ValueError("m must divide n")
+    return n // m, m
+
+
+def local_phase_matrix(n: int, m: int, state: ChirpState) -> ComplexArray:
+    """Return S[r,t] = exp(2*pi*i/N * (a*t^2 + c_r*t)).
+
+    Here c_r = 2*a*M*r + beta.  This is the global chirp
+    exp(2*pi*i*(a*(rM+t)^2 + beta*(rM+t))/N) with its block-only
+    scalar removed.  The scalar cancels in the rank-one block projection.
+    """
+    k, _ = _dimensions(n, m)
+    state.validate(n)
+    r = np.arange(k, dtype=np.int64)[:, None]
+    t = np.arange(m, dtype=np.int64)[None, :]
+    # The prototype targets moderate validation sizes.  Reduce factors modulo N
+    # before multiplication to keep int64 products safe for those sizes.
+    c = (((2 * state.a * m) % n) * r + state.beta) % n
+    phase = ((state.a % n) * ((t * t) % n) + (c * t) % n) % n
+    return np.exp(2j * np.pi * phase.astype(np.float64) / n)
+
+
+def compress_blocks(x: ComplexArray, m: int, state: ChirpState) -> ComplexArray:
+    """Compute one chirp summary per contiguous length-M block."""
+    x = np.asarray(x, dtype=np.complex128)
+    if x.ndim != 1 or x.size == 0:
+        raise ValueError("x must be a non-empty vector")
+    n = int(x.size)
+    k, _ = _dimensions(n, m)
+    s = local_phase_matrix(n, m, state)
+    return np.sum(s * x.reshape(k, m), axis=1)
+
+
+def materialize_projected_signal(
+    x: ComplexArray,
+    m: int,
+    state: ChirpState,
+) -> ComplexArray:
+    """Materialize the rank-one block projection for independent checking."""
+    x = np.asarray(x, dtype=np.complex128)
+    n = int(x.size)
+    k, _ = _dimensions(n, m)
+    s = local_phase_matrix(n, m, state)
+    d = np.sum(s * x.reshape(k, m), axis=1)
+    return (np.conj(s) * d[:, None]).reshape(n)
+
+
+def direct_row_estimate(x: ComplexArray, m: int, state: ChirpState) -> ComplexArray:
+    """Reference row: materialize the projected signal, then use NumPy FFT."""
+    return exact_unitary_dft(materialize_projected_signal(x, m, state))
+
+
+def _seed_value(
+    d: ComplexArray,
+    n: int,
+    m: int,
+    state: ChirpState,
+    seed: int,
+) -> complex:
+    """Directly evaluate one of the two recurrence-cycle seeds."""
+    k = n // m
+    r = np.arange(k, dtype=np.int64)[:, None]
+    t = np.arange(m, dtype=np.int64)[None, :]
+    c = (((2 * state.a * m) % n) * r + state.beta + seed) % n
+    phase = ((state.a % n) * ((t * t) % n) + (c * t) % n) % n
+    p = np.sum(np.exp(-2j * np.pi * phase.astype(np.float64) / n), axis=1)
+    block_phase = np.exp(-2j * np.pi * seed * np.arange(k) / k)
+    return complex(np.sum(d * block_phase * p) / math.sqrt(n))
+
+
+def decode_recurrence(
+    d: ComplexArray,
+    n: int,
+    m: int,
+    state: ChirpState,
+) -> ComplexArray:
+    """Decode all N Fourier outputs from K=N/M block summaries.
+
+    Algebraic recurrence, for zeta=exp(2*pi*i/N):
+
+      Y_m = D[m mod K]/sqrt(N)
+            + zeta^(-(a+m+beta)) Y_{m+2a}
+            - zeta^(-(a M^2 + m M + beta M))
+              D[(m+2aM) mod K]/sqrt(N).
+
+    Since N is a power of two and a is odd, m -> m+2a has exactly two
+    cycles.  We evaluate Y_0 and Y_1 directly and propagate each cycle.
+    """
+    d = np.asarray(d, dtype=np.complex128)
+    k, _ = _dimensions(n, m)
+    state.validate(n)
+    if d.shape != (k,):
+        raise ValueError("d must have length K=N/M")
+
+    d_fft = np.fft.fft(d)  # unnormalized D_s
+    y = np.empty(n, dtype=np.complex128)
+    y[0] = _seed_value(d, n, m, state, 0)
+    y[1] = _seed_value(d, n, m, state, 1)
+
+    step = (2 * state.a) % n
+    if math.gcd(step, n) != 2:
+        raise AssertionError("odd a and power-of-two n must give two cycles")
+    sqrt_n = math.sqrt(n)
+
+    for seed in (0, 1):
+        idx = seed
+        while True:
+            nxt = (idx + step) % n
+            if nxt == seed:
+                break
+            leading = np.exp(-2j * np.pi * (state.a + idx + state.beta) / n)
+            boundary = np.exp(
+                -2j
+                * np.pi
+                * ((state.a * m * m + idx * m + state.beta * m) % n)
+                / n
+            )
+            forcing = (
+                d_fft[idx % k]
+                - boundary * d_fft[(idx + 2 * state.a * m) % k]
+            ) / sqrt_n
+            y[nxt] = (y[idx] - forcing) / leading
+            idx = nxt
+    return y
+
+
+def one_row_estimate(x: ComplexArray, m: int, state: ChirpState) -> ComplexArray:
+    x = np.asarray(x, dtype=np.complex128)
+    return decode_recurrence(compress_blocks(x, m, state), int(x.size), m, state)
+
+
+def coordinatewise_complex_median(values: ComplexArray, axis: int = 0) -> ComplexArray:
+    values = np.asarray(values, dtype=np.complex128)
+    return np.median(values.real, axis=axis) + 1j * np.median(values.imag, axis=axis)
+
+
+def chirp_median_fft(
+    x: ComplexArray,
+    m: int,
+    rows: int,
+    rng: np.random.Generator,
+) -> ComplexArray:
+    """Median of independent O(N+K log K) global-chirp rows."""
+    x = np.asarray(x, dtype=np.complex128)
+    if rows <= 0 or rows % 2 != 1:
+        raise ValueError("rows must be positive and odd")
+    estimates = [one_row_estimate(x, m, draw_state(int(x.size), rng)) for _ in range(rows)]
+    return coordinatewise_complex_median(np.stack(estimates), axis=0)
+
+
+def variance_bound(x: ComplexArray, m: int) -> float:
+    """Universal per-output variance upper bound 2*M/N * ||x||_2^2."""
+    x = np.asarray(x, dtype=np.complex128)
+    n = int(x.size)
+    k, _ = _dimensions(n, m)
+    if m == 1:
+        return 0.0
+    if k < 2 * m:
+        raise ValueError("proved dyadic bound requires K >= 2*M")
+    return 2.0 * m / n * float(np.vdot(x, x).real)
+
+
+def median_uniform_bound(
+    x: ComplexArray,
+    m: int,
+    rows: int,
+    delta: float,
+) -> float:
+    """Simultaneous all-output bound from the median moment theorem."""
+    if rows <= 0 or rows % 2 != 1:
+        raise ValueError("rows must be positive and odd")
+    if not (0.0 < delta < 1.0):
+        raise ValueError("delta must lie in (0,1)")
+    x = np.asarray(x, dtype=np.complex128)
+    n = int(x.size)
+    s = (rows + 1) // 2
+    c_s = math.comb(2 * s - 1, s)
+    sigma = math.sqrt(variance_bound(x, m))
+    return math.sqrt(2.0) * (2.0 * n * c_s / delta) ** (1.0 / (2.0 * s)) * sigma
+
+
+def row_work_proxy(n: int, m: int) -> float:
+    """Transparent arithmetic proxy: scan + K FFT + seeds + recurrence."""
+    k, _ = _dimensions(n, m)
+    return 4.0 * n + k * math.log2(max(2, k))
+
+
+def total_work_proxy(n: int, m: int, rows: int) -> float:
+    return rows * row_work_proxy(n, m) + rows * n  # includes coordinate medians
+
+
+def covariance_matrix_formula(n: int, m: int, output: int = 0) -> ComplexArray:
+    """Exact covariance matrix for one output, averaged over all odd a and beta.
+
+    Intended for small independent verification only.  For source coordinates
+    n0=rM+u and n1=r'M+u', beta forces the same local displacement d, while
+    averaging odd a leaves a term exactly when N divides 4*d*(n1-n0).
+    """
+    _dimensions(n, m)
+    if not (0 <= output < n):
+        raise ValueError("invalid output")
+    q = np.zeros((n, n), dtype=np.complex128)
+    for n0 in range(n):
+        u0 = n0 % m
+        for n1 in range(n):
+            u1 = n1 % m
+            delta = n1 - n0
+            lo = max(u0 - (m - 1), u1 - (m - 1))
+            hi = min(u0, u1)
+            value = 0.0
+            for d in range(lo, hi + 1):
+                if d == 0:
+                    continue
+                z = 4 * d * delta
+                if z % n == 0:
+                    value += -1.0 if (z // n) % 2 else 1.0
+            if value:
+                q[n0, n1] = (
+                    np.exp(2j * np.pi * output * (n0 - n1) / n) * value / n
+                )
+    return (q + q.conj().T) / 2.0
+
+
+def covariance_operator_norm(n: int, m: int, output: int = 0) -> float:
+    q = covariance_matrix_formula(n, m, output)
+    return float(np.linalg.eigvalsh(q)[-1])
+
+
+def worst_case_signal(n: int, m: int) -> ComplexArray:
+    """Unit vector attaining the 2*M/N covariance eigenvalue at output 0.
+
+    Put energy in within-block coordinate u=0 and block Fourier mode ell=2.
+    This lies in the v_2(d)=0 covariance eigenspace.
+    """
+    k, _ = _dimensions(n, m)
+    if m < 2 or k < 2 * m:
+        raise ValueError("require M>=2 and K>=2M")
+    r = np.arange(k, dtype=np.float64)
+    x2 = np.zeros((k, m), dtype=np.complex128)
+    x2[:, 0] = np.exp(2j * np.pi * 2.0 * r / k) / math.sqrt(k)
+    return x2.reshape(n)
+
+
+def empirical_output_variance(
+    x: ComplexArray,
+    m: int,
+    output: int,
+    trials: int,
+    rng: np.random.Generator,
+) -> float:
+    x = np.asarray(x, dtype=np.complex128)
+    exact = exact_unitary_dft(x)[output]
+    errors = np.empty(trials, dtype=np.complex128)
+    for j in range(trials):
+        errors[j] = one_row_estimate(x, m, draw_state(int(x.size), rng))[output] - exact
+    return float(np.mean(np.abs(errors) ** 2))
+
+
+def _case_signals(n: int, rng: np.random.Generator) -> dict[str, ComplexArray]:
+    idx = np.arange(n, dtype=np.float64)
+    spike = np.zeros(n, dtype=np.complex128)
+    spike[n // 3] = 1.0
+    return {
+        "flat": np.ones(n, dtype=np.complex128),
+        "random_phase": np.exp(2j * np.pi * rng.random(n)),
+        "gaussian": rng.normal(size=n) + 1j * rng.normal(size=n),
+        "single_spike": spike,
+        "global_chirp": np.exp(2j * np.pi * (5.0 * idx * idx + 7.0 * idx) / n),
+    }
+
+
+def run_reproducible_experiments(seed: int = 20261009) -> dict[str, Any]:
+    rng = np.random.default_rng(seed)
+
+    decoder_checks: list[dict[str, Any]] = []
+    for n, m in [(64, 4), (256, 8), (1024, 16), (4096, 16)]:
+        x = rng.normal(size=n) + 1j * rng.normal(size=n)
+        state = draw_state(n, rng)
+        direct = direct_row_estimate(x, m, state)
+        recurrence = one_row_estimate(x, m, state)
+        decoder_checks.append(
+            {
+                "N": n,
+                "M": m,
+                "a": state.a,
+                "beta": state.beta,
+                "max_abs_difference": float(np.max(np.abs(direct - recurrence))),
+            }
+        )
+
+    covariance_checks: list[dict[str, Any]] = []
+    for n, m in [(32, 2), (32, 4), (64, 4), (64, 8), (128, 8)]:
+        measured = covariance_operator_norm(n, m, 0)
+        theorem = 2.0 * m / n
+        q = covariance_matrix_formula(n, m, 0)
+        covariance_checks.append(
+            {
+                "N": n,
+                "M": m,
+                "operator_norm": measured,
+                "theorem_2M_over_N": theorem,
+                "ratio": measured / theorem,
+                "trace": float(np.trace(q).real),
+                "expected_trace_M_minus_1": float(m - 1),
+            }
+        )
+
+    worst_variance: list[dict[str, Any]] = []
+    for n, m, trials in [(512, 8, 1000), (1024, 16, 1000), (2048, 16, 1000)]:
+        x = worst_case_signal(n, m)
+        empirical = empirical_output_variance(x, m, 0, trials, rng)
+        theory = 2.0 * m / n
+        worst_variance.append(
+            {
+                "N": n,
+                "M": m,
+                "trials": trials,
+                "empirical_variance": empirical,
+                "exact_worst_variance": theory,
+                "ratio": empirical / theory,
+            }
+        )
+
+    median_checks: list[dict[str, Any]] = []
+    n, m = 4096, 16
+    signals = _case_signals(n, rng)
+    signals["worst_covariance_mode"] = worst_case_signal(n, m)
+    for name, x in signals.items():
+        exact = exact_unitary_dft(x)
+        energy_scale = float(np.linalg.norm(x))
+        coeff_scale = energy_scale / math.sqrt(n)
+        for rows in [1, 3, 5, 9]:
+            errs: list[float] = []
+            for _ in range(5):
+                got = chirp_median_fft(x, m, rows, rng)
+                errs.append(float(np.max(np.abs(got - exact))))
+            median_checks.append(
+                {
+                    "case": name,
+                    "N": n,
+                    "M": m,
+                    "rows": rows,
+                    "median_max_error": float(np.median(errs)),
+                    "normalized_by_l2": float(np.median(errs) / energy_scale),
+                    "normalized_by_energy_coefficient_scale": float(
+                        np.median(errs) / coeff_scale
+                    ),
+                    "work_proxy_over_N": total_work_proxy(n, m, rows) / n,
+                }
+            )
+
+    asymptotic: list[dict[str, Any]] = []
+    for log2_n in [32, 64, 128, 256, 512, 1024, 2048]:
+        loglog = math.log2(log2_n)
+        # Symbolic powers of two: M is chosen on the log N scale.
+        m_proxy = 2.0 ** round(math.log2(log2_n))
+        rows = (2 * int(math.ceil(log2_n / max(1.0, loglog))) - 1)
+        time_ratio = rows / log2_n  # each row is O(N)
+        error_factor = math.sqrt(m_proxy) * 2.0 ** (log2_n / (rows + 1))
+        asymptotic.append(
+            {
+                "log2_N": log2_n,
+                "M_proxy": m_proxy,
+                "rows": rows,
+                "time_over_Nlog2N_proxy": time_ratio,
+                "error_factor_over_energy_coefficient_scale_proxy": error_factor,
+            }
+        )
+
+    return {
+        "metadata": {
+            "seed": seed,
+            "model": "complex arithmetic prototype; power-of-two N",
+        },
+        "summary": {
+            "decoder_max_difference": max(r["max_abs_difference"] for r in decoder_checks),
+            "covariance_ratio_min": min(r["ratio"] for r in covariance_checks),
+            "covariance_ratio_max": max(r["ratio"] for r in covariance_checks),
+            "worst_variance_ratio_min": min(r["ratio"] for r in worst_variance),
+            "worst_variance_ratio_max": max(r["ratio"] for r in worst_variance),
+        },
+        "decoder_checks": decoder_checks,
+        "covariance_operator_checks": covariance_checks,
+        "worst_case_variance_checks": worst_variance,
+        "median_experiments": median_checks,
+        "asymptotic_proxies": asymptotic,
+    }
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, default=Path("results.json"))
+    parser.add_argument("--seed", type=int, default=20261009)
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    results = run_reproducible_experiments(args.seed)
+    args.output.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    print(json.dumps(results["summary"], indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

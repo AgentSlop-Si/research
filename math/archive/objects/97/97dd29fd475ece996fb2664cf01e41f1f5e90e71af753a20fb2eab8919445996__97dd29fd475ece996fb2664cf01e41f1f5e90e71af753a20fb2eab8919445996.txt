@@ -1,0 +1,179 @@
+"""Phase 16: explicit complex-unitary realization of Phase 15's Galois folding.
+
+Tracks the incremental Shannon matrix-entropy gain of EACH normalized
+2-coordinate unitary butterfly. This is independent of the finite-field
+implementation and uses explicit Fourier matrices as output oracles.
+
+The general 2-bit/gate entropy bound is known (Nir Ailon, arXiv:1305.4745);
+we audit whether this particular Galois circuit saturates it gate by gate.
+"""
+import cmath
+import json
+import math
+from collections import Counter
+
+import numpy as np
+
+
+def is_power_of_two(n):
+    return n >= 1 and n & (n - 1) == 0
+
+
+def galois_orbits(n, b):
+    checked = set()
+    groups = []
+    for k0 in range(n):
+        if k0 in checked:
+            continue
+        orbit = []
+        k = k0
+        while k not in checked:
+            checked.add(k)
+            orbit.append(k)
+            k = k * (1 + b) % n
+        assert k == k0
+        groups.append(orbit)
+    return groups
+
+
+def entropy_rows(rows):
+    sq = np.abs(rows)**2
+    return -float(np.sum(sq * np.log2(sq, out=np.zeros_like(sq), where=sq>0), where=sq>0))
+
+
+def direct_unitary_dft(n):
+    indices = np.arange(n)
+    return np.exp(2j * np.pi * np.outer(indices, indices) / n) / np.sqrt(n)
+
+
+class Audit:
+    def __init__(self, n, b, track_gates=True):
+        assert is_power_of_two(n) and is_power_of_two(b) and 8 <= b < n <= b*b
+        self.n = n
+        self.b = b
+        self.l = n // b
+        self.rows = np.eye(n, dtype=np.complex128)
+        # Input permutation (wire a*B+h takes input j=a+L*h).
+        self.rows = self.rows[[a+self.l*h for a in range(self.l) for h in range(b)]]
+        self.count = Counter()
+        self.entropy = 0.0
+        self.min_gain = {}
+        self.max_gain = {}
+        self.track_gates = track_gates
+        self.gains = []
+
+    def butterfly(self, p, q, twiddle, category):
+        before = entropy_rows(self.rows[[p,q]])
+        rowp = self.rows[p,:].copy()
+        rowq = self.rows[q,:].copy()
+        rotated = twiddle * rowq
+        self.rows[p,:] = (rowp + rotated) / math.sqrt(2)
+        self.rows[q,:] = (rowp - rotated) / math.sqrt(2)
+        after = entropy_rows(self.rows[[p,q]])
+        gain = after - before
+        self.entropy += gain
+        self.count[category] += 1
+        self.min_gain[category] = min(self.min_gain.get(category, float('inf')), gain)
+        self.max_gain[category] = max(self.max_gain.get(category, float('-inf')), gain)
+        if self.track_gates:
+            self.gains.append(gain)
+        return gain
+
+    def fft(self, wires, category):
+        d = len(wires)
+        if d == 1:
+            return
+        # Bit reversal input rearrangement; row permutation costs no entropy.
+        bits = d.bit_length()-1
+        reversed_indices = [int(format(i, f'0{bits}b')[::-1], 2) for i in range(d)]
+        self.rows[wires,:] = self.rows[[wires[j] for j in reversed_indices],:]
+        for h in [1<<i for i in range(1,bits+1)]:
+            for base in range(0,d,h):
+                for k in range(h//2):
+                    self.butterfly(wires[base+k],wires[base+k+h//2],
+                        cmath.exp(2j*math.pi*k/h),category)
+
+    def run(self):
+        N,B,L = self.n,self.b,self.l
+        for a in range(L):
+            self.fft(list(range(a*B,(a+1)*B)), 'base')
+        entropy_after_base = self.entropy
+        # Mapping physical wires to the current multiscale frequency labels.
+        positions = {(L,a,q):a*B+q for a in range(L) for q in range(B)}
+        d=L
+        while d>1:
+            half=d//2
+            for a in range(half):
+                for q in range(B//2):
+                    key0=(d,a,2*q)
+                    key1=(d,a+half,2*q)
+                    p=positions.pop(key0)
+                    r=positions.pop(key1)
+                    self.butterfly(p,r,cmath.exp(2j*math.pi*q/B),'fold')
+                    assert (half,a,q) not in positions
+                    assert (half,a,q+B//2) not in positions
+                    positions[half,a,q]=p
+                    positions[half,a,q+B//2]=r
+            d//=2
+        assert len(positions)==N
+        entropy_after_fold = self.entropy
+        # Gather all output residual rows, each multiplied by a unit phase.
+        groups = galois_orbits(N,B)
+        ordered=[]
+        phase=[]
+        for orbit in groups:
+            d=len(orbit)
+            g=L//d
+            u=orbit[0]//g
+            invu=pow(u,-1,d) if d>1 else 0
+            for e in range(d):
+                a=e*invu%d if d>1 else 0
+                c=(u*a-e)//d
+                ordered.append(positions[d,a,u])
+                phase.append(cmath.exp(2j*math.pi*c/B))
+        assert set(ordered)==set(range(N))
+        self.rows=self.rows[ordered,:]*np.array(phase)[:,None]
+        # Orbit Q and Fourier blocks; output uses original k in each cycle.
+        cur=0
+        output_order=[]
+        for orbit in groups:
+            d=len(orbit)
+            g=L//d
+            for e in range(d):
+                self.rows[cur+e,:] *= cmath.exp(2j*math.pi*e*g/N)
+            self.fft(list(range(cur,cur+d)),'orbit')
+            output_order.extend(orbit)
+            cur+=d
+        assert cur==N
+        # Permute from orbit-block to standard frequency order.
+        inverse_order=np.argsort(output_order)
+        self.rows=self.rows[inverse_order,:]
+        target=direct_unitary_dft(N)
+        max_err=float(np.max(np.abs(self.rows-target)))
+        uni_err=float(np.max(np.abs(self.rows @ self.rows.conj().T-np.eye(N))))
+        expected=N*(N.bit_length()-1)//2
+        min_gain=min(self.min_gain.values())
+        max_gain=max(self.max_gain.values())
+        ent_actual=entropy_rows(self.rows)
+        assert self.count['base']==N*(B.bit_length()-1)//2
+        assert self.count['fold']==(N-B)//2
+        assert sum(self.count.values())==expected
+        assert max_err<1e-11, (N,B,max_err)
+        assert uni_err<1e-11, (N,B,uni_err)
+        assert abs(ent_actual-N*math.log2(N))<1e-8
+        assert abs(self.entropy-ent_actual)<1e-8
+        assert min_gain>2-1e-8, (N,B,'not all gates entropy-optimal',min_gain)
+        return dict(N=N,B=B,L=L,base_gates=self.count['base'],fold_gates=self.count['fold'],
+            orbit_gates=self.count['orbit'],all_gates=sum(self.count.values()),
+            lower_bound_pair_unitary_gates=expected,
+            base_entropy_bits=entropy_after_base,
+            fold_entropy_bits=entropy_after_fold-entropy_after_base,
+            orbit_entropy_bits=self.entropy-entropy_after_fold,
+            total_entropy_bits=self.entropy,
+            min_gate_entropy_gain_bits=min_gain,max_gate_entropy_gain_bits=max_gain,
+            max_fourier_entry_error=max_err,max_unitary_error=uni_err,
+            all_gates_saturate_entropy_bound=True)
+
+if __name__=='__main__':
+    for N,B in [(16,8),(32,8),(64,8),(128,16),(256,16),(256,32),(512,32)]:
+        print(json.dumps(Audit(N,B,track_gates=False).run()))

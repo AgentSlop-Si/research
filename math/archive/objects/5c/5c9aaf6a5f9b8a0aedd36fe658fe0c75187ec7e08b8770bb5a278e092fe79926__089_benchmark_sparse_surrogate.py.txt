@@ -1,0 +1,77 @@
+from __future__ import annotations
+import json, math, time
+import numpy as np
+from sparse_surrogate import approximate_dft_all, sufficient_sample_count, flatness_tau2
+
+try:
+    from scipy import fft as sp_fft
+except Exception:
+    sp_fft=None
+
+
+def fft(x):
+    if sp_fft is not None:
+        return sp_fft.fft(x, norm='ortho')
+    return np.fft.fft(x, norm='ortho')
+
+
+def make(kind,n,rng):
+    if kind=='flat': return np.ones(n,dtype=np.complex128)
+    if kind=='phase': return np.exp(2j*np.pi*rng.random(n))
+    if kind=='gaussian': return rng.normal(size=n)+1j*rng.normal(size=n)
+    if kind=='spike':
+        x=np.zeros(n,dtype=np.complex128); x[n//3]=1+2j; return x
+    if kind=='powerlaw':
+        mags=1/(1+np.arange(n))**0.8
+        phase=np.exp(2j*np.pi*rng.random(n)); return mags*phase
+    raise ValueError(kind)
+
+
+def op_proxy(n,b):
+    # Baseline radix-2 complex butterfly count vs m length-b transforms.
+    return {'full_butterflies': n*int(math.log2(n))//2,
+            'sparse_inner_butterflies': n*int(math.log2(b))//2 if b else 0}
+
+rng=np.random.default_rng(20261009)
+results={'empirical':[], 'scaling':[]}
+
+# Failure-rate stress tests at sufficient k. Keep N moderate for repetitions.
+for kind in ['flat','phase','gaussian','powerlaw','spike']:
+    n=4096; eps=.30; delta=.05
+    x=make(kind,n,rng)
+    ref=fft(x); norm=float(np.linalg.norm(x)); k=sufficient_sample_count(x,eps,delta)
+    trials=250 if kind!='spike' else 20
+    errs=[]; fails=0; supports=[]
+    t0=time.perf_counter()
+    for _ in range(trials):
+        out,plan=approximate_dft_all(x,eps,delta,rng=rng,return_plan=True,fallback_dense_if_k_ge_n=False)
+        err=float(np.max(np.abs(out-ref))/norm) if norm else 0.0
+        errs.append(err); supports.append(plan.support_size)
+        fails += err>eps
+    elapsed=time.perf_counter()-t0
+    results['empirical'].append({
+        'kind':kind,'n':n,'epsilon':eps,'delta':delta,'tau2':flatness_tau2(x),
+        'k':k,'trials':trials,'failures':fails,'failure_rate':fails/trials,
+        'median_error':float(np.median(errs)),'p95_error':float(np.quantile(errs,.95)),
+        'max_error':float(max(errs)),'median_support':float(np.median(supports)),
+        'seconds':elapsed})
+
+# Scaling / operation proxy + one wall-time run.
+for n in [2**12,2**14,2**16,2**18]:
+    for eps in [.50,.35,.25]:
+        x=np.ones(n,dtype=np.complex128)
+        k=sufficient_sample_count(x,eps,.05)
+        t0=time.perf_counter(); ref=fft(x); full_s=time.perf_counter()-t0
+        t0=time.perf_counter(); out,plan=approximate_dft_all(x,eps,.05,rng=rng,return_plan=True,fallback_dense_if_k_ge_n=False); approx_s=time.perf_counter()-t0
+        err=float(np.max(np.abs(out-ref))/np.linalg.norm(x))
+        proxy=op_proxy(n,plan.sparse_b)
+        results['scaling'].append({
+            'n':n,'epsilon':eps,'delta':.05,'k':k,'support':plan.support_size,'b':plan.sparse_b,
+            'normalized_error':err,'full_fft_seconds':full_s,'surrogate_seconds':approx_s,
+            **proxy,
+            'butterfly_ratio':proxy['sparse_inner_butterflies']/proxy['full_butterflies']
+        })
+
+path='benchmark_sparse_surrogate_results.json'
+with open(path,'w') as f: json.dump(results,f,indent=2)
+print(json.dumps(results,indent=2))

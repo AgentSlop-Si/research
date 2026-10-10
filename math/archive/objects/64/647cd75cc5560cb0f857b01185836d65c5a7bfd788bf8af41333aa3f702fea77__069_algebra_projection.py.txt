@@ -1,0 +1,84 @@
+"""Bridge the uploaded Phase-8 AlgebraFFT to selected-frequency circuits/jets.
+
+No seed re-FFT, dense input expansion, or inverse FFT is required for import.
+The upstream spectra must be trusted and already prepared; that work remains
+part of a cold workload. Dense/selected TIME coefficients still use its kernels.
+"""
+from dataclasses import dataclass
+import numpy as np
+from projected_circuit import ProjectedCircuit, integer, scalar
+
+
+def import_algebra(source, roots, target):
+    if source.n != target.n:
+        raise ValueError('period mismatch')
+    roots=tuple(roots)
+    seen,order,stack=set(),[],[(r,False) for r in reversed(roots)]
+    while stack:
+        uid,ready=stack.pop()
+        nd=source._get(uid)
+        if ready:order.append(uid)
+        elif uid not in seen:
+            seen.add(uid);stack.append((uid,True))
+            stack.extend((c,False) for c in reversed(nd.args))
+    mapped={}
+    for uid in order:
+        nd=source.nodes[uid]
+        if nd.op=='seed':
+            half=source._seed_fft[uid]
+            y=half[np.minimum(target.bins,target.n-target.bins)].copy()
+            high=target.bins>target.n//2
+            y[high]=y[high].conj()
+            mapped[uid]=target.register_projection(y)
+        elif nd.op=='const':mapped[uid]=target.impulse(0,nd.scalar)
+        elif nd.op=='impulse':mapped[uid]=target.impulse(nd.index,nd.scalar)
+        elif nd.op=='scale':mapped[uid]=target.scale(mapped[nd.args[0]],nd.scalar)
+        elif nd.op=='sum':
+            mapped[uid]=target.sum(target.scale(mapped[c],w) for c,w in zip(nd.args,nd.weights))
+        elif nd.op=='product':
+            product=target.product(mapped[c] for c in nd.args).root
+            mapped[uid]=target.scale(product,nd.scalar)
+        else:raise ValueError('unsupported algebra operation')
+    return [mapped[r] for r in roots]
+
+
+@dataclass(frozen=True)
+class ProjectedJet:
+    n:int
+    bins:np.ndarray
+    coefficients:np.ndarray
+
+    @property
+    def degree(self):return len(self.coefficients)-1
+
+    def many(self,edits):
+        correction=np.zeros(len(self.bins),dtype=np.complex128)
+        merged={}
+        for p,d in edits:
+            p=integer(p)
+            if not 0<=p<self.n:raise IndexError('edit outside signal')
+            merged[p]=scalar(merged.get(p,0)+scalar(d))
+        with np.errstate(over='raise',invalid='raise'):
+            for p,d in merged.items():
+                if d:correction += d*np.exp((-2j*np.pi/self.n)*((self.bins*p)%self.n))
+            out=self.coefficients[-1].copy()
+            for c in self.coefficients[-2::-1]:out=out*correction+c
+        if not np.all(np.isfinite(out)):raise FloatingPointError('nonfinite projected jet')
+        return out
+
+    def single(self,position,delta):return self.many([(position,delta)])
+
+
+def prepare_projected_jet(source,root,leaf,bins,*,max_degree=4):
+    """Exact finite-degree expansion, never a truncated approximation.
+
+    source.symbolic_jets supplies all degree coefficients or rejects the degree.
+    Only their chosen frequency bins are executed. Returned state retains no
+    upstream engine/seed arrays. Preparation is charged, not hidden in query.
+    """
+    coefficient_roots=source.symbolic_jets(root,leaf,max_degree=max_degree)
+    target=ProjectedCircuit(source.n,bins)
+    roots=import_algebra(source,coefficient_roots,target)
+    coefficients=np.stack(target.query_many(roots))
+    coefficients.flags.writeable=False
+    return ProjectedJet(source.n,target.bins,coefficients)

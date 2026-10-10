@@ -1,0 +1,61 @@
+   1	"""Independent recheck of saved structural-FFT research notes.
+   2	
+   3	Claims are scoped to their computation models. Nothing here establishes
+   4	sub-N-log-N complexity for arbitrary complex FFTs or integer multiplication.
+   5	"""
+   6	import random
+   7	from math import ceil, log2
+   8	from phase3_barrier import choose_ntt_prime, ntt_root, radix2_ntt, inverse_ntt, rank_one_sign_sparse
+   9	from structural_fft import fwht_mod, SharedLookupTable, tabulated_fwht_mod, asymptotic_block_length
+  10	
+  11	
+  12	def check():
+  13	    rng = random.Random(20261009)
+  14	    for p in (3, 5):
+  15	        cache = SharedLookupTable(p, max_entries=100000)
+  16	        for n in (8, 16, 64, 256, 1024):
+  17	            b = 8 if p == 3 else 4
+  18	            for _ in range(5):
+  19	                a = [rng.randrange(p) for _ in range(n)]
+  20	                out, stats = tabulated_fwht_mod(a, p=p, block=b, cache=cache)
+  21	                assert out == fwht_mod(a, p=p)
+  22	                assert stats['online_field_reads'] == n * stats['passes']
+  23	        assert cache.stats()['total_stored_field_elements'] < 1000000
+  24	    for n in (8, 16, 32, 64, 128):
+  25	        q = choose_ntt_prime(n)
+  26	        root = ntt_root(n, q)
+  27	        assert q >= n+1
+  28	        for _ in range(2):
+  29	            a = [rng.randrange(q) for _ in range(n)]
+  30	            assert inverse_ntt(radix2_ntt(a, q, root), q, root) == a
+  31	    print('PASS: random WHT lookup/butterfly agreement and exact NTT round-trips')
+  32	    print('WHT asymptotic lookup-family resource counts (theoretical, not materialized):')
+  33	    print('N=2^L  block b  table fields (p=3)  table fields/N')
+  34	    for L in (16, 32, 64, 128, 256):
+  35	        n = 1 << L
+  36	        b = asymptotic_block_length(n, p=3, fraction=0.25)
+  37	        stored = b * 3**b
+  38	        assert stored < n
+  39	        print(f'{L:<6} {b:<8} {stored:<19} {stored/n:.3e}')
+  40	    print('NTT root-of-unity/output-width barrier:')
+  41	    print('N  smallest q  q^2 pair-table entries  N*ceil(log2 q) explicit output bits')
+  42	    for n in (8, 16, 32, 64, 128, 256, 512, 1024):
+  43	        q = choose_ntt_prime(n)
+  44	        print(f'{n:<5} {q:<11} {q*q:<21} {n*ceil(log2(q))}')
+  45	    print('Sign-restricted rank-one + sparse WHT (optimistic direct correction counts):')
+  46	    print('N  residual nonzeros  rank1+(sparse) estimated adds  FWHT adds')
+  47	    for n in (2, 4, 8, 16):
+  48	        c = rank_one_sign_sparse(n)
+  49	        s = c['nonzero']
+  50	        est = n-1+s
+  51	        base = n*int(log2(n))
+  52	        print(f'{n:<3} {s:<18} {est:<30} {base}')
+  53	        for _ in range(3):
+  54	            x = [rng.randrange(3) for _ in range(n)]
+  55	            from phase3_barrier import apply_rank_one_sparse
+  56	            assert apply_rank_one_sparse(c, x) == fwht_mod(x, 3)
+  57	    print('PASS: WHT decompositions match reference on random inputs')
+  58	
+  59	
+  60	if __name__ == '__main__':
+  61	    check()

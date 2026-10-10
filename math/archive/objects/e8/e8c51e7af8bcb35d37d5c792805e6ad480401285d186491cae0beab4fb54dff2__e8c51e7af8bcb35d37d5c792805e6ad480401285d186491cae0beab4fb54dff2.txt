@@ -1,0 +1,52 @@
+"""Rigorous ℓp norm budget for fixed-strength phase-12 Green/Cayley stages.
+
+The proof uses finite-dimensional Riesz-Thorin interpolation and a resolvent
+Laplace integral. No FFT, numerical fit, or matrix norm oracle is used.
+"""
+from math import ceil, log, sqrt
+
+P = 9/5
+DELTA = 2/P - 1
+EPS = 1/512
+PATH_DEGREE = 2
+PATH_ALPHA = 1/32
+TREE_DEGREE = 3
+TREE_ALPHA = 2
+
+
+def general_cayley_lp_bound(degree, alpha, p):
+    delta = 2/p - 1
+    if not (1 <= p <= 2 and degree*abs(alpha)*delta < 1):
+        raise ValueError('the resolvent interpolation hypothesis is not satisfied')
+    return 1 + 2/(1-degree*abs(alpha)*delta)
+
+
+def path_lp_bound(p=P):
+    # a stronger ℓ1 Neumann-series estimate, interpolated with exact ℓ2 unitarity
+    delta = 2/p - 1
+    if not 1 <= p <= 2:
+        raise ValueError('p must be between 1 and 2')
+    a = PATH_DEGREE*PATH_ALPHA
+    return ((1+a)/(1-a))**delta
+
+
+def phase12_stage_bound(p=P):
+    b = general_cayley_lp_bound(TREE_DEGREE, TREE_ALPHA, p)
+    return (1 + EPS*b)/sqrt(1+EPS*EPS) * path_lp_bound(p)**2
+
+
+def lower_bound_stage_count(n, p=P):
+    if n < 1:
+        raise ValueError('bad size')
+    K=phase12_stage_bound(p)
+    return ceil(((1/p-1/2)*log(n))/log(K) - 1e-12)
+
+
+if __name__ == '__main__':
+    print(f'p={P}, delta={DELTA:.12f}, tree bound={general_cayley_lp_bound(3,2,P):.12g}')
+    K=phase12_stage_bound()
+    print(f'path factor max={path_lp_bound():.12g}, K={K:.12g}')
+    print(f'phase12 stage lower bound >= {1/(18*log(K)):.12f} ln(N)')
+    print(f'phase12 stage lower bound >= {log(2)/(18*log(K)):.12f} log2(N)')
+    for n in (32,64,128,256,512,1024,2**20):
+        print(f'N={n}, t >= {lower_bound_stage_count(n)}')

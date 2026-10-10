@@ -1,0 +1,515 @@
+===== SOURCE 35 fft_metaplectic_bruhat_rigidity_v23/run_all.py SHA256 daa13411ead670fe1d3772f7b386e3e8d6e802f173cdfe4772d918cfbd985a7d =====
+   1 from __future__ import annotations
+   2 import json
+   3 import random
+   4 import subprocess
+   5 import sys
+   6 from pathlib import Path
+   7 
+   8 from metaplectic_bruhat import (
+   9     count_bruhat_cells, field_for_length, is_easy_borel, is_monomial,
+  10     projectively_equal, random_sl2_word, sl2_elements, sl2_mul,
+  11     unique_lul_solution, unique_ulu_solution, verify_projective_word,
+  12     weil_operator,
+  13 )
+  14 
+  15 ROOT=Path(__file__).resolve().parent
+  16 
+  17 def main():
+  18     subprocess.run([sys.executable,'-m','unittest','-v','test_checkpoint'],cwd=ROOT,check=True)
+  19     rows=[]
+  20     for n in (5,7,11,13,17):
+  21         p,w=field_for_length(n); elems=sl2_elements(n); borel,big=count_bruhat_cells(n)
+  22         rows.append({
+  23             'n':n,'coefficient_field':p,'sl2_size':len(elems),
+  24             'borel_size':borel,'big_cell_size':big,
+  25             'lul_solution':list(unique_lul_solution(n)),
+  26             'ulu_solution':list(unique_ulu_solution(n)),
+  27             'all_borel_monomial':all(is_monomial(weil_operator(s,n,p,w),p) for s in elems if is_easy_borel(s,n)),
+  28         })
+  29     rng=random.Random(23004)
+  30     word_checks=[]
+  31     for n in (5,7,11,13):
+  32         p,w=field_for_length(n)
+  33         scalars=[]
+  34         for length in (3,7,15):
+  35             for _ in range(40):
+  36                 scalars.append(verify_projective_word(random_sl2_word(n,length,rng),n,p,w))
+  37         word_checks.append({'n':n,'word_checks':len(scalars),'all_nonzero_scalars':all(s!=0 for s in scalars)})
+  38     results={'cell_and_shear_records':rows,'random_word_checks':word_checks,
+  39              'exhaustive_projective_products_n5':120*120,
+  40              'theorem_scope':'odd prime transform lengths; finite Weil/metaplectic stage architecture'}
+  41     (ROOT/'results.json').write_text(json.dumps(results,indent=2)+'\n')
+  42     summary={
+  43         'status':'exact architecture closure; no faster FFT',
+  44         'main_theorem':'Every finite Weil operator over SL2(F_p) is either monomial (lower Borel) or diagonally/permutationally equivalent to one DFT (big Bruhat cell).',
+  45         'three_shear':'W=L(1)U(-1)L(1) uniquely; the middle upper shear is Fourier-equivalent.',
+  46         'word_fusion':'Any metaplectic word collapses projectively to either one monomial operator or one Fourier core surrounded by O(N) monomial work.',
+  47         'tests':'10/10 groups',
+  48         'exhaustive_group_products_n5':14400,
+  49     }
+  50     (ROOT/'RESULT_SUMMARY.json').write_text(json.dumps(summary,indent=2)+'\n')
+  51     subprocess.run([sys.executable,'independent_verifier.py'],cwd=ROOT,check=True)
+  52     print(json.dumps(results,indent=2))
+  53 
+  54 if __name__=='__main__':main()
+===== END SOURCE 35; 2547 bytes; 54 lines =====
+===== SOURCE 36 fft_metaplectic_bruhat_rigidity_v23/test_checkpoint.py SHA256 645bee0c3860785c7bfd79ac4a58a9bb261900755b1de1c3acaf0af3a6bb03ad =====
+   1 from __future__ import annotations
+   2 import hashlib
+   3 import random
+   4 import unittest
+   5 from pathlib import Path
+   6 
+   7 from metaplectic_bruhat import (
+   8     all_entries_nonzero, bruhat_certificate, chirp_operator, collapse_word,
+   9     complexity_class, count_bruhat_cells, direct_big_cell_kernel,
+  10     direct_borel_kernel, field_for_length, fourier_matrix, identity,
+  11     is_easy_borel, is_monomial, lower_shear, mat_mul, operator_product,
+  12     projectively_equal, random_sl2_word, scale_operator, sl2_elements,
+  13     sl2_mul, unique_lul_solution, unique_ulu_solution, upper_shear,
+  14     verify_projective_word, weil_operator, weyl_element,
+  15 )
+  16 
+  17 class MetaplecticBruhatTests(unittest.TestCase):
+  18     def test_bruhat_cell_counts(self):
+  19         for n in (5,7,11):
+  20             borel,big=count_bruhat_cells(n)
+  21             self.assertEqual(borel,n*(n-1))
+  22             self.assertEqual(big,n*n*(n-1))
+  23             self.assertEqual(borel+big,n*(n*n-1))
+  24 
+  25     def test_direct_kernel_formulas(self):
+  26         for n in (5,7,11):
+  27             p,w=field_for_length(n)
+  28             for s in sl2_elements(n):
+  29                 got=weil_operator(s,n,p,w)
+  30                 want=direct_borel_kernel(s,n,p,w) if is_easy_borel(s,n) else direct_big_cell_kernel(s,n,p,w)
+  31                 self.assertEqual(got,want,(n,s))
+  32 
+  33     def test_projective_group_law_exhaustive_n5(self):
+  34         n=5;p,w=field_for_length(n);elems=sl2_elements(n)
+  35         for a in elems:
+  36             ra=weil_operator(a,n,p,w)
+  37             for b in elems:
+  38                 lhs=mat_mul(ra,weil_operator(b,n,p,w),p)
+  39                 rhs=weil_operator(sl2_mul(a,b,n),n,p,w)
+  40                 self.assertTrue(projectively_equal(lhs,rhs,p),(a,b))
+  41 
+  42     def test_projective_group_law_random_larger(self):
+  43         rng=random.Random(23001)
+  44         for n in (7,11,13):
+  45             p,w=field_for_length(n);elems=sl2_elements(n)
+  46             for _ in range(500):
+  47                 a=elems[rng.randrange(len(elems))];b=elems[rng.randrange(len(elems))]
+  48                 self.assertTrue(projectively_equal(mat_mul(weil_operator(a,n,p,w),weil_operator(b,n,p,w),p),weil_operator(sl2_mul(a,b,n),n,p,w),p))
+  49 
+  50     def test_borel_exactly_monomial_big_cell_fourier_dense(self):
+  51         for n in (5,7,11):
+  52             p,w=field_for_length(n)
+  53             for s in sl2_elements(n):
+  54                 op=weil_operator(s,n,p,w)
+  55                 if is_easy_borel(s,n):
+  56                     self.assertTrue(is_monomial(op,p),(n,s))
+  57                 else:
+  58                     self.assertTrue(all_entries_nonzero(op,p),(n,s))
+  59                     self.assertEqual(complexity_class(s,n),'fourier_equivalent')
+  60 
+  61     def test_unique_three_shear_decompositions(self):
+  62         for n in (5,7,11,13):
+  63             self.assertEqual(unique_lul_solution(n),(1,n-1,1))
+  64             self.assertEqual(unique_ulu_solution(n),(n-1,1,n-1))
+  65 
+  66     def test_three_shear_operator_contains_hard_middle(self):
+  67         for n in (5,7,11,13):
+  68             p,w=field_for_length(n)
+  69             x,y,z=unique_lul_solution(n)
+  70             word=[lower_shear(x,n),upper_shear(y,n),lower_shear(z,n)]
+  71             self.assertTrue(projectively_equal(operator_product(word,n,p,w),fourier_matrix(n,p,w),p))
+  72             self.assertEqual(complexity_class(word[0],n),'linear_monomial')
+  73             self.assertEqual(complexity_class(word[1],n),'fourier_equivalent')
+  74             self.assertEqual(complexity_class(word[2],n),'linear_monomial')
+  75 
+  76     def test_all_easy_words_stay_easy(self):
+  77         rng=random.Random(23002)
+  78         for n in (5,7,11):
+  79             for length in (1,2,3,8,20):
+  80                 for _ in range(100):
+  81                     word=[]
+  82                     for _ in range(length):
+  83                         a=rng.randrange(1,n);t=rng.randrange(n)
+  84                         word.append(sl2_mul(lower_shear(t,n),(a,0,0,pow(a,-1,n)),n))
+  85                     self.assertTrue(is_easy_borel(collapse_word(word,n),n))
+  86                     self.assertNotEqual(collapse_word(word,n),weyl_element(n))
+  87 
+  88     def test_arbitrary_words_collapse_to_one_normal_form(self):
+  89         rng=random.Random(23003)
+  90         for n in (5,7,11):
+  91             p,w=field_for_length(n)
+  92             for length in (2,3,5,12):
+  93                 for _ in range(80):
+  94                     word=random_sl2_word(n,length,rng)
+  95                     scalar=verify_projective_word(word,n,p,w)
+  96                     self.assertNotEqual(scalar,0)
+  97                     final=collapse_word(word,n)
+  98                     op=weil_operator(final,n,p,w)
+  99                     self.assertEqual(is_monomial(op,p),is_easy_borel(final,n))
+ 100 
+ 101     def test_predecessor_hash(self):
+ 102         path=Path(__file__).with_name('PRIOR_v22_COMPLETE.zip')
+ 103         self.assertTrue(path.is_file())
+ 104         self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),'e1d30f08aa720c4e492a0e268b343d08d52bd80ecb126ab3fbe6c27097f36906')
+ 105 
+ 106 if __name__=='__main__':unittest.main(verbosity=2)
+===== END SOURCE 36; 4831 bytes; 106 lines =====
+===== SOURCE 37 fft_middle_reuse_continuation/fft_material_bridge_review/material_checks.py SHA256 43c4bd641f37172aba27f707e75048e2d15a7336ae571e5643c9a1e61955a2f6 =====
+   1 """Exact rational witnesses for the conditioned-macro material review.
+   2 
+   3 No numerical SVD, floating point, FFT oracle, or claimed #130 implementation.
+   4 The complex conditioning bounds follow from the proof in MATERIAL_REVIEW.md;
+   5 this script only evaluates the resulting rational lower bounds exactly.
+   6 """
+   7 from fractions import Fraction as Q
+   8 import json
+   9 from pathlib import Path
+  10 
+  11 
+  12 def identity(n):
+  13     return [[Q(i == j) for j in range(n)] for i in range(n)]
+  14 
+  15 
+  16 def zero(n):
+  17     return [[Q(0) for _ in range(n)] for _ in range(n)]
+  18 
+  19 
+  20 def transpose(a):
+  21     return [list(row) for row in zip(*a)]
+  22 
+  23 
+  24 def negative(a):
+  25     return [[-v for v in row] for row in a]
+  26 
+  27 
+  28 def multiply(a, b):
+  29     assert len(a[0]) == len(b)
+  30     return [[sum((a[i][k] * b[k][j] for k in range(len(b))), Q(0))
+  31              for j in range(len(b[0]))] for i in range(len(a))]
+  32 
+  33 
+  34 def block(a, b, c, d):
+  35     return [x + y for x, y in zip(a, b)] + [x + y for x, y in zip(c, d)]
+  36 
+  37 
+  38 def exchange(u):
+  39     """Three transparent block additions; u must be orthogonal."""
+  40     n = len(u)
+  41     one, empty = identity(n), zero(n)
+  42     assert multiply(transpose(u), u) == one
+  43     a1 = block(one, empty, u, one)
+  44     a2 = block(one, negative(transpose(u)), empty, one)
+  45     word = multiply(a1, multiply(a2, a1))
+  46     expected = block(empty, negative(transpose(u)), u, empty)
+  47     assert word == expected
+  48     assert multiply(transpose(word), word) == identity(2 * n)
+  49     return word
+  50 
+  51 
+  52 def rational(value):
+  53     value = Q(value)
+  54     return {"numerator": str(value.numerator), "denominator": str(value.denominator)}
+  55 
+  56 
+  57 def matrix(a):
+  58     return [[rational(v) for v in row] for row in a]
+  59 
+  60 
+  61 def diagonal_condition(entries):
+  62     """Exact spectral condition for a nonzero real diagonal matrix."""
+  63     magnitudes = [abs(Q(v)) for v in entries]
+  64     assert min(magnitudes) > 0
+  65     return max(magnitudes) / min(magnitudes)
+  66 
+  67 
+  68 def run():
+  69     # A local scale has condition 1; identity padding exposes its scale.
+  70     local = diagonal_condition([100, 100])
+  71     padded = diagonal_condition([100, 100, 1, 1])
+  72     padded_bound = max(Q(1), Q(100)) * max(Q(1), Q(1, 100))
+  73     assert local == 1 and padded == padded_bound == 100
+  74 
+  75     # Reflection and rational rotation: orthogonal and noncommuting.
+  76     u1 = [[Q(1), Q(0)], [Q(0), Q(-1)]]
+  77     u2 = [[Q(3, 5), Q(-4, 5)], [Q(4, 5), Q(3, 5)]]
+  78     assert multiply(u1, u2) != multiply(u2, u1)
+  79     w1, w2 = exchange(u1), exchange(u2)
+  80     one, empty = identity(2), zero(2)
+  81     bank_permutation = block(empty, one, one, empty)
+  82     second_orientation = multiply(bank_permutation, multiply(w2, bank_permutation))
+  83     corrected = multiply(second_orientation, w1)
+  84     incorrect = multiply(w2, w1)
+  85     expected = multiply(u2, u1)
+  86     expected_wrong = negative(multiply(transpose(u2), u1))
+  87     assert [row[:2] for row in corrected[:2]] == expected
+  88     assert [row[:2] for row in corrected[2:]] == zero(2)
+  89     assert [row[:2] for row in incorrect[:2]] == expected_wrong != expected
+  90     assert multiply(transpose(corrected), corrected) == identity(4)
+  91     # All basis inputs are covered by comparing the complete first block column.
+  92     witness = [[Q(1)], [Q(0)], [Q(0)], [Q(0)]]
+  93     correct_witness = multiply(corrected, witness)
+  94     wrong_witness = multiply(incorrect, witness)
+  95     assert correct_witness != wrong_witness
+  96 
+  97     bounds = []
+  98     for n in (8, 16, 32, 64, 128, 256):
+  99         m = n // 8
+ 100         elementary = Q(n) * Q(14, 11) ** m
+ 101         am_gm = Q(n) * Q(7 * n, 22 * (m + 1)) ** m
+ 102         assert am_gm >= elementary > n
+ 103         bounds.append({
+ 104             "n": n, "m": m,
+ 105             "elementary_condition_lower_bound": rational(elementary),
+ 106             "am_gm_condition_lower_bound": rational(am_gm),
+ 107             "elementary_bound_floor": str(elementary.numerator // elementary.denominator),
+ 108             "am_gm_bound_floor": str(am_gm.numerator // am_gm.denominator),
+ 109         })
+ 110     result = {
+ 111         "status": "PASS",
+ 112         "arithmetic": "fractions.Fraction throughout all matrix witnesses and bounds",
+ 113         "padded_condition": {
+ 114             "local_diagonal": [100, 100], "ambient_diagonal": [100, 100, 1, 1],
+ 115             "local_condition": rational(local), "ambient_condition": rational(padded),
+ 116             "correct_padded_bound": rational(padded_bound),
+ 117         },
+ 118         "alternating_banks": {
+ 119             "u1": matrix(u1), "u2": matrix(u2), "noncommuting": True,
+ 120             "three_addition_identities_checked": 2,
+ 121             "correct_active_block": matrix(expected),
+ 122             "same_orientation_active_block": matrix(expected_wrong),
+ 123             "correct_e0_output": matrix(correct_witness),
+ 124             "wrong_e0_output": matrix(wrong_witness),
+ 125             "correct_full_state_orthogonal": True,
+ 126         },
+ 127         "canonical_root_middle_condition_bounds": bounds,
+ 128         "claim_boundary": (
+ 129             "The all-N complex condition inequalities are proved in MATERIAL_REVIEW.md. "
+ 130             "These exact rational evaluations are certificates of their stated values, "
+ 131             "not numerical estimates or a general FFT lower bound."
+ 132         ),
+ 133         "separate_source_test_run": {
+ 134             "command": "PYTHONDONTWRITEBYTECODE=1 python -m unittest -v",
+ 135             "tests": 2, "status": "PASS",
+ 136             "scope": "Source NumPy toy matrix tests; not re-executed by this exact script.",
+ 137         },
+ 138     }
+ 139     path = Path(__file__).with_name("material_certificates.json")
+ 140     path.write_text(json.dumps(result, indent=2) + "\n")
+ 141     print(json.dumps({"status": result["status"], "rational_bound_cases": len(bounds),
+ 142                       "exchange_identities": 2, "output": str(path)}))
+ 143 
+ 144 
+ 145 if __name__ == "__main__":
+ 146     run()
+===== END SOURCE 37; 5611 bytes; 146 lines =====
+===== SOURCE 38 fft_middle_reuse_continuation/fft_qweyl_cache_demo/cache_demo.py SHA256 5cf5b0116bf3e2de981be1013ab53fa90bbf461710a041b25b7551e829b8e512 =====
+   1 """Exact cache propagation on the declared family x_j=B**j x_0.
+   2 
+   3 This consumes the previous sibling package; it does not replace that package.
+   4 The reference T action is quadratic. An ordinary convolution implementation can
+   5 replace its first call, giving O(N log N+rN) work for this related-input family.
+   6 """
+   7 import sys
+   8 from pathlib import Path
+   9 from collections import Counter
+  10 
+  11 SOURCE = Path(__file__).resolve().parent.parent / 'fft_qweyl_boundary_research'
+  12 sys.path.insert(0, str(SOURCE))
+  13 from operators import prepare_sparse, apply_c_charged, horner_c
+  14 from fixed_kernel import Counted, prepare, lower_convolution
+  15 
+  16 
+  17 def prepare_demo(field, n, q):
+  18     """Both methods pay these exact same two existing preparation routines."""
+  19     sparse = prepare_sparse(field,n,q)
+  20     kernel = prepare(field,n,q)
+  21     counts = Counter(sparse.preparation)
+  22     counts.update(kernel.preparation)
+  23     return sparse,kernel,dict(counts)
+  24 
+  25 
+  26 def apply_b(field, sparse, x):
+  27     if len(x) != sparse.n:
+  28         raise ValueError('wrong input length')
+  29     return [field.mul(sparse.upper[j],x[j+1])
+  30             for j in range(sparse.n-1)] + [field.zero]
+  31 
+  32 
+  33 def apply_b_charged(field, sparse, x):
+  34     c = Counted(field)
+  35     out = apply_b(c,sparse,x)
+  36     return out,dict(c.count)
+  37 
+  38 
+  39 def apply_t_charged(field,kernel,x):
+  40     c = Counted(field)
+  41     out = lower_convolution(c,kernel.kernel,x)
+  42     return out,dict(c.count)
+  43 
+  44 
+  45 def chain(field,sparse,kernel,x,steps,cached):
+  46     """Return all x_j and all y_j; storage is honestly O((steps+1)*N)."""
+  47     if steps < 0:
+  48         raise ValueError('negative steps')
+  49     n=sparse.n
+  50     y,counts=apply_t_charged(field,kernel,x)
+  51     arithmetic=Counter(counts)
+  52     inputs,outputs=[list(x)],[y]
+  53     for _ in range(steps):
+  54         x,bcounts=apply_b_charged(field,sparse,x)
+  55         arithmetic.update(bcounts)
+  56         if cached:
+  57             y,details=apply_c_charged(field,sparse,y)
+  58             arithmetic.update(details['field_operations'])
+  59         else:
+  60             y,tcounts=apply_t_charged(field,kernel,x)
+  61             arithmetic.update(tcounts)
+  62         inputs.append(x)
+  63         outputs.append(y)
+  64     return dict(inputs=inputs,outputs=outputs,
+  65         field_operations=dict(arithmetic),
+  66         logical_output_writes=(steps+1)*n,
+  67         logical_related_input_writes=steps*n,
+  68         retained_input_elements=(steps+1)*n,
+  69         retained_output_elements=(steps+1)*n,
+  70         initial_t_calls=1,subsequent_t_calls=0 if cached else steps,
+  71         c_updates=steps if cached else 0,b_updates=steps)
+  72 
+  73 
+  74 def expected_online(n,steps,cached):
+  75     if cached:
+  76         return dict(mul=n*(n+1)//2+steps*(3*n-1),
+  77                     add=n*(n-1)//2+steps*n)
+  78     return dict(mul=(steps+1)*n*(n+1)//2+steps*(n-1),
+  79                 add=(steps+1)*n*(n-1)//2)
+  80 
+  81 
+  82 def polynomial_b(field,sparse,coefficients,x):
+  83     if not coefficients:
+  84         raise ValueError('nonempty coefficients required')
+  85     c=Counted(field)
+  86     out=[c.mul(coefficients[-1],v) for v in x]
+  87     for coefficient in reversed(coefficients[:-1]):
+  88         previous=apply_b(c,sparse,out)
+  89         out=[c.add(previous[j],c.mul(coefficient,x[j]))
+  90              for j in range(sparse.n)]
+  91     return out,dict(c.count)
+  92 
+  93 
+  94 def cached_polynomial(field,sparse,coefficients,cached_tx):
+  95     return horner_c(field,sparse,coefficients,cached_tx)
+===== END SOURCE 38; 3269 bytes; 95 lines =====
+===== SOURCE 39 fft_middle_reuse_continuation/fft_qweyl_cache_demo/run_audit.py SHA256 a7f94bb1acb455592d69879e19defd4bf0cfdfca8e3cda715eee6c8bb036794b =====
+   1 """Small exact family demonstration, with independent T evaluations as oracle."""
+   2 import json
+   3 import random
+   4 from pathlib import Path
+   5 from cache_demo import (prepare_demo,chain,expected_online,apply_t_charged,
+   6                         polynomial_b,cached_polynomial)
+   7 from prior_exact_arithmetic import PrimeField
+   8 
+   9 
+  10 def main():
+  11     rng=random.Random(20261009)
+  12     records=[]
+  13     for prime in (65537,998244353):
+  14         f=PrimeField(prime)
+  15         for n in (8,16,32):
+  16             q=f.root(n)
+  17             assert f.power(q,n)==f.one and f.power(q,n//2)!=f.one
+  18             sparse,kernel,preparation=prepare_demo(f,n,q)
+  19             steps=min(4,n-1)
+  20             vectors=[[int(i==j) for i in range(n)] for j in range(n)]
+  21             vectors.extend([[rng.randrange(prime) for _ in range(n)] for _ in range(4)])
+  22             polynomial=[f.integer(v) for v in (2,-3,5,1)]
+  23             # Check every permitted shorter chain's counts, including zero updates.
+  24             for shorter in range(steps):
+  25                 for cached_mode in (False,True):
+  26                     trial=chain(f,sparse,kernel,vectors[-1],shorter,cached_mode)
+  27                     assert trial['field_operations']==expected_online(n,shorter,cached_mode)
+  28             for x in vectors:
+  29                 cached=chain(f,sparse,kernel,x,steps,True)
+  30                 baseline=chain(f,sparse,kernel,x,steps,False)
+  31                 assert cached['inputs']==baseline['inputs']
+  32                 assert cached['outputs']==baseline['outputs']
+  33                 assert cached['field_operations']==expected_online(n,steps,True)
+  34                 assert baseline['field_operations']==expected_online(n,steps,False)
+  35                 for seed,output in zip(cached['inputs'],cached['outputs']):
+  36                     independent,_=apply_t_charged(f,kernel,seed)
+  37                     assert output==independent
+  38                 px,pb_counts=polynomial_b(f,sparse,polynomial,x)
+  39                 expected,_=apply_t_charged(f,kernel,px)
+  40                 actual,pc_details=cached_polynomial(f,sparse,polynomial,cached['outputs'][0])
+  41                 assert actual==expected
+  42                 assert pb_counts==dict(mul=7*n-3,add=3*n)
+  43                 assert pc_details['field_operations']==dict(mul=10*n,add=6*n)
+  44             # Reusing a C update for an unrelated input is invalid.
+  45             # B*e0=0, whereas a fresh unchanged e0 has nonzero T*e0.
+  46             control=chain(f,sparse,kernel,vectors[0],1,True)
+  47             assert control['outputs'][1]==[f.zero]*n
+  48             assert control['outputs'][1]!=control['outputs'][0]
+  49             records.append(dict(prime=prime,n=n,steps=steps,
+  50                 basis_vectors=n,random_vectors=4,preparation=preparation,
+  51                 cached_online=cached['field_operations'],
+  52                 baseline_online=baseline['field_operations'],
+  53                 cached_total=sum(preparation.values())+sum(cached['field_operations'].values()),
+  54                 baseline_total=sum(preparation.values())+sum(baseline['field_operations'].values()),
+  55                 logical_output_writes=cached['logical_output_writes'],
+  56                 logical_related_input_writes=cached['logical_related_input_writes'],
+  57                 retained_input_elements=cached['retained_input_elements'],
+  58                 retained_output_elements=cached['retained_output_elements'],
+  59                 polynomial_identity_cases=len(vectors),
+  60                 unrelated_input_negative_control='PASS',status='PASS'))
+  61     result=dict(status='PASS',configurations=len(records),
+  62         basis_seed_vectors=sum(r['basis_vectors'] for r in records),
+  63         random_seed_vectors=sum(r['random_vectors'] for r in records),
+  64         full_chain_outputs=sum((r['basis_vectors']+r['random_vectors'])*(r['steps']+1) for r in records),
+  65         polynomial_identity_cases=sum(r['polynomial_identity_cases'] for r in records),
+  66         scope='Declared related-input family B^j*x only; not arbitrary fresh FFT speedup',
+  67         details=records)
+  68     out=Path(__file__).parent/'results'
+  69     out.mkdir(exist_ok=True)
+  70     (out/'cache_audit.json').write_text(json.dumps(result,indent=2)+'\n')
+  71     print(json.dumps({k:v for k,v in result.items() if k!='details'},indent=2))
+  72     for r in records[:3]:
+  73         print(f"N={r['n']}: cached total {r['cached_total']}, baseline total {r['baseline_total']}, full output writes {r['logical_output_writes']}")
+  74 
+  75 
+  76 if __name__=='__main__':
+  77     main()
+===== END SOURCE 39; 4373 bytes; 77 lines =====
+===== SOURCE 40 fft_middle_reuse_continuation/run_all.py SHA256 6c5d69403ea7546c193e632f91aff3753f6efb58dcc9efd2a4f6027d10aa8357 =====
+   1 """Reproduce all new checks in isolated processes using the standard library."""
+   2 from pathlib import Path
+   3 import os
+   4 import subprocess
+   5 import sys
+   6 
+   7 root = Path(__file__).resolve().parent
+   8 env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+   9 scripts = (
+  10     root / 'fft_qweyl_boundary_research' / 'run_audit.py',
+  11     root / 'fft_qweyl_cache_demo' / 'run_audit.py',
+  12     root / 'fft_material_bridge_review' / 'material_checks.py',
+  13 )
+  14 for script in scripts:
+  15     subprocess.run([sys.executable, str(script)], cwd=script.parent,
+  16                    env=env, check=True)
+  17 print('PASS: all three continuation components')
+===== END SOURCE 40; 607 bytes; 17 lines =====
+===== SOURCE 41 fft_moving_partition_gate_2026-10-10/RUN_ALL.sh SHA256 371b94d9edfb8810a6c43ee532a10d4c13a2db245f222de2608c3e71d8826d88 =====
+   1 #!/usr/bin/env bash
+   2 set -euo pipefail
+   3 cd "$(dirname "$0")"
+   4 python test_gate.py
+   5 python test_twisted.py
+   6 python verify_certificates.py
+===== END SOURCE 41; 132 bytes; 6 lines =====

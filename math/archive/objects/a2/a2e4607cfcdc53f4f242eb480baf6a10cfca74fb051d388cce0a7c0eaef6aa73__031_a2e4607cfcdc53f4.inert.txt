@@ -1,0 +1,242 @@
+SHARED-DENOMINATOR BOSTAN–MORI TREE: EXACT SPECTRAL BRIDGE AND COST
+2026-10-09
+
+Result
+------
+This pass does not produce an o(N log k) exact algorithm. It isolates two
+separate amplitude-dependent maps that denominator reuse does not pay for:
+(1) extension of a numerator's L-point spectrum to the missing coset of a
+2L-point spectrum, and (2) terminal rational-series decoding. The spectral
+extension is the familiar FFT-doubling operation, not a novel algorithm.
+An exact full-rank aliasing identity explains why simply commuting its
+twiddles through denominator multipliers does not make it disappear.
+These are limitations of this proposed implementation, not lower bounds
+on arbitrary algorithms or on joint processing of its constrained inputs.
+
+1. Model and residue tree
+-------------------------
+Use exact arithmetic over C (or a field of characteristic not 2 supporting
+the required auxiliary FFT roots). Input is distinct nonzero z_s with
+z_s^N=1 and arbitrary a_s, s=1,...,k. We want f_0,...,f_{N-1}, where
+f_m=sum_s a_s z_s^m. All support-dependent preprocessing is charged.
+
+At depth ell and residue 0<=r<2^ell, define
+
+  F_{ell,r}(t) = sum_{m>=0} f_{r+2^ell m} t^m
+               = P_{ell,r}(t)/Q_ell(t),
+  Q_ell(t) = product_s (1-z_s^(2^ell)t),
+  P_{ell,r}(t) = sum_s a_s z_s^r Q_ell(t)/(1-z_s^(2^ell)t).
+
+Thus deg P<k and deg Q=k. These representations remain valid if roots
+collide; cancellation can reduce their degrees. In particular, for odd
+prime N, squaring never identifies distinct Nth roots, so the common
+reduced denominator has degree k (assuming the corresponding amplitudes
+are nonzero). Powers-of-two N can have useful aliasing, but no arbitrary-
+support guarantee of early aliasing follows.
+
+Given a node P=P_{ell,r}, Q=Q_ell, put U(t)=P(t)Q(-t). Then
+
+  Q_{ell+1}(t^2)=Q(t)Q(-t),
+  P_{ell+1,r}(t^2)=[U(t)+U(-t)]/2,
+  t P_{ell+1,r+2^ell}(t^2)=[U(t)-U(-t)]/2.
+
+The denominator is common to every node of a level. Its polynomial and
+FFT data can therefore be computed once per level. The numerators differ.
+
+2. Exact spectral branch formulas
+---------------------------------
+Let L be a power of two with k<=L<2k (the k=1 case is immediate). Let alpha
+be a primitive 2Lth root and omega=alpha^2. Store each degree-<L numerator
+p by x_r=p(omega^r), 0<=r<L. To branch, one needs p on all 2L roots.
+
+If that 2L spectrum is available, then for j=0,...,L-1,
+
+  p_even(omega^j)
+    = [p(alpha^j)Q(-alpha^j)+p(-alpha^j)Q(alpha^j)]/2,
+  p_odd(omega^j)
+    = [p(alpha^j)Q(-alpha^j)-p(-alpha^j)Q(alpha^j)]/(2 alpha^j).
+
+Both child spectra together cost O(L) arithmetic given the parent 2L
+spectrum and the common Q values. This already shares the work between
+siblings. However, each child has only an L-point spectrum. Its next
+branch needs its own missing coset, unless a further cross-node identity
+is supplied.
+
+3. The missing-coset operator E
+-------------------------------
+Let F have entries F_{r,j}=omega^(rj), and let
+
+  F_odd = F diag(alpha^j),
+  E = F_odd F^{-1} = F diag(alpha^j) F^{-1}.
+
+Then y=E x gives y_r=p(alpha omega^r), the missing half of the 2L spectrum.
+Interleave x and y to get the complete 2L spectrum. Explicitly,
+
+  E_{r,s}=(1/L) sum_{j=0}^{L-1}(alpha omega^(r-s))^j
+         = 2/[L(1-alpha omega^(r-s))].
+
+E is a fixed dense circulant/Cauchy matrix, independent of the support,
+amplitudes and tree level. There are no zero entries. Also
+
+  E^2=F diag(omega^j) F^{-1},
+
+which is the cyclic permutation x_r -> x_{r+1 mod L}. This attractive
+identity alone is insufficient: denominator pointwise multipliers lie
+between successive extensions, and the next section gives their exact
+commutation defect.
+
+The standard application of E is inverse DFT, coefficient twist, forward
+DFT: 2 Fcost(L)+O(L)=O(L log L). Precomputing E's entries or its convolution
+kernel FFT eliminates only support-independent setup; it does not execute
+E x for a new x. If coefficients are also already available, FFT doubling
+needs only the twisted forward transform, Fcost(L)+O(L). Maintaining those
+coefficients across the numerator products still has to be charged.
+
+4. Exact aliasing/commutation defect
+------------------------------------
+For a degree-d polynomial q with d<=L and nonzero leading coefficient, set
+
+  D0=diag(q(omega^r)),
+  D1=diag(q(alpha omega^r)),
+  H_q(p)=floor(p(t)q(t)/t^L), for deg p<L.
+
+Here floor means retain coefficients of degrees >=L and shift down by L.
+Identify H_q with its L-by-L coefficient matrix, padding its output by zeros.
+Then the exact matrix identity is
+
+  E D0 - D1 E = 2 F_odd H_q F^{-1}.
+
+Proof. Write pq=A+t^L B with deg A<L and deg B<d. On the even grid t^L=1,
+so the sampled product represents A+B. Extending that aliased polynomial
+gives (A+B)(alpha omega^r). True multiplication on the odd grid gives
+(A-B)(alpha omega^r), because t^L=-1. Their difference is 2B on that grid.
+
+Moreover rank(H_q)=d. Its d output coefficients depend triangularly on
+the top d input coefficients, with nonzero diagonal q_d, after ordering
+from highest degree downward. Therefore
+
+  rank(E D0-D1 E)=d.
+
+For the BM multiplier q=Q_ell or Q_ell(-t), d=k. On the full degree-<L
+space the defect is rank k, and at L=k it is full rank L. In that state
+space, moving E past the pointwise Q multiplier and canceling pairs using
+E^2 requires the indicated rank-k correction; a permutation/twiddle-only
+commutation would omit it. Rank/density does not establish a superlinear
+operation lower bound.
+
+IMPORTANT RESTRICTION: actual BM numerators have degree<k, not arbitrary
+degree<L. Restricted to this input space, the defect for degree-k q has
+rank max(0,2k-L), by the same triangular argument. Thus its restricted
+rank need not be Theta(k) for a padded transform. Taking L=k when k is a
+power of two gives the clean full-rank case with no padding. Choosing
+L>=2k even removes this one product's alias defect entirely on actual
+numerators. This does not by itself remove the missing-grid issue: a
+parent 2L grid yields an L grid for each child. To get those children on
+a 2L grid by the same direct pointwise parity formulas, the parent must
+instead be known on a 4L grid. In particular, evaluation of a child at
+alpha omega^r requires its parent's product at square roots of that
+point, in a further half-twisted coset. No cheap restricted or batched
+implementation, and no universal obstruction to one, is inferred from
+the ambient rank calculation.
+
+5. What constrained batching may still exploit
+---------------------------------------------
+Numerators across a level are emphatically not independent arbitrary
+vectors. Their coefficients and spectra satisfy
+
+  P_{ell,r}(t)=sum_s a_s z_s^r Q_ell(t)/(1-z_s^(2^ell)t).
+
+All of them are generated by the same k amplitudes; their matrix has rank
+at most k. The standalone E-application cost therefore cannot be summed
+as an unconditional lower bound on joint processing. A successful new
+algorithm could fuse E applications, denominator multipliers, and final
+decoding on precisely this family. The proof above only invalidates the
+simple commutation/cancellation shortcut. It does not exclude such fusion.
+
+Likewise, carrying a very oversampled numerator spectrum permits several
+successive parity steps without extending it, but the grid halves after
+each step. After h levels it needs an initial 2^h L grid. Standard pruned
+FFT construction of that grid, plus the required parity network, does not
+by itself give a better asymptotic cost. A claim that it does must charge
+generation of the oversampled amplitude-dependent data, not just reuse
+of Q or of twiddle tables.
+
+6. Terminal decoding is a separate bottleneck
+--------------------------------------------
+Choose D=ceil(log_2(N/L)), assuming N>=L. There are 2^D=Theta(N/L)
+residue leaves, each requesting at most L coefficients. All leaf
+denominators are the same Q_D. Let
+
+  h(t)=Q_D(t)^(-1) mod t^L,
+  T_h = the lower-triangular Toeplitz map p -> (h p) mod t^L.
+
+For a leaf numerator spectrum x, its requested coefficient block is
+
+  T_h F^{-1} x,
+
+with unused final entries discarded. Precomputing h, its multiplication
+kernel FFT, or even the complete fixed matrix is allowed but does not
+apply this terminal map. The standard per-leaf cost is O(M(L)+Fcost(L))
+=O(L log L). Leaf residues must finally be interleaved into m order, O(N).
+
+Thus speeding up E alone does NOT prove o(N log k) for this construction.
+Continuing the untruncated degree-k tree to scalar leaves instead uses
+Theta(N) nodes of dimension Theta(k), giving at least Theta(Nk) work in
+the explicit dense-vector implementation, even if E cost were linear.
+Shrinking/truncating dimensions below k does not magically fix this:
+straightforward parity processing still has Theta(N) explicit data per
+full level over Theta(log k) tail levels, before any transform costs.
+Truncation from a spectrum is itself not a free pointwise operation.
+
+7. Honest sufficient condition and full cost
+--------------------------------------------
+Let tau(L) be the cost of a support-independent E application and let
+sigma(L) be the cost of the fixed terminal map T_h F^{-1} for the required
+denominator family. Suppose their setup and the common denominator setup
+cost Cpre(k,log N), and that all transforms/roots/initial data are charged.
+The node-by-node spectral BM scheme then costs
+
+  O(Cpre(k,log N) + (N/L)[tau(L)+sigma(L)+L]).
+
+Standard algorithms have tau,sigma=O(L log L), so this is O(N log k)
+plus polynomial-in-log-N preprocessing when k=Theta(log N).
+
+A sufficient improvement would be
+
+  Cpre=o(N log k), and tau(L)+sigma(L)=o(L log L),
+
+uniformly for the relevant fresh supports. Polynomial(k,log N) setup
+satisfies the first condition for k=Theta(log N). A fast E algorithm alone
+does not satisfy the second if sigma retains its ordinary FFT cost.
+Alternatively, a joint algorithm for the constrained node family can
+replace the separate tau/sigma bounds if it proves the aggregate
+amplitude-dependent work, including terminal output, is o(N log k).
+
+Initial Q_0 and P_0 can be built by a product/sum tree in
+O(M(k) log k). Each common denominator Q_{ell+1} follows by one Graeffe
+product and even extraction in O(M(k)); its spectra need O(M(k)). Across
+O(log N) levels this is O(M(k)(log N+log k)), apart from acquiring the
+given/auxiliary roots and the setup of any proposed faster fixed maps.
+These costs are small here but cannot be silently omitted.
+
+8. Prior art / source boundary
+------------------------------
+The BM parity formulas and FFT-doubling bridge are established methods:
+
+Alin Bostan and Ryuhei Mori, A Simple and Fast Algorithm for Computing the
+N-th Term of a Linearly Recurrent Sequence (2020), sections 4.3 and 4.4,
+Algorithm 10 (UP). With only an n-point DFT as input, UP uses inverse DFT,
+twist, forward DFT and costs 2 E(n)+n in that paper's notation.
+https://specfun.inria.fr/bostan/BoMo20.pdf#page=24
+
+Joris van der Hoeven, Optimizing the half-gcd algorithm, section 2.1:
+FFT doubling can cost F(n/2)+O(n) when the polynomial's coefficients and
+its half-length transform are both available; the polynomial coefficients
+are used to form the twisted remainder before the additional transform.
+https://www.texmacs.org/joris/gcd/gcd.pdf#page=3
+
+The explicit Cauchy entries and alias-commutator rank proof above are
+direct derivations used to audit this candidate, not claims of novelty.
+Independent exact finite-field tests checked the commutator
+rank on 310 choices over mod 97 (L=1,2,4,8,16, all 1<=k<=L),
+but the algebraic proof, rather than testing, establishes the identity.

@@ -1,0 +1,115 @@
+"""Eliminate the entire SECOND separated-generator stage for n=8.
+
+If F=B P A and P A is invertible, then B = F (P A)^(-1).
+On the open patch B[7,0]*B[0,7]!=0, membership of B in the rank-1
+separated-generator chart is EQUIVALENT to exactly 30 explicit 2x2 identities.
+Gauge-fix diag(A)=1, lower L[7]=1, upper U[0]=1: A has 26 free params.
+Therefore F8 factorization on this regular patch reduces to 30 polynomial
+equations in 26 unknowns, after multiplying out det(PA)^2.
+
+This is a reduction, NOT proof that the system has no solution.
+"""
+import json,sys
+from pathlib import Path
+import numpy as np
+from ct_positive_control import fft_matrix,root
+from jet_compatibility import inverse_mod
+N=8;P=12289;SHUFFLE=np.array([7,0,6,3,4,1,2,5]);
+
+def chart_stage(z,diag_fixed=True):
+    assert len(z)==(26 if diag_fixed else 34)
+    z=np.array(z,dtype=np.int64)%P
+    S=np.zeros((N,N),dtype=np.int64)
+    k=0
+    if diag_fixed:
+        np.fill_diagonal(S,1)
+    else:
+        for i in range(N):S[i,i]=z[k];k+=1
+    L=np.r_[[0],z[k:k+6],[1]];k+=6
+    V=np.r_[z[k:k+7],[0]];k+=7
+    U=np.r_[[1],z[k:k+6],[0]];k+=6
+    W=np.r_[[0],z[k:k+7]];k+=7
+    assert k==len(z)
+    for i in range(N):
+        for j in range(N):
+            if i>j:S[i,j]=L[i]*V[j]%P
+            if i<j:S[i,j]=U[i]*W[j]%P
+    return S
+
+def equations(Q):
+    # Work on numerator G = F @ adj(PA), or directly on B=F@(PA)^(-1).
+    E=[]
+    for i in range(2,7):
+        for k in range(1,i):
+            E.append((int(Q[i,k])*int(Q[7,0])-int(Q[i,0])*int(Q[7,k]))%P)
+    for i in range(1,6):
+        for k in range(i+1,7):
+            E.append((int(Q[i,k])*int(Q[0,7])-int(Q[i,7])*int(Q[0,k]))%P)
+    assert len(E)==30
+    return E
+
+def det_mod(A):
+    A=np.array(A,dtype=np.int64)%P
+    out=1
+    for c in range(N):
+        idc=np.flatnonzero(A[c:,c]);assert len(idc)
+        row=c+int(idc[0]);
+        if row!=c:A[[row,c]]=A[[c,row]];out=-out
+        piv=int(A[c,c]);out=out*piv%P
+        A[c,c:]=A[c,c:]*pow(piv,-1,P)%P
+        for i in range(c+1,N):
+            if A[i,c]:A[i,c:]=(A[i,c:]-int(A[i,c])*A[c,c:])%P
+    return out%P
+
+def analyze(M,A):
+    PA=A[SHUFFLE]
+    d=det_mod(PA)
+    assert d!=0
+    IA=inverse_mod(PA,P)
+    B=(M@IA)%P
+    adj=(IA*d)%P
+    G=M@adj%P
+    eqB=equations(B);eqG=equations(G)
+    assert np.array_equal(np.array(eqG,dtype=np.int64)%P,
+                          np.array(eqB,dtype=np.int64)*(d*d%P)%P)
+    regular=int(B[7,0])!=0 and int(B[0,7])!=0
+    if regular and not any(eqB):
+        # Reconstruct B from 13 lower + 13 upper + 8 diagonal parameters.
+        params=[]
+        params.extend(int(x) for x in np.diag(B))
+        invlo=pow(int(B[7,0]),-1,P)
+        params.extend(int(B[i,0]*invlo%P) for i in range(1,7))
+        params.extend(int(B[7,j]) for j in range(7))
+        invup=pow(int(B[0,7]),-1,P)
+        params.extend(int(B[i,7]*invup%P) for i in range(1,7))
+        params.extend(int(B[0,j]) for j in range(1,8))
+        assert np.array_equal(B,chart_stage(params,False))
+    return {'det_PA':int(d),'second_stage_regular':bool(regular),
+        'number_polynomials':len(eqG),'number_nonzero_equations':sum(int(x!=0) for x in eqG),
+        'all_equations_zero':not any(eqG)}
+
+def run():
+    rng=np.random.default_rng(20261009)
+    F=fft_matrix(8)
+    accept=0;generic_fail=0
+    root8=root(8)
+    for _ in range(20):
+        aa=rng.integers(1,P,size=26,dtype=np.int64)
+        bb=rng.integers(1,P,size=34,dtype=np.int64)
+        A=chart_stage(aa,True)
+        B=chart_stage(bb,False)
+        M=B@A[SHUFFLE]%P
+        z=analyze(M,A)
+        assert z['all_equations_zero'] and z['second_stage_regular']
+        accept+=1
+        t=analyze(F,A)
+        assert not t['all_equations_zero']
+        generic_fail+=1
+    return {'prime':P,'primitive_8th_root':root8,'n':8,'fixed_permutation':SHUFFLE.tolist(),
+        'normalized_first_stage_parameters':26,
+        'second_stage_membership_equations':30,
+        'lower_quadratic_identities':15,'upper_quadratic_identities':15,
+        'fresh_exact_product_positive_controls':accept,
+        'random_first_stages_failing_the_F8_equations':generic_fail,
+        'logical_scope':'Exact iff on det(PA)!=0, B[7,0]*B[0,7]!=0 and first-stage regular gauge; random failures DO NOT certify nonexistence of an F8 preimage.'}
+if __name__=='__main__':print(json.dumps(run(),indent=2))

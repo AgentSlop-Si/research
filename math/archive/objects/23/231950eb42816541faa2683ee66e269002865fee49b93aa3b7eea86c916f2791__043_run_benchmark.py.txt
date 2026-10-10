@@ -1,0 +1,12 @@
+from pathlib import Path
+import csv, json, subprocess, platform
+ROOT=Path(__file__).resolve().parent
+subprocess.run(["cmake","-S",str(ROOT),"-B",str(ROOT/"build"),"-DCMAKE_BUILD_TYPE=Release"],check=True)
+subprocess.run(["cmake","--build",str(ROOT/"build"),"-j2"],check=True)
+p=subprocess.run([str(ROOT/"build"/"adaptive_fft_cpp")],check=True,text=True,capture_output=True)
+print(p.stdout)
+lines=p.stdout.splitlines()
+start=next(i for i,s in enumerate(lines) if s.startswith("impl,case,"))
+rows=list(csv.DictReader(lines[start:]))
+out={"benchmark":"C++ adaptive FFT bookkeeping ablation", "platform":platform.platform(), "rows":rows}
+(ROOT/"cpp_benchmark_results.json").write_text(json.dumps(out,indent=2))

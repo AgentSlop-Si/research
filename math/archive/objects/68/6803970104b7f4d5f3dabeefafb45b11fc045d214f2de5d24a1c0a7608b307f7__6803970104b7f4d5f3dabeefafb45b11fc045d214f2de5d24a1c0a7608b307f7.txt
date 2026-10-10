@@ -1,0 +1,58 @@
+"""Exact second-order obstruction for a linear perturbation of a generic realized
+matrix, using the conormal of the 8-point two-stage separated-generator chart.
+
+This is a *local deformation certificate*, NOT an implicit polynomial equation
+and NOT an F8 exclusion. Every calculation is finite-field-exact.
+"""
+import json,sys
+from pathlib import Path
+import numpy as np
+OLD=(Path(__file__).resolve().parent/'prior_checkpoint' if (Path(__file__).resolve().parent/'prior_checkpoint').exists() else Path(__file__).resolve().parents[1]/'fft_nonlinear_compatibility_2026-10-09')
+sys.path.insert(0,str(OLD))
+import jacobian_gate as j
+P=[7,0,6,3,4,1,2,5]
+PRIME=12289
+
+def compute(seed=1011):
+    j.MOD=PRIME
+    M,J,A,B=j.basis(8,1,P,seed)
+    assert j.rank_mod(J)==60
+    Q=np.array(j.basis_null(J.T),dtype=np.int64)%PRIME
+    assert Q.shape==(4,64)
+    assert np.all((Q@J)%PRIME==0)
+    # Change A_{a,a} and B_{b,b} by +t, where a=P[b].
+    # Then Phi(t)=Phi(0)+t(J_a+J_(40+b))+t^2 E_(b,a).
+    options=[]
+    for b in range(8):
+        a=P[b]
+        normal=Q[:,b*8+a]%PRIME
+        options.append((b,a,normal))
+    b,a,qeval=next((b,a,v) for b,a,v in options if np.any(v))
+    dA=np.zeros((8,8),dtype=np.int64);dA[a,a]=1
+    dB=np.zeros((8,8),dtype=np.int64);dB[b,b]=1
+    S1=j.value(A);S2=j.value(B)
+    dM=(S2@dA[P,:] + dB@S1[P,:])%PRIME
+    E=(dB@dA[P,:])%PRIME
+    assert np.count_nonzero(E)==1 and E[b,a]==1
+    assert np.array_equal(dM.reshape(-1)%PRIME,(J[:,a]+J[:,40+b])%PRIME)
+    assert np.all(Q@dM.reshape(-1)%PRIME==0)
+    assert np.array_equal(Q@E.reshape(-1)%PRIME,qeval)
+    for t in [0,1,2,17,123]:
+        SS1=S1+t*dA;SS2=S2+t*dB
+        factored=SS2@SS1[P,:]%PRIME
+        expected=(M+t*dM+t*t*E)%PRIME
+        assert np.array_equal(factored,expected)
+    out={'prime':PRIME,'seed':seed,'shuffle':P,'jacobian_rank':60,'nullity':4,
+        'first_stage_diagonal_idx':a,'second_stage_diagonal_idx':b,
+        'tangent_delta_is_in_jacobian_span':True,'quadratic_term_single_entry':[b,a],
+        'conormal_pairing_vector':qeval.tolist(),
+        'reason':'No generator path with first derivative equal to the specified diag coordinate changes can realize M0+t*dM without a second-order correction; its missing t^2 E has a nonzero component transverse to the image. This is local, NOT a global FFT obstruction.'}
+    return out
+
+def verify(cert):
+    regen=compute(cert['seed'])
+    assert regen==cert
+    return True
+if __name__=='__main__':
+    z=compute()
+    print(json.dumps(z,indent=2))

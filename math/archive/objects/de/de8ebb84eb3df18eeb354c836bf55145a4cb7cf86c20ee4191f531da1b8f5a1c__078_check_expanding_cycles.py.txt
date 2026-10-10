@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""Fresh independent formula controls. Does not read or execute uploaded source."""
+from itertools import combinations
+from math import gcd
+from pathlib import Path
+import hashlib
+import json
+import random
+import time
+
+HERE = Path(__file__).resolve().parent
+LABELS = [(axis, c, sign) for axis in ("H", "V") for c in (0, 1) for sign in (-1, 1)]
+
+
+def step(v, a, b, label):
+    x, y = divmod(v, b)
+    axis, c, sign = label
+    if axis == "H":
+        x = (x + sign * (2 * y + c)) % a
+    else:
+        y = (y + sign * (2 * x + c)) % b
+    return x * b + y
+
+
+def permutation(a, b, label):
+    return [step(v, a, b, label) for v in range(a * b)]
+
+
+def representatives(p):
+    seen = bytearray(len(p))
+    reps = []
+    visits = 0
+    for v in range(len(p)):
+        if not seen[v]:
+            reps.append(v)
+            w = v
+            while not seen[w]:
+                seen[w] = 1
+                visits += 1
+                w = p[w]
+            assert w == v, "Not a permutation cycle decomposition"
+    assert visits == len(p)
+    return reps
+
+
+def splice(p, reps):
+    q = p.copy()
+    if len(reps) > 1:
+        for i, a in enumerate(reps):
+            q[a] = p[reps[(i + 1) % len(reps)]]
+    return q
+
+
+def incoming(p, flags):
+    return sum(not flags[v] and flags[w] for v, w in enumerate(p))
+
+
+def exact_radical_lower(e, s, n, loss=0):
+    """e >= (8-5sqrt2)*s*(n-s)/n - loss, exact integer test."""
+    u = s * (n - s)
+    t = 8 * u - (e + loss) * n
+    return t <= 0 or t * t <= 50 * u * u
+
+
+def threshold(n, loss):
+    x = 22 * n - 12 * loss
+    return x > 0 and x * x > 450 * n * n
+
+
+def cut_samples(n, b, seed):
+    if n <= 16:
+        for subset in combinations(range(n), n // 2):
+            flags = bytearray(n)
+            for v in subset:
+                flags[v] = 1
+            yield flags
+        return
+    yield bytearray(v < n // 2 for v in range(n))
+    yield bytearray((v // b) % 2 == 0 for v in range(n))
+    for bit in range(n.bit_length() - 1):
+        yield bytearray((v >> bit) & 1 for v in range(n))
+    rng = random.Random(seed)
+    for _ in range(4):
+        flags = bytearray(n)
+        for v in rng.sample(range(n), n // 2):
+            flags[v] = 1
+        yield flags
+
+
+def quotient_controls():
+    rows = []
+    for r in range(1, 7):
+        m = 2 ** r
+        a, b = 2 * m, m
+        count = 0
+        for label in LABELS:
+            for v in range(a * a):
+                x, y = divmod(v, a)
+                qv = x * b + y % b
+                z = step(v, a, a, label)
+                zx, zy = divmod(z, a)
+                assert zx * b + zy % b == step(qv, a, b, label)
+                count += 1
+        rows.append({"m": m, "labeled_commutation_checks": count})
+    return rows
+
+
+def half_loss_controls():
+    tested = 0
+    sharp = []
+    for c in range(1, 10):
+        worst = 0
+        for tails in range(1 << c):
+            for heads in range(1 << c):
+                old = sum(((tails >> j) & 1) * ((heads >> j) & 1) for j in range(c))
+                new = sum(((tails >> j) & 1) * ((heads >> ((j + 1) % c)) & 1) for j in range(c))
+                delta = abs(old - new)
+                assert delta <= c // 2
+                worst = max(worst, delta)
+                tested += 1
+        assert worst == c // 2
+        sharp.append({"selected_edges": c, "largest_observed_absolute_loss": worst})
+    return {"boolean_endpoint_patterns": tested, "sharpness": sharp}
+
+
+def geometry_controls():
+    rows = []
+    for k in range(2, 19):
+        r = k // 2
+        m = 2 ** r
+        a, b = (m, m) if k % 2 == 0 else (2 * m, m)
+        n = a * b
+        loss = 2 * m * (r + 2) if a == b else m * (3 * r + 7)
+        flags_list = list(cut_samples(n, b, 1000 + k))
+        before = [0] * len(flags_list)
+        after = [0] * len(flags_list)
+        cycles = []
+        maxima = []
+        hashes = []
+        for label in LABELS:
+            p = permutation(a, b, label)
+            axis, c, sign = label
+            invlabel = axis, c, -sign
+            assert all(step(p[v], a, b, invlabel) == v for v in range(n))
+            reps = representatives(p)
+            expected = (m * (r + 1) if c == 0 else m) if a == b else (
+                (m * (r + 2) if c == 0 else m) if axis == "H" else
+                (2 * m * (r + 1) if c == 0 else 2 * m))
+            assert len(reps) == expected
+            q = splice(p, reps)
+            assert len(representatives(q)) == 1
+            changed = [v for v in range(n) if p[v] != q[v]]
+            assert changed == (reps if len(reps) > 1 else [])
+            assert set(p[v] for v in changed) == set(q[v] for v in changed)
+            order, seen, v = [], bytearray(n), 0
+            while not seen[v]:
+                seen[v] = 1
+                order.append(v)
+                v = q[v]
+            assert len(order) == n and v == 0
+            assert all(q[order[i]] == order[(i + 1) % n] for i in range(n))
+            worst = 0
+            for i, flags in enumerate(flags_list):
+                ep, eq = incoming(p, flags), incoming(q, flags)
+                assert abs(ep - eq) <= len(reps) // 2
+                before[i] += ep
+                after[i] += eq
+                worst = max(worst, ep - eq)
+            cycles.append(len(reps))
+            maxima.append(worst)
+            digest = hashlib.sha256()
+            for z in q:
+                digest.update(z.to_bytes(4, "little"))
+            hashes.append(digest.hexdigest())
+        assert sum(cycles) == 2 * loss
+        for eb, ea in zip(before, after):
+            assert exact_radical_lower(eb, n // 2, n)
+            assert exact_radical_lower(ea, n // 2, n, loss)
+            assert ea >= eb - loss
+            if k >= 17:
+                assert 3 * ea > n // 2
+        rows.append({"k": k, "N": n, "m": m, "rectangle": a != b,
+                     "cycle_counts": cycles, "total_cycle_count": sum(cycles),
+                     "loss_bound": loss, "balanced_cuts_checked": len(flags_list),
+                     "minimum_checked_incoming_before": min(before),
+                     "minimum_checked_incoming_after": min(after),
+                     "largest_checked_loss_by_label": maxima,
+                     "three_layer_spectral_bound_passes": threshold(n, loss),
+                     "hamiltonian_successor_sha256_little_endian_u32": hashes})
+        print("geometry", k, n, sum(cycles), len(flags_list), flush=True)
+    return rows
+
+
+def rank(matrix, p):
+    mat = [row[:] for row in matrix]
+    rows, cols, rr = len(mat), len(mat[0]), 0
+    for cc in range(cols):
+        pivot = next((i for i in range(rr, rows) if mat[i][cc] % p), None)
+        if pivot is None:
+            continue
+        mat[rr], mat[pivot] = mat[pivot], mat[rr]
+        factor = pow(mat[rr][cc], -1, p)
+        mat[rr] = [z * factor % p for z in mat[rr]]
+        for i in range(rr + 1, rows):
+            factor = mat[i][cc]
+            if factor:
+                mat[i] = [(u - factor * v) % p for u, v in zip(mat[i], mat[rr])]
+        rr += 1
+        if rr == rows:
+            break
+    return rr
+
+
+def apply_green(p, weights, vector, prime):
+    order, v = [], 0
+    for _ in p:
+        order.append(v)
+        v = p[v]
+    assert v == 0 and len(set(order)) == len(p)
+    carry, multiplier = 0, 1
+    for v in order:
+        carry = (vector[v] + weights[v] * carry) % prime
+        multiplier = multiplier * weights[v] % prime
+    previous = carry * pow((1 - multiplier) % prime, -1, prime) % prime
+    result = [0] * len(p)
+    for v in order:
+        previous = (vector[v] + weights[v] * previous) % prime
+        result[v] = previous
+    return result
+
+
+def green_controls():
+    prime, records = 65537, []
+    for k in range(2, 6):
+        m = 2 ** (k // 2)
+        a, b = (m, m) if k % 2 == 0 else (2 * m, m)
+        n = a * b
+        cuts = list(cut_samples(n, b, 765 + k))
+        checks = 0
+        for label in LABELS:
+            p = permutation(a, b, label)
+            q = splice(p, representatives(p))
+            weights = [3] * n
+            columns = []
+            for j in range(n):
+                vec = [int(v == j) for v in range(n)]
+                ans = apply_green(q, weights, vec, prime)
+                residual = ans.copy()
+                for v, w in enumerate(q):
+                    residual[w] = (residual[w] - weights[w] * ans[v]) % prime
+                assert residual == vec
+                columns.append(ans)
+            for flags in cuts:
+                inside = [v for v in range(n) if flags[v]]
+                outside = [v for v in range(n) if not flags[v]]
+                block = [[columns[j][i] for j in outside] for i in inside]
+                assert rank(block, prime) == incoming(q, flags)
+                checks += 1
+        records.append({"N": n, "prime": prime, "nonzero_weight": 3,
+                        "exact_inverse_columns_checked": 8 * n,
+                        "exact_cross_ranks_checked": checks})
+    return records
+
+
+def thresholds():
+    rows = []
+    for r in range(1, 101):
+        for rectangular in (False, True):
+            m = 2 ** r
+            n = m * m * (2 if rectangular else 1)
+            loss = m * (3 * r + 7) if rectangular else 2 * m * (r + 2)
+            passed = threshold(n, loss)
+            assert passed == (r >= (8 if rectangular else 9))
+            rational_margin_numerator_16 = 3 * n - 48 * loss
+            if passed:
+                assert rational_margin_numerator_16 > 0
+            if r <= 10:
+                rows.append({"r": r, "N": n, "rectangle": rectangular,
+                             "loss": loss, "passes_exact_radical_test": passed,
+                             "rational_margin_times_16": rational_margin_numerator_16})
+    return {"ranges_checked": "r=1..100 for each parity", "displayed": rows}
+
+
+def main():
+    start = time.monotonic()
+    results = {"provenance": "Newly authored formula checker; imports only Python standard library; no uploaded source executed.",
+               "label_order": LABELS,
+               "external_theorem": "AFP MGG unnormalized numerical-radius bound 5sqrt(2), invoked rather than computationally reproved",
+               "quotient": quotient_controls(),
+               "half_loss": half_loss_controls(),
+               "geometry": geometry_controls(),
+               "green_controls": green_controls(),
+               "thresholds": thresholds(),
+               "status": "PASS"}
+    results["elapsed_seconds"] = time.monotonic() - start
+    (HERE / "CONTROL_RESULTS.json").write_text(json.dumps(results, indent=2) + "\n")
+    print(json.dumps({"status": "PASS", "elapsed_seconds": results["elapsed_seconds"]}), flush=True)
+
+
+if __name__ == "__main__":
+    main()

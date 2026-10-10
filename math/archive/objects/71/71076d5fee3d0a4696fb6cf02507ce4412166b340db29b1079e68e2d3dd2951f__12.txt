@@ -1,0 +1,162 @@
+   1 """A NONLINEAR Fourier coefficient gate for the unchanged four-stage layout.
+   2 
+   3 For every valid F = S4 P3 S3 P2 S2 P1 S1, the invertible outer inverse
+   4 stages C4=S4^-1, C1=S1^-1 necessarily satisfy
+   5     rank( (P3^-1 C4 F C1 P1^-1)[R,C] ) <= 16.
+   6 Thus EVERY 17x17 minor of that submatrix must vanish, a family of exact
+   7 polynomial equations involving the outer inverse stage coefficients.
+   8 
+   9 This is an explicitly computable NECESSARY condition, not a solution of the
+  10 equations. The controls verify nontriviality and zero-generator cases.
+  11 """
+  12 from pathlib import Path
+  13 import json
+  14 import numpy as np
+  15 from verify_exact import affine
+  16 ROOT=Path(__file__).resolve().parent
+  17 N=256
+  18 PS=[affine(c) for c in json.loads((ROOT/'AFFINE_LAYOUT.json').read_text())['affine_shuffle_columns']]
+  19 P1,P2,P3=PS
+  20 G=np.array([not bool(i&64) for i in range(N)])
+  21 C=np.flatnonzero(G)
+  22 R=np.flatnonzero(~G[P2])
+  23 assert len(C)==len(R)==128
+  24 BC=int(np.count_nonzero(G[1:]!=G[:-1]))
+  25 BR=int(np.count_nonzero(G[P2][1:]!=G[P2][:-1]))
+  26 assert (BC,BR)==(3,13)
+  27 
+  28 def root(n,p):
+  29     assert (p-1)%n==0
+  30     for g in range(2,p):
+  31         z=pow(g,(p-1)//n,p)
+  32         if pow(z,n//2,p)!=1:return z
+  33     raise ValueError('No root')
+  34 
+  35 def rank_and_det_mod(M,p):
+  36     """Return modular rank and determinant for square M (integer exact)."""
+  37     A=np.asarray(M,dtype=np.int64).copy()%p
+  38     n,m=A.shape
+  39     rank=0;det=1;swap=0
+  40     for j in range(m):
+  41         if rank>=n:break
+  42         where=np.flatnonzero(A[rank:,j])
+  43         if not len(where):
+  44             if n==m:return (rank,0)
+  45             continue
+  46         q=rank+int(where[0])
+  47         if q!=rank:A[[rank,q]]=A[[q,rank]];swap+=1
+  48         pivot=int(A[rank,j]);det=det*pivot%p
+  49         inv=pow(pivot,-1,p)
+  50         if rank+1<n:
+  51             alpha=A[rank+1:,j]*inv%p
+  52             A[rank+1:,j+1:]=(A[rank+1:,j+1:]-alpha[:,None]*A[rank,j+1:])%p
+  53             A[rank+1:,j]=0
+  54         rank+=1
+  55     if n==m:return rank, (0 if rank<n else ((-det if swap%2 else det)%p))
+  56     return rank,None
+  57 
+  58 def rank_mod(M,p):
+  59     a=np.asarray(M,dtype=np.int64).copy()%p;m,n=a.shape
+  60     row=0
+  61     for j in range(n):
+  62         if row>=m:break
+  63         w=np.flatnonzero(a[row:,j])
+  64         if not len(w):continue
+  65         piv=row+int(w[0]);a[[row,piv]]=a[[piv,row]]
+  66         inv=pow(int(a[row,j]),-1,p)
+  67         if row+1<m:
+  68             alpha=a[row+1:,j]*inv%p
+  69             a[row+1:,j+1:]=(a[row+1:,j+1:]-alpha[:,None]*a[row,j+1:])%p
+  70             a[row+1:,j]=0
+  71         row+=1
+  72     return row
+  73 
+  74 def Fourier_mod(p):
+  75     w=root(N,p);powers=np.array([pow(w,i,p) for i in range(N)],dtype=np.int64)
+  76     coords=np.arange(N,dtype=np.int64)
+  77     return powers[(coords[:,None]*coords[None,:])%N]
+  78 
+  79 def separated_stage(p,rng):
+  80     a,b,c,e,d=[rng.integers(0,p,N,dtype=np.int64) for _ in range(5)]
+  81     i=np.arange(N)[:,None];j=np.arange(N)[None,:]
+  82     return np.where(i>j,a[:,None]*b[None,:],np.where(i<j,c[:,None]*e[None,:],d[:,None]))%p
+  83 
+  84 def inv_lower_unit_separated(a,b,p):
+  85     # Exact O(N^2) inverse of I+strict_lower(a_i b_j); no pivots.
+  86     X=np.zeros((N,N),dtype=np.int64)
+  87     pref=np.zeros(N,dtype=np.int64)
+  88     for i in range(N):
+  89         row=(-int(a[i])*pref)%p
+  90         row[i]=(row[i]+1)%p
+  91         X[i,:]=row
+  92         pref=(pref+int(b[i])*row)%p
+  93     return X
+  94 
+  95 def inv_upper_unit_separated(c,e,p):
+  96     # Exact O(N^2) inverse of I+strict_upper(c_i e_j); no pivots.
+  97     X=np.zeros((N,N),dtype=np.int64)
+  98     suff=np.zeros(N,dtype=np.int64)
+  99     for i in range(N-1,-1,-1):
+ 100         row=(-int(c[i])*suff)%p
+ 101         row[i]=(row[i]+1)%p
+ 102         X[i,:]=row
+ 103         suff=(suff+int(e[i])*row)%p
+ 104     return X
+ 105 
+ 106 def main():
+ 107     result={'N':N,'middle_rank_bound':BC+BR,'input_window_boundary':BC,'output_window_boundary':BR,
+ 108             'input_mask':64,'row_subset_size':len(R),'col_subset_size':len(C),
+ 109             'first17_rows':[int(x) for x in R[:17]],'first17_cols':[int(x) for x in C[:17]],
+ 110             'prime_controls':[]}
+ 111     for p in (12289,65537):
+ 112         rng=np.random.default_rng(2667)
+ 113         S2=separated_stage(p,rng);S3=separated_stage(p,rng)
+ 114         # P2 acting on vector means permuting ROWS of S2.
+ 115         H=(S3@S2[P2,:])%p
+ 116         middle_rank=rank_mod(H[np.ix_(R,C)],p)
+ 117         assert middle_rank<=16,(p,middle_rank)
+ 118         # Zero-generator control: S2=S3=I also obeys the bound.
+ 119         Id=np.eye(N,dtype=np.int64)
+ 120         zero_control=(Id@Id[P2,:])%p
+ 121         assert rank_mod(zero_control[np.ix_(R,C)],p)<=16
+ 122         F=Fourier_mod(p)
+ 123         # H0 = P3^-1 F P1^-1 for outer inverse stages equal to identity.
+ 124         H0=F[np.argsort(P3)][:,P1]
+ 125         full_rank=rank_mod(H0[np.ix_(R,C)],p)
+ 126         rank17,det17=rank_and_det_mod(H0[np.ix_(R[:17],C[:17])],p)
+ 127         assert full_rank==128 and rank17==17 and det17%p!=0,(p,full_rank,rank17,det17)
+ 128         # Nontrivial, always invertible one-sided outer inverse stages.
+ 129         # Unitriangular with strict off-diagonal rank-one tails.
+ 130         a,b,c,e=[rng.integers(0,p,N,dtype=np.int64) for _ in range(4)]
+ 131         ii=np.arange(N)[:,None];jj=np.arange(N)[None,:]
+ 132         C4=(Id+np.where(ii>jj,a[:,None]*b[None,:],0))%p
+ 133         C1=(Id+np.where(ii<jj,c[:,None]*e[None,:],0))%p
+ 134         H_random=(C4@F)%p
+ 135         H_random=(H_random@C1)%p
+ 136         H_random=H_random[np.argsort(P3)][:,P1]
+ 137         random_outer_rank=rank_mod(H_random[np.ix_(R,C)],p)
+ 138         assert random_outer_rank==128
+ 139         # Full four-factor nontrivial synthetic positive control:
+ 140         # choose S4=C4^-1, S1=C1^-1 (both quasiseparable order 1),
+ 141         # then recover the two-stage middle factor by cancelling them.
+ 142         S4=inv_lower_unit_separated(a,b,p)
+ 143         S1=inv_upper_unit_separated(c,e,p)
+ 144         assert np.array_equal((S4@C4)%p,Id)
+ 145         assert np.array_equal((S1@C1)%p,Id)
+ 146         full=(S4@H[P3,:])%p
+ 147         full=(full@S1[P1,:])%p
+ 148         recovered=(C4@full)%p
+ 149         recovered=(recovered@C1)%p
+ 150         recovered=recovered[np.argsort(P3)][:,P1]
+ 151         assert np.array_equal(recovered,H)
+ 152         assert rank_mod(recovered[np.ix_(R,C)],p)==middle_rank
+ 153         result['prime_controls'].append({'p':p,'valid_two_stage_middle_rank':middle_rank,
+ 154                         'original_Fourier_with_identity_outer_rank':full_rank,
+ 155                         'first17_minor_determinant_mod_p':int(det17),
+ 156                         'arbitrary_unitriangular_outer_inverse_rank':random_outer_rank,
+ 157                         'four_stage_synthetic_reconstruction':'passed'})
+ 158     (ROOT/'FOURIER_COMPATIBILITY_CERTIFICATES.json').write_text(json.dumps(result,indent=2))
+ 159     print(json.dumps(result,indent=2))
+ 160     return result
+ 161 
+ 162 if __name__=='__main__':main()

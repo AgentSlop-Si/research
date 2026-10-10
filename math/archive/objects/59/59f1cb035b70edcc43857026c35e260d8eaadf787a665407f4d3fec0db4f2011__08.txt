@@ -1,0 +1,100 @@
+   1 """Independent exact checks of serial scan bounds and a two-scan FFT stage.
+   2 No uploaded modules are imported. No faster-FFT claim is made.
+   3 """
+   4 import json,random
+   5 from pathlib import Path
+   6 P=998244353
+   7 
+   8 def scan(x,a,b,forward=True):
+   9     y=[0]*len(x);state=0
+  10     for i in (range(len(x)) if forward else range(len(x)-1,-1,-1)):
+  11         state=(a[i]*state+b[i]*x[i])%P;y[i]=state
+  12     return y
+  13 
+  14 def inverse_scan(y,a,b,forward=True):
+  15     n=len(y);out=[]
+  16     for i in range(n):
+  17         j=i-1 if forward else i+1
+  18         prior=y[j] if 0<=j<n else 0
+  19         out.append((y[i]-a[i]*prior)*pow(b[i],-1,P)%P)
+  20     return out
+  21 
+  22 def apply(x,f,inverse=False):
+  23     kind,data=f
+  24     if kind=='scan':
+  25         a,b,d=data;return (inverse_scan if inverse else scan)(x,a,b,d)
+  26     if kind=='diag':return [v*(pow(c,-1,P) if inverse else c)%P for v,c in zip(x,data)]
+  27     if inverse:
+  28         out=[0]*len(x)
+  29         for i,j in enumerate(data):out[j]=x[i]
+  30         return out
+  31     return [x[j] for j in data]
+  32 
+  33 def word(x,fs,inverse=False):
+  34     for f in (reversed(fs) if inverse else fs):x=apply(x,f,inverse)
+  35     return x
+  36 
+  37 def direct(x,inverse=False):
+  38     n=len(x);root=pow(3,(P-1)//n,P)
+  39     if inverse:root=pow(root,-1,P)
+  40     out=[sum(v*pow(root,i*j,P) for j,v in enumerate(x))%P for i in range(n)]
+  41     return [v*pow(n,-1,P)%P for v in out] if inverse else out
+  42 
+  43 def scan_fft(x):
+  44     n=len(x);levels=(n-1).bit_length()
+  45     assert n==1<<levels
+  46     if n==1:return x[:],0
+  47     root=pow(3,(P-1)//n,P)
+  48     rev=[int(format(i,'0%db'%levels)[::-1],2) for i in range(n)]
+  49     out=[x[j]%P for j in rev];passes=0
+  50     for level in range(1,levels+1):
+  51         m=1<<level;wm=pow(root,n//m,P);ws=[1]
+  52         for j in range(1,m//2):ws.append(ws[-1]*wm%P)
+  53         layout=[];tw=[]
+  54         for base in range(0,n,m):
+  55             for j in range(m//2):layout.extend([base+j,base+j+m//2]);tw.append(ws[j])
+  56         y=[out[j] for j in layout]
+  57         a=[(-pow(2,-1,P) if i%2==0 else 0) for i in range(n)]
+  58         b=[(1 if i%2==0 else -2*tw[i//2]%P) for i in range(n)]
+  59         y=scan(y,a,b,False)
+  60         y=scan(y,[i%2 for i in range(n)],[1]*n,True);passes+=2
+  61         for i,j in enumerate(layout):out[j]=y[i]
+  62     return out,passes
+  63 
+  64 def main():
+  65     rng=random.Random(202610091012);counts=dict(random_words=0,inverse_identity_vectors=0,fft_basis_vectors=0,fft_random_vectors=0,dense_fourier_inverse_matrices=0)
+  66     for n in [1,2,3,4,5,8,16]:
+  67         for t in range(1,7):
+  68             for trial in range(20):
+  69                 fs=[]
+  70                 for _ in range(t):
+  71                     pi=list(range(n));rng.shuffle(pi)
+  72                     fs.extend([('perm',pi),('diag',[rng.randrange(1,P) for _ in range(n)]),('scan',([rng.choice([0,rng.randrange(P)]) for _ in range(n)],[rng.randrange(1,P) for _ in range(n)],bool(rng.randrange(2))))])
+  73                 pi=list(range(n));rng.shuffle(pi);fs.append(('perm',pi))
+  74                 cols=[]
+  75                 for j in range(n):
+  76                     e=[int(i==j) for i in range(n)]
+  77                     inv=word(e,fs,True)
+  78                     assert word(inv,fs)==e
+  79                     cols.append(inv);counts['inverse_identity_vectors']+=1
+  80                 support=[sum(cols[j][i]!=0 for j in range(n)) for i in range(n)]
+  81                 assert max(support)<=min(n,1<<t)
+  82                 assert min(support)<=min(n,1<<(t-1))
+  83                 counts['random_words']+=1
+  84     for n in [1,2,4,8,16,32,64,128,256]:
+  85         if n<=32:
+  86             for j in range(n):
+  87                 x=[int(i==j) for i in range(n)];got,t=scan_fft(x)
+  88                 assert got==direct(x);assert t==2*(n.bit_length()-1)
+  89                 counts['fft_basis_vectors']+=1
+  90         for _ in range(12):
+  91             x=[rng.randrange(P) for _ in range(n)];got,t=scan_fft(x)
+  92             assert got==direct(x);assert t==2*(n.bit_length()-1)
+  93             counts['fft_random_vectors']+=1
+  94         if n>1:
+  95             assert all(v!=0 for j in range(n) for v in direct([int(i==j) for i in range(n)],True))
+  96             counts['dense_fourier_inverse_matrices']+=1
+  97     result=dict(status='passed',field_prime=P,counts=counts,
+  98                 scope='Exact correctness and finite support checks. The all-size lower bound is proved separately; this FFT is a classical O(N log N) construction expressed as scans.')
+  99     Path(__file__).with_name('inverse_scan_checks.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
+ 100 if __name__=='__main__':main()

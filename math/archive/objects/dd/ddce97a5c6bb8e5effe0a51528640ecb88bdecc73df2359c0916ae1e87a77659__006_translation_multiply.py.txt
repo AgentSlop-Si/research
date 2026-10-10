@@ -1,0 +1,81 @@
+"""Research on A*B = (A-k)*B + k*B, with paid correction and selection.
+
+The bounded dispatcher provides a special-case fast path and a normal fallback.
+It is not a new worst-case multiplication algorithm or an FFT implementation.
+"""
+from dataclasses import dataclass
+
+
+def naf_terms(value):
+    """Canonical signed binary digits; slow/simple bigint research conversion."""
+    sign=-1 if value<0 else 1
+    value=abs(value); pos=0; terms=[]
+    while value:
+        if value&1:
+            digit=2-(value&3)
+            terms.append((pos,sign*digit))
+            value-=digit
+        value>>=1; pos+=1
+    return terms
+
+
+def signed_shift_multiply(a,b):
+    out=0
+    for power,sign in naf_terms(a):
+        if sign>0: out+=b<<power
+        else: out-=b<<power
+    return out
+
+
+def weight_table(max_value):
+    """Minimum signed-power term count by exact least-significant-digit DP.
+
+    This table is for exhaustive small-domain analysis only. It is not treated
+    as free preprocessing for arbitrary n-bit multiplication.
+    """
+    if max_value<0: raise ValueError('nonnegative table range')
+    w=[0]*(max_value+1)
+    if max_value: w[1]=1
+    for a in range(2,max_value+1):
+        if a&1: w[a]=1+min(w[(a-1)//2],w[(a+1)//2])
+        else: w[a]=w[a//2]
+    return w
+
+
+@dataclass(frozen=True)
+class TranslationPlan:
+    mode: str
+    operand: str | None=None
+    power: int | None=None
+    correction: int | None=None
+
+
+def select_translation(a,b,max_correction=255):
+    """At most four adjacent-power probes; no unbounded hunt for k."""
+    if not isinstance(max_correction,int) or not 0<=max_correction<=255:
+        raise ValueError('correction must remain a fixed at-most-8-bit magnitude')
+    best=None
+    for name,value in (('a',abs(a)),('b',abs(b))):
+        if not value: return TranslationPlan('zero')
+        bits=value.bit_length()
+        for power in (bits-1,bits):
+            k=value-(1<<power)
+            if abs(k)<=max_correction and (best is None or abs(k)<abs(best.correction)):
+                best=TranslationPlan('near_power',name,power,k)
+    return best or TranslationPlan('fallback')
+
+
+def adaptive_multiply(a,b,max_correction=255):
+    """Exact integer result; every call includes its own bounded detection."""
+    plan=select_translation(a,b,max_correction)
+    if plan.mode=='zero': return 0
+    if plan.mode=='fallback': return a*b
+    aa,bb=abs(a),abs(b)
+    other=bb if plan.operand=='a' else aa
+    # a_selected = 2**power + correction. Both output pieces are paid.
+    result=(other<<plan.power)+plan.correction*other
+    return -result if (a<0) != (b<0) else result
+
+
+def translated_signed_cost(a,k):
+    return len(naf_terms(a-k))+len(naf_terms(k))

@@ -1,0 +1,330 @@
+0001 #!/usr/bin/env python3
+0002 """Exact copied-center / fixed-I+J composition, conditional on retained proofs.
+0003 
+0004 Credits: icekylinx PR32/36 (projectors, copied centers), Dominik Scholz PR35
+0005 (two fixed factors and CRT bounds), Zhihao Chen PR29/23, Paureel/Aurel Prosz,
+0006 Swapnil Jain, Rohan Arun PR25/31, RaD/hipotures and all inherited notices.
+0007 Prepared locally with OpenAI Codex assistance; no formal theorem claim.
+0008 """
+0009 from collections import Counter
+0010 from fractions import Fraction as Q
+0011 from functools import lru_cache
+0012 from hashlib import sha256
+0013 from math import comb, factorial, isqrt, prod
+0014 from pathlib import Path
+0015 import argparse
+0016 import importlib.util
+0017 from itertools import combinations
+0018 import json
+0019 import sys
+0020 
+0021 HERE = Path(__file__).resolve().parent
+0022 ROOT = HERE.parents[1]
+0023 sys.path.insert(0, str(ROOT / 'scripts'))
+0024 import copied_centers_network as baseline
+0025 from structured_bulk_assembly import js
+0026 sys.path.insert(0,str(HERE))
+0027 from balanced_assembly import assembly, cutoffs
+0028 
+0029 AB = Q(82375901, 2*10**12)
+0030 AC = Q(717, 10000000)
+0031 # Strictly below the recomputed balanced assembly margin.
+0032 KAPPA = Q(411862541, 10**13)
+0033 PR47_KAPPA = Q(4105106623,10**14)
+0034 PR46_KAPPA = Q(410062945,10**13)
+0035 PR44_KAPPA = Q(2050314627,5*10**13)
+0036 PR37_KAPPA = Q(3850771033, 10**14)
+0037 PR38_KAPPA = Q(242889, 6250000000)
+0038 PR43_KAPPA = Q(409953,10**10)
+0039 PR42_KAPPA = Q(4099494519,10**14)
+0040 PR41_KAPPA = Q(1008542031,25000000000000)
+0041 PR40_KAPPA = Q(1959367447,50000000000000)
+0042 PR39_KAPPA = Q(971668963, 25000000000000)
+0043 
+0044 
+0045 def require(condition, message):
+0046     if not condition:
+0047         raise ValueError(message)
+0048 
+0049 
+0050 def read(path):
+0051     def reject(x):
+0052         raise ValueError('Floating point input forbidden: ' + x)
+0053     return json.loads(path.read_text(), parse_float=reject, parse_constant=reject)
+0054 
+0055 
+0056 def check_sources():
+0057     sources = read(HERE / 'SOURCE.json')
+0058     for name, digest in sources['files'].items():
+0059         require(sha256((ROOT / name).read_bytes()).hexdigest() == digest,
+0060                 'Pinned source changed: ' + name)
+0061     return sources
+0062 
+0063 
+0064 def mersenne(exponent):
+0065     require(exponent >= 3 and all(exponent % d for d in range(2, isqrt(exponent)+1)),
+0066             'Composite Lucas-Lehmer exponent')
+0067     p = 2**exponent - 1
+0068     s = 4
+0069     for _ in range(exponent - 2):
+0070         s = (s*s-2) % p
+0071     require(s == 0, 'Lucas-Lehmer failed')
+0072     return p
+0073 
+0074 
+0075 def exactness(h):
+0076     require(h in (23, 25), 'Uncertified dimension')
+0077     primes = [mersenne(e) for e in (61, 31, 19)]
+0078     Z = 3*h-7
+0079     B0 = (4*h-2)*Z + 27*(h+1)
+0080     D = 3*(h+1)*(h-1)**2
+0081     B = 2*(h-1)*B0
+0082     bounds = {r: sum(comb(h,j)*factorial(j)*B**j*D**(r-j)
+0083                      for j in range(r+1)) for r in (2,3,4)}
+0084     require(bounds[2] < primes[0], 'Rank-two minor modulus insufficient')
+0085     require(max(bounds[3],bounds[4]) < prod(primes), 'CRT minor modulus insufficient')
+0086     require(3*(h+1)*(h-1) < min(primes), 'Denominator may vanish')
+0087     return dict(h=h, primes=primes, prime_product=prod(primes),
+0088                 single_numerator_bound=B0, common_denominator_bound=D,
+0089                 correction_numerator_bound=B, minor_bounds=bounds,
+0090                 modulus_gaps={2: primes[0]-bounds[2],
+0091                               3: prod(primes)-bounds[3],4: prod(primes)-bounds[4]})
+0092 
+0093 
+0094 def tree(edges, n):
+0095     require(len(edges) == n-1 and len(set(edges)) == n-1, 'Wrong tree edge count')
+0096     seen = {0}
+0097     while True:
+0098         new = seen | {v for u,v in edges if u in seen} | {u for u,v in edges if v in seen}
+0099         if new == seen:
+0100             break
+0101         seen = new
+0102     require(len(seen) == n, 'Disconnected restriction graph')
+0103 
+0104 
+0105 def data_corners():
+0106     c = read(HERE/'data-corners.json')
+0107     prime = c['prime']
+0108     require(prime == 1000003 and all(prime % j for j in range(2,isqrt(prime)+1)),
+0109             'Data witness prime not proved')
+0110     require(c['dimensions'] == [23,25], 'Data dimensions')
+0111     require([tuple(r[:3]) for r in c['records']] == list(combinations(range(23),3)),
+0112             'Incomplete first triple coverage')
+0113     require(all(0 <= r[3] <= 2300 and 0 < r[4] < prime for r in c['records']),
+0114             'Invalid modular product record')
+0115     failures = c['fallback_pairs']
+0116     require(len({tuple(r[:6]) for r in failures}) == len(failures), 'Duplicate fallback')
+0117     counts = Counter()
+0118     for aa,bb,cc,u,v,w,row in failures:
+0119         require(0<=aa<bb<cc<23 and 0<=u<v<w<25 and 0<=row<47,'Invalid fallback pair')
+0120         counts[aa,bb,cc] += 1
+0121     require(all(r[3]+counts[tuple(r[:3])]==2300 for r in c['records']), 'Pair coverage gap')
+0122     require(c['good'] == sum(r[3] for r in c['records']), 'Wrong good count')
+0123     require(c['fallback'] == len(failures) and c['pairs'] == c['good']+c['fallback']==4073300,
+0124             'Wrong exhaustive pair count')
+0125     require(c['nonzero_pivots'] == 47*c['good']+sum(r[6] for r in failures),
+0126             'Wrong complete nonvanishing coverage')
+0127     from data_recovery import recover
+0128     recovery=recover(tuple(tuple(pair) for pair in failures))
+0129     require(len(recovery)==len(failures)==10,'Incomplete exact recovery')
+0130     require(all(len(row['pivots'])==47 and all(Q(x) for x in row['pivots'])
+0131                 for row in recovery),'Incomplete rational pivot proof')
+0132     return dict(c, primary_good=c['good'],primary_fallback=c['fallback'],
+0133                 good=c['pairs'],fallback=0,exact_recovery=recovery)
+0134 
+0135 
+0136 def geometry():
+0137     spec=importlib.util.spec_from_file_location('fixed_both_reversed_geometry',HERE/'reversed/geometry.py')
+0138     inherited=importlib.util.module_from_spec(spec)
+0139     spec.loader.exec_module(inherited)
+0140     g=inherited.run()  # Exact all-weight cuts and actual common-basis contractions.
+0141     c=data_corners()
+0142     require(g['dimensions']==[23,25] and g['profile']==[1]*9+[21,17,481], 'Reversed family')
+0143     require(g['rows']==[(r,i%25) for i,r in enumerate(list(range(23))+[22]+list(range(23)))],
+0144             'Rational recovery row geometry mismatch')
+0145     require(g['columns']==[(r,(528+i)%25) for i,r in enumerate(list(range(23))+[0]+list(range(23)))],
+0146             'Rational recovery column geometry mismatch')
+0147     coordinates={}
+0148     for h in (23,25):
+0149         primal=[Q(3),Q(4)]
+0150         dual=[-Q(5,3*(h+1)),Q(1,2)-Q(5,3*(h+1))]
+0151         require(all(primal) and all(dual), 'Zero fixed line coordinate')
+0152         coordinates[h]=dict(primal=primal,dual=dual)
+0153     return dict(dimensions=[23,25],inherited=g,modular=c,line_coordinates=coordinates,
+0154                 row_tree=[(r,23+be) for r,be in g['rows']],
+0155                 column_tree=[(r,23+be) for r,be in g['columns']],
+0156                 accepted_profile=dict(singletons=9,blocks=[21,17,481]),
+0157                 fallback_profile=dict(singletons=47,blocks=[481]),
+0158                 scope='Nonzero modular pivots certify rational nonvanishing at the actual two fixed bases; '
+0159                       'zeros follow separate exact rank cuts. Ten primary-prime failures are replayed '
+0160                       'with exact rational elimination, yielding the same profile for every pair.')
+0161 
+0162 
+0163 @lru_cache(None)
+0164 def logs(x):
+0165     x = Q(x)
+0166     require(x >= 1, 'Log domain')
+0167     k = 0
+0168     while x > 2:
+0169         x /= 2
+0170         k += 1
+0171     def small(y):
+0172         z = (y-1)/(y+1)
+0173         lo = 2*sum((z**(2*j+1)/Q(2*j+1) for j in range(32)), Q())
+0174         return lo, lo+2*z**65/(65*(1-z*z))
+0175     lo,hi = small(x)
+0176     lo2,hi2 = small(Q(2))
+0177     lo,hi = lo+k*lo2,hi+k*hi2
+0178     scale = 10**30
+0179     return Q((lo*scale).numerator//(lo*scale).denominator,scale), \
+0180         Q(-(-(hi*scale).numerator//(hi*scale).denominator),scale)
+0181 
+0182 
+0183 def moment(m,W,rows,saving):
+0184     require(type(saving) is Q and 0 < saving < 1, 'Exact positive saving required')
+0185     lower,upper = Q(),Q()
+0186     enclosure = {}
+0187     for t,n in sorted(rows.items()):
+0188         require(type(t) is int and type(n) is int and 0<t<m and n>0, 'Invalid child')
+0189         lo,hi = logs(Q(m,t))
+0190         u,v = saving*lo,saving*hi
+0191         require(0 <= u <= v < 1, 'Exponential enclosure domain')
+0192         weight = Q(t*n,m*W)
+0193         lower += weight*(1+u+u*u/2+u*u*u/6)
+0194         upper += weight*(1+v+v*v/(2*(1-v/3)))
+0195         enclosure[t] = dict(lower=lo,upper=hi)
+0196     return dict(saving=saving,exponent=1-saving,lower=lower,upper=upper,
+0197                 strict_gap=1-upper,logarithms=enclosure)
+0198 
+0199 
+0200 def profile():
+0201     a,b = 23,25
+0202     m = a*b
+0203     rows = [read(HERE / f'original-{h}.json') for h in (a,b)]
+0204     N = comb(a,3)*comb(b,3)
+0205     W = 2*N+sum(N//r['v']*r['R'] for r in rows)
+0206     L = sum(N//r['v']*r['loss'] for r in rows)
+0207     data = data_corners()
+0208     good,bad = data['good'],data['fallback']
+0209     parts = {'data':Counter({1:2*(9*good+47*bad),21:2*good,17:2*good,481:2*N}),
+0210              'paid_endpoint_copy':Counter({1:N})}
+0211     axes = []
+0212     for row in rows:
+0213         h = row['h']
+0214         require(row['v'] == comb(h,3), 'Triple count')
+0215         require(row['R'] == row['c']+row['q']-row['matched'], 'Role allocation')
+0216         require(row['loss'] == h*(h-1), 'Retained center loss')
+0217         require(sum(r*n for r,n in enumerate(row['histogram'])) == h*row['R']+2*row['loss'],
+0218                 'Original frame rank mass')
+0219         f = read(HERE / f'profiles-{h}.json')
+0220         for key in ('h','v','R','loss','rank_sum'):
+0221             require(f[key] == row[key], 'Fixed/original mismatch: '+key)
+0222         require(f['crt_disagreements'] == 0 and f['field_prime'] == 2**61-1,
+0223                 'Invalid CRT profile')
+0224         blocks = f['blocks'][:]
+0225         require(len(blocks) == h+1 and all(type(n) is int and n>=0 for n in blocks),
+0226                 'Invalid fixed blocks')
+0227         require(sum(t*n for t,n in enumerate(blocks)) == f['rank_sum'], 'Fixed profile mass')
+0228         require(blocks[h] == h, 'Exactly h full center cleanup calls expected')
+0229         # Preserve every transformed copy. Replace only its original's full cleanup.
+0230         blocks[h] -= h
+0231         blocks[1] += h
+0232         require(sum(t*n for t,n in enumerate(blocks)) == h*row['R']+row['loss'],
+0233                 'Copied fixed profile mass')
+0234         rep = N//row['v']
+0235         bank = rep*row['R']
+0236         parts[f'internal_{h}'] = Counter({t:n*rep for t,n in enumerate(blocks) if t and n})
+0237         parts[f'exterior_{h}'] = Counter({h:bank,m-2*h:bank})
+0238         parts[f'data_growth_{h}'] = Counter({1:2*N,h-2:2*N})
+0239         axes.append(dict(original=row,fixed=f,copied_blocks=blocks,exactness=exactness(h)))
+0240     hist = sum(parts.values(),Counter())
+0241     s = sum(t*n for t,n in hist.items())
+0242     require(s == W*m-N+L == 102078397025, 'Complete rank mass')
+0243     require((m,N,W,L) == (575,4073300,177530859,2226400), 'Physical constants')
+0244     require(max(hist) == 529 and all(0<t<m and n>0 for t,n in hist.items()), 'Proper children')
+0245     return dict(m=m,N=N,W=W,L=L,total_rank=s,deficit=W*m-s,maxchild=max(hist),
+0246                 child_multiplicities=dict(sorted(hist.items())),parts=parts,axes=axes)
+0247 
+0248 
+0249 def run():
+0250     require(not sys.flags.optimize, 'Assertions must remain enabled')
+0251     sources = check_sources()
+0252     prior = baseline.certificate()
+0253     geo,p = geometry(),profile()
+0254     exact = moment(p['m'],p['W'],p['child_multiplicities'],AB)
+0255     require(exact['upper'] < 1, 'Bit characteristic failed')
+0256     old = prior['bit']['counts']
+0257     old_at_new = moment(old['m'],old['W'],old['child_multiplicities'],AB)
+0258     require(old_at_new['lower'] > 1, 'Old construction not excluded at new saving')
+0259     forward=read(HERE/'comparison-pr40.json')
+0260     forward_rows={int(t):n for t,n in forward['child_multiplicities'].items()}
+0261     require(sum(t*n for t,n in forward_rows.items())==108202762275, 'PR40 rank mismatch')
+0262     forward_at_new=moment(forward['m'],forward['W'],forward_rows,AB)
+0263     require(forward_at_new['lower']>1,'PR40 network not excluded at new saving')
+0264     rad=read(HERE/'comparison-pr41.json')
+0265     rad_rows={int(t):n for t,n in rad['child_multiplicities'].items()}
+0266     require(sum(t*n for t,n in rad_rows.items())==rad['total_rank']==102565738275,'PR41 rank mismatch')
+0267     rad_at_new=moment(rad['m'],rad['W'],rad_rows,AB)
+0268     require(rad_at_new['lower']>1,'PR41 alternating network not excluded at new saving')
+0269     newest=read(HERE/'comparison-pr42.json')
+0270     newest_rows={int(t):n for t,n in newest['child_multiplicities'].items()}
+0271     require(sum(t*n for t,n in newest_rows.items())==newest['total_rank']==102565738275,'PR42 rank mismatch')
+0272     newest_at_new=moment(newest['m'],newest['W'],newest_rows,AB)
+0273     require(newest_at_new['lower']>1,'PR42 network not excluded at new saving')
+0274     previous=read(HERE/'comparison-pr43.json')
+0275     previous_rows={int(t):n for t,n in previous['child_multiplicities'].items()}
+0276     require(sum(t*n for t,n in previous_rows.items())==previous['total_rank']==102565738275,'PR43 rank mismatch')
+0277     previous_at_new=moment(previous['m'],previous['W'],previous_rows,AB)
+0278     require(previous_at_new['lower']>1,'PR43 network not excluded at new saving')
+0279     frontier=read(HERE/'comparison-pr44.json')
+0280     frontier_rows={int(t):n for t,n in frontier['child_multiplicities'].items()}
+0281     require(sum(t*n for t,n in frontier_rows.items())==frontier['total_rank']==102565738275,'PR44 rank mismatch')
+0282     frontier_at_new=moment(frontier['m'],frontier['W'],frontier_rows,AB)
+0283     require(frontier_at_new['lower']>1,'PR44 network not excluded at new saving')
+0284     parent=read(HERE/'comparison-pr46.json')
+0285     parent_rows={int(t):n for t,n in parent['child_multiplicities'].items()}
+0286     require(sum(t*n for t,n in parent_rows.items())==parent['total_rank']==102565738275,'PR46 rank mismatch')
+0287     parent_at_new=moment(parent['m'],parent['W'],parent_rows,AB)
+0288     require(parent_at_new['lower']>1,'PR46 network not excluded at new saving')
+0289     latest=read(HERE/'comparison-pr47.json')
+0290     latest_rows={int(t):n for t,n in latest['child_multiplicities'].items()}
+0291     require(sum(t*n for t,n in latest_rows.items())==latest['total_rank']==latest['W']*latest['m']-1846900,'PR47 rank mismatch')
+0292     latest_at_new=moment(latest['m'],latest['W'],latest_rows,AB)
+0293     require(latest_at_new['lower']>1,'PR47 network not excluded at new saving')
+0294     phase = prior['complex']['counts']
+0295     phase_row = read(ROOT / 'certificates/copied-centers-complex-input.json')
+0296     bridge = baseline.finite_bridge(p,phase,[phase_row,phase_row])
+0297     require(all(js(bridge[k])==js(prior['finite_bridge'][k]) for k in ('complex','semantic','rows')), 'Unexpected phase or stock change')
+0298     final = assembly(bridge,AB,KAPPA,a_complex=AC)
+0299     eventual = cutoffs(bridge,final)
+0300     require(KAPPA > PR47_KAPPA > PR46_KAPPA > PR44_KAPPA > PR43_KAPPA > PR42_KAPPA > PR41_KAPPA > PR40_KAPPA > PR39_KAPPA > PR38_KAPPA > PR37_KAPPA > prior['kappa'] > Q(1,2**15), 'Comparison failed')
+0301     require(KAPPA < Q(1,2**14), 'Unexpected power-of-two bracket')
+0302     own_files = sorted(HERE.glob('*.py'))+sorted(HERE.glob('*.cpp'))+[HERE/'PROOF.md',HERE/'SOURCE.json']
+0303     own_files += [HERE/f'{kind}-{h}.json' for h in (23,25) for kind in ('profiles','original','scalar')]
+0304     own_files += [HERE/'data-corners.json',HERE/'comparison-pr40.json',HERE/'comparison-pr41.json',HERE/'comparison-pr42.json',HERE/'comparison-pr43.json',HERE/'comparison-pr44.json',HERE/'comparison-pr46.json',HERE/'comparison-pr47.json',HERE/'search-record.json',HERE/'links-23.uses',HERE/'links-25.uses']
+0305     return dict(status='Conditional exact arithmetic witness; general transfer proofs are dependencies',
+0306                 kappa=KAPPA,bit=dict(counts=p,**exact),complex=prior['complex'],
+0307                 geometry=geo,finite_bridge=bridge,assembly=final,eventual_bounds=eventual,sources=sources,
+0308                 comparison=dict(PR47=PR47_KAPPA,ratio_PR47=KAPPA/PR47_KAPPA,PR46=PR46_KAPPA,ratio_PR46=KAPPA/PR46_KAPPA,PR44=PR44_KAPPA,ratio_PR44=KAPPA/PR44_KAPPA,PR36=prior['kappa'],PR37=PR37_KAPPA,PR38=PR38_KAPPA,PR39=PR39_KAPPA,PR40=PR40_KAPPA,PR41=PR41_KAPPA,PR42=PR42_KAPPA,PR43=PR43_KAPPA,
+0309                     ratio_PR36=KAPPA/prior['kappa'],ratio_PR37=KAPPA/PR37_KAPPA,
+0310                     ratio_PR38=KAPPA/PR38_KAPPA,ratio_PR39=KAPPA/PR39_KAPPA,ratio_PR40=KAPPA/PR40_KAPPA,ratio_PR41=KAPPA/PR41_KAPPA,ratio_PR42=KAPPA/PR42_KAPPA,ratio_PR43=KAPPA/PR43_KAPPA,
+0311                     dyadic_corollary='2^-15',next_dyadic_not_reached='2^-14'),
+0312                 controls=dict(PR47_bit_at_new_lower=latest_at_new['lower'],PR46_bit_at_new_lower=parent_at_new['lower'],PR44_bit_at_new_lower=frontier_at_new['lower'],old_bit_at_new_lower=old_at_new['lower'],PR40_bit_at_new_lower=forward_at_new['lower'],PR41_bit_at_new_lower=rad_at_new['lower'],PR42_bit_at_new_lower=newest_at_new['lower'],PR43_bit_at_new_lower=previous_at_new['lower']),
+0313                 local_sha256={str(p.relative_to(ROOT)):sha256(p.read_bytes()).hexdigest() for p in own_files},
+0314                 scope='Changed leave-one-out graphs with RaD alternating point order, newly pinned weighted carrier matching and fixed-basis internal blocks at (23,25); '
+0315                       'all actual data pairs checked for 9 singletons +21+17+481; '
+0316                       'ten failed modular tests are recovered by exact rational elimination. Exact scalar/label/'
+0317                       'matching/profile reconstruction is producer.py. OpenAI base theorem, '
+0318                       'written residual compiler, fixed-tape recursion, analytic/semantic/'
+0319                       'routing/recovery and eventual-threshold interfaces remain assumed.')
+0320 
+0321 
+0322 if __name__ == '__main__':
+0323     parser = argparse.ArgumentParser()
+0324     parser.add_argument('--output',type=Path)
+0325     args = parser.parse_args()
+0326     result = run()
+0327     if args.output:
+0328         args.output.write_text(json.dumps(js(result),indent=2,sort_keys=True)+'\n')
+0329     print('PASS conditional kappa='+str(KAPPA)+'; bit saving='+str(AB))
+0330     print('47 strict inequalities; seven margins; all-exact enclosures; inherited balanced assembly')

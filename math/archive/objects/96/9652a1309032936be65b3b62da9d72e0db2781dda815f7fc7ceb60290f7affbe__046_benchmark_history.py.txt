@@ -1,0 +1,61 @@
+"""Isolate the retained-history bug; all methods compute the same q outputs.
+
+Initialization and old-log construction are separately disclosed. Timings are
+steady-state one-update-plus-query calls as a log grows, not cold-start FFTs.
+The strong manual-compaction baseline is measured too.
+"""
+import importlib.util
+import json
+from pathlib import Path
+from statistics import median
+import sys
+from time import perf_counter_ns
+import numpy as np
+from projected_fourier import ProjectedFourierState
+
+HERE=Path(__file__).resolve().parent
+spec=importlib.util.spec_from_file_location('original_projected_fourier',HERE/'baseline_relation_view'/'projected_fourier.py')
+original=importlib.util.module_from_spec(spec)
+sys.modules[spec.name]=original
+spec.loader.exec_module(original)
+
+
+def make_state(cls,retained):
+    n,r,q=65536,8,8
+    projection=np.arange(r*q).reshape(r,q).astype(complex)
+    state=cls(n,np.arange(q),projection,np.ones(r))
+    for i in range(retained): state.add_coefficient(i%r,0.125)
+    state.query()
+    return state
+
+
+def run():
+    rows=[]
+    calls=300
+    for retained in [0,1000,10000,100000]:
+        methods={}
+        for label,cls,compact in [('original_no_compaction',original.ProjectedFourierState,False),
+                                  ('original_manual_compaction',original.ProjectedFourierState,True),
+                                  ('fixed_tail_replay',ProjectedFourierState,False)]:
+            timings=[]; setups=[]; sample=None
+            for _ in range(5):
+                t=perf_counter_ns(); state=make_state(cls,retained)
+                if compact: state.compact()
+                setups.append((perf_counter_ns()-t)/1e6)
+                t=perf_counter_ns()
+                for i in range(calls):
+                    state.add_coefficient(i%8,0.125)
+                    sample=state.query()
+                    if compact: state.compact()
+                timings.append((perf_counter_ns()-t)/1e6)
+                np.testing.assert_allclose(sample,state.coefficients@state.projection,atol=1e-10)
+            methods[label]={'median_ms':median(timings),'runs_ms':timings,
+                            'setup_median_ms':median(setups),'calls':calls,
+                            'retained_events_end':len(state.events)}
+        row={'old_retained_events':retained,'new_queries':calls,'q':8,'r':8,'methods':methods,
+             'speedup_vs_uncompacted':methods['original_no_compaction']['median_ms']/methods['fixed_tail_replay']['median_ms']}
+        rows.append(row); print(json.dumps(row),flush=True)
+    (HERE/'results'/'benchmark_history.json').write_text(json.dumps({'notes':__doc__,'rows':rows},indent=2))
+
+
+if __name__=='__main__': run()

@@ -1,0 +1,54 @@
+0001 #!/usr/bin/env python3
+0002 """Independent integer-only rectangle and Gray-path checks."""
+0003 import json, pathlib
+0004 ROOT=pathlib.Path(__file__).resolve().parent
+0005 def rev(i,m): return int(format(i,f'0{m}b')[::-1],2)
+0006 rect=[];gray=[]
+0007 for m in range(1,19):
+0008  n=1<<m
+0009  w=(n+1)//3 if m%2 else (n-1)//3
+0010  t=(2*n-1)//3 if m%2 else w
+0011  c=(2*n+3*m+2)//9 if m%2 else (n+3*m-1)//9
+0012  actual=sum(rev(i,m)<t for i in range(w))
+0013  assert actual==c
+0014  # 9N D = 3mN+N-(-1)^m, entirely integral.
+0015  assert 9*(c*n-w*t)==(3*m+1)*n-(-1)**m
+0016  rect.append({'m':m,'N':n,'W':w,'t':t,'count':c,'discrepancy_numerator':c*n-w*t,'discrepancy_denominator':n})
+0017  q=[i^(i>>1) for i in range(n)]
+0018  d=[0]*(n+1)
+0019  for a,b in zip(q,q[1:]):
+0020   a,b=sorted([a,b]);d[a+1]+=1;d[b+1]-=1
+0021  crossings=[];v=0
+0022  for threshold in range(1,n):
+0023   v+=d[threshold];crossings.append(v)
+0024  assert max(crossings)==m
+0025  witness=(n+1)//3 if m%2 else (2*n+1)//3
+0026  assert crossings[witness-1]==m
+0027  maxruns=max((v+1+int(t>n//2))//2 for t,v in enumerate(crossings,1))
+0028  assert maxruns==m//2+1
+0029  if m>1:
+0030   h=n//2;prev=[i^(i>>1) for i in range(h)]
+0031   assert q==prev+[h+x for x in reversed(prev)]
+0032   assert (q[h-1],q[h])==(h//2,3*h//2)
+0033  gray.append({'m':m,'N':n,'maximum_crossings':m,'maximizing_threshold':witness,'maximum_prefix_preimage_runs':maxruns})
+0034 
+0035 recurrences=[]
+0036 for parity in [0,1]:
+0037  m=2 if parity==0 else 1
+0038  n=1<<m;w=(n-1)//3 if not parity else(n+1)//3
+0039  t=w if not parity else(2*n-1)//3;c=1
+0040  for step in range(50):
+0041   assert c==((n+3*m-1)//9 if not parity else(2*n+3*m+2)//9)
+0042   assert 9*(c*n-w*t)==(3*m+1)*n-(-1)**m
+0043   if parity==0: c,w,t=c+w+1,4*w+1,n+w
+0044   else: c,w,t=c+2*w,4*w-1,2*n+t
+0045   n*=4;m+=2
+0046  recurrences.append({'parity':parity,'checked_steps':50,'last_m':m-2})
+0047 
+0048 m=27;n=1<<m;w=(n+1)//3;t=(2*n-1)//3;c=(2*n+3*m+2)//9
+0049 assert c*n-w*t>9*n
+0050 out={'direct_rectangle_checks':rect,'gray_path_checks':gray,'integer_recurrence_checks':recurrences,
+0051  'first_certified_A3_QS1_exponent':m,'cutoff_N':n,'cutoff_rectangle':{'W':w,'t':t,'count':c,'floor_mean':w*t//n,'count_minus_floor_mean':c-w*t//n},
+0052  'source_credit':'Explicit bit-reversal rectangle and Gray recurrence proposed by paired constructor; independently proved and checked here.',
+0053  'uploaded_code_executed':False}
+0054 (ROOT/'RECTANGLE_GRAY_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))

@@ -1,0 +1,103 @@
+1: """Independent exact modular checks of both periodic fusion identities.
+2: 
+3: This checks algebra and residual fitting; it does not exercise the approximate
+4: sampler. Gaussian integers are embedded consistently in F_97, whose roots
+5: support every tested length. No general FFT is called.
+6: """
+7: import hashlib
+8: import json
+9: import math
+10: import random
+11: from pathlib import Path
+12: 
+13: 
+14: def rotate(pair, quarter_turns):
+15:     a, b = pair
+16:     return ((a, b), (-b, a), (-a, -b), (b, -a))[quarter_turns % 4]
+17: 
+18: 
+19: def mass(xs):
+20:     return sum(abs(a) + abs(b) for a, b in xs)
+21: 
+22: 
+23: def nearest(a, b):
+24:     return (a + b // 2) // b if a >= 0 else -((-a + b // 2) // b)
+25: 
+26: 
+27: def fit(xs, scaled):
+28:     N = len(xs)
+29:     q = math.gcd(N, 4)
+30:     n = N // q
+31:     coefficients = [[0, 0] for _ in range(q)]
+32:     factor = n if scaled else 1
+33:     for s in range(q):
+34:         for c in range(2):
+35:             values = [xs[j][c] for j in range(s, N, q)]
+36:             total = sum(values)
+37:             proposal = total if scaled else nearest(total, n)
+38:             loss = sum(abs(factor * v - proposal) for v in values)
+39:             if loss <= factor * sum(abs(v) for v in values):
+40:                 coefficients[s][c] = proposal
+41:     residual = [tuple(factor * xs[j][c] - coefficients[j % q][c] for c in range(2))
+42:                 for j in range(N)]
+43:     spectral = [(0, 0)] * N
+44:     # Scaled means have a cancellation of n in their short Fourier spectrum.
+45:     amplitude = 1 if scaled else n
+46:     for t in range(q):
+47:         pairs = [rotate(coefficients[s], -4 * s * t // q) for s in range(q)]
+48:         spectral[t * n] = tuple(amplitude * sum(v[c] for v in pairs) for c in range(2))
+49:     return residual, spectral, factor
+50: 
+51: 
+52: def dft_mod(xs):
+53:     p, generator, N = 97, 5, len(xs)
+54:     assert 96 % N == 0
+55:     root = pow(generator, 96 // N, p)
+56:     imaginary_unit = pow(generator, 24, p)
+57:     encoded = [(a + imaginary_unit * b) % p for a, b in xs]
+58:     return [sum(x * pow(root, (-j * m) % N, p) for j, x in enumerate(encoded)) % p
+59:             for m in range(N)]
+60: 
+61: 
+62: def main():
+63:     rng = random.Random(87344)
+64:     cases = 0
+65:     coordinates = 0
+66:     by_mode = {"rounded_mean": 0, "scaled_exact_mean": 0}
+67:     for N in (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 96):
+68:         q = math.gcd(N, 4)
+69:         for trial in range(10):
+70:             pattern = [(rng.randrange(-30, 31), rng.randrange(-30, 31)) for _ in range(q)]
+71:             noise = [(0, 0) if trial == 0 else (rng.randrange(-9, 10), rng.randrange(-9, 10)) for _ in range(N)]
+72:             xs = [tuple(pattern[j % q][c] + noise[j][c] for c in range(2)) for j in range(N)]
+73:             expected = dft_mod(xs)
+74:             for scaled in (False, True):
+75:                 residual, spectral, factor = fit(xs, scaled)
+76:                 assert mass(residual) <= factor * mass(xs)
+77:                 comparison_factor = 2 if scaled else 3
+78:                 assert mass(residual) <= comparison_factor * factor * mass(noise)
+79:                 if trial == 0:
+80:                     assert mass(residual) == 0
+81:                 correction = dft_mod(residual)
+82:                 inv = pow(factor, -1, 97)
+83:                 imaginary_unit = pow(5, 24, 97)
+84:                 got = [(a + imaginary_unit * b + inv * y) % 97
+85:                        for (a, b), y in zip(spectral, correction)]
+86:                 assert got == expected
+87:                 cases += 1
+88:                 coordinates += N
+89:                 by_mode["scaled_exact_mean" if scaled else "rounded_mean"] += 1
+90:     report = {"status": "PASS", "exact_identity_cases": cases,
+91:               "exact_output_coordinates": coordinates, "cases_by_mode": by_mode,
+92:               "field": 97, "lengths": [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 96],
+93:               "checks": ["negative-sign Fourier identity", "Gaussian-integer quarter-turn support",
+94:                          "residual mass no worse than original", "near-periodic factor-three and factor-two bounds",
+95:                          "exact periodic residual vanishes"],
+96:               "scope": "Independent fitting/algebra checks; approximate integration is tested separately.",
+97:               "source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+98:     Path("identity_results.json").write_text(json.dumps(report, indent=2) + "\n")
+99:     print(json.dumps({k: report[k] for k in ("status", "exact_identity_cases", "exact_output_coordinates")}))
+100: 
+101: 
+102: if __name__ == "__main__":
+103:     main()

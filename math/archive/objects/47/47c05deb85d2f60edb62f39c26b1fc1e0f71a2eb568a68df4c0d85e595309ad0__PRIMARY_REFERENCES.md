@@ -1,0 +1,8 @@
+# Primary references and attribution limits
+
+Checked on 9 October 2026. These references identify classical ingredients and model restrictions. They are not independent verification of the uploaded implementation, a priority search, or proof of an unrestricted Fourier arithmetic lower bound.
+
+- Nir Ailon, [A Lower Bound for Fourier Transform Computation in a Linear Model Over 2x2 Unitary Gates Using Matrix Entropy](https://arxiv.org/abs/1305.4745), 2013. The paper establishes a Fourier lower bound in a layered linear circuit restricted to unitary two-coordinate gates using matrix entropy. The Phase22 residual argument is an application of this restricted-model entropy method; nonunitary Green arithmetic is outside that inference.
+- Tuan-Yow Chien and Shayne Waldron, [A Characterization of Projective Unitary Equivalence of Finite Frames and Applications](https://doi.org/10.1137/15M1042140), SIAM Journal on Discrete Mathematics 30(2), 2016, 976–994; [author preprint](https://arxiv.org/abs/1312.5393). The paper treats projective Gram invariants and reconstruction related to rank-one completion. Phase22's bilinear finite-field diagonal-congruence test is a project-specific gate, not a claim that Gram/gauge invariants are new. The Hermitian projective-frame results are not automatically the same theorem as the uploaded bilinear test.
+
+The bilateral Fourier tail-rank argument and boundary-count refinement are given with complete elementary derivations in the accompanying reports. No external theorem is needed to turn their finite tests into universal-in-length claims; the proofs, rather than the tests, supply those claims within the stated fixed-order architecture.

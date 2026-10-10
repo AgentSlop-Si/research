@@ -1,0 +1,267 @@
+   1 """Exact finite-field and combinatorial audit of Fourier operator compression.
+   2 
+   3 This program supplies examples and independent arithmetic checks, not an
+   4 unrestricted FFT lower bound or a new Fourier algorithm.
+   5 """
+   6 from __future__ import annotations
+   7 from dataclasses import dataclass, asdict
+   8 from math import log2
+   9 from typing import Sequence
+  10 
+  11 PRIME = 998244353
+  12 ROOT = 3
+  13 
+  14 
+  15 def check_length(n: int, prime: int = PRIME) -> None:
+  16     if n < 2 or n & (n - 1) or (prime - 1) % n:
+  17         raise ValueError('n must be a power of two, >=2, dividing prime-1')
+  18 
+  19 
+  20 def nth_root(n: int, prime: int = PRIME, root: int = ROOT) -> int:
+  21     check_length(n, prime)
+  22     w = pow(root, (prime - 1) // n, prime)
+  23     if pow(w, n, prime) != 1 or pow(w, n // 2, prime) == 1:
+  24         raise ValueError('root is not primitive at this length')
+  25     return w
+  26 
+  27 
+  28 def fourier_matrix(n: int, p: int = PRIME) -> list[list[int]]:
+  29     w = nth_root(n, p)
+  30     # Precompute roots. Entry F[j,k] = omega ** (j*k).
+  31     power = [pow(w, t, p) for t in range(n)]
+  32     return [[power[(j*k) % n] for k in range(n)] for j in range(n)]
+  33 
+  34 
+  35 def mod_rank(rows: Sequence[Sequence[int]], p: int = PRIME) -> int:
+  36     if not rows:
+  37         return 0
+  38     nc = len(rows[0])
+  39     if any(len(row) != nc for row in rows):
+  40         raise ValueError('ragged matrix')
+  41     mat = [[x % p for x in row] for row in rows]
+  42     r = 0
+  43     for c in range(nc):
+  44         pivot = next((t for t in range(r, len(mat)) if mat[t][c]), None)
+  45         if pivot is None:
+  46             continue
+  47         mat[r], mat[pivot] = mat[pivot], mat[r]
+  48         inv = pow(mat[r][c], -1, p)
+  49         # Work on rows below only; rank unaffected by pivot scaling.
+  50         for i in range(r + 1, len(mat)):
+  51             factor = mat[i][c] * inv % p
+  52             if factor:
+  53                 for j in range(c + 1, nc):
+  54                     mat[i][j] = (mat[i][j] - factor * mat[r][j]) % p
+  55                 mat[i][c] = 0
+  56         r += 1
+  57         if r == len(mat):
+  58             break
+  59     return r
+  60 
+  61 
+  62 def displacement_residual(n: int, p: int = PRIME) -> tuple[list[list[int]], list[list[int]]]:
+  63     """Z F - F D^(-1) = - e0 [omega^(-k)]_k; Z is the noncyclic downshift."""
+  64     F = fourier_matrix(n, p)
+  65     w = nth_root(n, p)
+  66     v = [pow(w, (-k) % n, p) for k in range(n)]
+  67     residual = []
+  68     for i in range(n):
+  69         residual.append([
+  70             ((F[i-1][j] if i else 0) - F[i][j] * v[j]) % p
+  71             for j in range(n)
+  72         ])
+  73     target = [[(-v[j] if i == 0 else 0) % p for j in range(n)] for i in range(n)]
+  74     return residual, target
+  75 
+  76 
+  77 def verify_displacement(n: int, p: int = PRIME) -> bool:
+  78     actual, expected = displacement_residual(n, p)
+  79     return actual == expected and mod_rank(actual, p) == 1
+  80 
+  81 
+  82 def full_rank_rectangles(n: int, p: int = PRIME) -> list[dict]:
+  83     """Check dyadic contiguous-row Fourier rectangles; theorem covers all column sets."""
+  84     F = fourier_matrix(n, p)
+  85     samples = []
+  86     for r in (2, 4, 8, 16, 32, 64):
+  87         if r > n // 2:
+  88             break
+  89         column_sets = [
+  90             list(range(r)),
+  91             list(range(n-r, n)),
+  92             list(range(0, n, max(1, n//r)))[:r],
+  93         ]
+  94         for i, col in enumerate(column_sets):
+  95             if len(set(col)) != len(col):
+  96                 continue
+  97             for row_start in (0, n//2, n-r):
+  98                 if row_start + r > n:
+  99                     continue
+ 100                 block = [[F[u][v] for v in col] for u in range(row_start, row_start+r)]
+ 101                 rank = mod_rank(block, p)
+ 102                 samples.append({'n':n,'rows':r,'row_start':row_start,
+ 103                                 'columns':i,'rank':rank,'expected':r})
+ 104                 if rank != r:
+ 105                     raise AssertionError(('contiguous minor rank', n, r, row_start, i, rank))
+ 106     return samples
+ 107 
+ 108 
+ 109 def reverse_bits(i: int, logn: int) -> int:
+ 110     j=0
+ 111     for _ in range(logn):
+ 112         j=(j<<1)|(i&1)
+ 113         i >>= 1
+ 114     return j
+ 115 
+ 116 
+ 117 def fft_mod(values: Sequence[int], p: int = PRIME) -> tuple[list[int], int]:
+ 118     n=len(values)
+ 119     w=nth_root(n,p)
+ 120     bits=n.bit_length()-1
+ 121     out=[int(values[reverse_bits(j,bits)]) % p for j in range(n)]
+ 122     gates=0
+ 123     width=2
+ 124     while width <= n:
+ 125         half=width//2
+ 126         rot=pow(w,n//width,p)
+ 127         for start in range(0,n,width):
+ 128             factor=1
+ 129             for j in range(half):
+ 130                 a=out[start+j]
+ 131                 b=out[start+j+half]*factor%p
+ 132                 out[start+j]=(a+b)%p
+ 133                 out[start+j+half]=(a-b)%p
+ 134                 factor=factor*rot%p
+ 135                 gates+=1
+ 136         width*=2
+ 137     return out,gates
+ 138 
+ 139 
+ 140 def verify_fft(n: int, p: int = PRIME) -> tuple[int,int]:
+ 141     # Verify on all basis vectors, i.e. matrix equality, not random samples.
+ 142     F=fourier_matrix(n,p)
+ 143     final_count=0
+ 144     for k in range(n):
+ 145         input=[0]*n
+ 146         input[k]=1
+ 147         out, count=fft_mod(input,p)
+ 148         if out != [F[j][k] for j in range(n)]:
+ 149             raise AssertionError(('FFT basis mismatch',n,k))
+ 150         final_count=count
+ 151     return n,final_count
+ 152 
+ 153 
+ 154 @dataclass(frozen=True)
+ 155 class EntropyRow:
+ 156     n: int
+ 157     stage: int
+ 158     support_per_row: int
+ 159     entropy_total_bits: int
+ 160     cumulative_gates: int
+ 161 
+ 162 
+ 163 def entropy_audit(n: int) -> list[EntropyRow]:
+ 164     """Bitset proof certificate for normalized DIT, without numeric rounding.
+ 165 
+ 166     After t normalized FFT levels, every row is a sum of 2**t disjoint
+ 167     original inputs of magnitude 2**(-t/2), hence the row has Shannon
+ 168     entropy t bits. Disjointness, coverage, and support are checked exactly.
+ 169     """
+ 170     check_length(n)
+ 171     bits=n.bit_length()-1
+ 172     support=[1<<reverse_bits(j,bits) for j in range(n)]
+ 173     observations=[EntropyRow(n,0,1,0,0)]
+ 174     gate_count=0
+ 175     for t in range(1,bits+1):
+ 176         width=1<<t
+ 177         half=width//2
+ 178         for start in range(0,n,width):
+ 179             for j in range(half):
+ 180                 a=start+j
+ 181                 b=a+half
+ 182                 if support[a]&support[b]:
+ 183                     raise AssertionError('unexpected support overlap')
+ 184                 new=support[a]|support[b]
+ 185                 support[a]=support[b]=new
+ 186                 gate_count+=1
+ 187         expected=1<<t
+ 188         if any(v.bit_count()!=expected for v in support):
+ 189             raise AssertionError(('incorrect support',n,t))
+ 190         observations.append(EntropyRow(n,t,expected,n*t,gate_count))
+ 191     if gate_count != n*bits//2:
+ 192         raise AssertionError('butterfly count mismatch')
+ 193     if any(v.bit_count()!=n for v in support):
+ 194         raise AssertionError('final transform not dense')
+ 195     return observations
+ 196 
+ 197 
+ 198 def grouped_macro_audit(n: int) -> list[dict]:
+ 199     """No counting a dense macro DFT as one ordinary bounded-volume gate."""
+ 200     check_length(n)
+ 201     L=n.bit_length()-1
+ 202     data=[]
+ 203     for h in range(1,L+1):
+ 204         if L%h:
+ 205             continue
+ 206         block=1<<h
+ 207         macro_calls=(L//h)*(n//block)
+ 208         primitive_min_per_macro=(block*h)//2
+ 209         primitive_total=macro_calls*primitive_min_per_macro
+ 210         if primitive_total!=n*L//2:
+ 211             raise AssertionError('missing grouped gate work')
+ 212         data.append(dict(n=n,levels_per_group=h,block_width=block,
+ 213                          macro_calls=macro_calls,
+ 214                          min_primitives_per_macro=primitive_min_per_macro,
+ 215                          total_primitives=primitive_total))
+ 216     return data
+ 217 
+ 218 
+ 219 
+ 220 def evaluate_pole_representation(values: Sequence[int], p: int = PRIME) -> tuple[list[int], dict]:
+ 221     """Recover every Fourier coefficient from the N-pole rational signature.
+ 222 
+ 223     G(z) = sum_k x[k]/(1 - omega**k*z).  Its coefficient [z**j] is
+ 224     exactly F(x)[j].  Description O(N); this direct realization O(N**2).
+ 225     It is intentionally a naive extraction, NOT a universal lower bound.
+ 226     """
+ 227     n=len(values)
+ 228     w=nth_root(n,p)
+ 229     factors=[pow(w,k,p) for k in range(n)]
+ 230     state=[int(x)%p for x in values]
+ 231     out=[]
+ 232     for j in range(n):
+ 233         out.append(sum(state)%p)
+ 234         if j<n-1:
+ 235             state=[state[k]*factors[k]%p for k in range(n)]
+ 236     return out,{'description_field_elements':2*n,
+ 237                 'coefficient_additions':n*(n-1),
+ 238                 'state_multiplies':n*(n-1),
+ 239                 'fft_butterflies':n*(n.bit_length()-1)//2}
+ 240 
+ 241 def run_audit(ns=(4,8,16,32,64,128)) -> dict:
+ 242     records=[]
+ 243     for n in ns:
+ 244         n_verified, gates=verify_fft(n)
+ 245         if not verify_displacement(n):
+ 246             raise AssertionError(('displacement',n))
+ 247         ranks=full_rank_rectangles(n)
+ 248         entropy=entropy_audit(n)
+ 249         macros=grouped_macro_audit(n)
+ 250         sample=[((i+3)*(i+17)+i*i) % PRIME for i in range(n)]
+ 251         recovered, pole_cost=evaluate_pole_representation(sample)
+ 252         fast,_=fft_mod(sample)
+ 253         if recovered!=fast:
+ 254             raise AssertionError(('pole coefficient expansion',n))
+ 255         records.append(dict(n=n_verified,basis_tests=n,displacement_rank=1,
+ 256                             block_rank_checks=len(ranks),
+ 257                             gates=gates,pole_cost=pole_cost,
+ 258                             log2_abs_det=n*(n.bit_length()-1)//2,
+ 259                             entropy_first=asdict(entropy[0]),entropy_last=asdict(entropy[-1]),
+ 260                             grouped_macros=macros))
+ 261     return {'model': 'finite_field_exact_for_identity;complex_unitary_for_potentials',
+ 262             'prime':PRIME,'results':records}
+ 263 
+ 264 if __name__=='__main__':
+ 265     import json
+ 266     result=run_audit()
+ 267     print(json.dumps(result,indent=2))

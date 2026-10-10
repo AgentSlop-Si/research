@@ -1,0 +1,469 @@
+1: """Consumer-aware dynamic Fourier views.
+2: 
+3: This module treats a signal as a *known relation* rather than a fresh dense
+4: array.  The current signal is represented by
+5: 
+6:     x = sum_i c[i] * b_i + e,
+7: 
+8: where the full spectra F(b_i) are already cached and ``e`` is maintained as
+9: an explicit sparse residual in the time domain.
+10: 
+11: Updates are metadata operations:
+12: 
+13: * ``add_coefficient(i, delta)`` changes one basis coefficient in O(1).
+14: * ``add_point(index, delta)`` changes one time-domain sample in expected O(1).
+15: 
+16: A ``PreparedFourierView`` represents a consumer that needs only selected
+17: frequency bins Q.  State updates append O(1)-size events; the view pays for
+18: those updates only when queried.  If t events accumulated since the previous
+19: query and u distinct relation coordinates survive coalescing, replay costs
+20: O(t + |Q| u).  A rebuild from the current relation costs
+21: O(|Q| (r + k)), where r is basis rank and k is current sparse support.
+22: The automatic planner chooses a conservative replay/rebuild strategy before
+23: reading a long event backlog.
+24: 
+25: This is a dynamic/structured-query data structure, not a new arbitrary-input
+26: FFT complexity result.  Precomputing the basis spectra is external and must be
+27: charged in an end-to-end application.
+28: """
+29: from __future__ import annotations
+30: 
+31: from dataclasses import dataclass
+32: import math
+33: import weakref
+34: from typing import Iterable, Sequence
+35: 
+36: import numpy as np
+37: 
+38: 
+39: @dataclass(frozen=True)
+40: class ViewStats:
+41:     strategy: str
+42:     q: int
+43:     backlog_events: int
+44:     coalesced_coefficients: int
+45:     coalesced_points: int
+46:     basis_rank: int
+47:     sparse_support: int
+48:     phase_cache_entries: int
+49: 
+50: 
+51: class CachedFourierBasis:
+52:     """Validate/register a basis spectrum matrix once and reuse it across states.
+53: 
+54:     Repeated O(rN) validation scans would defeat the purpose of a metadata-driven
+55:     runtime.  A producer can construct this object once when a basis enters the
+56:     cache, then create many cheap DynamicFourierState instances from it.
+57:     """
+58:     def __init__(self, basis_spectra: np.ndarray, *, validate: bool = True):
+59:         basis = np.asarray(basis_spectra, dtype=np.complex128)
+60:         if basis.ndim != 2 or basis.shape[1] < 1:
+61:             raise ValueError("basis_spectra must have shape (r,n), n>=1")
+62:         basis = np.ascontiguousarray(basis)
+63:         if validate and (not np.isfinite(basis.real).all() or not np.isfinite(basis.imag).all()):
+64:             raise ValueError("basis spectra must be finite")
+65:         self.spectra = basis
+66:         self.r, self.n = basis.shape
+67: 
+68: 
+69: class DynamicFourierState:
+70:     """Relation-aware signal state with O(1) metadata ingestion.
+71: 
+72:     ``basis_spectra`` has shape ``(r, n)`` and stores full complex DFTs of
+73:     supplied basis vectors.  The state does *not* attempt to discover this
+74:     representation from a dense signal.
+75:     """
+76: 
+77:     def __init__(
+78:         self,
+79:         basis_spectra: np.ndarray,
+80:         coefficients: Sequence[complex] | None = None,
+81:         sparse_residual: Iterable[tuple[int, complex]] = (),
+82:     ):
+83:         if isinstance(basis_spectra, CachedFourierBasis):
+84:             registered = basis_spectra
+85:         else:
+86:             registered = CachedFourierBasis(basis_spectra)
+87:         self.basis = registered
+88:         self.basis_spectra = registered.spectra
+89:         self.r, self.n = registered.r, registered.n
+90: 
+91:         if coefficients is None:
+92:             coeff = np.zeros(self.r, dtype=np.complex128)
+93:         else:
+94:             coeff = np.asarray(coefficients, dtype=np.complex128)
+95:             if coeff.shape != (self.r,):
+96:                 raise ValueError("coefficients must have shape (r,)")
+97:             if not np.isfinite(coeff.real).all() or not np.isfinite(coeff.imag).all():
+98:                 raise ValueError("coefficients must be finite")
+99:             coeff = coeff.copy()
+100:         self.coefficients = coeff
+101: 
+102:         self.sparse: dict[int, complex] = {}
+103:         for index, delta in sparse_residual:
+104:             self._validate_point(index, delta)
+105:             j = int(index)
+106:             value = self.sparse.get(j, 0j) + complex(delta)
+107:             if value == 0j:
+108:                 self.sparse.pop(j, None)
+109:             else:
+110:                 self.sparse[j] = value
+111: 
+112:         # Event versions are global and monotone.  _log_start_version is the
+113:         # state version immediately before _events[0].
+114:         self.version = 0
+115:         self._log_start_version = 0
+116:         self._events: list[tuple[int, str, int, complex]] = []
+117:         self._views: weakref.WeakSet[PreparedFourierView] = weakref.WeakSet()
+118: 
+119:     def _validate_point(self, index, delta) -> None:
+120:         if not isinstance(index, (int, np.integer)) or not 0 <= int(index) < self.n:
+121:             raise ValueError(f"index {index!r} outside [0,{self.n})")
+122:         z = complex(delta)
+123:         if not (math.isfinite(z.real) and math.isfinite(z.imag)):
+124:             raise ValueError("delta must be finite")
+125: 
+126:     def _append_event(self, kind: str, key: int, delta: complex) -> None:
+127:         z = complex(delta)
+128:         if z == 0j:
+129:             return
+130:         self.version += 1
+131:         self._events.append((self.version, kind, int(key), z))
+132: 
+133:     def add_coefficient(self, index: int, delta: complex) -> None:
+134:         """Add delta to one basis coefficient; O(1) state work."""
+135:         if not isinstance(index, (int, np.integer)) or not 0 <= int(index) < self.r:
+136:             raise ValueError(f"basis index {index!r} outside [0,{self.r})")
+137:         z = complex(delta)
+138:         if not (math.isfinite(z.real) and math.isfinite(z.imag)):
+139:             raise ValueError("delta must be finite")
+140:         if z == 0j:
+141:             return
+142:         i = int(index)
+143:         self.coefficients[i] += z
+144:         self._append_event("coeff", i, z)
+145: 
+146:     def add_coefficient_trusted(self, index: int, delta: complex) -> None:
+147:         """Unchecked O(1) fast path for producer-certified metadata."""
+148:         z = complex(delta)
+149:         if z == 0j:
+150:             return
+151:         i = int(index)
+152:         self.coefficients[i] += z
+153:         self._append_event("coeff", i, z)
+154: 
+155:     def set_coefficient(self, index: int, value: complex) -> None:
+156:         if not isinstance(index, (int, np.integer)) or not 0 <= int(index) < self.r:
+157:             raise ValueError(f"basis index {index!r} outside [0,{self.r})")
+158:         z = complex(value)
+159:         if not (math.isfinite(z.real) and math.isfinite(z.imag)):
+160:             raise ValueError("coefficient must be finite")
+161:         i = int(index)
+162:         self.add_coefficient(i, z - self.coefficients[i])
+163: 
+164:     def add_point(self, index: int, delta: complex) -> None:
+165:         """Add a sparse time-domain edit; expected O(1) state work."""
+166:         self._validate_point(index, delta)
+167:         z = complex(delta)
+168:         if z == 0j:
+169:             return
+170:         j = int(index)
+171:         value = self.sparse.get(j, 0j) + z
+172:         if value == 0j:
+173:             self.sparse.pop(j, None)
+174:         else:
+175:             self.sparse[j] = value
+176:         self._append_event("point", j, z)
+177: 
+178:     def add_point_trusted(self, index: int, delta: complex) -> None:
+179:         """Unchecked O(1) fast path for producer-certified metadata."""
+180:         z = complex(delta)
+181:         if z == 0j:
+182:             return
+183:         j = int(index)
+184:         value = self.sparse.get(j, 0j) + z
+185:         if value == 0j:
+186:             self.sparse.pop(j, None)
+187:         else:
+188:             self.sparse[j] = value
+189:         self._append_event("point", j, z)
+190: 
+191:     def clear_point(self, index: int) -> None:
+192:         if not isinstance(index, (int, np.integer)) or not 0 <= int(index) < self.n:
+193:             raise ValueError(f"index {index!r} outside [0,{self.n})")
+194:         j = int(index)
+195:         old = self.sparse.get(j, 0j)
+196:         if old != 0j:
+197:             self.add_point(j, -old)
+198: 
+199:     @property
+200:     def sparse_support(self) -> int:
+201:         return len(self.sparse)
+202: 
+203:     def _events_since(self, version: int):
+204:         if version < self._log_start_version:
+205:             return None
+206:         if version > self.version:
+207:             raise ValueError("view version is ahead of state")
+208:         start = version - self._log_start_version
+209:         return self._events[start:]
+210: 
+211:     def _evaluate_bins(self, bins: np.ndarray, phase_provider=None) -> np.ndarray:
+212:         q = len(bins)
+213:         if self.r:
+214:             # BLAS-friendly multiplication over only the requested bins.
+215:             result = self.coefficients @ self.basis_spectra[:, bins]
+216:             result = np.asarray(result, dtype=np.complex128)
+217:         else:
+218:             result = np.zeros(q, dtype=np.complex128)
+219:         if self.sparse:
+220:             if phase_provider is None:
+221:                 freq = bins.astype(np.float64)
+222:                 for j, delta in self.sparse.items():
+223:                     result += delta * np.exp((-2j * np.pi * j / self.n) * freq)
+224:             else:
+225:                 for j, delta in self.sparse.items():
+226:                     result += delta * phase_provider(j)
+227:         return result
+228: 
+229:     def view(
+230:         self,
+231:         bins: Sequence[int],
+232:         *,
+233:         prepared_positions: Sequence[int] | None = None,
+234:         phase_cache_limit: int = 128,
+235:         auto_rebuild_ratio: float = 1.0,
+236:         pin_event_log: bool = False,
+237:     ) -> "PreparedFourierView":
+238:         v = PreparedFourierView(
+239:             self,
+240:             bins,
+241:             prepared_positions=prepared_positions,
+242:             phase_cache_limit=phase_cache_limit,
+243:             auto_rebuild_ratio=auto_rebuild_ratio,
+244:             pin_event_log=pin_event_log,
+245:         )
+246:         self._views.add(v)
+247:         return v
+248: 
+249:     def dense(self) -> np.ndarray:
+250:         """Materialize all N Fourier bins from the current relation state."""
+251:         bins = np.arange(self.n, dtype=np.intp)
+252:         return self._evaluate_bins(bins)
+253: 
+254:     def compact_event_log(self) -> int:
+255:         """Drop events already consumed by every live view.
+256: 
+257:         Returns the number of dropped events.  If no views are alive, every
+258:         event can be dropped because the current coefficients/residual already
+259:         summarize the complete state.
+260:         """
+261:         # Only views that explicitly require replay pin old events.  Ordinary
+262:         # auto/rebuild-capable views can recover from compaction by rebuilding
+263:         # from the current factorized state.  This is crucial for many consumers:
+264:         # a dormant dashboard must not retain the entire update history.
+265:         pinned = [v for v in self._views if v.pin_event_log]
+266:         if pinned:
+267:             floor = min(v.version for v in pinned)
+268:         else:
+269:             floor = self.version
+270:         if floor <= self._log_start_version:
+271:             return 0
+272:         drop = min(floor - self._log_start_version, len(self._events))
+273:         if drop:
+274:             del self._events[:drop]
+275:             self._log_start_version += drop
+276:         return drop
+277: 
+278: 
+279: class PreparedFourierView:
+280:     """A persistent selected-bin view over a DynamicFourierState.
+281: 
+282:     A view caches its last answer.  State updates remain O(1); on the next
+283:     query the view either replays/coalesces only the intervening events or
+284:     rebuilds directly from the current relation state.
+285:     """
+286: 
+287:     def __init__(
+288:         self,
+289:         state: DynamicFourierState,
+290:         bins: Sequence[int],
+291:         *,
+292:         prepared_positions: Sequence[int] | None = None,
+293:         phase_cache_limit: int = 128,
+294:         auto_rebuild_ratio: float = 1.0,
+295:         pin_event_log: bool = False,
+296:     ):
+297:         self.state = state
+298:         b = np.asarray(bins, dtype=np.int64)
+299:         if b.ndim != 1 or b.size < 1:
+300:             raise ValueError("bins must be a nonempty 1-D sequence")
+301:         if np.any(b < 0) or np.any(b >= state.n):
+302:             raise ValueError("frequency bin outside valid range")
+303:         self.bins = b.astype(np.intp, copy=True)
+304:         self.q = len(self.bins)
+305:         self.phase_cache_limit = max(0, int(phase_cache_limit))
+306:         self.auto_rebuild_ratio = float(auto_rebuild_ratio)
+307:         self.pin_event_log = bool(pin_event_log)
+308:         if not math.isfinite(self.auto_rebuild_ratio) or self.auto_rebuild_ratio <= 0:
+309:             raise ValueError("auto_rebuild_ratio must be positive")
+310: 
+311:         # Consumer-specific projection of the cached basis.  This is the key
+312:         # memory trade: O(r*q) instead of carrying/updating N bins per view.
+313:         self._basis_q = np.ascontiguousarray(state.basis_spectra[:, self.bins])
+314:         self._phase_cache: dict[int, np.ndarray] = {}
+315:         self._prepared_row: dict[int, int] = {}
+316:         self._prepared_phase: np.ndarray | None = None
+317:         if prepared_positions is not None:
+318:             positions = np.asarray(prepared_positions, dtype=np.int64)
+319:             if positions.ndim != 1 or np.any(positions < 0) or np.any(positions >= state.n):
+320:                 raise ValueError("prepared position outside valid range")
+321:             # Deduplicate while preserving order.
+322:             unique = list(dict.fromkeys(int(x) for x in positions.tolist()))
+323:             pf = np.asarray(unique, dtype=np.float64)
+324:             self._prepared_phase = np.exp(
+325:                 (-2j*np.pi/state.n) * np.outer(pf, self.bins.astype(np.float64))
+326:             )
+327:             self._prepared_row = {p:i for i,p in enumerate(unique)}
+328: 
+329:         self._cached = self._evaluate_current()
+330:         self.version = state.version
+331:         self.last_stats = ViewStats(
+332:             "initial", self.q, 0, 0, 0, state.r, state.sparse_support,
+333:             len(self._phase_cache),
+334:         )
+335: 
+336:     def _evaluate_current(self) -> np.ndarray:
+337:         if self.state.r:
+338:             result = np.asarray(self.state.coefficients @ self._basis_q, dtype=np.complex128)
+339:         else:
+340:             result = np.zeros(self.q, dtype=np.complex128)
+341:         if self.state.sparse:
+342:             # Use the compact prepared phase table wherever possible.
+343:             prepared_keys=[]; prepared_vals=[]
+344:             for j,delta in self.state.sparse.items():
+345:                 row=self._prepared_row.get(j)
+346:                 if row is None or self._prepared_phase is None:
+347:                     result += delta*self._phase(j)
+348:                 else:
+349:                     prepared_keys.append(row); prepared_vals.append(delta)
+350:             if prepared_keys:
+351:                 rows=np.asarray(prepared_keys,dtype=np.intp)
+352:                 vals=np.asarray(prepared_vals,dtype=np.complex128)
+353:                 result += vals @ self._prepared_phase[rows]
+354:         return result
+355: 
+356:     def _make_phase(self, position: int) -> np.ndarray:
+357:         return np.exp((-2j * np.pi * position / self.state.n) * self.bins.astype(np.float64))
+358: 
+359:     def _phase(self, position: int) -> np.ndarray:
+360:         row = self._prepared_row.get(position)
+361:         if row is not None and self._prepared_phase is not None:
+362:             return self._prepared_phase[row]
+363:         p = self._phase_cache.get(position)
+364:         if p is not None:
+365:             return p
+366:         p = self._make_phase(position)
+367:         # Cache arbitrary positions only while under the opportunistic limit.
+368:         if len(self._phase_cache) < self.phase_cache_limit:
+369:             self._phase_cache[position] = p
+370:         return p
+371: 
+372:     @staticmethod
+373:     def _coalesce(events):
+374:         coeff: dict[int, complex] = {}
+375:         point: dict[int, complex] = {}
+376:         for _, kind, key, delta in events:
+377:             target = coeff if kind == "coeff" else point
+378:             target[key] = target.get(key, 0j) + delta
+379:         coeff = {k:v for k,v in coeff.items() if v != 0j}
+380:         point = {k:v for k,v in point.items() if v != 0j}
+381:         return coeff, point
+382: 
+383:     def _rebuild(self, backlog: int) -> np.ndarray:
+384:         self._cached = self._evaluate_current()
+385:         self.version = self.state.version
+386:         self.last_stats = ViewStats(
+387:             "rebuild", self.q, backlog, 0, 0, self.state.r,
+388:             self.state.sparse_support, len(self._phase_cache),
+389:         )
+390:         return self._cached.copy()
+391: 
+392:     def query(self, *, strategy: str = "auto") -> np.ndarray:
+393:         """Return the current selected Fourier bins.
+394: 
+395:         ``strategy='replay'`` coalesces intervening metadata events and applies
+396:         their Fourier effects to the cached bins.
+397: 
+398:         ``strategy='rebuild'`` ignores the event log and evaluates the current
+399:         relation state directly.
+400: 
+401:         ``strategy='auto'`` uses a conservative pre-scan upper bound.  Replaying
+402:         t events costs at most O(t + q*t); rebuilding costs O(q*(r+k)).
+403:         """
+404:         if strategy not in ("auto", "replay", "rebuild"):
+405:             raise ValueError("strategy must be auto, replay, or rebuild")
+406:         backlog = self.state.version - self.version
+407:         if backlog == 0:
+408:             self.last_stats = ViewStats(
+409:                 "cached", self.q, 0, 0, 0, self.state.r,
+410:                 self.state.sparse_support, len(self._phase_cache),
+411:             )
+412:             return self._cached.copy()
+413: 
+414:         if strategy == "rebuild":
+415:             return self._rebuild(backlog)
+416: 
+417:         events = self.state._events_since(self.version)
+418:         if events is None:
+419:             # The shared event log was compacted past this dormant view.
+420:             return self._rebuild(backlog)
+421: 
+422:         if strategy == "auto":
+423:             replay_upper = backlog * (self.q + 1)
+424:             rebuild_proxy = self.q * max(1, self.state.r + self.state.sparse_support)
+425:             if replay_upper > self.auto_rebuild_ratio * rebuild_proxy:
+426:                 return self._rebuild(backlog)
+427: 
+428:         coeff, point = self._coalesce(events)
+429: 
+430:         # After paying O(backlog) to inspect the events, a second exact proxy
+431:         # can still prefer rebuilding if cancellations did not help enough.
+432:         if strategy == "auto":
+433:             replay_exact_proxy = backlog + self.q * (len(coeff) + len(point))
+434:             rebuild_proxy = self.q * max(1, self.state.r + self.state.sparse_support)
+435:             if replay_exact_proxy > self.auto_rebuild_ratio * rebuild_proxy:
+436:                 return self._rebuild(backlog)
+437: 
+438:         if coeff:
+439:             # Tiny delta sets are faster as direct vector AXPYs; for larger
+440:             # sets, batch them into one BLAS-friendly product.
+441:             if len(coeff) < 24:
+442:                 for i,delta in coeff.items():
+443:                     self._cached += delta*self._basis_q[i]
+444:             else:
+445:                 ci = np.fromiter(coeff.keys(), dtype=np.intp, count=len(coeff))
+446:                 cv = np.fromiter(coeff.values(), dtype=np.complex128, count=len(coeff))
+447:                 self._cached += cv @ self._basis_q[ci]
+448:         if point:
+449:             if self._prepared_phase is not None and all(j in self._prepared_row for j in point):
+450:                 if len(point) < 24:
+451:                     for j,delta in point.items():
+452:                         self._cached += delta*self._prepared_phase[self._prepared_row[j]]
+453:                 else:
+454:                     rows = np.fromiter((self._prepared_row[j] for j in point), dtype=np.intp, count=len(point))
+455:                     pv = np.fromiter(point.values(), dtype=np.complex128, count=len(point))
+456:                     self._cached += pv @ self._prepared_phase[rows]
+457:             else:
+458:                 for j, delta in point.items():
+459:                     self._cached += delta * self._phase(j)
+460: 
+461:         self.version = self.state.version
+462:         self.last_stats = ViewStats(
+463:             "replay", self.q, backlog, len(coeff), len(point), self.state.r,
+464:             self.state.sparse_support, len(self._phase_cache),
+465:         )
+466:         return self._cached.copy()
+467: 
+468:     def rebuild(self) -> np.ndarray:
+469:         return self._rebuild(self.state.version - self.version)

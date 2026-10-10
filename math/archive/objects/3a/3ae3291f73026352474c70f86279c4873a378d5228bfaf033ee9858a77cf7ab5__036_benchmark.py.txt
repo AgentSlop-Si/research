@@ -1,0 +1,166 @@
+"""Reproducible exploratory benchmark of relation-aware dispatcher vs SciPy.
+Run: python benchmark.py. Includes initialization, transformation, result
+materialization and event metadata handling, but not data acquisition/network.
+"""
+from __future__ import annotations
+import json
+import os
+import platform
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+from scipy import fft
+import scipy
+from cost_aware_fft import RelationFFT, subscribe
+
+
+def median_ms(fn, repeats=3):
+    x=[]
+    for _ in range(repeats):
+        begin=time.perf_counter_ns()
+        fn()
+        x.append((time.perf_counter_ns()-begin)/1e6)
+    return round(float(np.median(x)),5)
+
+
+def emit_case(records, category, n, baseline_ms, adaptive_ms, extra=None):
+    item={'category':category,'n':int(n),'baseline_ms':round(baseline_ms,5),
+          'adaptive_ms':round(adaptive_ms,5),
+          'speedup':round(baseline_ms/adaptive_ms,3) if adaptive_ms>0 else None}
+    if extra: item.update(extra)
+    records.append(item)
+    print(f'{category:23s} n={n:>8,d}  baseline={baseline_ms:8.3f}ms  ours={adaptive_ms:8.3f}ms  speedup={baseline_ms/adaptive_ms:5.2f}x')
+
+
+def main():
+    rng=np.random.default_rng(91825)
+    data=[]
+    for n in (4096,16384,65536,262144):
+        x=rng.normal(size=n)
+
+        # Known position, materialized spectrum after each of 40 changes.
+        deltas=rng.normal(size=40)
+        p=n//3
+        def native_stream():
+            y=x.copy()
+            v=fft.rfft(y)
+            for d in deltas:
+                y[p]+=d
+                v=fft.rfft(y)
+            return v
+        def ours_stream():
+            eng=RelationFFT()
+            root=eng.register(x)
+            state=root.fork()
+            v=root.spectrum()
+            for d in deltas:
+                state.edit(p,d)
+                v=state.spectrum(method='auto')
+            return v
+        ref=native_stream(); got=ours_stream()
+        np.testing.assert_allclose(got,ref,atol=1e-7,rtol=1e-9)
+        b=median_ms(native_stream)
+        a=median_ms(ours_stream)
+        emit_case(data,'40 known edits',n,b,a,{'edits':40,'notes':'full spectrum after each edit; includes initial FFT'})
+
+        # 32 forked descendants of the same root, each differing at 1 site.
+        deltas2=rng.normal(size=32)
+        ps=(n//4+11)
+        def native_forks():
+            outs=[]
+            for d in deltas2:
+                y=x.copy(); y[ps]+=d
+                outs.append(fft.rfft(y))
+            return np.stack(outs)
+        def ours_forks():
+            eng=RelationFFT()
+            root=eng.register(x)
+            outs=[]
+            for d in deltas2:
+                child=root.fork().edit(ps,float(d))
+                outs.append(child.spectrum(method='auto'))
+            return np.stack(outs)
+        np.testing.assert_allclose(ours_forks(),native_forks(),atol=1e-7,rtol=1e-9)
+        b=median_ms(native_forks)
+        a=median_ms(ours_forks)
+        emit_case(data,'32 forked variants',n,b,a,{'variants':32,'notes':'one reference FFT and every dense output included'})
+
+        # 64 individual frequency queries on a stream; no dense after events.
+        ps=np.asarray(rng.integers(0,n,size=64),dtype=np.int64)
+        deltas3=rng.normal(size=64)
+        qs=[0,n//16,n//8,n//3]
+        def native_partial():
+            y=x.copy()
+            freq=fft.rfft(y)
+            out=[]
+            for p,d in zip(ps,deltas3):
+                y[p]+=d
+                freq=fft.rfft(y)
+                out.append(freq[qs])
+            return np.stack(out)
+        def ours_partial():
+            eng=RelationFFT()
+            root=eng.register(x)
+            tracker=subscribe(root,qs)
+            out=[]
+            for p,d in zip(ps,deltas3):
+                tracker.edit(int(p),float(d))
+                out.append(tracker.values())
+            return np.stack(out)
+        np.testing.assert_allclose(ours_partial(),native_partial(),atol=1e-7,rtol=1e-9)
+        b=median_ms(native_partial)
+        a=median_ms(ours_partial)
+        emit_case(data,'64 edits + 4 bins',n,b,a,{'frequency_queries_per_edit':4,
+            'notes':'live Q-bin subscription; compares against full FFT each edit, not a specialized selective frequency method'})
+
+    # Known two-basis family, 48 independent signals, include their representation.
+    for n in (4096, 16384, 65536):
+        B=rng.normal(size=(2,n))
+        C=rng.normal(size=(48,2))
+        def native_lowrank():
+            return np.stack([fft.rfft(C[i,0]*B[0]+C[i,1]*B[1]) for i in range(C.shape[0])])
+        def ours_lowrank():
+            e=RelationFFT()
+            states=e.states_from_bases(B,C)
+            return np.stack([s.spectrum(method='auto') for s in states])
+        np.testing.assert_allclose(ours_lowrank(),native_lowrank(),rtol=1e-9,atol=1e-7)
+        b=median_ms(native_lowrank)
+        a=median_ms(ours_lowrank)
+        emit_case(data,'48 signals, rank 2',n,b,a,{'signals':48,
+            'notes':'known basis+coefficients; baseline builds each dense signal; all outputs materialized'})
+
+    # Cost-aware calibration: record true timings on a medium-sparse signal.
+    tuning=[]
+    for n in (16384,65536):
+        for k in (1,4,16,64):
+            e=RelationFFT()
+            state=e.register(rng.normal(size=n)).fork()
+            indices=rng.choice(n,size=k,replace=False)
+            for p in indices:
+                state.edit(int(p),float(rng.normal()))
+            profile=e.calibrate(state,repeats=4)
+            tuning.append({'n':n,'changed_positions':k,
+                           'best':profile.best_method,
+                           'medians_ms':{v:round(s*1e3,5) for v,s in profile.median_seconds.items()}})
+            print(f"calibrate n={n:>6,d} k={k:>2d} best={profile.best_method} {tuning[-1]['medians_ms']}")
+
+    metadata={
+      'utc_recorded_at':datetime.now(timezone.utc).isoformat(),
+      'python':sys.version,
+      'platform':platform.platform(),
+      'numpy':np.__version__,
+      'scipy':scipy.__version__,
+      'notes':('Medians of 3 outer runs; warm backend; freshly initialized adaptive objects per outer run. '
+               'Correctness checked outside timing. Sources provide relations; no automatic search. '
+               'For four-bin queries comparator recomputes full FFT; separate direct-query baselines may be cheaper. '
+               'Results depend heavily on hardware and memory bandwidth; eFFT is not benchmarked.'),
+      'cases':data,'calibration':tuning
+    }
+    dest=Path(__file__).resolve().parent/'benchmark_results.json'
+    dest.write_text(json.dumps(metadata,indent=2),encoding='utf8')
+    print('Saved',dest)
+
+if __name__=='__main__':main()

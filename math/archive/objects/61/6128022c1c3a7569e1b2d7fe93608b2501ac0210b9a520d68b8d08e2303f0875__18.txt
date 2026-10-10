@@ -1,0 +1,101 @@
+1: """Run against either original or hardened module directory; no source writes."""
+2: import collections
+3: import json
+4: import platform
+5: import sys
+6: from pathlib import Path
+7: import numpy as np
+8: import scipy
+9: 
+10: sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
+11: from arbitrary_output import ArbitraryBinsDFTPlan, AutoOutputPlan, ProductiveProjectionPlanner
+12: from multi_view import SharedProjectedFourierStore, union_frequency_sets
+13: 
+14: class CountDeque(collections.deque):
+15:     visited=0
+16:     def __iter__(self):
+17:         for row in super().__iter__():
+18:             self.visited+=1
+19:             yield row
+20:     def __reversed__(self):
+21:         for row in super().__reversed__():
+22:             self.visited+=1
+23:             yield row
+24: 
+25: def backing(a):
+26:     while isinstance(a.base,np.ndarray): a=a.base
+27:     return a.nbytes
+28: 
+29: out={'versions':{'python':platform.python_version(),'numpy':np.__version__,'scipy':scipy.__version__}}
+30: out['shared_history']=[]
+31: for retained in (10,1000,100000):
+32:     st=SharedProjectedFourierStore(8,[0],np.ones((2,1)),{'v':[0]})
+33:     for _ in range(retained): st.add_coefficient(0,1)
+34:     st.query('v');st.events=CountDeque(st.events);st.add_coefficient(0,1)
+35:     got=st.query('v')
+36:     out['shared_history'].append({'retained_prior_events':retained,'H':st.views['v'].backlog,
+37:         'visited_events':st.events.visited,'storage_bytes':st.storage_bytes,'correct':bool(got[0]==retained+1)})
+38: 
+39: n=65536;full=np.ones(n,np.complex128);proj=full[:4][None,:]
+40: st=SharedProjectedFourierStore(n,[0,1,2,3],proj,{'v':[0]},[1])
+41: out['projection_retention']={'visible_bytes':st.projection.nbytes,'backing_bytes':backing(st.projection),'owns':bool(st.projection.flags.owndata)}
+42: full[:]=100;st.add_coefficient(0,1)
+43: out['projection_retention']['after_external_mutation']=float(st.query('v')[0].real)
+44: 
+45: st=SharedProjectedFourierStore(8,[0],np.ones((10,1)),{'a':[0],'b':[0]},event_capacity=0)
+46: st.add_coefficient(0,1);st.query_many(['a','b'])
+47: out['unavailable_history_fusion']={'strategy':st.views['a'].strategy,'r':10,'q_each':1,'H':1,'consumers':2}
+48: st=SharedProjectedFourierStore(8,list(range(8)),np.ones((4,8)),{'a':[0],'b':[0],'current':list(range(8))},event_capacity=0)
+49: st.add_coefficient(0,1);st.query('current');st.query_many(['a','b','current'])
+50: out['current_view_fusion']={'strategy':st.views['a'].strategy}
+51: 
+52: rng=np.random.default_rng(20261008);x=rng.normal(size=1024);y=rng.normal(size=1024);bins=[0,11,1023]
+53: p=AutoOutputPlan(1024,bins,sample=x,reps=1)
+54: got=p.project_stream_with_sample(y,[])[0]
+55: out['different_sample']={'max_absolute_error':float(np.max(np.abs(got-np.fft.fft(y)[bins])))}
+56: p=ProductiveProjectionPlanner(1024,[1],max_pruned_trials=0);p.project([x,y],expected_count=2)
+57: out['zero_trials']={'actual_pruned_trials':sum(t['strategy']=='arbitrary_pruned' for t in p.stats.trials)}
+58: 
+59: out['constant_signal_zero_bin']=[]
+60: for n in (4096,65536,262144,1048576):
+61:     p=ArbitraryBinsDFTPlan(n,[n-1]);got=p.execute(np.ones(n))[0]
+62:     out['constant_signal_zero_bin'].append({'n':n,'radix':p.k,'expected':0,'absolute_error':float(abs(got))})
+63: 
+64: checks=0;maxerr=0.
+65: for n in (1,2,3,6,8,15,16,31,64,127,128):
+66:     x=rng.normal(size=n)+1j*rng.normal(size=n);want=np.fft.fft(x)
+67:     for q in sorted(set((1,min(3,n),n))):
+68:         bins=rng.integers(n,size=q)
+69:         for k in (d for d in range(1,n+1) if n%d==0):
+70:             for backend in ('numpy','scipy'):
+71:                 got=ArbitraryBinsDFTPlan(n,bins,radix=k,backend=backend).execute(x)
+72:                 err=float(np.max(np.abs(got-want[bins])));maxerr=max(maxerr,err);checks+=1
+73:                 np.testing.assert_allclose(got,want[bins],atol=2e-9,rtol=3e-11)
+74: out['arbitrary_bin_sweep']={'comparisons':checks,'max_absolute_error':maxerr,'passed':True}
+75: 
+76: checks=0;maxerr=0.
+77: for n in (1,3,8,31,64):
+78:     for r in (0,1,4):
+79:         basis=rng.normal(size=(r,n))+1j*rng.normal(size=(r,n));c=rng.normal(size=r)+1j*rng.normal(size=r)
+80:         vb={name:rng.integers(n,size=min(n+2,7)) for name in ('a','b','c')}
+81:         union,_,_=union_frequency_sets(vb,n);projection=np.fft.fft(basis,axis=1)[:,union]
+82:         for cap in (None,0,1,3,64):
+83:             st=SharedProjectedFourierStore(n,union,projection,vb,c,event_capacity=cap,prepared_positions=[0,n-1])
+84:             x=c@basis
+85:             for t in range(60):
+86:                 d=complex(rng.normal()*.1,rng.normal()*.1)
+87:                 if r and t%2:
+88:                     i=t%r;st.add_coefficient(i,d);x+=d*basis[i]
+89:                 else:
+90:                     j=t%n;st.add_point(j,d);x[j]+=d
+91:                 if t%3==0:
+92:                     names=list(vb)[:1+t%3] if t%2 else list(vb)
+93:                     result=st.query_many(names);expected=np.fft.fft(x)
+94:                     for name,got in result.items():
+95:                         err=float(np.max(np.abs(got-expected[vb[name]])));maxerr=max(maxerr,err);checks+=1
+96:                         np.testing.assert_allclose(got,expected[vb[name]],atol=2e-9,rtol=3e-11)
+97:                         got[:]=999  # returned arrays must not alias caches
+98:                         np.testing.assert_allclose(st.query(name),expected[vb[name]],atol=2e-9,rtol=3e-11)
+99:                 if t%11==0: st.compact()
+100: out['multi_consumer_sweep']={'comparisons':checks,'max_absolute_error':maxerr,'passed':True}
+101: print(json.dumps(out,indent=2))

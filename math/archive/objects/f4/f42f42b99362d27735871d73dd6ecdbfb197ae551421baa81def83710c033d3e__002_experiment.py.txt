@@ -1,0 +1,206 @@
+"""Reproduce the finite searches and exact graph/rank certificates.
+
+The search is exhaustive only where explicitly labelled. No result here is a
+new sub-NlogN Fourier algorithm. Times are diagnostic setup times, not speedups.
+"""
+from __future__ import annotations
+import argparse
+import hashlib
+import itertools
+import json
+import math
+from pathlib import Path
+import platform
+import random
+import time
+
+from exact_graphs import (PrimeField,CyclotomicField,fourier,rank,skeleton,mv,
+                         progression_rank,consecutive_column_residual_lower,
+                         coset_residual_min,radix2_cost,compile_radix2,
+                         direct_decoder_lower)
+
+
+def dump(path,obj):
+    path.write_text(json.dumps(obj,indent=2)+'\n')
+
+
+def search_case(n,p,r,budget,rng):
+    start=time.perf_counter()
+    field=PrimeField(p); F=fourier(field,n)
+    choices=list(itertools.combinations(range(n),r)) if n<=8 else None
+    exhaustive=choices is not None and len(choices)**2<=budget
+    if exhaustive:
+        anchors=itertools.product(choices,repeat=2)
+        planned=len(choices)**2
+    else:
+        candidates={(tuple(range(r)),tuple(range(r)))}
+        if n%r==0:
+            candidates.add((tuple(range(r)),tuple(range(0,n,n//r))))
+            candidates.add((tuple(range(0,n,n//r)),tuple(range(r))))
+        # Always bound sampling even when some anchor sets repeat.
+        for _ in range(budget):
+            candidates.add((tuple(sorted(rng.sample(range(n),r))),
+                            tuple(sorted(rng.sample(range(n),r)))))
+        anchors=sorted(candidates); planned=len(candidates)
+    valid=singular=0; best=None; min_residual=n*n
+    for rows,cols in anchors:
+        try: plan=skeleton(field,n,rows,cols,F)
+        except ValueError:
+            singular+=1; continue
+        valid+=1; c=plan.cost(); min_residual=min(min_residual,c['residual_nonzeros'])
+        if best is None or c['arithmetic']<best.cost()['arithmetic']:
+            best=plan
+    elapsed=time.perf_counter()-start
+    if best is None: raise AssertionError('no nonsingular anchor')
+    assert best.verify()
+    graph=best.compile(); assert graph.verify_all_inputs()
+    floor=consecutive_column_residual_lower(n,r)
+    assert min_residual>=floor
+    out=dict(n=n,p=p,r=r,search=('exhaustive_anchor_pairs' if exhaustive else 'seeded_sample'),
+             planned_anchor_pairs=planned,nonsingular=valid,singular=singular,
+             best_rows=best.rows,best_cols=best.cols,best_cost=best.cost(),
+             smallest_residual_seen=min_residual,residual_theorem_lower_bound=floor,
+             radix2=radix2_cost(n),construction_and_search_seconds=elapsed,
+             all_input_modular_graph_verified=True)
+    return out,best
+
+
+def exact_small_certificates(search_results,outdir):
+    records=[]
+    for n in (4,8,16):
+        cases=[x for x in search_results if x['n']==n]
+        case=min(cases,key=lambda x:x['best_cost']['arithmetic'])
+        start=time.perf_counter()
+        field=CyclotomicField(n)
+        plan=skeleton(field,n,case['best_rows'],case['best_cols'])
+        assert plan.verify()
+        graph=plan.compile(); assert graph.verify_all_inputs()
+        rationals=[q for matrix in (plan.U,plan.V,plan.E) for row in matrix for val in row for q in val]
+        proof=dict(factorization=plan.certificate(),graph=graph.certificate(),
+                   all_input_exact_verification=True,
+                   numerator_max_bits=max(abs(q.numerator).bit_length() for q in rationals),
+                   denominator_max_bits=max(q.denominator.bit_length() for q in rationals))
+        name=f'cyclotomic_certificate_n{n}.json'; dump(outdir/name,proof)
+        records.append(dict(n=n,rows=plan.rows,cols=plan.cols,cost=plan.cost(),
+                            arithmetic_ratio=plan.cost()['arithmetic']/radix2_cost(n)['arithmetic'],
+                            construction_and_verification_seconds=time.perf_counter()-start,
+                            certificate=name,numerator_max_bits=proof['numerator_max_bits'],
+                            denominator_max_bits=proof['denominator_max_bits']))
+    return records
+
+
+def rank_checks():
+    results=[]; total=0
+    rng=random.Random(307)
+    for n,p in ((8,17),(16,97),(32,193),(64,257),(128,257)):
+        f=PrimeField(p); F=fourier(f,n)
+        for _ in range(80):
+            a,b=rng.randrange(1,min(n,16)+1),rng.randrange(1,min(n,16)+1)
+            s,t=rng.randrange(n),rng.randrange(n)
+            k,j=rng.randrange(n),rng.randrange(n)
+            block=[[F[(k+s*i)%n][(j+t*l)%n] for l in range(b)] for i in range(a)]
+            got=rank(f,block); expected=progression_rank(n,a,b,s,t)
+            assert got==expected
+            total+=1
+        results.append(dict(n=n,prime=p,random_progressions_verified=80))
+    return dict(total_verified=total,cases=results)
+
+
+def coset_checks():
+    records=[]
+    for n,p in ((4,17),(8,17),(16,97),(32,193),(64,257)):
+        f=PrimeField(p); F=fourier(f,n)
+        r=1
+        while r<n:
+            for offset in sorted({0,1,n//r-1}):
+                cols=[(offset+j*(n//r))%n for j in range(r)]
+                plan=skeleton(f,n,list(range(r)),cols,F)
+                observed=plan.cost()['residual_nonzeros']
+                expected=coset_residual_min(n,r)
+                assert observed==expected and observed>=n*n//4
+                assert plan.verify()
+                records.append(dict(n=n,r=r,coset_offset=offset,prime=p,observed_residual=observed,
+                                    proved_minimum=expected,quadratic_fraction=observed/(n*n)))
+            r*=2
+    return records
+
+
+def factored_controls():
+    records=[]
+    for n,p in ((4,17),(8,17),(16,97),(32,193),(64,257),(128,257)):
+        f=PrimeField(p); graph=compile_radix2(f,n)
+        assert graph.verify_all_inputs()
+        records.append(dict(n=n,prime=p,scalar_gates=len(graph.ops),
+                            root_table_preparation_multiplies=n-1,
+                            root_table_elements=n,full_outputs=n,
+                            all_input_modular_verification=True))
+    return records
+
+
+def numeric_rank_trap():
+    import numpy as np
+    n=4096; b=64
+    idx=np.arange(b)
+    A=np.exp(-2j*np.pi*idx[:,None]*idx[None,:]/n)
+    u,s,vh=np.linalg.svd(A,full_matrices=False)
+    f=PrimeField(12289); powers=[f.power(f.root(n),i) for i in range(n)]
+    modular=rank(f,[[powers[i*j%n] for j in range(b)] for i in range(b)])
+    assert modular==b
+    approximation_rank=8
+    approx=(u[:,:approximation_rank]*s[:approximation_rank])@vh[:approximation_rank,:]
+    x=vh[approximation_rank,:].conj()
+    error=float(np.linalg.norm((A-approx)@x))
+    assert error>0
+    # A concrete adversarial direction. Scaling invalidates any fixed absolute
+    # error promise for unrestricted-size inputs; it is NOT a stable-FFT lower bound.
+    scale=1/error
+    scaled_error=float(np.linalg.norm((A-approx)@(scale*x)))
+    return dict(n=n,block_rows=b,block_cols=b,exact_rank_by_vandermonde=b,
+                independent_modular_rank=modular,modular_prime=f.p,
+                relative_svd_ranks={str(e):int(np.sum(s>e*s[0])) for e in (1e-6,1e-9,1e-12,1e-14)},
+                singular_values=s.tolist(),truncation_rank=approximation_rank,
+                unit_input_output_l2_error=error,input_scale_for_unit_error=scale,
+                measured_scaled_output_l2_error=scaled_error,
+                scope='Diagnostic approximate-rank illustration, not a new approximation algorithm.')
+
+
+def recurrence_ledger():
+    # Work/N for N=2**L. Values are arithmetic model calculations, not benchmarks.
+    rows=[]
+    for L in (16,64,256,1024,4096):
+        t=max(1,int(math.log2(L)))
+        grouped=L  # fused ordinary stages still execute all L arithmetic levels
+        rows.append(dict(log2_n=L,fixed_30_percent_saving_ratio=0.7,
+                         fused_ordinary_stages_ratio=grouped/L,
+                         hypothetical_linear_cost_logN_block_ratio=math.ceil(L/t)/L,
+                         hypothetical_status='Needs exact O(b) growing block kernels including encountered twiddles, routing, and bounded total preparation; not supplied.'))
+    return rows
+
+
+def main():
+    parser=argparse.ArgumentParser(); parser.add_argument('--out',default='results')
+    args=parser.parse_args(); out=Path(args.out); out.mkdir(parents=True,exist_ok=True)
+    rng=random.Random(20261009)
+    cases=[]
+    # Exhaustive all 1- and 2-anchor combinations at N<=8, bounded samples later.
+    for n,p,ranks,budget in ((4,17,(1,2),1000),(8,17,(1,2),1000),
+                             (16,97,(1,2,4,8),120),(32,193,(1,2,4,8,16),40)):
+        for r in ranks:
+            record,_=search_case(n,p,r,budget,rng); cases.append(record)
+            print(f"N={n:2} r={r:2} {record['search']}: "
+                  f"best {record['best_cost']['arithmetic']} vs FFT {record['radix2']['arithmetic']}; "
+                  f"E nnz={record['best_cost']['residual_nonzeros']}",flush=True)
+    data=dict(status='NO_GENERAL_SUB_N_LOG_N_RESULT',date='2026-10-09',
+              python=platform.python_version(),seed=20261009,search=cases,
+              exact_cyclotomic=exact_small_certificates(cases,out),
+              progression_ranks=rank_checks(),coset_residuals=coset_checks(),
+              factored_residual_controls=factored_controls(),
+              direct_decoder_lower_bounds=[dict(n=n,best_lower_bound=min(direct_decoder_lower(n,r) for r in range(1,n)),
+                                               radix2=radix2_cost(n)['arithmetic'])
+                                           for n in (16,64,256,1024,4096,16384)],
+              numerical_rank_trap=numeric_rank_trap(),recurrence_ledger=recurrence_ledger())
+    dump(out/'research_results.json',data)
+    print('Exact certificates and all-input graph checks passed.',flush=True)
+
+
+if __name__=='__main__': main()

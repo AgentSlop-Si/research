@@ -1,0 +1,43 @@
+   1 """Charged-preparation benchmark for repeated edits at a KNOWN location.
+   2 
+   3 Adaptive method pays for one initial full FFT and preparing N/2+1 phases.
+   4 The comparison baseline transforms all 40 modified inputs separately.
+   5 This is a structured streaming application, NOT a benchmark of #130.
+   6 """
+   7 import time,json
+   8 import numpy as np
+   9 from scipy.fft import rfft
+  10 from prepared_update import PreparedPointEdit
+  11 rng=np.random.default_rng(67)
+  12 rows=[]
+  13 for n in [16384,65536,262144,1048576]:
+  14     x0=rng.standard_normal(n)
+  15     location=n//3
+  16     deltas=rng.normal(scale=0.1,size=40)
+  17     # warmup both methods
+  18     _=rfft(x0)
+  19     pp=PreparedPointEdit(n,location)
+  20     _=pp.update(rfft(x0),0.3)
+  21     times=[]
+  22     for method in ('full_rfft','prepared_point_edit'):
+  23         for _ in range(3):
+  24             x=x0.copy()
+  25             t0=time.perf_counter_ns()
+  26             if method=='prepared_point_edit':
+  27                 cached=rfft(x) # count initial FFT
+  28                 updater=PreparedPointEdit(n,location) # count phase generation
+  29             for d in deltas:
+  30                 x[location]+=d
+  31                 if method=='full_rfft':out=rfft(x)
+  32                 else:cached=updater.update(cached,d);out=cached
+  33             elapsed=(time.perf_counter_ns()-t0)/1e6
+  34             err=float(np.max(np.abs(out-rfft(x))))
+  35             assert np.allclose(out,rfft(x),atol=1e-7,rtol=1e-10)
+  36             times.append((method,elapsed,err))
+  37     full=float(np.median([v for m,v,e in times if m=='full_rfft']))
+  38     prepared=float(np.median([v for m,v,e in times if m=='prepared_point_edit']))
+  39     errors=[e for m,v,e in times if m=='prepared_point_edit']
+  40     row={'n':n,'updates':40,'full_rfft_ms':full,'prepared_total_ms':prepared,'ratio':full/prepared,'max_abs_error':max(errors),'includes_initial_spectrum_and_phase_prep':True}
+  41     rows.append(row)
+  42     print(f'N={n:8d} updates=40 full={full:9.2f}ms prepared_all={prepared:9.2f}ms speedup={full/prepared:.2f}x max_error={max(errors):.3e}')
+  43 with open('benchmark_prepared_results.json','w') as f:json.dump(rows,f,indent=2)

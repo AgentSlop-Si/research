@@ -1,0 +1,34 @@
+   1 """Independent exact rational moment helpers authored during the companion audit.
+   2 50-term atanh logarithm bounds and 12-term exponential with exact tail.
+   3 """
+   4 from fractions import Fraction as Q
+   5 from math import factorial
+   6 
+   7 def log_bounds(x):
+   8     x=Q(x); k=0
+   9     while x>2: x/=2; k+=1
+  10     def small(y):
+  11         z=(y-1)/(y+1)
+  12         lo=2*sum((z**(2*j+1)/Q(2*j+1) for j in range(50)),Q())
+  13         hi=lo+2*z**101/(101*(1-z*z))
+  14         return lo,hi
+  15     l,u=small(x);l2,u2=small(Q(2));l+=k*l2;u+=k*u2
+  16     den=10**50
+  17     return Q((l*den).numerator//(l*den).denominator,den),Q(-(-(u*den).numerator//(u*den).denominator),den)
+  18 
+  19 def moment(m,W,rows,a):
+  20     lo=hi=Q()
+  21     for t,n in rows.items():
+  22         l,u=log_bounds(Q(m,t)); l*=a;u*=a
+  23         assert 0<=l<=u<1
+  24         L=sum((l**j/factorial(j) for j in range(13)),Q())
+  25         U=sum((u**j/factorial(j) for j in range(13)),Q())+u**13/factorial(13)/(1-u/14)
+  26         w=Q(t*n,m*W);lo+=w*L;hi+=w*U
+  27     return lo,hi
+  28 
+  29 def js(x):
+  30     if isinstance(x,Q):return str(x)
+  31     if isinstance(x,dict):return {str(k):js(v) for k,v in x.items()}
+  32     if isinstance(x,(list,tuple)):return [js(v) for v in x]
+  33     return x
+  34 

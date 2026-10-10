@@ -1,0 +1,27 @@
+   1 # Independent verifier of the newly generated raw coefficients, no package imports.
+   2 import json
+   3 from pathlib import Path
+   4 from sympy import QQ,sympify,Poly,Symbol
+   5 K=QQ.cyclotomic_field(8)
+   6 file=Path(__file__).with_name('channel_certificate.json')
+   7 c=json.loads(file.read_text())
+   8 def dec(x):
+   9     if isinstance(x,list):return [dec(v) for v in x]
+  10     p=Poly(sympify(x,locals={'zeta':Symbol('zeta')}),Symbol('zeta'),domain=QQ)
+  11     return sum((K.convert(coeff)*K.unit**power[0] for power,coeff in p.terms()),K.zero)
+  12 a,b,v,e,d=[dec(c[name]) for name in ('forward_a','forward_b','backward_a','backward_b','diagonal')]
+  13 for col in range(8):
+  14     output=[K.zero]*8
+  15     for channel in range(3):
+  16         state=K.zero
+  17         for row in range(8):
+  18             state=a[channel][row]*state+(b[channel][row] if row==col else K.zero)
+  19             output[row]+=state
+  20         state=K.zero
+  21         for row in range(7,-1,-1):
+  22             state=v[channel][row]*state+(e[channel][row] if row==col else K.zero)
+  23             output[row]+=state
+  24     output[col]+=d[col]
+  25     target=[K.unit**((r*c['col_order'][col])%8) for r in c['row_order']]
+  26     assert output==target,(col,output,target)
+  27 print('SAVED_EXACT_CERTIFICATE_VERIFIED: 64/64 entries in Q(zeta_8)')

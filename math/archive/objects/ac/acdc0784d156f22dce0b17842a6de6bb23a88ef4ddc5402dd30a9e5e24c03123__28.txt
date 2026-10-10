@@ -1,0 +1,42 @@
+0001 from pathlib import Path
+0002 import random,json
+0003 from independent_checks import mul,rank
+0004 
+0005 def kernel_vector(a,p):
+0006  w=[r[:] for r in a];piv=[];h=0;N=len(a[0])
+0007  for c in range(N):
+0008   k=next((k for k in range(h,len(w)) if w[k][c]),None)
+0009   if k is None:continue
+0010   w[k],w[h]=w[h],w[k];iv=pow(w[h][c],-1,p);w[h]=[x*iv%p for x in w[h]]
+0011   for k in range(len(w)):
+0012    if k!=h:
+0013     v=w[k][c];w[k]=[(x-v*y)%p for x,y in zip(w[k],w[h])]
+0014   piv.append(c);h+=1
+0015   if h==len(w):break
+0016  free=next(c for c in range(N) if c not in piv);v=[0]*N;v[free]=1
+0017  for row,c in enumerate(piv):v[c]=(-w[row][free])%p
+0018  return v
+0019 
+0020 def main():
+0021  out={};n=32;p=97;omega=pow(5,3,p);rng=random.Random(9031);A=[]
+0022  for row in range(7):
+0023   order=list(range(n));rng.shuffle(order)
+0024   for g in range(4):
+0025    a=[0]*n
+0026    for j in order[g*8:(g+1)*8]:a[j]=rng.randrange(1,p)
+0027    A.append(a)
+0028  v=kernel_vector(A,p);F=[[pow(omega,k*j,p)for j in range(n)]for k in range(n)];image=mul(F,[[x]for x in v],p)
+0029  assert any(v) and not any(x[0] for x in mul(A,[[x]for x in v],p)) and any(x[0]for x in image)
+0030  out['overlapping_transcript']={'rank':rank(A,p),'rows':28,'columns':32,'nonzero_kernel':v,'nonzero_Fourier_image':[x[0]for x in image]}
+0031  moments=[]
+0032  for n,p,g in [(5,101,2),(8,97,5),(16,97,5),(25,101,2),(32,193,5),(49,197,2)]:
+0033   w=pow(g,(p-1)//n,p);x=[j+1 for j in range(n)];y=[sum(x[j]*pow(w,k*j,p)for j in range(n))%p for k in range(2*n-1)];H=[[y[i+j]for j in range(n)]for i in range(n)];assert rank(H,p)==n;moments.append({'n':n,'rank':n})
+0034   F=[[pow(w,k*j,p)for j in range(n)]for k in range(n)];coeff=[2,3,5,7];filter_matrix=[[sum(coeff[s]for s in range(4)if i==(j+s)%n)%p for j in range(n)]for i in range(n)];left=mul(F,filter_matrix,p);right=[[(sum(coeff[s]*pow(w,i*s,p)for s in range(4))*F[i][j])%p for j in range(n)]for i in range(n)];assert left==right
+0035  out['full_Hankel_and_filter_checks']=moments
+0036  for n in range(2,200):
+0037   for R in range(1,n+1):
+0038    # Equivalent exact positive inequality R-1 >= log2 R.
+0039    assert 2**(R-1)>=R
+0040  out['work_proxy_integer_minimum_verified']='R−1 ≥ log2 R; equality R=1,2'
+0041  Path(__file__).with_name('V16_EXTRA_RESULTS.json').write_text(json.dumps(out,indent=2));print('PASS independent transcript, moment, filter and work-proxy controls')
+0042 if __name__=='__main__':main()

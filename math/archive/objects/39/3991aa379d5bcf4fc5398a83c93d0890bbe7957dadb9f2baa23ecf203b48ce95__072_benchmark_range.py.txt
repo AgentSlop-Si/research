@@ -1,0 +1,86 @@
+"""Frozen-base range index vs vector recomputation and segment-tree intervals."""
+import json
+from pathlib import Path
+from time import perf_counter_ns
+import numpy as np
+from benchmark_phase8 import projected_register, phase, ms
+from range_product import FrozenProductIndex, SegmentProductIndex
+
+
+class SegmentIndex:
+    """O(mq) numeric storage control; O(log m) products per interval."""
+    def __init__(self, values):
+        m,q=values.shape
+        self.n=1<<(m-1).bit_length()
+        self.t=np.ones((2*self.n,q),dtype=np.complex128)
+        self.t[self.n:self.n+m]=values
+        width=self.n
+        while width>1:
+            lo=width//2
+            self.t[lo:width]=self.t[width:2*width:2]*self.t[width+1:2*width:2]
+            width=lo
+
+    def interval(self,lo,hi):
+        out=np.ones(self.t.shape[1],dtype=np.complex128)
+        lo+=self.n;hi+=self.n
+        while lo<hi:
+            if lo&1:out*=self.t[lo];lo+=1
+            if hi&1:hi-=1;out*=self.t[hi]
+            lo//=2;hi//=2
+        return out
+
+
+def run(n,m,q,p,versions,repeats=5):
+    rng=np.random.default_rng(n+m+q+p+814)
+    signals=rng.normal(0,.001/np.sqrt(n),(m,n));signals[:,0]+=1
+    bins=np.sort(rng.choice(n,q,replace=False))
+    events=[[(int(j),int(rng.integers(n)),float(rng.normal(0,.002)))
+             for j in rng.choice(m,p,replace=False)] for _ in range(versions)]
+    methods=('vector','range','segment','segment_engine')
+    def trial(method):
+        t=perf_counter_ns()
+        proj=projected_register(signals,bins)
+        registration=ms(t);t=perf_counter_ns()
+        ix=(FrozenProductIndex(n,bins,proj) if method == 'range' else
+            SegmentProductIndex(n,bins,proj) if method == 'segment_engine' else
+            SegmentIndex(proj) if method=='segment' else None)
+        root=ix.branch() if method in ('range','segment_engine') else None
+        prep=ms(t);t=perf_counter_ns();out=[]
+        for event in events:
+            if method in ('range','segment_engine'):
+                out.append(root.edit_many(event).query('auto' if method=='segment_engine' else 'range'))
+            elif method=='vector':
+                a=proj.copy()
+                for j,pos,d in event:a[j]+=d*phase(n,bins,pos)
+                out.append(np.prod(a,axis=0))
+            else:
+                val=np.ones(q,dtype=complex);start=0
+                for j,pos,d in sorted(event):
+                    if start<j:val*=ix.interval(start,j)
+                    val*=proj[j]+d*phase(n,bins,pos);start=j+1
+                if start<m:val*=ix.interval(start,m)
+                out.append(val)
+        warm=ms(t)
+        numeric=proj.nbytes+(ix.table.nbytes+ix.base.nbytes+ix.values.nbytes if method in ('range','segment_engine') else
+                            ix.t.nbytes if method=='segment' else 0)
+        return {'registration_ms':registration,'index_ms':prep,'warm_ms':warm,'cold_ms':registration+prep+warm,
+                'numeric_bytes_at_query':numeric},np.stack(out)
+    rows={method:[] for method in methods};maxerr=0
+    reference=trial('vector')[1]
+    for _ in range(repeats):
+        for method in rng.permutation(methods):
+            row,out=trial(method)
+            maxerr=max(maxerr,float(np.max(abs(out-reference))))
+            np.testing.assert_allclose(out,reference,rtol=2e-10,atol=2e-10)
+            rows[method].append(row)
+    summary={name:{key:float(np.median([r[key] for r in trials])) for key in trials[0]}
+             for name,trials in rows.items()}
+    return {'n':n,'m':m,'q':q,'p':p,'versions':versions,'summary':summary,'trials':rows,
+            'max_abs_error':maxerr,'all_requested_outputs_retained':True}
+
+
+if __name__=='__main__':
+    out=[]
+    for args in [(8192,128,64,4,96),(512,4096,64,4,512),(4096,2048,32,2,256),(512,256,64,128,64)]:
+        r=run(*args);out.append(r);print(args,r['summary'],flush=True)
+    Path('results/benchmark_range.json').write_text(json.dumps(out,indent=2)+'\n')

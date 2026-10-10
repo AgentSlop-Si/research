@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Exact bounded refinement: the base where W(h0,h1,h2,h6) is identically
+zero in h6 is finite (dimension zero), using a second Sylvester certificate.
+"""
+import json
+from pathlib import Path
+import sympy as sp
+from sympy.polys.rings import ring
+HERE=Path(__file__).resolve().parent
+zsym=sp.Symbol('z');K=sp.QQ.alg_field_from_poly(sp.Poly(zsym**4+1,zsym),alias='z')
+R,s,a,b,x=ring('h0,h1,h2,h6',K);Z=R.zero;O=R.one
+D=json.loads((HERE/'independent_polynomials.json').read_text())
+W=Z
+for mon,cs in D['W']['terms']:
+    ex=[0]*4
+    for j in mon:ex[j]+=1
+    W+=R.from_dict({tuple(ex):sum((K.unit**j*int(v) for j,v in enumerate(cs)),K.zero)})
+WC=[R.from_dict({m[:3]+(0,):c for m,c in W.items() if m[3]==i}) for i in range(3)]
+q1,r1=WC[1].div(WC[2]);q0,r0=WC[0].div(WC[2])
+assert all(m[0]==m[3]==0 for P in (r1,r0) for m in P)
+assert r1.gcd(r0)==O
+
+def coeff(P,j,d):return R.from_dict({m[:j]+(0,)+m[j+1:]:c for m,c in P.items() if m[j]==d})
+def determinant(rows):
+    n=len(rows);state={0:O}
+    for row in rows:
+        new={}
+        for mask,v in state.items():
+            for j,u in enumerate(row):
+                if u and not mask>>j&1:
+                    target=mask|(1<<j)
+                    new[target]=new.get(target,Z)+(-1)**((mask>>(j+1)).bit_count())*v*u
+        state=new
+    return state.get((1<<n)-1,Z)
+fc=[coeff(r1,1,j) for j in (2,1,0)];gc=[coeff(r0,1,j) for j in (3,2,1,0)]
+assert fc[0] and all(not any(m) for m in fc[0])
+rows=[[Z]*j+fc+[Z]*(2-j) for j in range(3)]+[[Z]*j+gc+[Z]*(1-j) for j in range(2)]
+rr=determinant(rows)
+assert rr and all(m[0]==m[1]==m[3]==0 for m in rr)
+# This nonzero resultant constrains h2 to finitely many values, while r1 is
+# monic up to a fixed nonzero constant in h1. W2 fixes h0 uniquely.
+def rec(P):
+    out=[]
+    for m,c in sorted(P.items()):
+        co=list(reversed(c.to_list()))+[0]*4
+        out.append({'exponents':list(m),'coefficient_rationals':[str(co[j]) for j in range(4)]})
+    return out
+result={'statement':'The base W2=W1=W0=0 is finite over C. Its h6-fiber union has dimension at most one.','W2':rec(WC[2]),'W1_remainder':rec(r1),'W0_remainder':rec(r0),'leading_h1_coefficient_of_W1_remainder':rec(fc[0]),'resultant_eliminating_h1':rec(rr),'resultant_degree_in_h2':max(m[2] for m in rr),'gcd_remainders_is_one':True,'base_point_upper_bound':2*max(m[2] for m in rr),'scope':'This sharpens only the identically-zero-W exceptional fiber stratum. The complete necessary candidate locus still has dimension at most two and is not shown empty.'}
+(HERE/'finite_fiber_results.json').write_text(json.dumps(result,indent=2)+'\n')
+print(json.dumps(result,indent=2),flush=True)

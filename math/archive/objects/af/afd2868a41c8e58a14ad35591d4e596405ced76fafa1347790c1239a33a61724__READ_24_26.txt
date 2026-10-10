@@ -1,0 +1,274 @@
+
+===== SOURCE 24 6094ff8e52038d8514d0d00822d345a7793fe40d45e88372bdaed746e3c995da fft_materials_extension_20261009/fft_rational_reuse_research/rational_reuse.py | 6079 bytes 164 lines =====
+   1 """Exact verified resolvent edges for the sparse grading H R = D H.
+   2 
+   3 One paid H anchor is required. This is a related-query method, not a faster
+   4 fresh transform. Cyclic band solves use standard low-rank boundary closure.
+   5 """
+   6 from collections import Counter
+   7 from dataclasses import dataclass
+   8 from pathlib import Path
+   9 import sys
+  10 
+  11 ROOT = Path(__file__).resolve().parent.parent
+  12 sys.path.insert(0, str(ROOT/'fft_sparse_grading_research'))
+  13 from grading import prepare_grading
+  14 from fixed_kernel import Counted
+  15 
+  16 
+  17 @dataclass
+  18 class BandPlan:
+  19     n: int
+  20     diagonal: object
+  21     inverse_diagonal: object
+  22     bands: list
+  23     responses: list
+  24     inverse_closure: list
+  25     preparation: dict
+  26 
+  27 
+  28 def triangular_solve(field, inverse_diagonal, bands, rhs):
+  29     n = len(rhs)
+  30     out = [field.zero]*n
+  31     for i in range(n-1, -1, -1):
+  32         acc = rhs[i]
+  33         for k, band in enumerate(bands, 1):
+  34             if i+k < n:
+  35                 acc = field.sub(acc, field.mul(band[i], out[i+k]))
+  36         out[i] = field.mul(inverse_diagonal, acc)
+  37     return out
+  38 
+  39 
+  40 def prepare_band(field, diagonal, bands):
+  41     """Prepare (diagonal I + sum band[k][i] shift^(k+1))^-1.
+  42 
+  43     Width is 1 or 2 and N>=4. Scalar diagonal must be nonzero; singular full
+  44     cyclic matrices are rejected by their small closure determinant.
+  45     """
+  46     if len(bands) not in (1, 2) or len(bands[0]) < 4:
+  47         raise ValueError('width 1 or 2 and N>=4 required')
+  48     n = len(bands[0])
+  49     if any(len(b) != n for b in bands) or diagonal == field.zero:
+  50         raise ValueError('equal band lengths and nonzero diagonal required')
+  51     c = Counted(field)
+  52     inverse_diagonal = c.inv(diagonal)
+  53     width = len(bands)
+  54     columns = [[field.zero]*n for _ in range(width)]
+  55     for k, band in enumerate(bands, 1):
+  56         for i in range(n-k, n):
+  57             j = i+k-n
+  58             columns[j][i] = c.add(columns[j][i], band[i])
+  59     responses = [triangular_solve(c, inverse_diagonal, bands, v) for v in columns]
+  60     closure = [[c.add(field.one if i == j else field.zero, responses[j][i])
+  61                 for j in range(width)] for i in range(width)]
+  62     if width == 1:
+  63         if closure[0][0] == field.zero:
+  64             raise ValueError('singular cyclic closure')
+  65         inverse = [[c.inv(closure[0][0])]]
+  66     else:
+  67         a, b = closure[0]
+  68         d, e = closure[1]
+  69         determinant = c.sub(c.mul(a, e), c.mul(b, d))
+  70         if determinant == field.zero:
+  71             raise ValueError('singular cyclic closure')
+  72         scale = c.inv(determinant)
+  73         inverse = [[c.mul(e, scale), c.neg(c.mul(b, scale))],
+  74                    [c.neg(c.mul(d, scale)), c.mul(a, scale)]]
+  75     return BandPlan(n, diagonal, inverse_diagonal, [list(b) for b in bands],
+  76                     responses, inverse, dict(c.count))
+  77 
+  78 
+  79 def apply_band(field, plan, values):
+  80     if len(values) != plan.n:
+  81         raise ValueError('wrong vector length')
+  82     out = []
+  83     for i in range(plan.n):
+  84         value = field.mul(plan.diagonal, values[i])
+  85         for k, band in enumerate(plan.bands, 1):
+  86             value = field.add(value, field.mul(band[i], values[(i+k)%plan.n]))
+  87         out.append(value)
+  88     return out
+  89 
+  90 
+  91 def solve_band(field, plan, rhs):
+  92     if len(rhs) != plan.n:
+  93         raise ValueError('wrong vector length')
+  94     c = Counted(field)
+  95     z = triangular_solve(c, plan.inverse_diagonal, plan.bands, rhs)
+  96     width = len(plan.bands)
+  97     alpha = []
+  98     for row in plan.inverse_closure:
+  99         acc = c.mul(row[0], z[0])
+ 100         for j in range(1, width):
+ 101             acc = c.add(acc, c.mul(row[j], z[j]))
+ 102         alpha.append(acc)
+ 103     out = list(z)
+ 104     for response, coefficient in zip(plan.responses, alpha):
+ 105         for i in range(plan.n):
+ 106             out[i] = c.sub(out[i], c.mul(response[i], coefficient))
+ 107     return out, dict(c.count)
+ 108 
+ 109 
+ 110 @dataclass
+ 111 class RationalPlan:
+ 112     n: int
+ 113     q: object
+ 114     shift: object
+ 115     grading: dict
+ 116     source: BandPlan
+ 117     target: BandPlan
+ 118     preparation: dict
+ 119 
+ 120 
+ 121 def prepare_rational(field, n, q, shift, grading=None):
+ 122     if n < 4 or n & (n-1) or shift == field.zero:
+ 123         raise ValueError('dyadic N>=4 and nonzero shift required')
+ 124     count = Counter()
+ 125     if grading is None:
+ 126         grading = prepare_grading(field, n, q)
+ 127         count.update(grading['preparation'])
+ 128     elif grading['n'] != n or grading['q'] != q:
+ 129         raise ValueError('stale grading plan')
+ 130     c = Counted(field)
+ 131     diagonal = c.neg(shift)
+ 132     source = prepare_band(field, diagonal, [grading['r']])
+ 133     target = prepare_band(field, diagonal, [grading['d1'], grading['d2']])
+ 134     count.update(c.count)
+ 135     count.update(source.preparation)
+ 136     count.update(target.preparation)
+ 137     return RationalPlan(n, q, shift, grading, source, target, dict(count))
+ 138 
+ 139 
+ 140 def generate_related_pair(field, plan, anchor_input, anchor_output):
+ 141     """Both inverses paid; caller's exact anchor_output=H anchor_input is trusted."""
+ 142     x, source_count = solve_band(field, plan.source, anchor_input)
+ 143     y, target_count = solve_band(field, plan.target, anchor_output)
+ 144     count = Counter(source_count)
+ 145     count.update(target_count)
+ 146     return x, y, dict(field_operations=dict(count), source_solve=source_count,
+ 147                       target_solve=target_count, full_vector_outputs=2*plan.n,
+ 148                       expensive_transform_calls=0)
+ 149 
+ 150 
+ 151 def verified_output(field, plan, anchor_input, anchor_output, query_input):
+ 152     """Use a supplied shift only after checking its full relation in O(N)."""
+ 153     if any(len(x) != plan.n for x in (anchor_input, anchor_output, query_input)):
+ 154         raise ValueError('wrong vector length')
+ 155     c = Counted(field)
+ 156     recovered = apply_band(c, plan.source, query_input)
+ 157     if recovered != list(anchor_input):
+ 158         raise ValueError('query does not satisfy the proposed rational edge')
+ 159     out, solve_count = solve_band(field, plan.target, anchor_output)
+ 160     count = Counter(c.count)
+ 161     count.update(solve_count)
+ 162     return out, dict(field_operations=dict(count), relation_field_operations=dict(c.count),
+ 163                      relation_comparisons=plan.n, full_output_writes=plan.n,
+ 164                      expensive_transform_calls=0)
+
+===== SOURCE 25 6e788f624747e254973135f9e610208b73098335bbe32dc443888814e3ee5b01 fft_materials_extension_20261009/fft_rational_reuse_research/run_audit.py | 5372 bytes 106 lines =====
+   1 """Exact basis audit and a charged same-target related-query comparator."""
+   2 from collections import Counter
+   3 import json
+   4 from pathlib import Path
+   5 import random
+   6 import sys
+   7 from rational_reuse import (prepare_rational, solve_band, apply_band,
+   8                             generate_related_pair, verified_output, Counted)
+   9 from fixed_kernel import prepare
+  10 from operators import prepare_sparse, horner_c
+  11 from prior_exact_arithmetic import PrimeField, CyclotomicField
+  12 
+  13 ROOT = Path(__file__).resolve().parent.parent
+  14 sys.path.insert(0, str(ROOT/'fft_qweyl_resolvent_research'))
+  15 from fast_hc import prepare_fast, apply_hc
+  16 
+  17 
+  18 def total(count):
+  19     return sum(count.values())
+  20 
+  21 
+  22 def main():
+  23     cases = []
+  24     basis = mixed = singular = rejected = 0
+  25     fields = [(PrimeField(65537), n) for n in (4,8,16,32)]
+  26     fields += [(PrimeField(998244353), n) for n in (4,8,16,32)]
+  27     fields += [(CyclotomicField(n), n) for n in (4,8)]
+  28     rng = random.Random(20261009)
+  29     for field,n in fields:
+  30         q = field.root(n)
+  31         kernel = prepare(field,n,q)
+  32         sparse = prepare_sparse(field,n,q)
+  33         # 2 can itself have dyadic root order in a finite field: choose safely.
+  34         shift = next(field.integer(v) for v in range(2,100)
+  35                      if field.power(field.integer(v),n) != field.one)
+  36         plan = prepare_rational(field,n,q,shift)
+  37         vectors = [[field.one if i==j else field.zero for i in range(n)] for j in range(n)]
+  38         vectors += [[field.integer(rng.randrange(-5,6)) for _ in range(n)] for _ in range(3)]
+  39         for index,x in enumerate(vectors):
+  40             y,_ = horner_c(field,sparse,kernel.kernel,x)
+  41             xq,yq,counts = generate_related_pair(field,plan,x,y)
+  42             truth,_ = horner_c(field,sparse,kernel.kernel,xq)
+  43             assert yq == truth
+  44             assert apply_band(field,plan.source,xq) == x
+  45             assert apply_band(field,plan.target,yq) == y
+  46             checked,detail = verified_output(field,plan,x,y,xq)
+  47             assert checked == yq and detail['expensive_transform_calls']==0
+  48             if index < n: basis+=1
+  49             else: mixed+=1
+  50         for bad_shift in (field.one,q):
+  51             try: prepare_rational(field,n,q,bad_shift)
+  52             except ValueError: singular+=1
+  53             else: raise AssertionError('singular root shift accepted')
+  54         bad=list(xq);bad[0]=field.add(bad[0],field.one)
+  55         try: verified_output(field,plan,x,y,bad)
+  56         except ValueError: rejected+=1
+  57         else: raise AssertionError('wrong relation accepted')
+  58         cases.append(dict(field=getattr(field,'p',f'Q(zeta_{n})'),n=n,
+  59                           preparation=plan.preparation,pair_online=counts,
+  60                           verified_online=detail))
+  61     benchmark=[]
+  62     field=PrimeField(998244353)
+  63     for n in (32,64,128,256):
+  64         eta=field.root(2*n);q=field.mul(eta,eta)
+  65         fast=prepare_fast(field,n,eta)
+  66         x=[field.integer(rng.randrange(-100,101)) for _ in range(n)]
+  67         y,anchor=apply_hc(field,fast,x)
+  68         plan=prepare_rational(field,n,q,field.integer(2))
+  69         queries=16
+  70         related=Counter(fast.preparation)
+  71         related.update(plan.preparation);related.update(anchor['field_operations'])
+  72         baseline=Counter(fast.preparation);baseline.update(anchor['field_operations'])
+  73         # Both workloads generate the same related inputs. Charge their common
+  74         # grading/source-solver preparation to the fresh-transform baseline too.
+  75         baseline.update(plan.grading['preparation'])
+  76         baseline.update(plan.source.preparation)
+  77         baseline['neg'] += 1
+  78         last_x,last_y=x,y
+  79         supports=[]
+  80         for _ in range(queries):
+  81             current_x,source_count=solve_band(field,plan.source,last_x)
+  82             current_y,detail=verified_output(field,plan,last_x,last_y,current_x)
+  83             truth,fresh=apply_hc(field,fast,current_x)
+  84             assert current_y==truth
+  85             # Query input generation is included in BOTH competing workloads.
+  86             related.update(source_count);related.update(detail['field_operations'])
+  87             baseline.update(source_count);baseline.update(fresh['field_operations'])
+  88             supports.append(sum(a!=b for a,b in zip(current_x,last_x)))
+  89             last_x,last_y=current_x,current_y
+  90         benchmark.append(dict(n=n,additional_queries=queries,
+  91                               cold_graph_field_operations=total(related),
+  92                               cold_fresh_field_operations=total(baseline),
+  93                               graph_ledger=dict(related),fresh_ledger=dict(baseline),
+  94                               minimum_changed_coordinates=min(supports),
+  95                               all_outputs_materialized=True,
+  96                               complete_relation_verification_charged=True,
+  97                               baseline_extra_root='supplied primitive 2N-th root'))
+  98     report=dict(status='PASS',cases=cases,full_basis_vectors=basis,mixed_vectors=mixed,
+  99                 singular_shift_rejections=singular,bad_relation_rejections=rejected,
+ 100                 comparisons=benchmark,
+ 101                 model='Exact field arithmetic; related-query anchor and all preparation paid; not CPU timings.')
+ 102     Path(__file__).with_name('results.json').write_text(json.dumps(report,indent=2)+'\n')
+ 103     print(json.dumps({k:v for k,v in report.items() if k!='cases'},indent=2))
+ 104 
+ 105 
+ 106 if __name__=='__main__': main()

@@ -1,0 +1,87 @@
+0001 #!/usr/bin/env python3
+0002 """Independent bank invariants and striped Fourier cuts; no source imports."""
+0003 import pathlib,json
+0004 ROOT=pathlib.Path(__file__).resolve().parent;P=65537
+0005 def identity(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+0006 def mm(a,b,p=P):
+0007  bt=list(zip(*b));return [[sum(x*y for x,y in zip(row,col))%p for col in bt] for row in a]
+0008 def sub(a,b,p=P):return [[(x-y)%p for x,y in zip(r,s)] for r,s in zip(a,b)]
+0009 def rank(a,p=P):
+0010  a=[r[:] for r in a];rr=0
+0011  for j in range(len(a[0])):
+0012   k=next((k for k in range(rr,len(a)) if a[k][j]%p),None)
+0013   if k is None:continue
+0014   a[rr],a[k]=a[k],a[rr];iv=pow(a[rr][j],-1,p);a[rr]=[x*iv%p for x in a[rr]]
+0015   for k in range(rr+1,len(a)):
+0016    c=a[k][j]
+0017    if c:a[k]=[(x-c*y)%p for x,y in zip(a[k],a[rr])]
+0018   rr+=1
+0019   if rr==len(a):break
+0020  return rr
+0021 def inv(a,p=P):
+0022  n=len(a);a=[r[:]+s for r,s in zip(a,identity(n))]
+0023  for j in range(n):
+0024   k=next(k for k in range(j,n) if a[k][j]%p);a[j],a[k]=a[k],a[j]
+0025   v=pow(a[j][j],-1,p);a[j]=[v*x%p for x in a[j]]
+0026   for k in range(n):
+0027    if k!=j:
+0028     c=a[k][j];a[k]=[(x-c*y)%p for x,y in zip(a[k],a[j])]
+0029  return [r[n:] for r in a]
+0030 def power4(a,p=P):a2=mm(a,a,p);return mm(a2,a2,p)
+0031 def fourier(n,p=P,gen=3):
+0032  w=pow(gen,(p-1)//n,p);assert pow(w,n,p)==1 and(n==1 or pow(w,n//2,p)!=1)
+0033  return [[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+0034 
+0035 bank_cases=[]
+0036 for n,m in [(4,2),(8,2),(8,4),(16,4),(16,8),(32,8)]:
+0037  q=n//m;small=fourier(m);Q=identity(n)
+0038  for j in range(n-1):Q[j+1][j]=(j+2)%P
+0039  Qi=inv(Q)
+0040  for active in [[],[0],list(range(0,q,2)),list(range(q))]:
+0041   B=identity(n);E=[[0]*n for _ in range(n)]
+0042   for b in active:
+0043    for i in range(m):
+0044     E[b*m+i][b*m+i]=1
+0045     for j in range(m):B[b*m+i][b*m+j]=small[i][j]
+0046   K=mm(mm(Qi,B),Q);I=identity(n);Pi=[[x*pow(m*m-1,-1,P)%P for x in row] for row in sub(power4(K),I)]
+0047   assert Pi==mm(mm(Qi,E),Q)
+0048   assert mm(Pi,Pi)==Pi and rank(Pi)==m*len(active)
+0049   assert mm(sub(K,I),sub(I,Pi))==[[0]*n for _ in range(n)]
+0050   assert rank(sub(K,I))==m*len(active)
+0051   K2=mm(K,K);assert sum(K2[j][j] for j in range(n))%P==(n+m*len(active))%P
+0052   bank_cases.append({'N':n,'m':m,'active_blocks':active,'projector_rank':m*len(active)})
+0053 
+0054 # Exact projector false positive: wrong active Fourier spectrum.
+0055 p=17;K=[[0]*4 for _ in range(4)]
+0056 for j,x in enumerate([6,7,1,1]):K[j][j]=x
+0057 I=identity(4);Pi=[[x*pow(3,-1,p)%p for x in row] for row in sub(power4(K,p),I,p)]
+0058 assert mm(Pi,Pi,p)==Pi and rank(Pi,p)==2
+0059 assert mm(sub(K,I,p),sub(I,Pi,p),p)==[[0]*4 for _ in range(4)]
+0060 tr2=sum(mm(K,K,p)[j][j] for j in range(4))%p;assert tr2==2 and tr2!=6
+0061 # Normalized F2 has fourth power I and loses the active selector contrast.
+0062 F2=[[1,1],[1,p-1]];Fn=[[x*pow(6,-1,p)%p for x in row] for row in F2]
+0063 assert power4(Fn,p)==identity(2)
+0064 
+0065 striped=[]
+0066 for k in range(2,10):
+0067  n=1<<k;m=1<<(k//2);q=n//m;t=q//2;L=m//t;assert m%t==0
+0068  R=[int(format(i,f'0{k}b')[::-1],2) for i in range(n)]
+0069  first={j for j in range(n) if(j//m)%2==0};other=set(range(n))-first
+0070  natural=[(j+1)%n for j in range(n)];bitrev=[R[(R[j]+1)%n] for j in range(n)]
+0071  enter=lambda pi:sum(j in other and pi[j] in first for j in range(n))
+0072  assert enter(natural)==q//2 and enter(bitrev)==m
+0073  w=pow(3,(P-1)//n,P)
+0074  a=[[pow(w,i*j,P) for j in sorted(other)] for i in sorted(first)]
+0075  actual=rank(a);assert actual==n//2
+0076  eta=pow(w,t*t,P);assert pow(eta,2*L,P)==1 and pow(eta,L,P)!=1
+0077  assert rank([[pow(eta,b*d,P) for d in range(L)] for b in range(L)])==L
+0078  cap=2*q+4*m
+0079  if n>=256:assert cap<n//2
+0080  striped.append({'N':n,'m':m,'q':q,'natural_incoming':q//2,'bitrev_cycle_incoming':m,'four_layer_rank_cap':cap,'Fourier_cross_rank':actual,'strict_exclusion':cap<actual,'small_Vandermonde_block_size':L})
+0081 
+0082 out={'field':P,'abstract_bank_similarity_cases':bank_cases,
+0083  'projector_false_positive':{'field':17,'K_diagonal':[6,7,1,1],'projector_rank':2,'trace_K_squared':2,'required_even_F2_bank_trace':6},
+0084  'normalized_F2_fourth_power_identity':True,'striped_bank_cases':striped,
+0085  'scope':'Necessary bank conditions and a restricted cycle/endpoint exclusion; no constructed paired-Green Fourier factorization.',
+0086  'uploaded_code_executed':False}
+0087 (ROOT/'INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))

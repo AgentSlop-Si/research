@@ -1,0 +1,140 @@
+--- original/cost_aware_fft(1).py
++++ patched/cost_aware_fft.py
+@@ -46,6 +46,14 @@
+     return z
+ 
+ 
++def _retained_array_bytes(array):
++    """Count an ndarray's retained backing allocation, including view padding."""
++    owner = array
++    while isinstance(owner.base, np.ndarray):
++        owner = owner.base
++    return owner.nbytes
++
++
+ class Base:
+     """Immutable raw input and rFFT shared by multiple state versions."""
+     def __init__(self, signal, spectrum):
+@@ -145,6 +153,9 @@
+     max_cache_bytes limits strong references held for implicit exact lookup.
+     max_phase_bytes limits cached phase-vector bytes. Explicitly held states
+     and bases belong to the caller; they are separately reported as live bytes.
++    max_temp_bytes is a conservative pruned work-array eligibility budget,
++    not a hard allocator/RSS limit. Backend/runtime hidden allocations and
++    separately budgeted persistent phase-cache storage are excluded.
+ 
+     The conservative fallback avoids expensive data-driven relation searches.
+     Relation metadata (edit index/shift/basis coefficients) is passed explicitly.
+@@ -283,12 +294,13 @@
+         self.stats['phase_misses'] += 1
+         phase = phases_tiled(n, position, count=count)
+         phase.flags.writeable = False
+-        if phase.nbytes <= self.max_phase_bytes:
++        retained_bytes = _retained_array_bytes(phase)
++        if retained_bytes <= self.max_phase_bytes:
+             self._phase[key] = phase
+-            self._phase_bytes += phase.nbytes
++            self._phase_bytes += retained_bytes
+             while self._phase_bytes > self.max_phase_bytes:
+                 _, old = self._phase.popitem(last=False)
+-                self._phase_bytes -= old.nbytes
++                self._phase_bytes -= _retained_array_bytes(old)
+         return phase
+ 
+     @staticmethod
+@@ -387,6 +399,27 @@
+             out += d*self._phase_vector(state.n,p,out.size)
+         return _validate_spectrum(out, state.n)
+ 
++    @staticmethod
++    def _pruned_required_bytes(state):
++        """Conservative visible-array estimate shared by dispatch and execution.
++
++        Charge six length-N complex buffers for rows, FFT output, transpose
++        copy, half-spectrum output/addition, phase/multiplication staging and
++        workspace reserve; also six length-m float buffers and 64 KiB for
++        tile padding/small allocations. This intentionally overestimates the
++        normal array peak. Unspecified FFT/runtime hidden allocations are
++        not bounded; this is not a hard process-memory guarantee.
++        """
++        n, k = state.n, state.distinct_edits
++        if not k:
++            return 0  # no sparse/pruned kernel is needed
++        if n & (n-1):
++            raise ValueError('pruned mode requires power-of-two length')
++        b = 1 << (k-1).bit_length()
++        if b > n:
++            raise ValueError('more edited coordinates than signal positions')
++        return 96*n + 48*(n//b) + 64*1024
++
+     def _pruned_spectrum(self,state):
+         """Residue-class decomposition for known sparse changes.
+ 
+@@ -404,8 +437,8 @@
+         if n & (n-1):
+             raise ValueError('pruned mode requires power-of-two length')
+         b=1 << (k-1).bit_length()
+-        if b > n or (16*n + 8*(n//b)) > self.max_temp_bytes:
+-            raise MemoryError('pruned method exceeds temporary memory budget')
++        if self._pruned_required_bytes(state) > self.max_temp_bytes:
++            raise MemoryError('pruned work-array estimate exceeds temporary budget')
+         m = n//b
+         rows = np.zeros((m,b),dtype=np.complex128)
+         q = np.arange(m,dtype=np.float64)
+@@ -476,7 +509,8 @@
+         methods=['native']
+         if state.distinct_edits:
+             methods+=['direct']
+-            if include_pruned and state.n & (state.n-1)==0 and state.n*16 <= self.max_temp_bytes:
++            if (include_pruned and state.n & (state.n-1)==0
++                    and self._pruned_required_bytes(state) <= self.max_temp_bytes):
+                 methods+=['pruned']
+         else:
+             methods+=['linear']
+@@ -486,11 +520,21 @@
+             runs=[]
+             for run in range(repeats):
+                 t0=time.perf_counter_ns()
+-                out=self.materialize(state,method=method,cache_output=False)
++                try:
++                    out=self.materialize(state,method=method,cache_output=False)
++                except MemoryError:
++                    if method != 'pruned':
++                        raise
++                    # A backend allocation may fail despite the estimate.
++                    # Do not select a candidate that did not finish all trials.
++                    runs=[]
++                    self.stats['calibration_pruned_memory_skips'] += 1
++                    break
+                 elapsed=(time.perf_counter_ns()-t0)*1e-9
+                 np.testing.assert_allclose(out,reference,rtol=2e-8,atol=2e-7)
+                 runs.append(elapsed)
+-            benchmark[method] = float(np.median(runs))
++            if len(runs) == repeats:
++                benchmark[method] = float(np.median(runs))
+         best=min(benchmark,key=benchmark.get)
+         prof=Profile(state.n,state.distinct_edits,state.term_count,
+                      any(shift for (_,shift) in state.terms),benchmark,best)
+@@ -516,7 +560,12 @@
+ 
+ 
+ def sparse_from_known_changes(base_spectrum, n, changes, method='direct'):
+-    """Functional API: a real length-n reference rFFT plus known (position,delta)."""
++    """Reference rFFT plus known edits, with no stored time-domain reference.
++
++    'auto' conservatively means 'direct' in this spectrum-only interface.
++    Native recomputation cannot be used without reconstructing missing input;
++    no inverse FFT or other hidden reconstruction is performed.
++    """
+     e=RelationFFT(max_cache_bytes=0)
+     original=np.zeros(n)
+     spectrum=np.array(base_spectrum,dtype=np.complex128,copy=True)
+@@ -528,6 +577,8 @@
+         state.edit(p,d)
+     if method=='native':
+         raise ValueError('reference spectrum alone insufficient for native recompute')
++    if method=='auto':
++        method='direct'
+     return e.materialize(state,method=method)
+ 
+ class TrackedBins:

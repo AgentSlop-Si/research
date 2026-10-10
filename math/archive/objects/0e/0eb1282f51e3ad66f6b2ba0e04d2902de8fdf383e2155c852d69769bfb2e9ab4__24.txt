@@ -1,0 +1,232 @@
+   1 """Exact, fully finite-field cut-rank audit for global O(N)-work scan stages.
+   2 
+   3 The proof is mathematical; this file checks representative finite matrices.
+   4 No FFT outputs or intermediate convolution are cached, and there are no threads.
+   5 """
+   6 from __future__ import annotations
+   7 
+   8 from itertools import combinations
+   9 import random
+  10 
+  11 P = 998244353
+  12 G = 3
+  13 
+  14 
+  15 def dft(n: int, p: int = P, primitive_root: int = G) -> list[list[int]]:
+  16     if n < 2 or n & (n-1) or (p-1)%n:
+  17         raise ValueError('n must be a supported power of two >=2')
+  18     omega = pow(primitive_root, (p-1)//n, p)
+  19     return [[pow(omega, i*j, p) for j in range(n)] for i in range(n)]
+  20 
+  21 
+  22 def rank(rows: list[list[int]], p: int = P) -> int:
+  23     if not rows:
+  24         return 0
+  25     w = len(rows[0])
+  26     if any(len(row) != w for row in rows):
+  27         raise ValueError('matrix is not rectangular')
+  28     a = [[int(v)%p for v in row] for row in rows]
+  29     h=len(a); r=0
+  30     for c in range(w):
+  31         pivot = next((i for i in range(r,h) if a[i][c]), None)
+  32         if pivot is None: continue
+  33         a[r], a[pivot] = a[pivot], a[r]
+  34         inv = pow(a[r][c],-1,p)
+  35         for j in range(c,w):
+  36             a[r][j] = a[r][j]*inv%p
+  37         for i in range(r+1,h):
+  38             f=a[i][c]
+  39             if f:
+  40                 for j in range(c,w):
+  41                     a[i][j]=(a[i][j]-f*a[r][j])%p
+  42         r+=1
+  43         if r==h: break
+  44     return r
+  45 
+  46 
+  47 def offdiag_ranks(a:list[list[int]], cut:int, p:int=P) -> tuple[int,int]:
+  48     n=len(a)
+  49     if not 0<cut<n or any(len(row)!=n for row in a):
+  50         raise ValueError('square matrix with nontrivial cut required')
+  51     upper=rank([row[cut:] for row in a[:cut]],p)
+  52     lower=rank([row[:cut] for row in a[cut:]],p)
+  53     return upper,lower
+  54 
+  55 
+  56 def diag(values:list[int],p:int=P)->list[list[int]]:
+  57     n=len(values)
+  58     return [[values[i]%p if i==j else 0 for j in range(n)] for i in range(n)]
+  59 
+  60 
+  61 def forward(a:list[int],b:list[int],p:int=P)->list[list[int]]:
+  62     """y[0]=b0*x0, y[i]=a[i]*y[i-1]+b[i]*x[i]."""
+  63     n=len(a)
+  64     if len(b)!=n: raise ValueError('coefficient mismatch')
+  65     out=[[0]*n for _ in range(n)]
+  66     for i in range(n):
+  67         if i:
+  68             out[i]=[(a[i]*t)%p for t in out[i-1]]
+  69         out[i][i]=b[i]%p
+  70     return out
+  71 
+  72 
+  73 def backward(a:list[int],b:list[int],p:int=P)->list[list[int]]:
+  74     """y[n-1]=b[n-1]*x[n-1], y[i]=a[i]*y[i+1]+b[i]*x[i]."""
+  75     n=len(a)
+  76     if len(b)!=n: raise ValueError('coefficient mismatch')
+  77     out=[[0]*n for _ in range(n)]
+  78     for i in range(n-1,-1,-1):
+  79         if i<n-1:
+  80             out[i]=[(a[i]*t)%p for t in out[i+1]]
+  81         out[i][i]=b[i]%p
+  82     return out
+  83 
+  84 
+  85 def matmul(a:list[list[int]],b:list[list[int]],p:int=P)->list[list[int]]:
+  86     if len(a)!=len(b) or any(len(row)!=len(a) for row in a+b):
+  87         raise ValueError('square equal-size matrices required')
+  88     n=len(a)
+  89     out=[[0]*n for _ in range(n)]
+  90     for i in range(n):
+  91         for k,v in enumerate(a[i]):
+  92             if v:
+  93                 for j,w in enumerate(b[k]):
+  94                     out[i][j]=(out[i][j]+v*w)%p
+  95     return out
+  96 
+  97 
+  98 def permute(a:list[list[int]],row_order:list[int],col_order:list[int]) -> list[list[int]]:
+  99     n=len(a)
+ 100     if sorted(row_order)!=list(range(n)) or sorted(col_order)!=list(range(n)):
+ 101         raise ValueError('permutations required')
+ 102     return [[a[i][j] for j in col_order] for i in row_order]
+ 103 
+ 104 
+ 105 def bit_reverse_order(n:int)->list[int]:
+ 106     if n<2 or n&(n-1):raise ValueError('power of two required')
+ 107     k=n.bit_length()-1
+ 108     return [int(f'{i:0{k}b}'[::-1],2) for i in range(n)]
+ 109 
+ 110 
+ 111 def gray_order(n:int)->list[int]:
+ 112     if n<2 or n&(n-1):raise ValueError('power of two required')
+ 113     return [i^(i>>1) for i in range(n)]
+ 114 
+ 115 
+ 116 def parity_order(n:int)->list[int]:
+ 117     return list(range(0,n,2))+list(range(1,n,2))
+ 118 
+ 119 
+ 120 def crossing_count(order:list[int],cut:int)->int:
+ 121     n=len(order)
+ 122     if sorted(order)!=list(range(n)):raise ValueError('permutation required')
+ 123     return sum(1 for x in order[:cut] if x>=cut)
+ 124 
+ 125 
+ 126 def balanced_rank_report(n:int)->dict:
+ 127     f=dft(n);cut=n//2
+ 128     orders={'natural':list(range(n)), 'bit_reverse':bit_reverse_order(n),
+ 129             'parity':parity_order(n),'gray':gray_order(n)}
+ 130     results={}
+ 131     for label,order in orders.items():
+ 132         results[label]={
+ 133             'upper_lower':offdiag_ranks(permute(f,order,order),cut),
+ 134             'permutation_cut_crossings':crossing_count(order,cut),
+ 135         }
+ 136     return {'n':n,'balanced_cut':cut,'data':results}
+ 137 
+ 138 
+ 139 def exact_min_balanced_submatrix_rank(n:int)->dict:
+ 140     """Exhaust all row and column subsets of size n/2 (practical at n<=8)."""
+ 141     if n>8:raise ValueError('Exhaustive subset search limited to n<=8')
+ 142     f=dft(n);h=n//2
+ 143     best=n; witnesses=[];hist={}
+ 144     row_sets=list(combinations(range(n),h))
+ 145     for rs in row_sets:
+ 146         for cs in row_sets:
+ 147             r=rank([[f[i][j] for j in cs] for i in rs])
+ 148             hist[r]=hist.get(r,0)+1
+ 149             if r<best:
+ 150                 best=r;witnesses=[{'rows':rs,'cols':cs}]
+ 151             elif r==best and len(witnesses)<3:
+ 152                 witnesses.append({'rows':rs,'cols':cs})
+ 153     return {'n':n, 'submatrix_count':len(row_sets)**2,'minimum_rank':best,
+ 154             'witnesses':witnesses, 'histogram':hist}
+ 155 
+ 156 
+ 157 def random_scan_compositions(n:int=10,trials:int=30,seed:int=20261009)->dict:
+ 158     rng=random.Random(seed)
+ 159     worst_violation=0
+ 160     checked=0
+ 161     for _ in range(trials):
+ 162         M=diag([rng.randint(1,20) for _ in range(n)])
+ 163         used_f=used_b=0
+ 164         for __ in range(rng.randint(1,10)):
+ 165             typ=rng.choice(['f','b','d'])
+ 166             a=[rng.randrange(1,P) for _ in range(n)]
+ 167             b=[rng.randrange(1,P) for _ in range(n)]
+ 168             if typ=='f':
+ 169                 layer=forward(a,b);used_f+=1
+ 170             elif typ=='b':
+ 171                 layer=backward(a,b);used_b+=1
+ 172             else:layer=diag(b)
+ 173             M=matmul(layer,M)
+ 174             for cut in range(1,n):
+ 175                 upper,lower=offdiag_ranks(M,cut)
+ 176                 worst_violation=max(worst_violation,upper-used_b,lower-used_f)
+ 177                 assert upper<=used_b and lower<=used_f
+ 178                 checked+=1
+ 179     return {'n':n,'trials':trials,'checked_cut_bounds':checked,'max_violation':worst_violation}
+ 180 
+ 181 
+ 182 if __name__=='__main__':
+ 183     import json
+ 184     print(json.dumps([balanced_rank_report(n) for n in (8,16,32,64,128)],indent=2))
+ 185     print(json.dumps(exact_min_balanced_submatrix_rank(8),indent=2))
+ 186     print(json.dumps(random_scan_compositions(),indent=2))
+ 187 
+ 188 
+ 189 def cut_rank_potential(a:list[list[int]],p:int=P)->int:
+ 190     """Sum of upper and lower off-diagonal ranks over all contiguous cuts."""
+ 191     return sum(sum(offdiag_ranks(a,c,p)) for c in range(1,len(a)))
+ 192 
+ 193 
+ 194 def permutation_matrix(order:list[int],p:int=P)->list[list[int]]:
+ 195     n=len(order)
+ 196     if sorted(order)!=list(range(n)):raise ValueError('permutation required')
+ 197     return [[int(j==order[i]) for j in range(n)] for i in range(n)]
+ 198 
+ 199 
+ 200 def footrule(order:list[int])->int:
+ 201     n=len(order)
+ 202     if sorted(order)!=list(range(n)):raise ValueError('permutation required')
+ 203     return sum(abs(i-order[i]) for i in range(n))
+ 204 
+ 205 
+ 206 def multichannel(n:int,r_forward:int,r_backward:int,seed:int=10)->list[list[int]]:
+ 207     rng=random.Random(seed)
+ 208     a=diag([rng.randrange(1,P) for _ in range(n)])
+ 209     for direction,num in ((forward,r_forward),(backward,r_backward)):
+ 210         for _ in range(num):
+ 211             b=direction([rng.randrange(1,P) for _ in range(n)],[rng.randrange(1,P) for _ in range(n)])
+ 212             for i in range(n):
+ 213                 for j in range(n):
+ 214                     a[i][j]=(a[i][j]+b[i][j])%P
+ 215     return a
+ 216 
+ 217 
+ 218 def independent_balanced_bound_check(n:int=8)->dict:
+ 219     """Exhaustive balanced subsets at N=8, exact rank and optimality witness."""
+ 220     if n!=8:raise ValueError('designed for exhaustive N=8')
+ 221     f=dft(n)
+ 222     all_sets=list(combinations(range(n),n//2))
+ 223     nchecks=0
+ 224     worst_slack=n
+ 225     for rs in all_sets:
+ 226         for cs in all_sets:
+ 227             sub=[[f[i][j] for j in cs] for i in rs]
+ 228             r=rank(sub)
+ 229             assert r* n >= len(rs)*len(cs)
+ 230             worst_slack=min(worst_slack,r-n//4)
+ 231             nchecks+=1
+ 232     return {'pairs':nchecks,'bound':'rank >= |R||C|/N', 'min_excess_over_bound':worst_slack}

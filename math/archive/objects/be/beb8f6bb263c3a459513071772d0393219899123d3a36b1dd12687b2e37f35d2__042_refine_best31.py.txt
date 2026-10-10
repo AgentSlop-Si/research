@@ -1,0 +1,83 @@
+import torch, random, math, json, time
+
+torch.set_default_dtype(torch.float64); cdtype=torch.complex128
+n=16; a=(1+1j)/2; b=(1-1j)/2
+C=torch.tensor([[a,b],[b,a]],dtype=cdtype); T=C
+for _ in range(3): T=torch.kron(T,C)
+Tnorm=torch.linalg.norm(T)
+standard=[]
+for bit in range(4):
+ step=1<<bit
+ for block in range(0,n,2*step):
+  for off in range(step): standard.append((block+off,block+off+step))
+
+def supp(seq):
+ S=[1<<i for i in range(n)]; full=(1<<n)-1
+ for p,q in seq:
+  u=S[p]|S[q]; S[p]=u;S[q]=u
+ return sum(x.bit_count() for x in S),sum(x==full for x in S)
+
+def find_full(seed, attempts=10000):
+ rng=random.Random(seed)
+ rem=rng.randrange(32); seq=[e for i,e in enumerate(standard) if i!=rem]; rng.shuffle(seq)
+ sc=supp(seq); temp=10.0
+ for it in range(attempts):
+  i,j=rng.sample(range(31),2); seq[i],seq[j]=seq[j],seq[i]
+  ns=supp(seq); delta=(ns[1]-sc[1])*1000+(ns[0]-sc[0])
+  if delta>=0 or rng.random()<math.exp(delta/max(temp,1e-9)): sc=ns
+  else: seq[i],seq[j]=seq[j],seq[i]
+  temp*=0.9995
+  if sc[1]==16: return rem,seq
+ return None,None
+
+rem,seq=find_full(100009)
+print('removed',rem,'support',supp(seq),'schedule',seq,flush=True)
+
+def optimize(seed, steps=2400):
+ torch.manual_seed(seed); g=len(seq)
+ z=torch.zeros((g,3,2),requires_grad=True); din=torch.zeros((n,2),requires_grad=True); dout=torch.zeros((n,2),requires_grad=True)
+ with torch.no_grad():
+  vals=[a,b,b]
+  for j,v in enumerate(vals): z[:,j,0].fill_(math.log(abs(v))); z[:,j,1].fill_(math.atan2(v.imag,v.real))
+  z.add_(0.08*torch.randn_like(z)); din.normal_(0,.03); dout.normal_(0,.03)
+ pars=[z,din,dout]
+ def ex(u): return torch.exp(u[...,0]+1j*u[...,1])
+ def build():
+  M=torch.diag(ex(din)); pv=ex(z)
+  for j,(x,y) in enumerate(seq):
+   p,q,r=pv[j,0],pv[j,1],pv[j,2]; s=-q*r/p
+   ox=M[x,:]; oy=M[y,:]
+   nx=p*ox+q*oy; ny=r*ox+s*oy
+   M=M.clone(); M[x,:]=nx; M[y,:]=ny
+  return torch.diag(ex(dout))@M
+ best=9.; beststate=None
+ opt=torch.optim.Adam(pars,lr=.025)
+ for it in range(steps):
+  opt.zero_grad(); rel=torch.linalg.norm(build()-T)/Tnorm; loss=rel*rel; loss.backward(); torch.nn.utils.clip_grad_norm_(pars,50); opt.step()
+  v=rel.item()
+  if v<best: best=v; beststate=[p.detach().clone() for p in pars]
+  if it in (800,1500,2050):
+   for pg in opt.param_groups: pg['lr']*=.3
+  if it%400==0: print('adam',seed,it,best,flush=True)
+ with torch.no_grad():
+  for p,s in zip(pars,beststate): p.copy_(s)
+ opt2=torch.optim.LBFGS(pars,lr=.35,max_iter=350,line_search_fn='strong_wolfe',tolerance_grad=1e-13,tolerance_change=1e-15,history_size=100)
+ def closure():
+  opt2.zero_grad(); rel=torch.linalg.norm(build()-T)/Tnorm; (rel*rel).backward(); return rel*rel
+ try: opt2.step(closure)
+ except Exception as e: print('lbfgs',e)
+ with torch.no_grad():
+  rel=(torch.linalg.norm(build()-T)/Tnorm).item()
+  # max intermediate cond
+  P=torch.diag(ex(din)); pv=ex(z); mc=1.
+  for j,(x,y) in enumerate(seq):
+   p,q,r=pv[j,0],pv[j,1],pv[j,2]; s=-q*r/p
+   G=torch.eye(n,dtype=cdtype); G[x,x]=p;G[x,y]=q;G[y,x]=r;G[y,y]=s
+   P=G@P; sv=torch.linalg.svdvals(P); mc=max(mc,(sv[0]/sv[-1]).item())
+  P=torch.diag(ex(dout))@P; sv=torch.linalg.svdvals(P); mc=max(mc,(sv[0]/sv[-1]).item())
+ return rel,mc
+
+out=[]
+for sd in [300009,300010]:
+ t=time.time(); rel,cond=optimize(sd); rec={'seed':sd,'rel_error':rel,'max_intermediate_condition':cond,'seconds':time.time()-t}; out.append(rec); print('RESULT',rec,flush=True)
+json.dump({'removed':rem,'schedule':seq,'results':out},open('adaptive_fft_cpp/refined_best31.json','w'),indent=2)

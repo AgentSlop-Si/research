@@ -1,0 +1,69 @@
+"""Prime-length two-stage cut-rank theorem, computational audit + 2-power control.
+
+Proof applies over complex roots; field experiments are independent sanity checks,
+not a field-uniform nonvanishing-minors theorem.
+"""
+import random
+from two_stage_ct import modular_rank,P,root
+from cut_rank_gate import exact_corner_bound,bitrev
+
+def isprime(n):
+    if n<2:return False
+    return all(n%d for d in range(2,int(n**.5)+1))
+
+def field_root_of_unity(n):
+    # Locate a finite field whose multiplicative group contains an n-th root.
+    q=1
+    for t in range(2,50000,2):
+        q= t*n+1
+        if q>1000 and isprime(q):break
+    else:raise ValueError('field unavailable')
+    for base in range(2,100):
+        w=pow(base,(q-1)//n,q)
+        if w!=1 and pow(w,n,q)==1:
+            return q,w
+    raise AssertionError('root missing')
+
+def four_corners(n,input_order,output_order,shuffle,q,w):
+    h=n//2
+    assert sorted(shuffle)==list(range(n))
+    a=sum(shuffle[i]<h for i in range(h))
+    partitions=[output_order[:h],output_order[h:]]
+    colsets=[input_order[:h],input_order[h:]]
+    middle=[a,h-a,h-a,n-2*h+a]
+    powers=[pow(w,z,q) for z in range(n)]
+    ranks=[modular_rank([[powers[i*j%n] for j in C] for i in R],q) for R in partitions for C in colsets]
+    return {'n':n,'intersection':a,'ranks':ranks,'free_middle':middle,
+            'lower_bound':max(v-cap for v,cap in zip(ranks,middle))}
+
+def run_primes():
+    rng=random.Random(20261009)
+    for n in (5,7,11,17,19):
+        q,w=field_root_of_unity(n)
+        h=(n-1)//2
+        predicted=(h+1)//2
+        best=100
+        for trial in range(30):
+            O=list(range(n));I=list(range(n));P=list(range(n))
+            rng.shuffle(O);rng.shuffle(I);rng.shuffle(P)
+            result=four_corners(n,I,O,P,q,w)
+            assert all(rank==v for rank,v in zip(result['ranks'],[h,h,h,h+1])), result
+            assert result['lower_bound']>=predicted,result
+            best=min(best,result['lower_bound'])
+        print('PRIME',n,'field',q,'certified minimum necessary r1+r2 >=',predicted,'lowest sample observed',best,'trials',30)
+
+def run_2powers():
+    for n in (16,32,64):
+        h=n//2
+        order=list(range(0,n,2))+list(range(1,n,2))
+        mid=h//2
+        shuffle=list(range(mid))+list(range(h,h+mid))+list(range(mid,h))+list(range(h+mid,n))
+        result=four_corners(n,order,order,shuffle,P,root(n))
+        print('POWER2',result)
+        assert result['ranks']==[n//4]*4 and result['lower_bound']==0
+        if n<=32:
+            allcuts=exact_corner_bound(order,order,shuffle)
+            print('POWER2_ALLCUTS',n,allcuts)
+
+if __name__=='__main__':
+    run_primes();run_2powers()

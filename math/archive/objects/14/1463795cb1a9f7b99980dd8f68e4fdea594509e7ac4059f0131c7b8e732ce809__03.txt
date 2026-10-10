@@ -1,0 +1,182 @@
+1: #include <algorithm>
+2: #include <chrono>
+3: #include <cmath>
+4: #include <complex>
+5: #include <cstdint>
+6: #include <iomanip>
+7: #include <iostream>
+8: #include <numeric>
+9: #include <random>
+10: #include <string>
+11: #include <vector>
+12: 
+13: using cd = std::complex<double>;
+14: using Clock = std::chrono::steady_clock;
+15: 
+16: struct Event {
+17:     bool coeff;
+18:     int key;
+19:     cd delta;
+20: };
+21: 
+22: static double ms_since(Clock::time_point t0) {
+23:     return std::chrono::duration<double,std::milli>(Clock::now()-t0).count();
+24: }
+25: 
+26: static cd randc(std::mt19937_64 &g, double scale=1.0) {
+27:     std::normal_distribution<double> d(0.0, scale);
+28:     return {d(g),d(g)};
+29: }
+30: 
+31: struct Problem {
+32:     int n, r, q, p, updates;
+33:     std::vector<cd> basis;      // r*n
+34:     std::vector<cd> coeff0;     // r
+35:     std::vector<int> bins;      // q
+36:     std::vector<int> positions; // p
+37:     std::vector<cd> phase_q;    // p*q
+38:     std::vector<cd> phase_full; // p*n
+39:     std::vector<Event> events;
+40: };
+41: 
+42: static Problem make_problem(int n=8192,int r=256,int q=64,int p=32,int updates=4096) {
+43:     Problem z{n,r,q,p,updates};
+44:     std::mt19937_64 g(0xA71D4F22ULL);
+45:     z.basis.resize((size_t)r*n);
+46:     for (auto &v:z.basis) v=randc(g);
+47:     z.coeff0.resize(r); for(auto &v:z.coeff0) v=randc(g);
+48:     std::vector<int> pool(n); std::iota(pool.begin(),pool.end(),0); std::shuffle(pool.begin(),pool.end(),g);
+49:     z.bins.assign(pool.begin(),pool.begin()+q);
+50:     std::sort(z.bins.begin(),z.bins.end());
+51:     std::shuffle(pool.begin(),pool.end(),g);
+52:     z.positions.assign(pool.begin(),pool.begin()+p);
+53:     std::sort(z.positions.begin(),z.positions.end());
+54: 
+55:     const double tau=-2.0*std::acos(-1.0)/n;
+56:     z.phase_q.resize((size_t)p*q);
+57:     z.phase_full.resize((size_t)p*n);
+58:     for(int a=0;a<p;a++) {
+59:         int pos=z.positions[a];
+60:         for(int b=0;b<q;b++) z.phase_q[(size_t)a*q+b]=std::exp(cd(0,tau*pos*z.bins[b]));
+61:         for(int k=0;k<n;k++) z.phase_full[(size_t)a*n+k]=std::exp(cd(0,tau*pos*k));
+62:     }
+63:     std::uniform_real_distribution<double> u(0.0,1.0);
+64:     std::uniform_int_distribution<int> ci(0,r-1), pi(0,p-1);
+65:     z.events.reserve(updates);
+66:     for(int t=0;t<updates;t++) {
+67:         bool coeff=u(g)<0.72;
+68:         z.events.push_back({coeff, coeff?ci(g):pi(g), randc(g,0.02)});
+69:     }
+70:     return z;
+71: }
+72: 
+73: static std::vector<cd> initial_partial(const Problem& z) {
+74:     std::vector<cd> y(z.q,cd(0,0));
+75:     for(int i=0;i<z.r;i++) {
+76:         cd c=z.coeff0[i];
+77:         const cd* row=&z.basis[(size_t)i*z.n];
+78:         for(int b=0;b<z.q;b++) y[b]+=c*row[z.bins[b]];
+79:     }
+80:     return y;
+81: }
+82: 
+83: static double run_replay(const Problem& z,int H, cd &checksum, std::vector<cd>* final_out=nullptr) {
+84:     auto y=initial_partial(z);
+85:     std::vector<cd> coeff=z.coeff0;
+86:     std::vector<cd> residual(z.p,cd(0,0));
+87:     std::vector<Event> pending; pending.reserve(H+8);
+88:     checksum=0;
+89:     auto t0=Clock::now();
+90:     for(int t=0;t<z.updates;t++) {
+91:         const auto &e=z.events[t];
+92:         if(e.coeff) coeff[e.key]+=e.delta; else residual[e.key]+=e.delta;
+93:         pending.push_back(e);
+94:         if((t+1)%H==0) {
+95:             for(const auto &a:pending) {
+96:                 if(a.coeff) {
+97:                     const cd* row=&z.basis[(size_t)a.key*z.n];
+98:                     for(int b=0;b<z.q;b++) y[b]+=a.delta*row[z.bins[b]];
+99:                 } else {
+100:                     const cd* ph=&z.phase_q[(size_t)a.key*z.q];
+101:                     for(int b=0;b<z.q;b++) y[b]+=a.delta*ph[b];
+102:                 }
+103:             }
+104:             pending.clear();
+105:             checksum += y[0];
+106:         }
+107:     }
+108:     if(final_out) *final_out=y;
+109:     return ms_since(t0);
+110: }
+111: 
+112: static double run_rebuild(const Problem& z,int H, cd &checksum, std::vector<cd>* final_out=nullptr) {
+113:     std::vector<cd> coeff=z.coeff0;
+114:     std::vector<cd> residual(z.p,cd(0,0));
+115:     std::vector<cd> y(z.q);
+116:     checksum=0;
+117:     auto t0=Clock::now();
+118:     for(int t=0;t<z.updates;t++) {
+119:         const auto &e=z.events[t];
+120:         if(e.coeff) coeff[e.key]+=e.delta; else residual[e.key]+=e.delta;
+121:         if((t+1)%H==0) {
+122:             std::fill(y.begin(),y.end(),cd(0,0));
+123:             for(int i=0;i<z.r;i++) {
+124:                 cd c=coeff[i];
+125:                 const cd* row=&z.basis[(size_t)i*z.n];
+126:                 for(int b=0;b<z.q;b++) y[b]+=c*row[z.bins[b]];
+127:             }
+128:             for(int a=0;a<z.p;a++) if(residual[a]!=cd(0,0)) {
+129:                 cd d=residual[a]; const cd* ph=&z.phase_q[(size_t)a*z.q];
+130:                 for(int b=0;b<z.q;b++) y[b]+=d*ph[b];
+131:             }
+132:             checksum += y[0];
+133:         }
+134:     }
+135:     if(final_out) *final_out=y;
+136:     return ms_since(t0);
+137: }
+138: 
+139: static double run_eager(const Problem& z,int H, cd &checksum) {
+140:     std::vector<cd> dense(z.n,cd(0,0));
+141:     for(int i=0;i<z.r;i++) {
+142:         cd c=z.coeff0[i]; const cd* row=&z.basis[(size_t)i*z.n];
+143:         for(int k=0;k<z.n;k++) dense[k]+=c*row[k];
+144:     }
+145:     checksum=0;
+146:     auto t0=Clock::now();
+147:     for(int t=0;t<z.updates;t++) {
+148:         const auto &e=z.events[t];
+149:         if(e.coeff) {
+150:             const cd* row=&z.basis[(size_t)e.key*z.n];
+151:             for(int k=0;k<z.n;k++) dense[k]+=e.delta*row[k];
+152:         } else {
+153:             const cd* ph=&z.phase_full[(size_t)e.key*z.n];
+154:             for(int k=0;k<z.n;k++) dense[k]+=e.delta*ph[k];
+155:         }
+156:         if((t+1)%H==0) checksum += dense[z.bins[0]];
+157:     }
+158:     return ms_since(t0);
+159: }
+160: 
+161: template<class F> static double median3(F fn) {
+162:     std::vector<double> t(3); for(auto &v:t) v=fn();
+163:     std::sort(t.begin(),t.end()); return t[1];
+164: }
+165: 
+166: int main(){
+167:     Problem z=make_problem();
+168:     std::cout<<std::setprecision(10);
+169:     std::cout<<"N="<<z.n<<" r="<<z.r<<" q="<<z.q<<" prepared_points="<<z.p<<" updates="<<z.updates<<"\n";
+170:     std::cout<<"H,replay_ms,rebuild_ms,eager_ms,replay_vs_rebuild,replay_vs_eager,max_error\n";
+171:     cd eager_checksum; double eager_common=median3([&]{return run_eager(z,64,eager_checksum);});
+172:     for(int H: {1,4,16,64,128,256,512,1024}) {
+173:         cd ca,cb,cc; std::vector<cd> ya,yb;
+174:         // correctness from one pass
+175:         run_replay(z,H,ca,&ya); run_rebuild(z,H,cb,&yb);
+176:         double err=0; for(int i=0;i<z.q;i++) err=std::max(err,std::abs(ya[i]-yb[i]));
+177:         double tr=median3([&]{return run_replay(z,H,ca);});
+178:         double tb=median3([&]{return run_rebuild(z,H,cb);});
+179:         double te=eager_common;
+180:         std::cout<<H<<","<<tr<<","<<tb<<","<<te<<","<<tb/tr<<","<<te/tr<<","<<err<<"\n";
+181:     }
+182: }

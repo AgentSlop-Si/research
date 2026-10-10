@@ -1,0 +1,209 @@
+1: """Exact full-register, scalar-gate, and closed-cycle residual checks."""
+2: import json
+3: import random
+4: from pathlib import Path
+5: from feedback import prepare_feedback,feedback_word,gain_update_word,rank_one_add
+6: from prior_affine_reuse import prepare,execute,execute_scalar,expand_scalar,inverse,apply_t,apply_j,charge
+7: 
+8: 
+9: def increment(plan,fb,injections,initial):
+10:     n,p,R=plan['n'],plan['p'],fb['batches']
+11:     forcing=[[0]*n for _ in range(R)]
+12:     for vertex,source in injections:
+13:         value=apply_t(plan,initial[source*n:(source+1)*n])
+14:         forcing[vertex]=[(a+b)%p for a,b in zip(forcing[vertex],value)]
+15:     chain=[forcing[0][:]]
+16:     for r in range(1,R):
+17:         chain.append([(a+b)%p for a,b in zip(forcing[r],apply_j(plan,chain[-1]))])
+18:     scalar=chain[-1][fb['observed']]*pow(fb['kappa'],-1,p)%p
+19:     correction=[scalar*u%p for u in fb['u']]
+20:     out=[]
+21:     for r in range(R):
+22:         out.append([(a+b)%p for a,b in zip(chain[r],correction)])
+23:         correction=apply_j(plan,correction)
+24:     assert out[0]==[(a+u*out[-1][fb['observed']])%p for a,u in zip(forcing[0],fb['u'])]
+25:     for r in range(1,R):
+26:         assert out[r]==[(a+b)%p for a,b in zip(forcing[r],apply_j(plan,out[r-1]))]
+27:     return out
+28: 
+29: 
+30: def main():
+31:     rows=[]
+32:     rng=random.Random(731009)
+33:     basis_count=random_count=0
+34:     # Focused independent-review cases: reject invalid register sources before
+35:     # Python's negative indexing can alias them to a target bank.
+36:     edge_plan=prepare(4,65537)
+37:     zero_feedback=prepare_feedback(edge_plan,3,[0]*4,0)
+38:     invalid_injections=([],[(-1,0)],[(3,0)],[(0,-1)])
+39:     for injections in invalid_injections:
+40:         for compiler in (
+41:                 lambda: feedback_word(edge_plan,zero_feedback,injections),
+42:                 lambda: gain_update_word(edge_plan,zero_feedback,injections,0,1)):
+43:             try:
+44:                 compiler()
+45:             except ValueError:
+46:                 pass
+47:             else:
+48:                 raise AssertionError('invalid injection accepted')
+49:     focused_valid_cases=0
+50:     # Coordinate zero, zero closing edge, repeated source bank, non-root
+51:     # injections, equal gains, and arbitrary preexisting target/workspace state.
+52:     injections=[(0,0),(2,0),(1,1)]
+53:     word,cost=feedback_word(edge_plan,zero_feedback,injections)
+54:     size=cost['target_base']+12
+55:     initial=[(17*i+3)%65537 for i in range(size)]
+56:     initial[0]=0
+57:     expected=initial[:]
+58:     inc=increment(edge_plan,zero_feedback,injections,initial)
+59:     for r in range(3):
+60:         for i in range(4):
+61:             index=cost['target_base']+4*r+i
+62:             expected[index]=(expected[index]+inc[r][i])%65537
+63:     assert execute_scalar(expand_scalar(word,65537),initial,65537)==expected
+64:     zero_update,_=gain_update_word(edge_plan,zero_feedback,injections,0,5)
+65:     assert zero_update==[]
+66:     focused_valid_cases+=1
+67:     nonzero_feedback=prepare_feedback(edge_plan,3,[2,4,6,8],0)
+68:     update,_=gain_update_word(edge_plan,nonzero_feedback,injections,0,1)
+69:     new_expected=initial[:]
+70:     new_inc=increment(edge_plan,nonzero_feedback,injections,initial)
+71:     for r in range(3):
+72:         for i in range(4):
+73:             index=cost['target_base']+4*r+i
+74:             new_expected[index]=(new_expected[index]+new_inc[r][i])%65537
+75:     assert execute_scalar(expand_scalar(update,65537),expected,65537)==new_expected
+76:     equal_update,_=gain_update_word(edge_plan,nonzero_feedback,injections,1,1)
+77:     assert equal_update==[]
+78:     focused_valid_cases+=1
+79:     # A zero-valued source pivot is legal: only its nonzero coefficient is inverted.
+80:     pivot_word,pivot_cost=rank_one_add(65537,{0:3,1:5},3,[2,0])
+81:     pivot_initial=[0,7,99,11,13]
+82:     pivot_expected=[0,7,99,81,13]
+83:     assert execute_scalar(expand_scalar(pivot_word,65537),pivot_initial,65537)==pivot_expected
+84:     assert len(expand_scalar(pivot_word,65537))==pivot_cost['scalar_instructions']
+85:     assert execute(inverse(pivot_word,65537),pivot_expected,65537)==pivot_initial
+86:     assert rank_one_add(65537,{0:0},3,[2,0])[0]==[]
+87:     assert rank_one_add(65537,{0:3},3,[0,0])[0]==[]
+88:     focused_valid_cases+=3
+89:     # Both endpoints of a gain correction must remain nonsingular.
+90:     singular_gain_feedback=prepare_feedback(edge_plan,1,[2,0,0,0],0)
+91:     singular_gain=pow(2,-1,65537)
+92:     for old,new in ((singular_gain,0),(0,singular_gain)):
+93:         try:
+94:             gain_update_word(edge_plan,singular_gain_feedback,[(0,0)],old,new)
+95:         except ValueError as error:
+96:             assert 'singular' in str(error)
+97:         else:
+98:             raise AssertionError('singular gain endpoint accepted')
+99:     for p in (65537,998244353):
+100:         for n in (2,4,8):
+101:             plan=prepare(n,p)
+102:             for R in (1,2,4):
+103:                 observed=n-1
+104:                 for factor in (2,3,5,7):
+105:                     u=[factor*(i+1)%p for i in range(n)]
+106:                     try:
+107:                         fb=prepare_feedback(plan,R,u,observed)
+108:                         break
+109:                     except ValueError:
+110:                         continue
+111:                 else:
+112:                     raise AssertionError('test did not find nonsingular feedback')
+113:                 assert fb['coefficient_preparation']=={
+114:                     'mul':(R-1)*(3*n-1)+2*n,
+115:                     'add':(R-1)*(2*n-1)+n-1,
+116:                     'sub':1,'constant_inverse':1}
+117:                 modes=[('one_root',[(0,0)]),('independent_roots',[(r,r) for r in range(R)])]
+118:                 for mode,injections in modes:
+119:                     word,cost=feedback_word(plan,fb,injections)
+120:                     scalar=expand_scalar(word,p)
+121:                     backwards=inverse(word,p)
+122:                     beta=(1-fb['kappa'])%p
+123:                     new_gain=next(g for g in (2,3,5,7) if (1-g*beta)%p)
+124:                     new_fb=prepare_feedback(plan,R,[new_gain*value%p for value in u],observed)
+125:                     update,update_cost=gain_update_word(plan,fb,injections,1,new_gain)
+126:                     update_scalar=expand_scalar(update,p)
+127:                     assert len(update_scalar)==update_cost['rank_one_correction']['scalar_instructions']
+128:                     assert update_cost['coefficient_preparation']=={
+129:                         'mul':(3*R-2)*n+4,'sub':4,'constant_inverse':1,
+130:                         **({'add':(R-1)*n} if R>1 else {})}
+131:                     assert len(scalar)==cost['scalar_instructions']==charge(word)['expanded_scalar_instructions']
+132:                     size=cost['target_base']+R*n
+133:                     for coordinate in range(size):
+134:                         initial=[int(i==coordinate) for i in range(size)]
+135:                         inc=increment(plan,fb,injections,initial)
+136:                         expected=initial[:]
+137:                         for r in range(R):
+138:                             for i in range(n):
+139:                                 k=cost['target_base']+r*n+i
+140:                                 expected[k]=(expected[k]+inc[r][i])%p
+141:                         got=execute(word,initial,p)
+142:                         assert got==expected
+143:                         assert execute_scalar(scalar,initial,p)==expected
+144:                         assert execute(backwards,got,p)==initial
+145:                         assert got[:cost['target_base']]==initial[:cost['target_base']]
+146:                         new_inc=increment(plan,new_fb,injections,initial)
+147:                         new_expected=initial[:]
+148:                         for r in range(R):
+149:                             for i in range(n):
+150:                                 k=cost['target_base']+r*n+i
+151:                                 new_expected[k]=(new_expected[k]+new_inc[r][i])%p
+152:                         assert execute(update,got,p)==new_expected
+153:                         assert execute_scalar(update_scalar,got,p)==new_expected
+154:                         basis_count+=1
+155:                     for _ in range(4):
+156:                         initial=[rng.randrange(p) for _ in range(size)]
+157:                         inc=increment(plan,fb,injections,initial)
+158:                         expected=initial[:]
+159:                         for r in range(R):
+160:                             for i in range(n):
+161:                                 k=cost['target_base']+r*n+i
+162:                                 expected[k]=(expected[k]+inc[r][i])%p
+163:                         assert execute_scalar(scalar,initial,p)==expected
+164:                         new_inc=increment(plan,new_fb,injections,initial)
+165:                         new_expected=initial[:]
+166:                         for r in range(R):
+167:                             for i in range(n):
+168:                                 k=cost['target_base']+r*n+i
+169:                                 new_expected[k]=(new_expected[k]+new_inc[r][i])%p
+170:                         assert execute_scalar(update_scalar,expected,p)==new_expected
+171:                         random_count+=1
+172:                     rows.append({'p':p,'n':n,'R':R,'mode':mode,'kappa':fb['kappa'],
+173:                                  'coefficient_preparation':fb['coefficient_preparation'],
+174:                                  'cost':cost,'gain_update':update_cost,'basis_vectors':size})
+175:                 pivot=next(i for i,a in enumerate(fb['a']) if a)
+176:                 singular=[0]*n
+177:                 singular[pivot]=pow(fb['a'][pivot],-1,p)
+178:                 try:
+179:                     prepare_feedback(plan,R,singular,observed)
+180:                 except ValueError as error:
+181:                     assert 'singular feedback' in str(error)
+182:                 else:
+183:                     raise AssertionError('singular feedback accepted')
+184:     examples=[]
+185:     for n,R in ((32,4),(64,4),(128,8)):
+186:         plan=prepare(n)
+187:         fb=prepare_feedback(plan,R,[2*(i+1) for i in range(n)],n-1)
+188:         for mode,injections in [('one_root',[(0,0)]),('independent_roots',[(r,r) for r in range(R)])]:
+189:             word,cost=feedback_word(plan,fb,injections)
+190:             assert charge(word)['expanded_scalar_instructions']==cost['scalar_instructions']
+191:             update,update_cost=gain_update_word(plan,fb,injections,1,2)
+192:             assert charge(update)['expanded_scalar_instructions']==update_cost['rank_one_correction']['scalar_instructions']
+193:             examples.append({'n':n,'R':R,'mode':mode,'cost':cost,
+194:                              'gain_update':update_cost,
+195:                              'coefficient_preparation':fb['coefficient_preparation']})
+196:     report={'status':'PASS','cases':len(rows),'full_state_basis_vectors':basis_count,
+197:             'gain_update_full_state_basis_vectors':basis_count,
+198:             'random_full_states':random_count,'singular_feedback_rejections':18,
+199:             'focused_invalid_injection_rejections':8,
+200:             'focused_singular_gain_rejections':2,
+201:             'focused_valid_edge_cases':focused_valid_cases,
+202:             'scope':'Exact rank-one cyclic feedback; every first transform and preparation is charged; no fresh FFT speed claim.',
+203:             'examples':examples,'cases_detail':rows}
+204:     Path(__file__).with_name('results.json').write_text(json.dumps(report,indent=2)+'\n')
+205:     print(json.dumps({k:v for k,v in report.items() if k not in ('cases_detail','examples')},indent=2))
+206: 
+207: 
+208: if __name__=='__main__':
+209:     main()

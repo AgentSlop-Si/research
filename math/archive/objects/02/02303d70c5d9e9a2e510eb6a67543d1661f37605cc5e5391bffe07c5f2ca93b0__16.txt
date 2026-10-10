@@ -1,0 +1,160 @@
+   1 #!/usr/bin/env python3
+   2 """Independently authored fixed-interface linear-system controls."""
+   3 import json
+   4 from pathlib import Path
+   5 
+   6 FIELD = 65537
+   7 
+   8 
+   9 def zero(n, m=None):
+  10     return [[0] * (n if m is None else m) for _ in range(n)]
+  11 
+  12 
+  13 def eye(n):
+  14     z = zero(n)
+  15     for i in range(n):
+  16         z[i][i] = 1
+  17     return z
+  18 
+  19 
+  20 def mul(a, b):
+  21     out = zero(len(a), len(b[0]))
+  22     sparse_b = [[(j, x) for j, x in enumerate(row) if x] for row in b]
+  23     for i, row in enumerate(a):
+  24         for k, x in enumerate(row):
+  25             if x:
+  26                 for j, y in sparse_b[k]:
+  27                     out[i][j] += x * y
+  28         out[i] = [x % FIELD for x in out[i]]
+  29     return out
+  30 
+  31 
+  32 def rank(a):
+  33     z = [row[:] for row in a]
+  34     r = 0
+  35     width = len(z[0])
+  36     for j in range(width):
+  37         pivot = next((i for i in range(r, len(z)) if z[i][j]), None)
+  38         if pivot is None:
+  39             continue
+  40         z[r], z[pivot] = z[pivot], z[r]
+  41         iv = pow(z[r][j], -1, FIELD)
+  42         z[r][j:] = [v * iv % FIELD for v in z[r][j:]]
+  43         for i in range(r + 1, len(z)):
+  44             c = z[i][j]
+  45             if c:
+  46                 z[i][j:] = [(v - c * w) % FIELD for v, w in zip(z[i][j:], z[r][j:])]
+  47         r += 1
+  48         if r == len(z):
+  49             break
+  50     return r
+  51 
+  52 
+  53 def root(n):
+  54     w = pow(3, (FIELD - 1) // n, FIELD)
+  55     assert pow(w, n, FIELD) == 1 and pow(w, n // 2, FIELD) != 1
+  56     return w
+  57 
+  58 
+  59 def fourier(n, w):
+  60     return [[pow(w, i * j, FIELD) for j in range(n)] for i in range(n)]
+  61 
+  62 
+  63 def bank(m, q, active, inverse=False):
+  64     eta = root(m)
+  65     if inverse:
+  66         eta = pow(eta, -1, FIELD)
+  67     f = fourier(m, eta)
+  68     if inverse:
+  69         im = pow(m, -1, FIELD)
+  70         f = [[v * im % FIELD for v in row] for row in f]
+  71     out = zero(m * q)
+  72     for r in range(q):
+  73         block = f if r in active else eye(m)
+  74         for i in range(m):
+  75             for j in range(m):
+  76                 out[r * m + i][r * m + j] = block[i][j]
+  77     return out
+  78 
+  79 
+  80 def intertwiner_equations(a, y):
+  81     """Coefficient rows for P A - Y P = 0, row-major vec(P)."""
+  82     n = len(a)
+  83     equations = []
+  84     for i in range(n):
+  85         for j in range(n):
+  86             row = [0] * (n * n)
+  87             for k in range(n):
+  88                 row[i * n + k] = (row[i * n + k] + a[k][j]) % FIELD
+  89                 row[k * n + j] = (row[k * n + j] - y[i][k]) % FIELD
+  90             equations.append(row)
+  91     return equations
+  92 
+  93 
+  94 def check(m, q, active):
+  95     n = m * q
+  96     omega, eta = root(n), root(m)
+  97     omega_q = pow(omega, m, FIELD)
+  98     f = fourier(n, omega)
+  99     r = zero(n)
+ 100     for b in range(q):
+ 101         for s in range(m):
+ 102             r[b * m + s][b + q * s] = 1
+ 103     rt = [list(row) for row in zip(*r)]
+ 104     b, bi = bank(m, q, active), bank(m, q, active, True)
+ 105     v, vi = mul(b, r), mul(rt, bi)
+ 106     s, si, d = zero(n), zero(n), zero(n)
+ 107     for j in range(n):
+ 108         s[(j + 1) % n][j] = 1
+ 109         si[(j - 1) % n][j] = 1
+ 110         d[j][j] = pow(omega, j, FIELD)
+ 111     a1, a2 = mul(mul(v, s), vi), mul(mul(v, d), vi)
+ 112     p0 = zero(n)
+ 113     for u in range(q):
+ 114         for t in range(m):
+ 115             for bank_index in range(q):
+ 116                 common = pow(omega_q, u * bank_index, FIELD) * pow(omega, bank_index * t, FIELD) % FIELD
+ 117                 for h in range(m):
+ 118                     factor = int(t == h) if bank_index in active else pow(eta, t * h, FIELD)
+ 119                     p0[m * u + t][m * bank_index + h] = common * factor % FIELD
+ 120     assert mul(p0, v) == f
+ 121     assert mul(p0, a1) == mul(d, p0)
+ 122     assert mul(p0, a2) == mul(si, p0)
+ 123     expected_nnz = n * (len(active) + (q - len(active)) * m)
+ 124     actual_nnz = sum(bool(x) for row in p0 for x in row)
+ 125     assert actual_nnz == expected_nnz
+ 126     e1, e2 = intertwiner_equations(a1, d), intertwiner_equations(a2, si)
+ 127     r1, rboth = rank(e1), rank(e1 + e2)
+ 128     calibration = [0] * (n * n)
+ 129     for k in range(n):
+ 130         calibration[k] = v[k][0]
+ 131     calibrated = rank(e1 + e2 + [calibration])
+ 132     assert r1 == n * n - n
+ 133     assert rboth == n * n - 1
+ 134     assert calibrated == n * n
+ 135     flat_p = [x for row in p0 for x in row]
+ 136     assert sum(x * y for x, y in zip(calibration, flat_p)) % FIELD == 1
+ 137     return {'N': n, 'm': m, 'q': q, 'active': sorted(active), 'P_nnz': actual_nnz,
+ 138             'unknowns': n * n, 'one_generator_rank': r1,
+ 139             'two_generator_rank': rboth, 'calibrated_rank': calibrated}
+ 140 
+ 141 
+ 142 def main():
+ 143     cases = []
+ 144     for m, q, choices in (
+ 145         (2, 2, (set(), {0}, {1}, {0, 1})),
+ 146         (2, 4, (set(), {0}, {0, 1}, set(range(4)))),
+ 147         (4, 2, (set(), {0}, {0, 1})),
+ 148         (4, 4, ({0, 1},)),
+ 149     ):
+ 150         for active in choices:
+ 151             cases.append(check(m, q, active))
+ 152     result = {'field': FIELD, 'cases': cases, 'case_count': len(cases),
+ 153               'all_exact_assertions_passed': True,
+ 154               'scope': 'Unique exterior operator verified; no paired-Green factorization constructed.'}
+ 155     Path(__file__).with_name('EXTERIOR_UNIQUENESS_CONTROLS.json').write_text(json.dumps(result, indent=2) + '\n')
+ 156     print(json.dumps(result, indent=2))
+ 157 
+ 158 
+ 159 if __name__ == '__main__':
+ 160     main()

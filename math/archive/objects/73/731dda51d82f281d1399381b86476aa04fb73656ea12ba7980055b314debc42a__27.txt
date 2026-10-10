@@ -1,0 +1,120 @@
+   1 #!/usr/bin/env python3
+   2 """Independent checks for the one-extra-pole construction.
+   3 
+   4 No supplied executable or source module is imported. Requires Python 3 and sympy.
+   5 Finite-field PASS lines are supplemental certificates at those sizes; the
+   6 uniform statement is proved independently in PROOF_OR_OBSTRUCTION.md.
+   7 """
+   8 import json
+   9 from pathlib import Path
+  10 import sympy as s
+  11 
+  12 
+  13 def symbolic_checks():
+  14     q,z=s.symbols('q z')
+  15     A=[s.Integer(1)]
+  16     for n in range(1,9):
+  17         R=s.Poly(s.prod(z-q**k for k in range(n)),z)
+  18         An=s.expand(sum(q**((n*(n-1)-j*(j-1))//2)*R.nth(j)*z**j for j in range(n+1)))
+  19         A.append(An)
+  20         for shift in range(n):
+  21             value=sum(s.Poly(An,z).nth(j)*q**((shift+j)*(shift+j-1)//2) for j in range(n+1))
+  22             assert s.expand(value)==0, ('orthogonality',n,shift)
+  23         if n>=2:
+  24             m=n-1
+  25             aa=q**(m-1)*(q**(m+1)+q**m-1)
+  26             bb=q**(3*m-3)*(q**m-1)
+  27             assert s.expand(An-(z-aa)*A[n-1]+bb*A[n-2])==0, ('three_term',n)
+  28     return {'symbolic_degrees': list(range(1,9)), 'orthogonality_and_three_term': 'PASS'}
+  29 
+  30 
+  31 def trim(a):
+  32     while len(a)>1 and not a[-1]: a.pop()
+  33     return a
+  34 
+  35 def add(a,b,p):
+  36     c=[0]*max(len(a),len(b))
+  37     for j,x in enumerate(a): c[j]=(c[j]+x)%p
+  38     for j,x in enumerate(b): c[j]=(c[j]+x)%p
+  39     return trim(c)
+  40 
+  41 def scale(a,t,p): return trim([(t*x)%p for x in a])
+  42 
+  43 def mul(a,b,p):
+  44     c=[0]*(len(a)+len(b)-1)
+  45     for j,x in enumerate(a):
+  46         for k,y in enumerate(b):c[j+k]=(c[j+k]+x*y)%p
+  47     return trim(c)
+  48 
+  49 def rem(a,b,p):
+  50     a=a[:]
+  51     inv=pow(b[-1],-1,p)
+  52     while len(a)>=len(b) and a!=[0]:
+  53         k=len(a)-len(b);v=a[-1]*inv%p
+  54         for j,x in enumerate(b):a[j+k]=(a[j+k]-v*x)%p
+  55         trim(a)
+  56     return a
+  57 
+  58 def gcd(a,b,p):
+  59     while b!=[0]:a,b=b,rem(a,b,p)
+  60     return scale(a,pow(a[-1],-1,p),p)
+  61 
+  62 def deriv(a,p): return trim([(j*a[j])%p for j in range(1,len(a))] or [0])
+  63 
+  64 def val(a,z,p):
+  65     v=0
+  66     for x in reversed(a):v=(v*z+x)%p
+  67     return v
+  68 
+  69 def A_direct(n,q,p):
+  70     """Build from its defining product, not the three-term recurrence."""
+  71     R=[1]
+  72     for k in range(n):R=mul(R,[-pow(q,k,p)%p,1],p)
+  73     return [(x*pow(q,(n*(n-1)-j*(j-1))//2,p))%p for j,x in enumerate(R)]
+  74 
+  75 def field_for(N):
+  76     k=(1_000_000+N-1)//N
+  77     while not s.isprime(k*N+1):k+=1
+  78     p=k*N+1
+  79     g=int(s.primitive_root(p))
+  80     q=pow(g,(p-1)//N,p)
+  81     assert pow(q,N,p)==1
+  82     assert all(pow(q,N//int(ell),p)!=1 for ell in s.factorint(N))
+  83     return p,q
+  84 
+  85 def check_size(N):
+  86     h=N//2;p,q=field_for(N)
+  87     ah=A_direct(h,q,p);ag=A_direct(h-1,q,p)
+  88     assert gcd(ah,ag,p)==[1]
+  89     assert ag[0]!=0
+  90     moments=[pow(q,m*(m-1)//2,p) for m in range(N)]
+  91     forbidden=[1]+[0]*(N-1)+[1]
+  92     F=[0]+ah
+  93     for t in range(1,2*N+1):
+  94         B=add(F,scale(ag,t,p),p)
+  95         if gcd(B,deriv(B,p),p)==[1] and gcd(B,forbidden,p)==[1]:break
+  96     else:raise AssertionError(('candidate_bound_failed',N,p))
+  97     assert len(B)==h+2 and B[-1]==1 and B[0]!=0
+  98     for shift in range(h-1):
+  99         assert sum(B[j]*moments[shift+j] for j in range(h+2))%p==0
+ 100     # Verify the recurrence reproduces all N moments from its first h+1 values.
+ 101     recovered=moments[:h+1]
+ 102     while len(recovered)<N:
+ 103         shift=len(recovered)-(h+1)
+ 104         recovered.append(-sum(B[j]*recovered[shift+j] for j in range(h+1))%p)
+ 105     assert recovered==moments
+ 106     return {'N':N,'p':p,'q':q,'parameter_t':t,'degree':h+1,'gcd_B_derivative':0,'gcd_B_forbidden':0,'moments':'PASS'}
+ 107 
+ 108 
+ 109 def main():
+ 110     results={'symbolic':symbolic_checks(),'finite_fields':[]}
+ 111     sizes=list(range(4,132,2))+[256,512,1024]
+ 112     for N in sizes:
+ 113         r=check_size(N);results['finite_fields'].append(r)
+ 114         print(f"PASS N={N} p={r['p']} q={r['q']} t={r['parameter_t']} degree={r['degree']}",flush=True)
+ 115     results['disclaimer']='Finite tests supplement, and do not replace, the uniform proof.'
+ 116     target=Path(__file__).with_name('check_results.json')
+ 117     target.write_text(json.dumps(results,indent=2)+'\n')
+ 118     print(f'Wrote {target}')
+ 119 
+ 120 if __name__=='__main__':main()

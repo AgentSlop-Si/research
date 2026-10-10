@@ -1,0 +1,140 @@
+   1 """Phase 12: exact, fresh-input polynomial convolution methods.
+   2 
+   3 Three algorithms are deliberately separated:
+   4 - schoolbook: n^2 input-dependent coefficient multiplications;
+   5 - Karatsuba: 3^(log_2 n) products for power-of-two length, for ALL inputs;
+   6 - evaluation/interpolation: 2n-1 input-dependent bilinear products, and
+   7   O(n^2) surrounding field operations. This is multiplication-count optimal
+   8   but it is NOT a sub-nlogn algorithm.
+   9 
+  10 All algorithms calculate linear (not circular) convolution modulo a prime.
+  11 No caches, threads, input structure assumptions, or approximate arithmetic.
+  12 """
+  13 from __future__ import annotations
+  14 from dataclasses import dataclass
+  15 from math import comb
+  16 from typing import Sequence
+  17 
+  18 DEFAULT_P = 998244353
+  19 
+  20 @dataclass(frozen=True)
+  21 class ArithmeticResult:
+  22     coeffs: tuple[int, ...]
+  23     bilinear_products: int
+  24     method: str
+  25 
+  26 
+  27 def schoolbook(a: Sequence[int], b: Sequence[int], p: int = DEFAULT_P) -> ArithmeticResult:
+  28     if not a or not b:
+  29         raise ValueError('nonempty polynomials required')
+  30     out = [0] * (len(a)+len(b)-1)
+  31     for i, x in enumerate(a):
+  32         for j, y in enumerate(b):
+  33             out[i+j] = (out[i+j] + int(x)*int(y)) % p
+  34     return ArithmeticResult(tuple(out),len(a)*len(b),'schoolbook')
+  35 
+  36 
+  37 def karatsuba(a: Sequence[int], b: Sequence[int], p: int = DEFAULT_P,
+  38               threshold: int = 1) -> ArithmeticResult:
+  39     """Works on any nonempty lengths. Counts products at schoolbook leaves."""
+  40     if not a or not b or threshold < 1:
+  41         raise ValueError('nonempty polynomials and threshold>=1 required')
+  42     n=1<<(max(len(a),len(b))-1).bit_length()
+  43     x=[int(v)%p for v in a]+[0]*(n-len(a))
+  44     y=[int(v)%p for v in b]+[0]*(n-len(b))
+  45     def recurse(x, y):
+  46         z=len(x)
+  47         if z<=threshold:
+  48             prod=[0]*(2*z-1)
+  49             for i,u in enumerate(x):
+  50                 for j,v in enumerate(y):
+  51                     prod[i+j]=(prod[i+j]+u*v)%p
+  52             return prod,z*z
+  53         mid=z//2
+  54         low,lowcost=recurse(x[:mid],y[:mid])
+  55         high,highcost=recurse(x[mid:],y[mid:])
+  56         sx=[(x[i]+x[i+mid])%p for i in range(mid)]
+  57         sy=[(y[i]+y[i+mid])%p for i in range(mid)]
+  58         middle,midcost=recurse(sx,sy)
+  59         for i in range(len(middle)):
+  60             middle[i]=(middle[i]-low[i]-high[i])%p
+  61         out=[0]*(2*z-1)
+  62         for i in range(len(low)):
+  63             out[i]=(out[i]+low[i])%p
+  64             out[i+mid]=(out[i+mid]+middle[i])%p
+  65             out[i+z]=(out[i+z]+high[i])%p
+  66         return out,lowcost+highcost+midcost
+  67     product,count=recurse(x,y)
+  68     return ArithmeticResult(tuple(product[:len(a)+len(b)-1]),count,'karatsuba')
+  69 
+  70 
+  71 def interpolation_product(a: Sequence[int], b: Sequence[int],
+  72                           p: int = DEFAULT_P) -> ArithmeticResult:
+  73     """Exact evaluation/interpolation using 2n-1 distinct field points.
+  74 
+  75     Bilinear multiplication count is m=len(a)+len(b)-1, and is optimal
+  76     for two n-coefficient inputs (when lengths equal n) in bilinear rank.
+  77     Evaluation/interpolation add O(m^2) scalar arithmetic; counted separately
+  78     conceptually, not in bilinear_products.
+  79     """
+  80     if not a or not b:
+  81         raise ValueError('nonempty polynomials required')
+  82     m=len(a)+len(b)-1
+  83     if not 1 < p or m > p:
+  84         raise ValueError('prime modulus must provide at least m evaluation points')
+  85     aa=[int(x)%p for x in a];bb=[int(x)%p for x in b]
+  86     def eval_horner(c,t):
+  87         v=0
+  88         for ci in reversed(c):
+  89             v=(v*t+ci)%p
+  90         return v
+  91     # m input-dependent products, one for each evaluation point.
+  92     values=[(eval_horner(aa,t)*eval_horner(bb,t))%p for t in range(m)]
+  93     # For consecutive points x_i=i, denominators x_i-x_(i-order)=order.
+  94     # A single inverse is needed for each order. The standard O(m) recurrence
+  95     # builds those inverses when m<p and p is prime.
+  96     inv=[0]*max(2,m)
+  97     inv[1]=1
+  98     for z in range(2,m):
+  99         inv[z]=(p-(p//z)*inv[p%z]%p)%p
+ 100     # Newton divided differences computed in place, descending index.
+ 101     d=values[:]
+ 102     for order in range(1,m):
+ 103         inverse=inv[order]
+ 104         for i in range(m-1,order-1,-1):
+ 105             d[i]=(d[i]-d[i-1])*inverse%p
+ 106     # Convert Newton form to monomial coefficients using Horner in x.
+ 107     coefficients=[d[-1]]
+ 108     for j in range(m-2,-1,-1):
+ 109         new=[0]*(len(coefficients)+1)
+ 110         for i,v in enumerate(coefficients):
+ 111             new[i]=(new[i]-j*v)%p
+ 112             new[i+1]=(new[i+1]+v)%p
+ 113         new[0]=(new[0]+d[j])%p
+ 114         coefficients=new
+ 115     return ArithmeticResult(tuple(coefficients),m,'evaluation-interpolation')
+ 116 
+ 117 
+ 118 def operation_counts(n:int)->dict[str,int]:
+ 119     if n<1 or n&(n-1):
+ 120         raise ValueError('n must be a positive power of two')
+ 121     m=2*n-1
+ 122     return {'n':n,'schoolbook_bilinear':n*n,
+ 123             'karatsuba_bilinear':3**(n.bit_length()-1),
+ 124             'evaluation_bilinear':m,
+ 125             'radix2_ntt_bilinear':1<<(m-1).bit_length(),
+ 126             'naive_eval_linear_ops_order':m*n,
+ 127             'naive_interpolation_linear_ops_order':m*m}
+ 128 
+ 129 
+ 130 def coverage_bound(n:int, r:int, k:int, families:int)->dict[str,int|float]:
+ 131     """Union bound for M affine subspaces, each of dimension <=r,
+ 132     plus residual vectors of Hamming weight <=k in F2^n."""
+ 133     if not (0<=r<=n and 0<=k<=n and families>=1):
+ 134         raise ValueError('invalid parameters')
+ 135     ball=sum(comb(n,j) for j in range(k+1))
+ 136     covered_upper=min(1<<n,families*(1<<r)*ball)
+ 137     return {'n':n,'r':r,'k':k,'families':families,
+ 138             'hamming_ball':ball,'covered_upper':covered_upper,
+ 139             'uncovered_lower':(1<<n)-covered_upper,
+ 140             'covered_fraction_upper':covered_upper/(1<<n)}

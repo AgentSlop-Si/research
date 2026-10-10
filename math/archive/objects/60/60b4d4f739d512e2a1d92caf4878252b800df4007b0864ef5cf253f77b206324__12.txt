@@ -1,0 +1,125 @@
+   1 """Independent audit written for this review; does not execute/import archive code."""
+   2 import hashlib,json,random
+   3 from pathlib import Path
+   4 P=998244353
+   5 G=3
+   6 
+   7 def eye(n): return [[int(i==j) for j in range(n)] for i in range(n)]
+   8 def mul(A,B,p=P):
+   9  return [[sum(a*b for a,b in zip(row,col))%p for col in zip(*B)] for row in A]
+  10 def inv(A,p=P):
+  11  n=len(A);W=[[(v%p) for v in row]+idrow for row,idrow in zip(A,eye(n))]
+  12  for j in range(n):
+  13   k=next((i for i in range(j,n) if W[i][j]),None)
+  14   if k is None:raise ArithmeticError('singular')
+  15   W[j],W[k]=W[k],W[j]
+  16   c=pow(W[j][j],-1,p);W[j]=[c*x%p for x in W[j]]
+  17   for i in range(n):
+  18    if i!=j:
+  19     c=W[i][j];W[i]=[(x-c*y)%p for x,y in zip(W[i],W[j])]
+  20  return [r[n:] for r in W]
+  21 def rank(A,p=P):
+  22  if not A:return 0
+  23  W=[r[:] for r in A];r=0
+  24  for j in range(len(W[0])):
+  25   k=next((i for i in range(r,len(W)) if W[i][j]%p),None)
+  26   if k is None:continue
+  27   W[r],W[k]=W[k],W[r]
+  28   c=pow(W[r][j]%p,-1,p);W[r]=[c*x%p for x in W[r]]
+  29   for i in range(r+1,len(W)):
+  30    c=W[i][j];W[i]=[(x-c*y)%p for x,y in zip(W[i],W[r])]
+  31   r+=1
+  32   if r==len(W):break
+  33  return r
+  34 
+  35 def scan_matrix(a,up=False,p=P):
+  36  n=len(a);M=eye(n)
+  37  for i in (range(n-2,-1,-1) if up else range(1,n)):
+  38   prev=i+1 if up else i-1
+  39   M[i]=[(x+a[i]*y)%p for x,y in zip(M[i],M[prev])]
+  40  return M
+  41 
+  42 def independent_fft(x,p=P,g=G):
+  43  n=len(x);L=n.bit_length()-1
+  44  # Iterative bit reversal without strings.
+  45  order=[]
+  46  for i in range(n):
+  47   rev=0;k=i
+  48   for _ in range(L):rev=2*rev+k%2;k//=2
+  49   order.append(rev)
+  50  y=[x[j] for j in order]
+  51  root=pow(g,(p-1)//n,p);half_inv=pow(2,-1,p)
+  52  for ell in range(1,L+1):
+  53   m=1<<ell;h=m//2
+  54   q=[v for start in range(0,n,m) for j in range(h) for v in (start+j,start+j+h)]
+  55   z=[y[i] for i in q]
+  56   for k in range(n//2):z[2*k+1]=(-2*pow(root,(k%h)*n//m,p)*z[2*k+1])%p
+  57   b=z[:]
+  58   for i in range(n-1,-1,-1):
+  59    if i%2==0:b[i]=(z[i]-half_inv*b[i+1])%p
+  60   f=b[:]
+  61   for i in range(n):
+  62    if i%2:f[i]=(b[i]+f[i-1])%p
+  63   for k,i in enumerate(q):y[i]=f[k]
+  64  return y
+  65 
+  66 out={}
+  67 r=Path('latest_scan_audit/input/fft_interleaved_scan_barrier')
+  68 out['archive_hashes']={}
+  69 for line in (r/'SHA256SUMS.txt').read_text().splitlines():
+  70  digest,name=line.split(maxsplit=1)
+  71  out['archive_hashes'][name]=(hashlib.sha256((r/name).read_bytes()).hexdigest()==digest)
+  72 assert all(out['archive_hashes'].values())
+  73 out['two_scan_basis_counts']={}
+  74 for p,g in [(998244353,3),(2013265921,31)]:
+  75  count=0
+  76  for n in [2,4,8,16,32,64,128]:
+  77   w=pow(g,(p-1)//n,p)
+  78   for j in range(n):
+  79    y=independent_fft([int(i==j) for i in range(n)],p,g)
+  80    assert y==[pow(w,j*k,p) for k in range(n)]
+  81    count+=1
+  82  out['two_scan_basis_counts'][str(p)]=count
+  83 out['bidirectional_sum']=[]
+  84 for n in [4,8,16,32,64]:
+  85  A=scan_matrix([0]+[j+2 for j in range(1,n)])
+  86  B=scan_matrix([j+3 for j in range(n-1)]+[0],True)
+  87  H=[[(x+y)%P for x,y in zip(a,b)] for a,b in zip(A,B)]
+  88  Hinv=inv(H)
+  89  nnz=sum(v!=0 for row in Hinv for v in row)
+  90  residual=[[(Hinv[i][j] if i!=j else 0) for j in range(n)] for i in range(n)]
+  91  assert mul(H,Hinv)==eye(n)
+  92  out['bidirectional_sum'].append({'N':n,'inverse_nnz':nnz,'own_diagonal_residual_rank':rank(residual),'identity_residual_rank':rank([[(Hinv[i][j]-int(i==j))%P for j in range(n)] for i in range(n)])})
+  93  assert nnz==n*n
+  94 out['rank_one_counterexample']=[]
+  95 for n in [4,8,16,32]:
+  96  H=[[1+int(i==j) for j in range(n)] for i in range(n)];Hinv=inv(H)
+  97  own_diag_removed=[[Hinv[i][j] if i!=j else 0 for j in range(n)] for i in range(n)]
+  98  I_removed=[[(Hinv[i][j]-int(i==j))%P for j in range(n)] for i in range(n)]
+  99  assert rank(own_diag_removed)==n and rank(I_removed)==1
+ 100  out['rank_one_counterexample'].append({'N':n,'own_diagonal_residual_rank':rank(own_diag_removed),'identity_residual_rank':rank(I_removed)})
+ 101 rng=random.Random(772619);checks=0
+ 102 for p,g in [(998244353,3),(2013265921,31)]:
+ 103  for n in [4,8,16,32,64]:
+ 104   w=pow(g,(p-1)//n,p)
+ 105   for s in range(n):
+ 106    q=n//(s+1)
+ 107    if not q:continue
+ 108    supports=[set(rng.sample(range(n),s)) for _ in range(q)]
+ 109    covered=set().union(*supports)
+ 110    free=[j for j in range(n) if j not in covered][:q]
+ 111    assert len(free)==q
+ 112    V=[[pow(w,i*j,p) for j in free] for i in range(q)]
+ 113    assert rank(V,p)==q;checks+=1
+ 114 out['independent_vandermonde_checks']=checks
+ 115 # Exact combinatorial minimization of the stated tradeoff, not realizability.
+ 116 out['pass_budget_lower_bounds']=[]
+ 117 for L in range(1,17):
+ 118  n=2**L
+ 119  pairs=[(t,n//((1<<t)+1)) for t in range(L+2)]
+ 120  # If B=0, stronger boundary-row condition must hold.
+ 121  pairs=[(t,b) for t,b in pairs if b or t>=L+1]
+ 122  out['pass_budget_lower_bounds'].append({'N':n,'minimum_t_plus_B_allowed_by_combined_bounds':min(t+b for t,b in pairs)})
+ 123 out['status']='PASS'
+ 124 Path('latest_scan_audit/independent_check_results.json').write_text(json.dumps(out,indent=2)+'\n')
+ 125 print(json.dumps(out,indent=2))

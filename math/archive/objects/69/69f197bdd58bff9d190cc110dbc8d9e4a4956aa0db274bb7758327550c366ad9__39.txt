@@ -1,0 +1,396 @@
+0001 """Phase 10: persistent two-factor convolution edits using exact bivariate jets.
+0002 
+0003 Given a sum/convolution DAG F(A,B), compile coefficient kernels K_{h,l}:
+0004  F(A+alpha*e_s,B+beta*e_t)[q]
+0005  = sum_{h,l} alpha**h beta**l K_{h,l}[(q-h*s-l*t) mod N].
+0006 
+0007 The identity holds over any commutative ring. Numeric prepared kernels here
+0008 use scipy's float64 real FFT, so production answers are approximate.
+0009 AOT native work is performed by the prebuilt C++ library; there is NO
+0010 runtime C++ compilation, Numba JIT, or eval/exec in this module.
+0011 """
+0012 from __future__ import annotations
+0013 
+0014 from dataclasses import dataclass
+0015 from pathlib import Path
+0016 from functools import lru_cache
+0017 import ctypes
+0018 import json
+0019 import sys
+0020 import time
+0021 import numpy as np
+0022 from algebra_fft import AlgebraFFT, DegreeExceeded
+0023 
+0024 C_INT64=ctypes.c_int64
+0025 C_DBL=ctypes.c_double
+0026 PTR=ctypes.c_void_p
+0027 
+0028 @lru_cache(maxsize=2)
+0029 def _load_aot(path: str):
+0030     lib=ctypes.CDLL(path)
+0031     fun=lib.fft10_eval
+0032     fun.argtypes=[C_INT64,PTR,PTR,C_INT64,PTR,PTR,C_INT64,PTR,PTR,PTR,PTR,
+0033                   C_INT64,C_DBL,C_INT64,C_DBL,PTR,C_INT64,PTR]
+0034     fun.restype=ctypes.c_int
+0035     return fun
+0036 
+0037 
+0038 def _native_path():
+0039     filename=('fft_phase10.dll' if sys.platform=='win32' else
+0040               'libfft_phase10.dylib' if sys.platform=='darwin' else
+0041               'libfft_phase10.so')
+0042     path=Path(__file__).resolve().parent/filename
+0043     return str(path) if path.is_file() else None
+0044 
+0045 
+0046 
+0047 @lru_cache(maxsize=2)
+0048 def _load_shape(path):
+0049     lib=ctypes.CDLL(path)
+0050     fn=lib.fft10_shape_eval
+0051     fn.argtypes=[C_INT64,PTR,PTR,PTR,PTR,C_INT64,C_DBL,C_INT64,C_DBL,PTR,C_INT64,PTR]
+0052     fn.restype=ctypes.c_int
+0053     return fn
+0054 
+0055 
+0056 @lru_cache(maxsize=1)
+0057 def _offline_shape_manifest():
+0058     """Read the build-time signature once, never scan or JIT during updates."""
+0059     root=Path(__file__).resolve().parent
+0060     manifest=root/'shape_manifest.json'
+0061     if not manifest.exists():return None
+0062     try:
+0063         info=json.loads(manifest.read_text())
+0064         path=root/info['native_library']
+0065         if path.is_file():return info,str(path)
+0066     except (OSError,KeyError,TypeError,ValueError):
+0067         pass
+0068     return None
+0069 
+0070 
+0071 def _matching_shape(plan):
+0072     """Only select the AOT kernel if all symbolic coefficient degrees match."""
+0073     info=_offline_shape_manifest()
+0074     if info is None:return None
+0075     manifest,path=info
+0076     spec=manifest['shape']
+0077     dense=list(map(list,zip(map(int,plan.dense_a),map(int,plan.dense_b))))
+0078     sparse=list(map(list,zip(map(int,plan.sparse_a),map(int,plan.sparse_b))))
+0079     return path if spec['dense']==dense and spec['sparse']==sparse else None
+0080 
+0081 
+0082 def _pointer(arr):
+0083     return ctypes.c_void_p(arr.ctypes.data)
+0084 
+0085 
+0086 def _validate_pos(n, pos, delta, name):
+0087     if not isinstance(pos,(int,np.integer)) or isinstance(pos,(bool,np.bool_)) or not 0 <= pos < n:
+0088         raise IndexError(f'{name} position must be an integer in [0,{n})')
+0089     if not np.isscalar(delta) or not np.isfinite(delta):
+0090         raise ValueError(f'{name} delta must be finite scalar')
+0091     return int(pos),float(delta)
+0092 
+0093 
+0094 def _output_indices(n, indices):
+0095     if indices is None:
+0096         return None
+0097     q=np.asarray(indices)
+0098     if q.ndim==1 and q.size==0:
+0099         return np.empty(0,dtype=np.int64)
+0100     if q.ndim !=1 or not np.issubdtype(q.dtype,np.integer):
+0101         raise TypeError('indices must be a one-dimensional integer array')
+0102     if np.any((q < 0) | (q >= n)):
+0103         raise IndexError('output index out of bounds')
+0104     return np.ascontiguousarray(q,dtype=np.int64)
+0105 
+0106 
+0107 def _freeze(arr, dtype):
+0108     x=np.ascontiguousarray(arr,dtype=dtype)
+0109     x.flags.writeable=False
+0110     return x
+0111 
+0112 
+0113 @dataclass(frozen=True)
+0114 class TwoEditPlan:
+0115     n: int
+0116     root: int
+0117     target_a: int
+0118     target_b: int
+0119     total_degree: int
+0120     base: np.ndarray
+0121     dense: np.ndarray
+0122     dense_a: np.ndarray
+0123     dense_b: np.ndarray
+0124     sparse_a: np.ndarray
+0125     sparse_b: np.ndarray
+0126     sparse_positions: np.ndarray
+0127     sparse_weights: np.ndarray
+0128     symbolic_terms: tuple[tuple[int,int], ...]
+0129     preparation_seconds: float
+0130     number_original_nodes: int
+0131     number_symbolic_nodes: int
+0132     linear_direct_coefficients: int = 0
+0133 
+0134     @property
+0135     def memory_bytes(self):
+0136         return sum(v.nbytes for v in (
+0137             self.base,self.dense,self.dense_a,self.dense_b,self.sparse_a,self.sparse_b,
+0138             self.sparse_positions,self.sparse_weights))
+0139 
+0140     @property
+0141     def native_available(self):
+0142         return _native_path() is not None
+0143 
+0144     @property
+0145     def shape_available(self):
+0146         return _matching_shape(self) is not None
+0147 
+0148     @property
+0149     def coefficient_count(self):
+0150         return len(self.symbolic_terms)
+0151 
+0152     def update(self, pos_a, delta_a, pos_b, delta_b, indices=None, *, backend='auto'):
+0153         """Both edits are relative to the two immutable base factors.
+0154         backend='native': generic compiled library must exist.
+0155         backend='aot_shape': previously generated and compiled symbolic-shape library required.
+0156         backend='numpy': vectorized fallback.
+0157         backend='auto': AOT shape if matching; otherwise generic AOT, then NumPy.
+0158         There is never any runtime compilation.
+0159         """
+0160         sa,alpha=_validate_pos(self.n,pos_a,delta_a,'A')
+0161         sb,beta=_validate_pos(self.n,pos_b,delta_b,'B')
+0162         q=_output_indices(self.n,indices)
+0163         if backend not in ('auto','native','aot_shape','numpy'):
+0164             raise ValueError('backend must be auto, native, aot_shape or numpy')
+0165         if backend in ('auto','aot_shape'):
+0166             path=_matching_shape(self)
+0167             if path is not None:
+0168                 return self._shape(path,sa,alpha,sb,beta,q)
+0169             if backend=='aot_shape':
+0170                 raise RuntimeError('No precompiled shape library matches this plan')
+0171         if backend in ('auto','native'):
+0172             path=_native_path()
+0173             if path is not None:
+0174                 return self._native(path,sa,alpha,sb,beta,q)
+0175             if backend=='native':
+0176                 raise RuntimeError('Generic AOT library missing; run python build_native.py once')
+0177         return self._numpy(sa,alpha,sb,beta,q)
+0178 
+0179     def _native(self,path,pa,alpha,pb,beta,q):
+0180         out=np.empty(self.n if q is None else len(q), dtype=np.float64)
+0181         status=_load_aot(path)(
+0182             self.n, _pointer(self.base), _pointer(self.dense),
+0183             len(self.dense_a), _pointer(self.dense_a), _pointer(self.dense_b),
+0184             len(self.sparse_a), _pointer(self.sparse_a), _pointer(self.sparse_b),
+0185             _pointer(self.sparse_positions), _pointer(self.sparse_weights),
+0186             pa, alpha, pb, beta,
+0187             None if q is None else _pointer(q), len(out), _pointer(out))
+0188         if status:
+0189             raise RuntimeError(f'Native kernel failed with error code {status}')
+0190         return out
+0191 
+0192     def _shape(self,path,pa,alpha,pb,beta,q):
+0193         out=np.empty(self.n if q is None else len(q),dtype=np.float64)
+0194         code=_load_shape(path)(
+0195             self.n,_pointer(self.base),_pointer(self.dense),
+0196             _pointer(self.sparse_positions),_pointer(self.sparse_weights),
+0197             pa,alpha,pb,beta,None if q is None else _pointer(q),len(out),_pointer(out))
+0198         if code:raise RuntimeError(f'AOT shape kernel failed with code {code}')
+0199         return out
+0200 
+0201     def _numpy(self,pa,alpha,pb,beta,q):
+0202         n=self.n
+0203         out=self.base.copy() if q is None else self.base[q].copy()
+0204         for h,(da,db) in enumerate(zip(self.dense_a,self.dense_b)):
+0205             shift=(int(da)*pa+int(db)*pb)%n
+0206             coeff=(alpha**int(da))*(beta**int(db))
+0207             if coeff==0: continue
+0208             if q is None:
+0209                 out+=coeff*np.roll(self.dense[h],shift)
+0210             else:
+0211                 out+=coeff*self.dense[h,(q-shift)%n]
+0212         for da,db,p,weight in zip(self.sparse_a,self.sparse_b,
+0213                                    self.sparse_positions,self.sparse_weights):
+0214             shifted=(int(p)+int(da)*pa+int(db)*pb)%n
+0215             incr=float(weight)*(alpha**int(da))*(beta**int(db))
+0216             if q is None:out[shifted]+=incr
+0217             else:out[q==shifted]+=incr
+0218         return out
+0219 
+0220 
+0221 def _bivariate_symbolic(engine:AlgebraFFT, root:int, a:int, b:int,
+0222                         max_degree:int, max_terms:int):
+0223     """Exact algebraic DAG expansion; no numerical zero thresholds."""
+0224     if a==b or engine._get(a).op!='seed' or engine._get(b).op!='seed':
+0225         raise ValueError('two distinct seed nodes required')
+0226     da=engine.degree_in(root,a)
+0227     db=engine.degree_in(root,b)
+0228     if da+db>max_degree:
+0229         raise DegreeExceeded(f'combined upper degree {da+db} exceeds bound {max_degree}')
+0230     original_nodes=engine.reachable_count(root)
+0231     memo={}
+0232     zero=engine.zero
+0233     for uid in engine._topological(root):
+0234         nd=engine.nodes[uid]
+0235         if uid==a:
+0236             memo[uid]={(0,0):uid,(1,0):engine.one}
+0237         elif uid==b:
+0238             memo[uid]={(0,0):uid,(0,1):engine.one}
+0239         elif nd.op in ('seed','const','impulse'):
+0240             memo[uid]={(0,0):uid}
+0241         elif nd.op=='scale':
+0242             memo[uid]={p:engine.scale(v,nd.scalar) for p,v in memo[nd.args[0]].items()}
+0243         elif nd.op=='sum':
+0244             result={}
+0245             for child,weight in zip(nd.args,nd.weights):
+0246                 for p,v in memo[child].items():
+0247                     term=engine.scale(v,weight)
+0248                     result[p]=engine.add(result.get(p,zero),term)
+0249             memo[uid]=result
+0250         elif nd.op=='product':
+0251             res={(0,0):engine.const(nd.scalar)}
+0252             for child in nd.args:
+0253                 nxt={}
+0254                 for (i,j),lhs in res.items():
+0255                     for (h,l),rhs in memo[child].items():
+0256                         coord=(i+h,j+l)
+0257                         if coord[0]+coord[1]>max_degree:
+0258                             raise DegreeExceeded('unexpected degree overflow')
+0259                         nxt[coord]=engine.add(nxt.get(coord,zero), engine.mul(lhs,rhs))
+0260                 res=nxt
+0261                 if len(res)>max_terms:
+0262                     raise DegreeExceeded('too many bivariate coefficients')
+0263             memo[uid]=res
+0264         else:
+0265             raise AssertionError(f'unknown graph node: {nd.op}')
+0266     result={p:u for p,u in memo[root].items() if u!=zero}
+0267     if (0,0) not in result:result[(0,0)]=zero
+0268     if len(result)>max_terms:
+0269         raise DegreeExceeded('too many bivariate coefficients')
+0270     return result,original_nodes
+0271 
+0272 
+0273 
+0274 def _direct_time_if_affine(engine, uid, *, max_terms=24):
+0275     """Evaluate affine combinations of shifted original signals in O(terms*N).
+0276 
+0277     If the expression contains a convolution of two general signals, return
+0278     None and use the verified frequency-domain fallback. This is an exact
+0279     syntactic certificate, not a test for numerically tiny coefficients.
+0280     """
+0281     def merge_scaled(dst, src, mul):
+0282         for key, value in src.items():
+0283             dst[key]=dst.get(key,0.) + mul*value
+0284         return {k:v for k,v in dst.items() if v}
+0285 
+0286     results={}
+0287     for v in engine._topological(uid):
+0288         nd=engine.nodes[v]
+0289         if nd.op=='seed':
+0290             current=({(v,0):1.}, {})
+0291         elif nd.op=='const':
+0292             current=({}, {0:nd.scalar} if nd.scalar else {})
+0293         elif nd.op=='impulse':
+0294             current=({}, {nd.index:nd.scalar})
+0295         elif nd.op=='scale':
+0296             child=results[nd.args[0]]
+0297             current=None if child is None else (
+0298                 {key:nd.scalar*x for key,x in child[0].items() if nd.scalar*x},
+0299                 {key:nd.scalar*x for key,x in child[1].items() if nd.scalar*x})
+0300         elif nd.op=='sum':
+0301             dense={};sparse={}
+0302             for child_id,weight in zip(nd.args,nd.weights):
+0303                 child=results[child_id]
+0304                 if child is None:
+0305                     dense=None
+0306                     break
+0307                 dense=merge_scaled(dense,child[0],weight)
+0308                 sparse=merge_scaled(sparse,child[1],weight)
+0309             current=None if dense is None else (dense,sparse)
+0310         elif nd.op=='product':
+0311             dense={};sparse={0:nd.scalar}
+0312             for child_id in nd.args:
+0313                 child=results[child_id]
+0314                 if child is None or (dense and child[0]):
+0315                     dense=None
+0316                     break
+0317                 cd,cs=child
+0318                 new_dense={};new_sparse={}
+0319                 for (seed,off),value in dense.items():
+0320                     for t,w in cs.items():
+0321                         key=(seed,(off+t)%engine.n)
+0322                         new_dense[key]=new_dense.get(key,0.)+value*w
+0323                 for (seed,off),value in cd.items():
+0324                     for t,w in sparse.items():
+0325                         key=(seed,(off+t)%engine.n)
+0326                         new_dense[key]=new_dense.get(key,0.)+value*w
+0327                 for t,v0 in sparse.items():
+0328                     for u,v1 in cs.items():
+0329                         key=(t+u)%engine.n
+0330                         new_sparse[key]=new_sparse.get(key,0.)+v0*v1
+0331                 dense={k:v for k,v in new_dense.items() if v}
+0332                 sparse={k:v for k,v in new_sparse.items() if v}
+0333                 if len(dense)+len(sparse)>max_terms:
+0334                     dense=None
+0335                     break
+0336             current=None if dense is None else (dense,sparse)
+0337         else:
+0338             current=None
+0339         if current is not None and len(current[0])+len(current[1])>max_terms:
+0340             current=None
+0341         results[v]=current
+0342     result=results[uid]
+0343     if result is None:return None
+0344     dense,sparse=result
+0345     out=np.zeros(engine.n,dtype=np.float64)
+0346     for (seed,offset),amp in dense.items():
+0347         out += amp*np.roll(engine._seeds[seed],offset)
+0348     for offset,amp in sparse.items():
+0349         out[offset]+=amp
+0350     return out
+0351 
+0352 
+0353 def prepare_two(engine:AlgebraFFT, root:int, target_a:int, target_b:int,
+0354                 *, max_total_degree=5,max_terms=24,max_sparse_positions=24,
+0355                 max_kernel_bytes=256*1024*1024):
+0356     """Prepare a bivariate *exact algebraic* update from Phase 8's graph.
+0357 
+0358     Prep requires transformed coefficient kernels, up to O(terms N log N)
+0359     for inverse FFT and O(terms N) spectral DAG calculations (plus graph work).
+0360     High-degree expressions are rejected, not silently truncated.
+0361     """
+0362     if max_total_degree<1 or max_total_degree>12 or max_terms<1:
+0363         raise ValueError('invalid compilation bounds')
+0364     start=time.perf_counter()
+0365     coeffs,orig=_bivariate_symbolic(engine,root,target_a,target_b,max_total_degree,max_terms)
+0366     n=engine.n
+0367     if 8*n*(len(coeffs)+1)>max_kernel_bytes:
+0368         raise MemoryError('prepared kernel estimate exceeds memory budget')
+0369     sparse_a=[];sparse_b=[];sparse_pos=[];sparse_vals=[]
+0370     dense_a=[];dense_b=[];dense_data=[]
+0371     fast_coeff=0
+0372     for (h,l),sym in sorted(coeffs.items()):
+0373         if (h,l)==(0,0):
+0374             directly=_direct_time_if_affine(engine,sym)
+0375             base=engine.evaluate_time(sym) if directly is None else directly
+0376             fast_coeff += (directly is not None)
+0377             continue
+0378         sparse=engine._known_impulses(sym,limit=max_sparse_positions)
+0379         if sparse is not None:
+0380             for pos,amp in sorted(sparse.items()):
+0381                 if amp:
+0382                     sparse_a.append(h);sparse_b.append(l)
+0383                     sparse_pos.append(pos);sparse_vals.append(amp)
+0384         else:
+0385             dense_a.append(h);dense_b.append(l)
+0386             directly=_direct_time_if_affine(engine,sym)
+0387             dense_data.append(engine.evaluate_time(sym) if directly is None else directly)
+0388             fast_coeff += (directly is not None)
+0389     dense=_freeze(np.stack(dense_data,axis=0) if dense_data else np.empty((0,n)),np.float64)
+0390     return TwoEditPlan(
+0391         n,root,target_a,target_b,max_total_degree,_freeze(base,np.float64),dense,
+0392         _freeze(np.asarray(dense_a),np.int32),_freeze(np.asarray(dense_b),np.int32),
+0393         _freeze(np.asarray(sparse_a),np.int32),_freeze(np.asarray(sparse_b),np.int32),
+0394         _freeze(np.asarray(sparse_pos),np.int64),_freeze(np.asarray(sparse_vals),np.float64),
+0395         tuple(sorted(coeffs)),time.perf_counter()-start,orig,
+0396         engine.reachable_count(root),fast_coeff)

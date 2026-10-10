@@ -1,0 +1,190 @@
+   1 """Independent phase-14 audit. No uploaded executable is imported or run.
+   2 All identity checks use integer exponents or exact modular arithmetic.
+   3 Entropy is computed from exact dyadic support sizes, without logarithmic floats.
+   4 """
+   5 import json
+   6 import math
+   7 from collections import Counter
+   8 from pathlib import Path
+   9 
+  10 OUT = Path(__file__).with_name('independent_results.json')
+  11 P = 1_000_000_009
+  12 
+  13 def is_prime(n):
+  14     if n < 2: return False
+  15     if n % 2 == 0: return n == 2
+  16     return all(n % d for d in range(3, math.isqrt(n)+1, 2))
+  17 
+  18 def orbits(n, a):
+  19     used = set(); answer = []
+  20     for k in range(n):
+  21         if k in used: continue
+  22         seq = []; q = k
+  23         while q not in used:
+  24             used.add(q); seq.append(q); q = a*q % n
+  25         assert q == k
+  26         answer.append(seq)
+  27     return answer
+  28 
+  29 def log2_exact(n):
+  30     assert n > 0 and n & (n-1) == 0
+  31     return n.bit_length()-1
+  32 
+  33 def cycle_audits():
+  34     result=[]
+  35     for m in range(4, 14):
+  36         n=1<<m
+  37         for b in range(3, m):
+  38             base=1<<b; length=n//base
+  39             cycles=orbits(n,1+base)
+  40             expected={1:base, **{1<<s:base//2 for s in range(1,m-b+1)}}
+  41             hist=dict(Counter(map(len, cycles)))
+  42             assert hist==expected
+  43             count=base+(base//2)*(m-b)
+  44             assert len(cycles)==count
+  45             # Every primitive L-th eigenvalue occurs once in each L-cycle.
+  46             assert hist[length]==base//2
+  47             # Nullity of P-cI is at most number of cycles, equality at c=1.
+  48             assert sum(hist.values())==count
+  49             result.append(dict(N=n,B=base,cycles=count,rank_budget=n-count,
+  50                                primitive_eigenvalue_multiplicity=hist[length]))
+  51     return result
+  52 
+  53 def sparse_audits():
+  54     result=[]
+  55     for n,base in [(16,8),(32,8),(64,8),(128,16),(256,16),
+  56                    (256,32),(512,32),(1024,32),(2048,64)]:
+  57         length=n//base; ell=log2_exact(length); b=log2_exact(base)
+  58         assert length<=base
+  59         cycles=orbits(n,1+base)
+  60         entropy_u=0; entropy_v=0; nonzeros=0; pair_checks=0
+  61         for cyc in cycles:
+  62             k0=cyc[0]; d=len(cyc); step=length//d
+  63             assert d==length//math.gcd(length,k0)
+  64             row_counts=[0]*d
+  65             for j in range(n):
+  66                 residue=k0*j%length
+  67                 assert residue%step==0
+  68                 e=residue//step
+  69                 h=(k0*j-residue)//length
+  70                 row_counts[e]+=1; nonzeros+=1
+  71                 for t,k in enumerate(cyc):
+  72                     assert k==k0*(1+base*t)%n
+  73                     assert (base*residue*t+residue+length*h-k*j)%n==0
+  74                     pair_checks+=1
+  75             assert row_counts==[n//d]*d
+  76             # U row probabilities: 1/d on d entries.
+  77             # V row probabilities: d/N on N/d entries.
+  78             entropy_u += d*log2_exact(d)
+  79             entropy_v += d*log2_exact(n//d)
+  80         assert pair_checks==n*n
+  81         assert nonzeros==n*(base+base//2*ell)
+  82         assert entropy_u==n*(ell-1)+base
+  83         assert entropy_v==n*(b+1)-base
+  84         assert entropy_u+entropy_v==n*log2_exact(n)
+  85         result.append(dict(N=n,B=base,entry_exponents_checked=pair_checks,
+  86                            residual_nonzeros=nonzeros,entropy_U=entropy_u,
+  87                            entropy_V=entropy_v,entropy_total=entropy_u+entropy_v,
+  88                            residual_unitary_two_coordinate_gate_lower_bound=(entropy_v+1)//2))
+  89     return result
+  90 
+  91 def extension_audits():
+  92     assert is_prime(P)
+  93     nonresidue=next(x for x in range(2,100) if pow(x,(P-1)//2,P)==P-1)
+  94     z8=pow(nonresidue,(P-1)//8,P)
+  95     assert pow(z8,4,P)==P-1
+  96     result=[]
+  97     for n in (16,32,64):
+  98         length=n//8
+  99         # All roots of X^L-z8 are primitive Nth roots. Their Frobenius
+ 100         # orbit length equals ord_N(P)=L, certifying irreducibility.
+ 101         order=1
+ 102         while pow(P,order,n)!=1: order+=1
+ 103         assert order==length
+ 104         nonzeros=0; checked=0
+ 105         for cyc in orbits(n,9):
+ 106             d=len(cyc)
+ 107             for e in range(d):
+ 108                 residue=e*length//d
+ 109                 for j in range(n):
+ 110                     co=[0]*length
+ 111                     for t,k in enumerate(cyc):
+ 112                         q,r=divmod((k*j)%n,length)
+ 113                         phase=pow(z8,(q-(8//d)*e*t)%8,P)
+ 114                         co[r]=(co[r]+phase*pow(d,-1,P))%P
+ 115                     assert all(v==0 for r,v in enumerate(co) if r!=residue)
+ 116                     expected=(pow(z8,((cyc[0]*j-residue)//length)%8,P)
+ 117                               if cyc[0]*j%length==residue else 0)
+ 118                     assert co[residue]==expected
+ 119                     nonzeros+=expected!=0; checked+=1
+ 120         assert checked==n*n
+ 121         result.append(dict(N=n,extension_degree=order,all_residual_coefficients_checked=checked,
+ 122                            residual_nonzeros=nonzeros,prime=P))
+ 123     return result
+ 124 
+ 125 def polynomial_and_multiscale_audits():
+ 126     result=[]
+ 127     schedules=[lambda j:j,lambda j:j*j,lambda j:j*j+3*j+7,
+ 128                lambda j:j**4+5*j**3-7*j+11]
+ 129     for m in range(4,11):
+ 130         n=1<<m
+ 131         for b in range(3,m):
+ 132             base=1<<b; length=n//base
+ 133             for ix,f in enumerate(schedules):
+ 134                 counts=Counter(f(j)%length for j in range(n))
+ 135                 assert all(c%base==0 for c in counts.values())
+ 136                 assert base//2 not in counts.values()
+ 137                 rank=n-max(counts.values())
+ 138                 if length==2:
+ 139                     assert rank==min(sum(f(j)%2==0 for j in range(n)),
+ 140                                      sum(f(j)%2==1 for j in range(n)))
+ 141                 result.append(dict(N=n,B=base,schedule=ix,phase_deviation_rank=rank,
+ 142                                    required_total_rank=n-base-base//2*(m-b)))
+ 143     return result
+ 144 
+ 145 def two_mask_audits():
+ 146     result=[]
+ 147     for n in (128,256,512):
+ 148         a=n//8; length=a//8
+ 149         rows={}
+ 150         for cyc in orbits(a,9):
+ 151             for t,k1 in enumerate(cyc): rows[k1]=(cyc[0],len(cyc),t)
+ 152         checked=0
+ 153         for k in range(n):
+ 154             k1,k2=divmod(k,8)
+ 155             k0,d,t=rows[k1]
+ 156             for j in range(n):
+ 157                 j2,j1=divmod(j,a)
+ 158                 r=k0*j1%length; e=r//(length//d); h=(k0*j1-r)//length
+ 159                 # Each matrix coefficient has exactly one surviving orbit term.
+ 160                 composed=(a*k2*j2+j1*k2+8*r+8*length*h+(n//d)*e*t)%n
+ 161                 assert composed==(k*j)%n
+ 162                 checked+=1
+ 163         result.append(dict(N=n,all_basis_vectors_verified=n,all_matrix_entries_verified=checked,
+ 164                            nonbase_diagonal_masks=2,method='integer phase congruences'))
+ 165     return result
+ 166 
+ 167 def conductor_counterexample():
+ 168     n=128
+ 169     masks=[[2*j for j in range(n)], [2*j+(j<3) for j in range(n)]]
+ 170     profile=[]
+ 171     for base in (8,16,32,64):
+ 172         length=n//base
+ 173         ranks=[n-max(Counter(x%length for x in schedule).values()) for schedule in masks]
+ 174         needed=n-base-base//2*log2_exact(length)
+ 175         profile.append(dict(N=n,B=base,mask_ranks=ranks,budget=needed,passes=sum(ranks)>=needed))
+ 176     assert all(row['passes'] for row in profile[:-1])
+ 177     assert not profile[-1]['passes']
+ 178     return profile
+ 179 
+ 180 def main():
+ 181     report=dict(cycle_audits=cycle_audits(),sparse_and_entropy_audits=sparse_audits(),
+ 182                 degree_preserving_extension_audits=extension_audits(),
+ 183                 polynomial_and_multiscale_audits=polynomial_and_multiscale_audits(),
+ 184                 two_mask_audits=two_mask_audits(),conductor_counterexample=conductor_counterexample(),
+ 185                 uploaded_code_executed=False)
+ 186     OUT.write_text(json.dumps(report,indent=2)+'\n')
+ 187     print(json.dumps({k:len(v) if isinstance(v,list) else v for k,v in report.items()},indent=2))
+ 188     print('PASS; results:',OUT)
+ 189 
+ 190 if __name__=='__main__': main()

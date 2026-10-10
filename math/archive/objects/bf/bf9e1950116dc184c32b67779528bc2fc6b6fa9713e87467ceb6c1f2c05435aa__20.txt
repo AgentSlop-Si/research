@@ -1,0 +1,52 @@
+   1 """Run the portable component checks, without rerunning timing experiments."""
+   2 from concurrent.futures import ThreadPoolExecutor
+   3 import hashlib
+   4 import json
+   5 from pathlib import Path
+   6 import subprocess
+   7 import sys
+   8 import time
+   9 
+  10 ROOT = Path(__file__).resolve().parent
+  11 CHECKS = [
+  12     ('fft_route_barriers_research', 'audit.py'),
+  13     ('fft_route_barriers_research', 'audit_numeric_shifts.py'),
+  14     ('fft_route_barriers_research', 'independent_review_checks.py'),
+  15     ('fft_resolvent_aggregate_research', 'run_audit.py'),
+  16     ('fft_graph_feedback_research', 'run_audit.py'),
+  17     ('fft_sparse_grading_research', 'run_audit.py'),
+  18     ('fft_exact_decimation_research', 'run_audit.py'),
+  19     ('fft_strong_scale_research', 'run_audit.py'),
+  20     ('fft_native_energy_research', 'verify.py'),
+  21     ('fft_surrogate_prefix_research', 'run_audit.py'),
+  22     ('fft_surrogate_prefix_research', 'independent_review_checks.py'),
+  23     ('fft_structured_phase_research', 'audit.py'),
+  24 ]
+  25 
+  26 def run_one(item):
+  27     folder, script = item
+  28     start = time.monotonic()
+  29     result = subprocess.run([sys.executable, script], cwd=ROOT/folder,
+  30                             capture_output=True, text=True)
+  31     name = folder + '__' + Path(script).stem
+  32     log = ROOT/'verification_logs'/f'{name}.txt'
+  33     log.write_text(result.stdout + result.stderr)
+  34     return dict(component=folder, script=script, exit_code=result.returncode,
+  35                 elapsed_seconds=round(time.monotonic()-start, 3),
+  36                 source_sha256=hashlib.sha256((ROOT/folder/script).read_bytes()).hexdigest(),
+  37                 log=str(log.relative_to(ROOT)))
+  38 
+  39 def main():
+  40     (ROOT/'verification_logs').mkdir(exist_ok=True)
+  41     # Two jobs bound host contention. Recorded benchmark data are unchanged.
+  42     with ThreadPoolExecutor(max_workers=2) as pool:
+  43         results = list(pool.map(run_one, CHECKS))
+  44     passed = all(row['exit_code'] == 0 for row in results)
+  45     report = dict(status='PASS' if passed else 'FAIL', checks=results,
+  46                   note='Integration and correctness checks; no timing benchmark rerun.')
+  47     (ROOT/'verification_summary.json').write_text(json.dumps(report, indent=2)+'\n')
+  48     print(json.dumps(report, indent=2))
+  49     return 0 if passed else 1
+  50 
+  51 if __name__ == '__main__':
+  52     raise SystemExit(main())

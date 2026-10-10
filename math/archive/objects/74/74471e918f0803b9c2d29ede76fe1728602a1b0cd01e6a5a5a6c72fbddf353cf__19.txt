@@ -1,0 +1,176 @@
+   1 """Independently authored checks. No supplied module is imported or executed."""
+   2 import json, math, random
+   3 from pathlib import Path
+   4 import numpy as np
+   5 
+   6 OUT=Path(__file__).parent
+   7 P=998244353
+   8 IROOT=pow(3,(P-1)//4,P)
+   9 Z8=pow(3,(P-1)//8,P)
+  10 ROOT2=(Z8+pow(Z8,-1,P))%P
+  11 
+  12 def mm(a,b):
+  13     # Eight products below P^2 sum to less than int64 maximum.
+  14     out=np.zeros((a.shape[0],b.shape[1]),dtype=np.int64)
+  15     for j in range(0,a.shape[1],8):
+  16         out=(out+(a[:,j:j+8]@b[j:j+8,:])%P)%P
+  17     return out
+  18 
+  19 def inverse(a):
+  20     n=len(a); w=np.concatenate([a.copy()%P,np.eye(n,dtype=np.int64)],axis=1)
+  21     for j in range(n):
+  22         piv=next(k for k in range(j,n) if w[k,j])
+  23         w[[j,piv]]=w[[piv,j]]
+  24         w[j]=(w[j]*pow(int(w[j,j]),-1,P))%P
+  25         factors=w[:,j].copy();factors[j]=0
+  26         w=(w-factors[:,None]*w[j:j+1,:])%P
+  27     return w[:,n:]
+  28 
+  29 def rank(a):
+  30     w=a.copy()%P;r=0
+  31     for j in range(w.shape[1]):
+  32         inds=np.flatnonzero(w[r:,j])
+  33         if not len(inds):continue
+  34         q=r+int(inds[0]);w[[r,q]]=w[[q,r]]
+  35         w[r]=(w[r]*pow(int(w[r,j]),-1,P))%P
+  36         f=w[r+1:,j].copy()
+  37         w[r+1:]=(w[r+1:]-f[:,None]*w[r:r+1])%P
+  38         r+=1
+  39         if r==len(w):break
+  40     return r
+  41 
+  42 def cayley(adj,alpha):
+  43     n=len(adj);eye=np.eye(n,dtype=np.int64)
+  44     return (2*inverse((eye-IROOT*alpha%P*adj)%P)-eye)%P
+  45 
+  46 def haar_mod(m):
+  47     h=np.zeros((m,m),dtype=np.int64)
+  48     def scale(w):
+  49         e=w.bit_length()-1
+  50         return pow((pow(2,e//2,P)*(ROOT2 if e%2 else 1))%P,-1,P)
+  51     h[:,0]=scale(m)
+  52     width=m;start=1
+  53     while width>1:
+  54         for b in range(m//width):
+  55             lo=b*width;mid=lo+width//2
+  56             h[lo:mid,start+b]=scale(width)
+  57             h[mid:lo+width,start+b]=(-scale(width))%P
+  58         start+=m//width;width//=2
+  59     return h
+  60 
+  61 def modular_stage(n,variant,seed):
+  62     order=list(range(n));random.Random(seed).shuffle(order)
+  63     invorder=np.argsort(order).tolist()
+  64     path=np.zeros((n,n),dtype=np.int64)
+  65     path2=np.zeros_like(path)
+  66     for j in range(n-1):
+  67         path[j,j+1]=path[j+1,j]=1
+  68         u,v=invorder[j:j+2];path2[u,v]=path2[v,u]=1
+  69     alpha=pow(2 if variant=='strong_haar' else 32,-1,P)
+  70     eps=pow(2 if variant=='strong_haar' else 512,-1,P)
+  71     m=n//2
+  72     if variant=='green_tree':
+  73         size=(1<<((m+1).bit_length()-1))-1
+  74         adj=np.zeros((m,m),dtype=np.int64)
+  75         for k in range(1,size):adj[k,(k-1)//2]=adj[(k-1)//2,k]=1
+  76         h=cayley(adj,2);hinv=inverse(h)
+  77     else:
+  78         h=haar_mod(m);hinv=h.T.copy()
+  79     r=np.zeros((n,n),dtype=np.int64);r[:m,m:]=h;r[m:,:m]=hinv
+  80     q=(np.eye(n,dtype=np.int64)+(IROOT*eps%P)*r)%P
+  81     return mm(q,mm(cayley(path,alpha),cayley(path2,alpha)))
+  82 
+  83 def run_modular():
+  84     cov=[];pairs=[]
+  85     for n in [8,16,32,64,128]:
+  86         omega=pow(3,(P-1)//n,P)
+  87         d=np.array([pow(omega,k,P) for k in range(n)],dtype=np.int64)
+  88         for v in ['green_tree','haar_adapter']:
+  89             a=modular_stage(n,v,5031+n)
+  90             defect=(a[:,np.roll(np.arange(n),-1)]-d[:,None]*a)%P
+  91             cov.append(dict(n=n,variant=v,rank=rank(defect)))
+  92         stages={}
+  93         for role,seed in [('first',2609+n),('second',2609+10*n)]:
+  94             for v in ['green_tree','haar_adapter','strong_haar']:
+  95                 a=modular_stage(n,v,seed);ai=inverse(a)
+  96                 assert np.array_equal(mm(a,ai),np.eye(n,dtype=np.int64))
+  97                 if role=='first':
+  98                     diag=np.diag(mm(a[:,np.roll(np.arange(n),-1)],ai))
+  99                 else:diag=np.diag(mm(ai,d[:,None]*a%P))
+ 100                 stages[role,v]=sorted(int(x) for x in diag)
+ 101         for v,w in [('green_tree','green_tree'),('green_tree','haar_adapter'),
+ 102                     ('haar_adapter','green_tree'),('haar_adapter','haar_adapter'),
+ 103                     ('strong_haar','strong_haar'),('strong_haar','haar_adapter')]:
+ 104             x,y=stages['first',v],stages['second',w]
+ 105             idx=next((j for j,(a,b) in enumerate(zip(x,y)) if a!=b),None)
+ 106             pairs.append(dict(n=n,first=v,second=w,match=x==y,
+ 107                               mismatch_index=idx,first_mismatch=None if idx is None else [x[idx],y[idx]]))
+ 108     expected=json.loads((OUT/'phase13_source_certificate.json').read_text())
+ 109     for a,b in zip(pairs,expected):
+ 110         assert a['n']==b['n'] and a['first_mismatch']==b['first_mismatch']
+ 111     assert len(expected)==len(pairs)==30
+ 112     assert all(a['rank']==a['n'] for a in cov)
+ 113     return dict(covariance=cov,two_stage=pairs,all_uploaded_mismatches_reproduced=True)
+ 114 
+ 115 def givens_qr(a):
+ 116     n=len(a);r=a.copy();q=np.eye(n,dtype=complex);count=0
+ 117     for k in range(n-1):
+ 118         x,y=r[k,k],r[k+1,k]
+ 119         if abs(y)==0:continue
+ 120         rho=math.sqrt(abs(x)**2+abs(y)**2)
+ 121         g=np.array([[x.conjugate(),y.conjugate()],[-y,x]])/rho
+ 122         r[k:k+2]=g@r[k:k+2]
+ 123         q[:,k:k+2]=q[:,k:k+2]@g.conj().T
+ 124         count+=1
+ 125     phases=np.diag(r)/abs(np.diag(r))
+ 126     r=phases.conjugate()[:,None]*r;q=q*phases[None,:]
+ 127     return q,r,count
+ 128 
+ 129 def haar_gates(m):
+ 130     h=np.eye(m);count=0;leaves=[]
+ 131     def rec(slot,node,width):
+ 132         nonlocal count
+ 133         if width==1:leaves.append(slot);return
+ 134         a=h[slot].copy();b=h[node].copy()
+ 135         h[slot]=(a+b)/math.sqrt(2);h[node]=(a-b)/math.sqrt(2)
+ 136         count+=1
+ 137         rec(slot,2*node,width//2);rec(node,2*node+1,width//2)
+ 138     rec(0,1,m)
+ 139     return h[leaves,:],count
+ 140 
+ 141 def run_numeric():
+ 142     rng=np.random.default_rng(140413);rows=[]
+ 143     for n in [4,8,16,32,64]:
+ 144         for strength in [1/32,1/2,2,100]:
+ 145             a=np.diag(rng.normal(size=n))
+ 146             off=rng.normal(size=n-1)
+ 147             a+=np.diag(off,1)+np.diag(off,-1)
+ 148             t=np.eye(n)-1j*strength*a
+ 149             qm,rm,cm=givens_qr(t);qp,rp,cp=givens_qr(t.conj().T)
+ 150             cay=t.conj().T@np.linalg.inv(t)
+ 151             m=n//2;h,hcount=haar_gates(m)
+ 152             root=h[:,0]
+ 153             assert np.linalg.norm(root-np.ones(m)/math.sqrt(m))<1e-12
+ 154             eps=strength;c=1/math.sqrt(1+eps**2);s=eps*c
+ 155             z=np.zeros((m,m));ii=np.eye(m)
+ 156             invol=np.block([[z,h],[h.T,z]])
+ 157             v=c*np.eye(n)+1j*s*invol
+ 158             dh=np.block([[h,z],[z,ii]])
+ 159             rot=np.block([[c*ii,1j*s*ii],[1j*s*ii,c*ii]])
+ 160             gatev=dh@rot@dh.conj().T
+ 161             record=dict(n=n,strength=strength,cayley_gates=cm+cp,
+ 162                         haar_gates=hcount,rotation_gates=2*hcount+m,
+ 163                         common_R_error=float(np.linalg.norm(rm-rp)),
+ 164                         qr_error=float(np.linalg.norm(t-qm@rm)),
+ 165                         cayley_error=float(np.linalg.norm(cay-qp@qm.conj().T)),
+ 166                         normalized_rotation_error=float(np.linalg.norm(v-gatev)),
+ 167                         normalized_rotation_unitarity=float(np.linalg.norm(v@v.conj().T-np.eye(n))))
+ 168             assert max(record[k] for k in ['common_R_error','qr_error','cayley_error','normalized_rotation_error','normalized_rotation_unitarity'])<1e-9
+ 169             assert cm+cp<=2*(n-1) and hcount==m-1
+ 170             rows.append(record)
+ 171     return rows
+ 172 
+ 173 if __name__=='__main__':
+ 174     result=dict(numeric_gate_reconstruction=run_numeric(),exact_modular=run_modular())
+ 175     (OUT/'independent_phase13_results.json').write_text(json.dumps(result,indent=2))
+ 176     print('PASS: 20 QR/Haar normalized reconstruction cases; 10 full-rank covariance defects; all 30 uploaded two-stage mismatch certificates reproduced.')

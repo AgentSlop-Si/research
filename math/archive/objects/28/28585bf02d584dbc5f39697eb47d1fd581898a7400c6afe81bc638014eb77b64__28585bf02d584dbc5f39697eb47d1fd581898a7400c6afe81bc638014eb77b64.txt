@@ -1,0 +1,68 @@
+"""A universal-expressivity audit, NOT a universal fast transform.
+
+For N=M^2 and N | p-1, choose M distinct shifts and multiplier cosets.
+Then every arbitrary raw vector admits an EXACT M-orbit representation,
+because each h sees an invertible M-by-M Vandermonde matrix.
+Extracting all M orbit components and evaluating all outputs with the
+present algorithms is superlinear. The finding identifies the growing-g
+bottleneck rather than hiding it.
+"""
+from __future__ import annotations
+import random,json
+from pathlib import Path
+from fast_vandermonde import solve_moments
+from multishear_union import synthesize_orbits
+from test_shear_gauge import primitive_n_root,dft_slow
+import phase_union_general as phase
+
+
+def represent_arbitrary(x,p,omega,m):
+    n=m*m; assert len(x)==n
+    subroots=phase.phase_table(m,p,pow(omega,m,p))
+    subgroup=set(subroots)
+    mus=[]
+    for val in range(2,p):
+        if all(val*pow(pr,-1,p)%p not in subgroup for pr in mus):
+            mus.append(val)
+            if len(mus)==m:break
+    assert len(mus)==m
+    a=list(range(m))
+    C=[]
+    for t in range(m):
+        C.append([sum(x[t+m*u]*subroots[(-h*u)%m] for u in range(m))%p
+                  for h in range(m)])
+    B=[[0]*m for _ in range(m)]
+    for h in range(m):
+        nodes=[mus[j]*subroots[(-a[j]*h)%m]%p for j in range(m)]
+        weights=solve_moments(nodes,[C[t][h] for t in range(m)],p)
+        assert weights is not None
+        for j,z in enumerate(weights):B[j][h]=z
+    inv_m=pow(m,-1,p)
+    bases=[]
+    for j in range(m):
+        bases.append([sum(B[j][h]*subroots[(h*u)%m] for h in range(m))%p*inv_m%p
+                      for u in range(m)])
+    return [(a[j],mus[j],bases[j]) for j in range(m)]
+
+
+def main():
+    p=998244353;rng=random.Random(2117)
+    data=[]
+    for m in (4,8,16):
+        n=m*m;w=primitive_n_root(p,n)
+        for rep in range(8):
+            x=[rng.randrange(p) for _ in range(n)]
+            orbit=represent_arbitrary(x,p,w,m)
+            new=synthesize_orbits(n,p,m,orbit)
+            assert new==x
+            if rep==0:
+                data.append({'N':n,'M':m,'g':m,
+                             'orbit_terms_per_output':n*m,
+                             'direct_dft_reference_matched':dft_slow(new,p,w)==dft_slow(x,p,w)})
+    result={'constructions_checked':24,'result':'Every arbitrary square-length input admits g=M orbit representation under the stated field assumptions. This is NOT an O(N) executor.','samples':data}
+    out=Path(__file__).with_name('UNIVERSAL_BASIS_AUDIT.json')
+    out.write_text(json.dumps(result,indent=2)+'\n')
+    print(json.dumps(result,indent=2))
+    return result
+
+if __name__=='__main__':main()

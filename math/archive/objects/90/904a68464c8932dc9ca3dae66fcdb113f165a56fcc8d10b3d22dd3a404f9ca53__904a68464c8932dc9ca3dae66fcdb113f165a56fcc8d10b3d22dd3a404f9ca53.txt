@@ -1,0 +1,37 @@
+"""Run fresh checks for all four phase folders plus Phase 15 smoke controls."""
+import subprocess,json,os
+ROOT='/mnt/data'
+dst=ROOT+'/fft_green_phase15_folding'
+checks=[('phase15',dst,10),('phase14',ROOT+'/fft_green_phase14_galois_coherence',15),('phase13',ROOT+'/fft_green_phase13_phase_coherence',12),('phase12',ROOT+'/fft_green_phase12_unitary_escape',8)]
+summary=[]
+with open(dst+'/validation.log','w') as f:
+    for name,path,count in checks:
+        p=subprocess.run(['python','-m','unittest','discover','-s','tests','-v'],cwd=path,env={**os.environ,'PYTHONPATH':'.'},text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)
+        f.write(f'===== {name} =====\n{p.stdout}\n')
+        assert p.returncode==0 and f'Ran {count} tests' in p.stdout,(name,p.stdout)
+        summary.append({'suite':name,'test_count':count,'passed':True})
+    p=subprocess.run(['python','unitarity_probe.py'],cwd=dst,env={**os.environ,'OPENBLAS_NUM_THREADS':'1'},text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)
+    assert p.returncode==0,p.stdout
+    f.write('===== numeric scaled unitarity =====\n'+p.stdout+'\n')
+    complex_probes=[json.loads(x) for x in p.stdout.splitlines()]
+    p=subprocess.run(['python','phase15_executor.py'],cwd=dst,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)
+    assert p.returncode==0,p.stdout
+    f.write('===== exact residual/direct DFT =====\n'+p.stdout+'\n')
+    fft_probes=[json.loads(x) for x in p.stdout.splitlines()]
+    p=subprocess.run(['python','haar_coherence.py'],cwd=dst,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=120)
+    assert p.returncode==0,p.stdout
+    f.write('===== exact inverse =====\n'+p.stdout+'\n')
+    inverse_probes=[json.loads(x) for x in p.stdout.splitlines()]
+result={'date':'2026-10-09','model':'F_998244353 for exact arithmetic, complex for Gram',
+ 'suites':summary,'total_passed_tests':sum(x['test_count'] for x in summary),
+ 'numeric_unitarity_checks':len(complex_probes),
+ 'max_numeric_unitarity_error':max(x['orthogonality_max_error'] for x in complex_probes),
+ 'exact_residual_forward_full_fourier_checks':len(fft_probes),
+ 'max_exact_forward_N':max(x['N'] for x in fft_probes),
+ 'inverse_checks':len(inverse_probes),
+ 'max_exact_inverse_N':max(x['N'] for x in inverse_probes),
+ 'all_radix2_butterflies_match_classical_fft':all(x['all_butterflies_conserved'] for x in fft_probes),
+ 'asymptotic_speedup_proved':False}
+with open(dst+'/validation_results.json','w') as f:
+    json.dump(result,f,indent=2)
+print(json.dumps(result,indent=2))

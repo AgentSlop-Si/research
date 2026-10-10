@@ -1,0 +1,305 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh standard-library checker. Imports no predecessor or exploratory code."""
+   3 from fractions import Fraction as Q
+   4 from pathlib import Path
+   5 import json, math, time
+   6 OUT=Path(__file__).resolve().parent
+   7 
+   8 class Field:
+   9     def __init__(self,mod): self.mod=tuple(map(Q,mod)); self.n=len(mod)-1
+  10     def __call__(self,a=0):
+  11         if isinstance(a,Elt):
+  12             assert a.f is self; return a
+  13         if isinstance(a,(int,Q)): a=[a]
+  14         a=list(map(Q,a))+[Q(0)]*self.n
+  15         for k in range(len(a)-1,self.n-1,-1):
+  16             c=a[k]
+  17             for j in range(self.n): a[k-self.n+j]-=c*self.mod[j]
+  18         return Elt(self,tuple(a[:self.n]))
+  19 class Elt:
+  20     def __init__(self,f,a):self.f=f;self.a=a
+  21     def __add__(self,b):
+  22         b=self.f(b);return Elt(self.f,tuple(x+y for x,y in zip(self.a,b.a)))
+  23     __radd__=__add__
+  24     def __neg__(self):return Elt(self.f,tuple(-x for x in self.a))
+  25     def __sub__(self,b):return self+-self.f(b)
+  26     def __rsub__(self,b):return self.f(b)+-self
+  27     def __mul__(self,b):
+  28         b=self.f(b);a=[Q(0)]*(2*self.f.n-1)
+  29         for i,x in enumerate(self.a):
+  30             if x:
+  31                 for j,y in enumerate(b.a):
+  32                     if y:a[i+j]+=x*y
+  33         return self.f(a)
+  34     __rmul__=__mul__
+  35     def inv(self):
+  36         assert self
+  37         n=self.f.n; cols=[(self*self.f([0]*j+[1])).a for j in range(n)]
+  38         a=[[cols[j][i] for j in range(n)]+[Q(i==0)] for i in range(n)]
+  39         for k in range(n):
+  40             h=next(i for i in range(k,n) if a[i][k]);a[k],a[h]=a[h],a[k]
+  41             d=a[k][k];a[k]=[x/d for x in a[k]]
+  42             for i in range(n):
+  43                 if i!=k:
+  44                     d=a[i][k]
+  45                     if d:a[i]=[x-d*y for x,y in zip(a[i],a[k])]
+  46         return self.f([a[i][-1] for i in range(n)])
+  47     def __truediv__(self,b):return self*self.f(b).inv()
+  48     def __rtruediv__(self,b):return self.f(b)*self.inv()
+  49     def __pow__(self,n):
+  50         if n<0:return self.inv()**(-n)
+  51         x=self;y=self.f(1)
+  52         while n:
+  53             if n&1:y=y*x
+  54             x=x*x;n//=2
+  55         return y
+  56     def __bool__(self):return any(self.a)
+  57     def __eq__(self,b):
+  58         try:return self.a==self.f(b).a
+  59         except (TypeError,AssertionError):return False
+  60     def data(self):return [str(x) for x in self.a]
+  61 
+  62 def trim(a):
+  63     a=list(a)
+  64     while len(a)>1 and not a[-1]:a.pop()
+  65     return a
+  66 
+  67 def add(a,b):
+  68     z=a[0]*0;return trim([(a[i] if i<len(a) else z)+(b[i] if i<len(b) else z) for i in range(max(len(a),len(b)))])
+  69 def neg(a):return [-x for x in a]
+  70 def sub(a,b):return add(a,neg(b))
+  71 def scale(a,s):return trim([x*s for x in a])
+  72 def mul(a,b):
+  73     c=[a[0]*0]*(len(a)+len(b)-1)
+  74     for i,x in enumerate(a):
+  75         for j,y in enumerate(b):c[i+j]=c[i+j]+x*y
+  76     return trim(c)
+  77 def pw(a,n):
+  78     b=[a[0]*0+1]
+  79     while n:
+  80         if n&1:b=mul(a,b)
+  81         a=mul(a,a);n//=2
+  82     return b
+  83 def divmodp(a,b):
+  84     a=trim(a);b=trim(b);assert any(b);z=a[0]*0;q=[z]*max(1,len(a)-len(b)+1);inv=1/b[-1]
+  85     while any(a) and len(a)>=len(b):
+  86         k=len(a)-len(b);v=a[-1]*inv;q[k]=v
+  87         a=sub(a,[z]*k+scale(b,v))
+  88     return trim(q),a
+  89 def gcdp(a,b):
+  90     while any(b):a,b=b,divmodp(a,b)[1]
+  91     return scale(a,1/a[-1])
+  92 def derivative(a):return trim([i*a[i] for i in range(1,len(a))] or [a[0]*0])
+  93 def exactq(a,b):
+  94     q,r=divmodp(a,b);assert not any(r);return q
+  95 def evalp(a,x):
+  96     y=x*0
+  97     for c in reversed(a):y=y*x+c
+  98     return y
+  99 
+ 100 def build_polynomials(K):
+ 101     z=K([0,1]);a=[K(1),z**2];b=[K(1),z**3];c=[z**2,z**3];e=[z**3,z**2];f=[z**4,K(1)];h=[z,K(1)]
+ 102     A=mul(mul(c,a),b);B=mul(mul(e,a),b);C=mul(f,pw(b,2));E=mul(h,pw(a,2));S=add(A,B);U=sub(scale(C,2),S)
+ 103     L=sub(pw(B,2),mul(C,E));M=add(add(add(add(scale(mul(A,B),-2),mul(A,C)),mul(A,E)),mul(B,C)),sub(mul(B,E),scale(mul(C,E),2)));J=pw(sub(B,C),2)
+ 104     RT=add(sub(mul(L,pw(U,2)),mul(mul(M,U),C)),mul(J,pw(C,2)))
+ 105     N=add(sub(scale(mul(mul(mul(S,J),U),L),-2),mul(M,add(scale(mul(mul(S,J),C),-1),mul(sub(mul(C,L),mul(S,M)),U)))),scale(mul(mul(J,sub(mul(C,L),mul(S,M))),C),2))
+ 106     D=mul(L,RT);Guard=[K(1)]
+ 107     for v in [a,b,C,sub(A,B),sub(B,C),sub(C,S),L,RT]:Guard=mul(Guard,v)
+ 108     return N,D,Guard
+ 109 
+ 110 def universal_identities():
+ 111     # Expanded integer-polynomial checks with variables alpha,beta,gamma,epsilon,delta.
+ 112     class P:
+ 113         def __init__(self,c=0):
+ 114             self.v=c if isinstance(c,dict) else ({(0,0,0,0,0):c} if c else {})
+ 115         def __add__(self,b):
+ 116             b=b if isinstance(b,P) else P(b);v=self.v.copy()
+ 117             for e,c in b.v.items():v[e]=v.get(e,0)+c
+ 118             return P({e:c for e,c in v.items() if c})
+ 119         __radd__=__add__
+ 120         def __neg__(self):return P({e:-c for e,c in self.v.items()})
+ 121         def __sub__(self,b):return self+-(b if isinstance(b,P) else P(b))
+ 122         def __rsub__(self,b):return P(b)+-self
+ 123         def __mul__(self,b):
+ 124             b=b if isinstance(b,P) else P(b);v={}
+ 125             for e,c in self.v.items():
+ 126                 for f,d in b.v.items():
+ 127                     g=tuple(x+y for x,y in zip(e,f));v[g]=v.get(g,0)+c*d
+ 128             return P({e:c for e,c in v.items() if c})
+ 129         __rmul__=__mul__
+ 130         def __pow__(self,n):
+ 131             z=P(1)
+ 132             for _ in range(n):z=z*self
+ 133             return z
+ 134     vs=[]
+ 135     for i in range(5):e=[0]*5;e[i]=1;vs.append(P({tuple(e):1}))
+ 136     a,b,c,e,d=vs;L=b*b-c*e;M=-2*a*b+a*c+a*e+b*c+b*e-2*c*e;J=(b-c)**2;S=a+b;U=2*c-S
+ 137     residual=(b-c)*(b*d*d+(b-a)*d+b-c)-(e-b)*d*(c*d+2*c-a-b)
+ 138     assert not (residual-(L*d*d+M*d+J)).v
+ 139     assert not (J*(c*c*L-c*S*M+S*S*J)-(c*c*J*L-c*U*M*L+U*U*L*L)).v
+ 140 
+ 141 def polynomial_certificate():
+ 142     K=Field([1,1,1,1,1]);N,D,G=build_polynomials(K)
+ 143     # Explicit new degree-five formula, independently checked by multiplication.
+ 144     ns=[[7,10,10,0],[7,8,8,2],[3,8,10,4],[-5,-8,-4,2],[-1,-8,-6,0],[-3,-10,-10,0]]
+ 145     ds=[[1,0,0,0],[1,-1,-1,1],[-1,-1,0,2],[0,1,3,1],[2,1,2,0],[1,0,0,0]]
+ 146     n=list(map(K,ns));d=list(map(K,ds));assert mul(N,d)==mul(D,n)
+ 147     assert any(sub(n,scale(d,n[0])))  # The numerator is not n(0)*denominator.
+ 148     assert len(gcdp(n,d))==1
+ 149     radical=exactq(G,gcdp(G,derivative(G)));radical=scale(radical,1/radical[-1]);assert len(radical)==9
+ 150     assert len(gcdp(radical,derivative(radical)))==1
+ 151     assert len(N)==19 and len(D)==19 and len(G)==33
+ 152     # Recover formulas without relying on the exploratory JSON.
+ 153     common=gcdp(N,D); nr=exactq(N,common);dr=exactq(D,common)
+ 154     nr=scale(nr,1/dr[0]);dr=scale(dr,1/dr[0]);assert nr==n and dr==d
+ 155     return K,n,d,{'numerator':[x.data() for x in n],'denominator':[x.data() for x in d],'exception_polynomial':[x.data() for x in radical],'degrees':{'unreduced_numerator':18,'unreduced_denominator':18,'common_factor':len(common)-1,'reduced_numerator':5,'reduced_denominator':5,'raw_guard':32,'distinct_exception_bound':8}}
+ 156 
+ 157 def matmul(A,B,p=None):
+ 158     n=len(A);l=len(B);m=len(B[0]);zero=0 if p else A[0][0]*0
+ 159     out=[[zero for _ in range(m)] for _ in range(n)]
+ 160     if p:
+ 161         for i in range(n):
+ 162             for j in range(m):out[i][j]=sum(A[i][k]*B[k][j] for k in range(l))%p
+ 163     else:
+ 164         for i in range(n):
+ 165             for j in range(m):out[i][j]=sum((A[i][k]*B[k][j] for k in range(l)),zero)
+ 166     return out
+ 167 
+ 168 def rank(A,p):
+ 169     A=[r[:] for r in A];i=0
+ 170     for j in range(len(A[0])):
+ 171         k=next((k for k in range(i,len(A)) if A[k][j]%p),None)
+ 172         if k is None:continue
+ 173         A[i],A[k]=A[k],A[i];q=pow(A[i][j],-1,p);A[i]=[x*q%p for x in A[i]]
+ 174         for k in range(len(A)):
+ 175             if k!=i:
+ 176                 v=A[k][j];A[k]=[(x-v*y)%p for x,y in zip(A[k],A[i])]
+ 177         i+=1
+ 178         if i==len(A):break
+ 179     return i
+ 180 
+ 181 def modular_kernels(n,w,p,lam=1,need_B=True):
+ 182     h=(n+1)//2;F=[[pow(w,i*j,p) for j in range(n)] for i in range(n)];A=[pow(w,h*i*i,p) for i in range(n)];D=[pow(a,-1,p) for a in A]
+ 183     H=[[pow(w,(-h*(i+j)**2)%n,p) for j in range(n)] for i in range(n)];G=sum(A)%p;c=n*G%p;den=(1+pow(lam,3,p)*c)%p
+ 184     if need_B:assert den
+ 185     B=[[(F[i][j]-lam*G*H[i][j]+(lam*lam*c*D[i] if i==j else 0))*pow(den,-1,p)%p for j in range(n)] for i in range(n)] if need_B else None
+ 186     return F,A,D,H,G,c,B
+ 187 
+ 188 def value_mod(v,z,p):return sum((x.numerator*pow(x.denominator,-1,p)%p)*pow(z,i,p) for i,x in enumerate(v.a))%p
+ 189 
+ 190 def pole_data(r,z,p):
+ 191     a=(1+r*pow(z,2,p))%p;b=(1+r*pow(z,3,p))%p;c=(pow(z,2,p)+r*pow(z,3,p))%p;e=(pow(z,3,p)+r*pow(z,2,p))%p;f=(pow(z,4,p)+r)%p;h=(z+r)%p
+ 192     A=c*a*b%p;B=e*a*b%p;C=f*b*b%p;E=h*a*a%p;S=(A+B)%p;U=(2*C-S)%p;L=(B*B-C*E)%p;M=(-2*A*B+A*C+A*E+B*C+B*E-2*C*E)%p;J=(B-C)**2%p
+ 193     RT=(L*U*U-M*U*C+J*C*C)%p;guard=a*b*C*(A-B)*(B-C)*(C-S)*L*RT%p
+ 194     if not guard:return None
+ 195     N=(-2*S*J*U*L-M*(-S*J*C+(C*L-S*M)*U)+2*J*(C*L-S*M)*C)%p;D=L*RT%p
+ 196     return N*pow(D,-1,p)%p
+ 197 
+ 198 def reconstruct_block(r,z,p,expected_trace):
+ 199     entries=[[ (pow(z,i*j,p)+r*pow(z,(-3*(i+j)**2)%5,p))%p for j in range(5)] for i in range(5)]
+ 200     a,b,c,e,f,h=entries[0][1],entries[0][2],entries[1][2],entries[1][3],entries[1][4],entries[2][3]
+ 201     al=c*pow(a*b,-1,p)%p;be=e*pow(a*b,-1,p)%p;ga=f*pow(a*a,-1,p)%p;ep=h*pow(b*b,-1,p)%p
+ 202     L=(be*be-ga*ep)%p;M=(-2*al*be+al*ga+al*ep+be*ga+be*ep-2*ga*ep)%p;J=(be-ga)**2%p;p1=M*pow(L,-1,p)%p;p0=J*pow(L,-1,p)%p
+ 203     class Quad:
+ 204         def __init__(self,a=0,b=0):self.a=a%p;self.b=b%p
+ 205         def co(self,x):return x if isinstance(x,Quad) else Quad(x)
+ 206         def __add__(self,x):x=self.co(x);return Quad(self.a+x.a,self.b+x.b)
+ 207         __radd__=__add__
+ 208         def __neg__(self):return Quad(-self.a,-self.b)
+ 209         def __sub__(self,x):return self+-self.co(x)
+ 210         def __rsub__(self,x):return self.co(x)+-self
+ 211         def __mul__(self,x):x=self.co(x);return Quad(self.a*x.a-p0*self.b*x.b,self.a*x.b+self.b*x.a-p1*self.b*x.b)
+ 212         __rmul__=__mul__
+ 213         def norm(self):return (self.a*self.a-p1*self.a*self.b+p0*self.b*self.b)%p
+ 214         def inv(self):
+ 215             norm=self.norm();assert norm
+ 216             return Quad(self.a-p1*self.b,-self.b)*pow(norm,-1,p)
+ 217         def __truediv__(self,x):return self*self.co(x).inv()
+ 218         def __eq__(self,x):x=self.co(x);return self.a==x.a and self.b==x.b
+ 219     dd=Quad(0,1);tt=(ga*dd+(al+be)*dd*dd)/(ga*(dd+2)-al-be);kk=(tt+dd*dd)*pow(ga,-1,p)
+ 220     assert tt+tt.inv()==expected_trace
+ 221     if not kk.norm() or not (1+tt).norm():return False
+ 222     xx=(tt-dd)/kk
+ 223     rr=[None,xx,(al-xx)/dd,(be-xx)/dd,(ga-xx)/dd];zz=kk/(1+tt)
+ 224     uu=[Quad(1)]+[entries[0][i]*rr[i] for i in range(1,5)];vv=[zz/tt]+[entries[0][i]-zz*uu[i] for i in range(1,5)]
+ 225     assert tt+tt.inv()==expected_trace
+ 226     for i in range(5):
+ 227         for j in range(i+1,5):assert uu[i]*vv[j]+tt*vv[i]*uu[j]==entries[i][j]
+ 228     return True
+ 229 
+ 230 def finite_control(N,p,w,numer,denom,full=True,spectral=True):
+ 231     assert pow(w,N,p)==1 and all(pow(w,N//r,p)!=1 for r in range(2,N+1) if N%r==0 and all(r%d for d in range(2,math.isqrt(r)+1)))
+ 232     m=N//5;e5=m*pow(m,-1,5);em=5*pow(5,-1,m);eta=pow(w,e5,p);theta=pow(w,em,p)
+ 233     F,A,D,H,G,c,B=modular_kernels(N,w,p);f,a,d,h,g,cc,b5=modular_kernels(5,eta,p,need_B=False);fm,am,dm,hm,gm,cm,bm=modular_kernels(m,theta,p,need_B=False)
+ 234     assert G==g*gm%p and c==cc*cm%p
+ 235     idx=lambda a,b:(e5*a+em*b)%N
+ 236     for aa in range(5):
+ 237       for bb in range(m):
+ 238        for ac in range(5):
+ 239         for bd in range(m):
+ 240          i,j=idx(aa,bb),idx(ac,bd)
+ 241          target=(f[aa][ac]*fm[bb][bd]-G*h[aa][ac]*hm[bb][bd]+(c*d[aa]*dm[bb] if aa==ac and bb==bd else 0))*pow(1+c,-1,p)%p
+ 242          assert target==B[i][j]
+ 243     if full:
+ 244         X=[[(pow(N,-1,p)*pow(w,(-i*j)%N,p)+(A[i] if i==j else 0))%p for j in range(N)] for i in range(N)]
+ 245         identity=[[int(i==j) for j in range(N)] for i in range(N)]
+ 246         assert matmul(X,B,p)==identity and matmul(B,X,p)==identity
+ 247     rows=[];endpoint_checks=0;trace_only_checks=0
+ 248     for bb in range(m):
+ 249       for bd in range(m):
+ 250         rho=-G*hm[bb][bd]*pow(fm[bb][bd],-1,p)%p;t=pole_data(rho,eta,p)
+ 251         if t is not None:
+ 252             nv=sum(value_mod(v,eta,p)*pow(rho,i,p) for i,v in enumerate(numer))%p;dv=sum(value_mod(v,eta,p)*pow(rho,i,p) for i,v in enumerate(denom))%p;assert dv and t==nv*pow(dv,-1,p)%p
+ 253             if reconstruct_block(rho,eta,p,t):endpoint_checks+=1
+ 254             else:trace_only_checks+=1
+ 255             rows.append({'b':bb,'d':bd,'rho':rho,'trace':t})
+ 256     R=list(range(m//2));I=[idx(aa,bb) for aa in range(5) for bb in R];J=[i for i in range(N) if i not in I]
+ 257     cutrank=rank([[B[i][j] for j in J] for i in I],p);assert cutrank==5*(m//2)
+ 258     spectral_result=None
+ 259     if spectral:
+ 260         M=[[f[i][j]*a[j]%p for j in range(5)] for i in range(5)];M2=matmul(M,M,p);M3=matmul(M2,M,p);assert M3==[[cc*int(i==j)%p for j in range(5)] for i in range(5)]
+ 261         roots=[x for x in range(p) if pow(x,3,p)==cc];assert len(roots)==3
+ 262         projectors=[];ranks=[];L=[];solvers=[]
+ 263         for t in roots:
+ 264             P=[[(int(i==j)+pow(t,-1,p)*M[i][j]+pow(t,-2,p)*M2[i][j])*pow(3,-1,p)%p for j in range(5)] for i in range(5)]
+ 265             assert matmul(P,P,p)==P;projectors.append(P);ranks.append(rank(P,p));L.append(matmul(P,f,p));solvers.append(modular_kernels(m,theta,p,t)[-1])
+ 266         assert sum(ranks)==5
+ 267         for i,P in enumerate(projectors):
+ 268             for j,Qq in enumerate(projectors):
+ 269                 if i!=j:assert matmul(P,Qq,p)==[[0]*5 for _ in range(5)]
+ 270         assert [[sum(P[i][j] for P in projectors)%p for j in range(5)] for i in range(5)]==[[int(i==j) for j in range(5)] for i in range(5)]
+ 271         for aa in range(5):
+ 272          for bb in range(m):
+ 273           for ac in range(5):
+ 274            for bd in range(m):assert sum(L[k][aa][ac]*solvers[k][bb][bd] for k in range(3))%p==B[idx(aa,bb)][idx(ac,bd)]
+ 275         spectral_result={'eigenvalues':roots,'multiplicities':ranks,'all_entry_reconstruction':True}
+ 276     controls=[];seen=set()
+ 277     for row in rows:
+ 278         if row['trace'] not in seen:controls.append(row);seen.add(row['trace'])
+ 279     return {'N':N,'prime':p,'omega':w,'eta':eta,'theta':theta,'G':G,'c':c,'full_two_sided_inverse':full,'crt_entries_checked':N*N,'complementary_fiber_cut_rank':cutrank,'good_ratio_count':len(set(r['rho'] for r in rows)),'distinct_pole_traces':len(seen),'quadratic_endpoint_checks':endpoint_checks,'quadratic_trace_only_checks':trace_only_checks,'trace_witnesses':controls,'spectral_recursion':spectral_result}
+ 280 
+ 281 def charzero_fifteen(numer,denom):
+ 282     # Phi_15(x)=x^8-x^7+x^5-x^4+x^3-x+1.
+ 283     K=Field([1,-1,0,1,-1,1,0,-1,1]);w=K([0,1]);N=15;h=8;assert w**15==1 and w**5!=1 and w**3!=1
+ 284     powers=[w**i for i in range(N)];A=[powers[(h*i*i)%N] for i in range(N)];G=sum(A,K(0));c=N*G;assert G*G==-15;dinv=(1-c)/(1+N**3)
+ 285     assert dinv*(1+c)==1
+ 286     F=[[powers[(i*j)%N] for j in range(N)] for i in range(N)];B=[[(F[i][j]-G*powers[(-h*(i+j)**2)%N]+(c*powers[(-h*i*i)%N] if i==j else 0))*dinv for j in range(N)] for i in range(N)]
+ 287     X=[[(Q(1,N)*powers[(-i*j)%N]+(A[i] if i==j else 0)) for j in range(N)] for i in range(N)]
+ 288     ident=[[K(int(i==j)) for j in range(N)] for i in range(N)];assert matmul(X,B)==ident and matmul(B,X)==ident
+ 289     eta=w**6;theta=w**10
+ 290     embed=lambda v:sum((v.a[i]*eta**i for i in range(4)),K(0))
+ 291     nn=list(map(embed,numer));dd=list(map(embed,denom));traces=[]
+ 292     for d in [0,1]:
+ 293         rho=-G*theta**((-2*d*d)%3);traces.append(evalp(nn,rho)/evalp(dd,rho))
+ 294     assert traces[0]!=traces[1]
+ 295     return {'N':15,'field':'Q[x]/Phi_15(x)','full_two_sided_inverse_entries':450,'G':G.data(),'two_block_trace_values':[x.data() for x in traces],'different_traces':True}
+ 296 
+ 297 def main():
+ 298     start=time.time();universal_identities();K,n,d,polys=polynomial_certificate();print('Polynomial invariant and eight-exception certificate passed.',flush=True)
+ 299     exact=charzero_fifteen(n,d);print('Characteristic-zero full N=15 control passed.',flush=True)
+ 300     controls=[]
+ 301     for args in [(15,31,9,True,True),(45,181,16,True,True),(65,131,4,False,False),(245,491,4,False,False)]:
+ 302         N,p,w,full,spectral=args;v=finite_control(N,p,w,n,d,full,spectral);controls.append(v);print('Finite full-CRT control',N,'traces',v['distinct_pole_traces'],flush=True)
+ 303     result={'polynomial_invariant':polys,'characteristic_zero':exact,'finite_controls':controls,'seconds':round(time.time()-start,3),'scope':'Direct one-reciprocal-pair-per-block pole bank obstruction, not a lower bound for arbitrary global Green sums.'}
+ 304     (OUT/'GLOBAL_LIFT_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n');print('PASS',result['seconds'],'seconds')
+ 305 if __name__=='__main__':main()

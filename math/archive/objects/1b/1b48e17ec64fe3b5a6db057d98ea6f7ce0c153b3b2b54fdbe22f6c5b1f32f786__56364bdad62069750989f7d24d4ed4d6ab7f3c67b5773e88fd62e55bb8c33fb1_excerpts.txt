@@ -1,0 +1,77 @@
+170: def permutation_cycles(pi: Sequence[int]) -> list[list[int]]:
+171:     """Decompose ANY permutation into consistently ordered disjoint cycles."""
+172:     n=len(pi)
+173:     assert set(pi)==set(range(n))
+174:     seen=set();result=[]
+175:     for start in range(n):
+176:         if start in seen: continue
+177:         cur=start;cycle=[]
+178:         while cur not in seen:
+179:             seen.add(cur);cycle.append(cur);cur=pi[cur]
+180:         assert cur==start
+181:         result.append(cycle)
+182:     return result
+183: 
+184: 
+185: def linearize_perm(pi: Sequence[int]) -> list[int]:
+186:     """Concatenate the disjoint cycles. The resolvent has off-cut rank <=1."""
+187:     return [v for cycle in permutation_cycles(pi) for v in cycle]
+188: 
+189: 
+190: def green_perm_submatrix(pi:Sequence[int], weights:Sequence[int], rows, cols, q:int):
+191:     """Green inverse of I-diag(weights)*Permutation(pi) on chosen rows/cols.
+192: 
+193:     Distinct permutation cycles do not couple. Each nonzero entry equals
+194:     a directed path product divided by 1 minus that cycle's total product.
+195:     """
+196:     cycles=permutation_cycles(pi)
+197:     lookups={v:(cycle,index) for cycle in cycles for index,v in enumerate(cycle)}
+198:     den={cycle[0]:(1-functools.reduce(lambda val,i:(val*weights[i])%q, cycle, 1))%q
+199:          for cycle in cycles}
+200:     if 0 in den.values():
+201:         raise ValueError('singular Green inverse: some cycle product is 1')
+202:     ret=[]
+203:     for i in rows:
+204:         cycle,k=lookups[i]
+205:         first=cycle[0]
+206:         inverse=pow(den[first],-1,q)
+207:         row=[]
+208:         for j in cols:
+209:             other, jj=lookups[j]
+210:             if other is not cycle:
+211:                 row.append(0);continue
+212:             val=1;idx=k
+213:             while idx != jj:
+214:                 val=val*weights[cycle[idx]]%q
+215:                 idx=(idx+1)%len(cycle)
+216:             row.append(val*inverse%q)
+217:         ret.append(row)
+218:     return ret
+219: 
+220: 
+221: def check_multi_green_inverse(pi, weights, q):
+222:     n=len(pi)
+223:     G=green_perm_submatrix(pi,weights,list(range(n)),list(range(n)),q)
+224:     return all((G[i][j]-weights[i]*G[pi[i]][j])%q==int(i==j)
+225:                for i in range(n) for j in range(n))
+226: 
+227: 
+
+383: def rank_mod(A,q):
+384:     a=[list(row) for row in A]
+385:     if not a:return 0
+386:     nr,nc=len(a),len(a[0]); ri=0
+387:     for j in range(nc):
+388:         i=next((i for i in range(ri,nr) if a[i][j]%q),None)
+389:         if i is None:continue
+390:         a[ri],a[i]=a[i],a[ri]
+391:         inv=pow(a[ri][j]%q,-1,q)
+392:         for ii in range(ri+1,nr):
+393:             f=a[ii][j]*inv%q
+394:             for jj in range(j,nc):
+395:                 a[ii][jj]=(a[ii][jj]-f*a[ri][jj])%q
+396:         ri+=1
+397:         if ri==nr:break
+398:     return ri
+399: 
+400: 

@@ -1,0 +1,94 @@
+1: """Independent complex-number spot check for entropy, volume and FFT gates.
+2: 
+3: Proofs are analytic; this numerical diagnostic is *not* an exact certificate.
+4: It is separated from exact_audit.py to avoid confusing finite-field operations
+5: with complex moduli or Shannon entropy.
+6: """
+7: from __future__ import annotations
+8: import cmath
+9: import json
+10: from math import log2, pi, sqrt
+11: 
+12: 
+13: def fourier(n):
+14:     return [[cmath.exp(2j*pi*i*j/n) for j in range(n)] for i in range(n)]
+15: 
+16: 
+17: def entropy_of_matrix(mat):
+18:     return -sum(p*log2(p) for row in mat for v in row if (p:=abs(v)**2)>1.e-28)
+19: 
+20: 
+21: def log2_determinant_magnitude(mat):
+22:     a=[row[:] for row in mat]
+23:     n=len(a)
+24:     total=0.0
+25:     for i in range(n):
+26:         pivot=max(range(i,n),key=lambda r:abs(a[r][i]))
+27:         if abs(a[pivot][i])<1.e-12:
+28:             raise AssertionError('singular')
+29:         a[i],a[pivot]=a[pivot],a[i]
+30:         pv=a[i][i]
+31:         total+=log2(abs(pv))
+32:         for r in range(i+1,n):
+33:             factor=a[r][i]/pv
+34:             if factor:
+35:                 for j in range(i+1,n):
+36:                     a[r][j]-=factor*a[i][j]
+37:                 a[r][i]=0j
+38:     return total
+39: 
+40: 
+41: def bit_rev(j,bits):
+42:     answer=0
+43:     for _ in range(bits):
+44:         answer=(answer<<1)|(j&1)
+45:         j>>=1
+46:     return answer
+47: 
+48: 
+49: def normalized_fft_gate_stages(n):
+50:     if n<2 or n & (n-1):
+51:         raise ValueError('power of two >=2')
+52:     bits=n.bit_length()-1
+53:     identity=[]
+54:     for i in range(n):
+55:         idx=bit_rev(i,bits)
+56:         identity.append([complex(1 if j==idx else 0) for j in range(n)])
+57:     stages=[entropy_of_matrix(identity)]
+58:     width=2
+59:     while width<=n:
+60:         half=width//2
+61:         for start in range(0,n,width):
+62:             for j in range(half):
+63:                 a,b=start+j,start+j+half
+64:                 w=cmath.exp(2j*pi*j/width)
+65:                 ra,rb=identity[a],identity[b]
+66:                 identity[a]=[(x+w*y)/sqrt(2) for x,y in zip(ra,rb)]
+67:                 identity[b]=[(x-w*y)/sqrt(2) for x,y in zip(ra,rb)]
+68:         stages.append(entropy_of_matrix(identity))
+69:         width*=2
+70:     goal=fourier(n)
+71:     max_err=max(abs(identity[i][j]-goal[i][j]/sqrt(n)) for i in range(n) for j in range(n))
+72:     return stages,max_err
+73: 
+74: 
+75: def run(ns=(2,4,8,16,32)):
+76:     records=[]
+77:     for n in ns:
+78:         stages,error=normalized_fft_gate_stages(n)
+79:         for t,h in enumerate(stages):
+80:             if abs(h-n*t)>1.e-8:
+81:                 raise AssertionError(('entropy',n,t,h,n*t))
+82:         matrix=fourier(n)
+83:         det=log2_determinant_magnitude(matrix)
+84:         wanted=n*log2(n)/2
+85:         if abs(det-wanted)>1.e-8:
+86:             raise AssertionError(('volume',n,det,wanted))
+87:         if error>1.e-10:
+88:             raise AssertionError(('DFT',n,error))
+89:         records.append({'n':n,'entropy_by_stage':stages,'max_spectrum_entry_error':error,
+90:                         'log2_det_magnitude':det,'theoretical_log2_det':wanted})
+91:     return records
+92: 
+93: if __name__=='__main__':
+94:     print(json.dumps(run(),indent=2))

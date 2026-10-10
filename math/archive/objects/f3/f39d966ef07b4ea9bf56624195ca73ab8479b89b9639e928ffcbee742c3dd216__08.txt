@@ -1,0 +1,123 @@
+   1 #!/usr/bin/env python3
+   2 """Independent exact review of the moving-partition source. Uploaded code is inert."""
+   3 import json,random
+   4 from pathlib import Path
+   5 from exact_utils import Field,prime_by_trial_division
+   6 BASE=Path(__file__).parent
+   7 
+   8 def boundary(a,n):return sum((j in a)!=((j+1) in a) for j in range(n-1))
+   9 def mask_set(n,m):return {j for j in range(n) if (j&m).bit_count()%2==0}
+  10 def bformula(k,m):return sum(2**(k-1-s) for s in range(k) if (m&((1<<(s+1))-1)).bit_count()%2)
+  11 def primitive(n,p):
+  12     for a in range(2,p):
+  13         w=pow(a,(p-1)//n,p)
+  14         if pow(w,n,p)==1 and (n==1 or pow(w,n//2,p)!=1):return w
+  15     raise AssertionError
+  16 
+  17 def certificates():
+  18     source=json.loads((BASE/'sources/moving/EXACT_CERTIFICATES.json').read_text());out=[]
+  19     for case in source['cases']:
+  20         n=case['n'];a=mask_set(n,case['initial_parity_mask']);initial=sorted(a);cost=[boundary(a,n)];sets=[a]
+  21         for pi in case['permutations']:
+  22             assert sorted(pi)==list(range(n));a={j for j in range(n) if pi[j] in a};sets.append(a);cost.append(boundary(a,n))
+  23         assert cost==case['boundary_costs']
+  24         assert all(mask_set(n,m)==aset for m,aset in zip(case['mask_path'],sets))
+  25         bound=sum(r*d for r,d in zip(case['orders'],cost));assert bound==case['bound']<n//2
+  26         rows=[i for i in range(n) if i not in a];checked=[]
+  27         for witness in case['modular']:
+  28             p=witness['prime'];w=witness['primitive_root'];assert prime_by_trial_division(p)
+  29             assert pow(w,n,p)==1 and pow(w,n//2,p)!=1
+  30             mat=[[pow(w,i*j,p) for j in initial] for i in rows]
+  31             det=Field(p).det(mat);assert det==witness['determinant']!=0
+  32             checked.append({'prime':p,'determinant':det})
+  33         out.append({'N':n,'name':case['name'],'boundary_costs':cost,'capacity':bound,'required_rank':n//2,'modular':checked})
+  34     return out
+  35 
+  36 def parity_and_twists():
+  37     count=0;twisted=[]
+  38     for k in range(1,11):
+  39         n=1<<k
+  40         for mask in range(1,n):assert boundary(mask_set(n,mask),n)==bformula(k,mask);count+=1
+  41         reverse=lambda x:int(format(x,'0%db'%k)[::-1],2)
+  42         rotate=lambda x:((x<<1)&(n-1))+(x>>(k-1))
+  43         pi=[rotate(reverse(x)) for x in range(n)]
+  44         assert all(pi[1<<j]==1<<((-j)%k) for j in range(k))
+  45         m=k//2;mask=(1<<m) if k%2==0 else (1<<m)+(1<<(m+1))
+  46         if k==1:mask=1
+  47         a=mask_set(n,mask);assert {j for j in range(n) if pi[j] in a}==a
+  48         d=boundary(a,n);assert d==((1<<m)-1 if k%2==0 else 1<<m)
+  49         rank_controls=[]
+  50         for p in (12289,65537):
+  51             w=primitive(n,p);f=Field(p)
+  52             if n<=256:
+  53                 col=sorted(a)
+  54                 # Both final signs, needed when a shuffle swaps the partition.
+  55                 for same in (False,True):
+  56                     row=sorted(a if same else set(range(n))-a)
+  57                     mat=[[pow(w,i*j,p) for j in col] for i in row]
+  58                     assert f.rank(mat)==n//2
+  59                 rank_controls.append({'prime':p,'full_half_block_ranks':[n//2,n//2]})
+  60             elif k%2==0:
+  61                 eta=pow(w,(1<<(m-1))**2,p)
+  62                 for rows in ([0,1],[2,3]):assert f.det([[pow(eta,i*j,p) for j in (0,1)] for i in rows])
+  63                 rank_controls.append({'prime':p,'proof_block_size':2,'both_partition_signs':'PASS'})
+  64             else:
+  65                 eta=pow(w,(1<<(m-1))**2,p)
+  66                 for rows in ([0,1,6,7],[2,3,4,5]):assert f.det([[pow(eta,i*j,p) for j in (0,1,6,7)] for i in rows])
+  67                 rank_controls.append({'prime':p,'proof_block_size':4,'both_partition_signs':'PASS'})
+  68         minimum=(n//2+d-1)//d;expected=((1<<(m-1))+1) if k%2==0 else 1<<m
+  69         assert minimum==expected
+  70         twisted.append({'k':k,'N':n,'invariant_mask':mask,'boundary':d,'necessary_depth':minimum,'rank_controls':rank_controls})
+  71     return {'exhaustive_parity_masks':count,'twisted_controls':twisted}
+  72 
+  73 def stage_products():
+  74     p=65537;f=Field(p);rng=random.Random(70823);out=[]
+  75     for trial in range(200):
+  76         n=rng.randrange(2,13);t=rng.randrange(1,6);ranks=[rng.randrange(1,3) for _ in range(t)]
+  77         a=set(rng.sample(range(n),rng.randrange(1,n)));initial=sorted(a);matrix=f.eye(n);bound=0
+  78         for layer,r in enumerate(ranks):
+  79             if layer:
+  80                 pi=rng.sample(range(n),n);matrix=[matrix[j] for j in pi];a={j for j in range(n) if pi[j] in a}
+  81             factors=[[[rng.randrange(p) for _ in range(r)] for _ in range(n)] for _ in range(4)]
+  82             stage=[[rng.randrange(p) if i==j else sum(factors[0 if i>j else 2][i][k]*factors[1 if i>j else 3][j][k] for k in range(r))%p for j in range(n)] for i in range(n)]
+  83             matrix=f.mul(stage,matrix);bound+=r*boundary(a,n)
+  84         cross=[[matrix[i][j] for j in initial] for i in range(n) if i not in a]
+  85         actual=f.rank(cross);assert actual<=bound
+  86         out.append({'N':n,'stages':t,'rank_orders':ranks,'cross_rank':actual,'moving_capacity':bound})
+  87     return out
+  88 
+  89 def survivor():
+  90     k=8;n=1<<k;rng=random.Random(20261016+17*k);perms=[];columns=[]
+  91     for stage in range(3):
+  92         rows=[1<<i for i in range(k)]
+  93         for _ in range(2*k*k):
+  94             i,j=rng.sample(range(k),2)
+  95             if rng.randrange(4)==0:rows[i],rows[j]=rows[j],rows[i]
+  96             else:rows[i]^=rows[j]
+  97         pi=[sum(((x&row).bit_count()%2)<<i for i,row in enumerate(rows)) for x in range(n)]
+  98         assert sorted(pi)==list(range(n));perms.append(pi);columns.append([pi[1<<j] for j in range(k)])
+  99     layout=list(range(n));edges=[]
+ 100     for stage in range(4):
+ 101         edges.extend(zip(layout[:-1],layout[1:]))
+ 102         if stage<3:layout=[layout[j] for j in perms[stage]]
+ 103     parity_caps=[]
+ 104     for m in range(1,n):
+ 105         cap=sum(((x&m).bit_count()%2)!=((y&m).bit_count()%2) for x,y in edges)
+ 106         assert cap>=n//2;parity_caps.append(cap)
+ 107     adj=[[] for _ in range(n)]
+ 108     for u,v in edges:adj[u].append(v);adj[v].append(u)
+ 109     intervals=0;minimum_slack=n
+ 110     for lo in range(n):
+ 111         inside=set();cap=0
+ 112         for hi in range(lo,n):
+ 113             cap+=sum(-1 if v in inside else 1 for v in adj[hi]);inside.add(hi)
+ 114             if len(inside)==n:continue
+ 115             needed=min(len(inside),n-len(inside));assert cap>=needed
+ 116             minimum_slack=min(minimum_slack,cap-needed);intervals+=1
+ 117     assert intervals==32895
+ 118     return {'N':n,'seed':20261016,'shuffle_bit_columns':columns,'parity_masks':255,'minimum_parity_capacity':min(parity_caps),'consecutive_intervals':intervals,'minimum_interval_slack':minimum_slack,'scope':'Necessary moving-cut tests only; no coefficient fitting or network maxflow replication'}
+ 119 
+ 120 if __name__=='__main__':
+ 121     result={'status':'PASS','certificates':certificates(),'parity_twist':parity_and_twists(),'stage_products':stage_products(),'survivor':survivor()}
+ 122     (BASE/'MOVING_RESULTS.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 123     print('PASS: 13 certificates, 26 saved determinants, 2036 masks, 10 twisted lengths, 200 stage products, 255 survivor masks and 32895 intervals')

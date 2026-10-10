@@ -1,0 +1,114 @@
+1: """Finite q-Weyl conjugation with its essential wraparound boundary term."""
+2: from dataclasses import dataclass
+3: from fixed_kernel import Counted
+4: 
+5: 
+6: @dataclass
+7: class SparsePlan:
+8:     n: int
+9:     q: object
+10:     diagonal: list
+11:     upper: list
+12:     corner: object
+13:     preparation: dict
+14: 
+15: 
+16: def prepare_sparse(field, n, q):
+17:     if n < 2 or n & (n-1):
+18:         raise ValueError('N must be a power of two at least 2')
+19:     c = Counted(field)
+20:     powers = [field.one]
+21:     for _ in range(1, n):
+22:         powers.append(c.mul(powers[-1], q))
+23:     diagonal = [powers[(-j) % n] for j in range(n)]
+24:     upper = [c.sub(q, diagonal[j]) for j in range(n-1)]
+25:     half, inverse_n = c.inv(field.integer(2)), field.one
+26:     for _ in range(n.bit_length()-1):
+27:         inverse_n = c.mul(inverse_n, half)
+28:     corner = c.neg(c.mul(q, inverse_n))
+29:     return SparsePlan(n, q, diagonal, upper, corner, dict(c.count))
+30: 
+31: 
+32: def apply_sparse_c(field, plan, x):
+33:     """C=B+Q^-1-(q/N)A^(N-1), exactly 2N multiplications and N adds.
+34: 
+35: The negative corner coefficient is already prepared. The operation does not
+36: materialize a dense matrix or invoke H_q(C).
+37: """
+38:     if len(x) != plan.n:
+39:         raise ValueError('wrong input length')
+40:     n = plan.n
+41:     out = [field.add(field.mul(plan.diagonal[j], x[j]),
+42:                      field.mul(plan.upper[j], x[j+1])) for j in range(n-1)]
+43:     out.append(field.add(field.mul(plan.diagonal[-1], x[-1]),
+44:                          field.mul(plan.corner, x[0])))
+45:     return out
+46: 
+47: 
+48: def apply_c_charged(field, plan, x):
+49:     c = Counted(field)
+50:     result = apply_sparse_c(c, plan, x)
+51:     n = plan.n
+52:     return result, {'field_operations': dict(c.count),
+53:         'input_reads': 2*n, 'coefficient_reads': 2*n, 'output_writes': n}
+54: 
+55: 
+56: def horner_c(field, plan, coefficients, x):
+57:     """Fully charged direct polynomial action; a dense degree-N-1 H is quadratic."""
+58:     if not coefficients:
+59:         raise ValueError('nonempty coefficient list required')
+60:     if len(x) != plan.n:
+61:         raise ValueError('wrong input length')
+62:     c, n = Counted(field), plan.n
+63:     out = [c.mul(coefficients[-1], value) for value in x]
+64:     for scalar in reversed(coefficients[:-1]):
+65:         value = apply_sparse_c(c, plan, out)
+66:         out = [c.add(value[j], c.mul(scalar, x[j])) for j in range(n)]
+67:     degree = len(coefficients)-1
+68:     return out, {'field_operations': dict(c.count),
+69:         'sparse_matvecs': degree, 'degree': degree,
+70:         'full_output_writes': n,
+71:         'intermediate_vector_writes': 2*n*degree,
+72:         'model': 'Unit exact field arithmetic and explicit O(log N)-bit word indexing; not bit complexity.'}
+73: 
+74: 
+75: def identity(field, n):
+76:     return [[field.one if i == j else field.zero for j in range(n)] for i in range(n)]
+77: 
+78: 
+79: def matrix_add(field, a, b):
+80:     return [[field.add(x, y) for x, y in zip(row, other)] for row, other in zip(a, b)]
+81: 
+82: 
+83: def matrix_sub(field, a, b):
+84:     return [[field.sub(x, y) for x, y in zip(row, other)] for row, other in zip(a, b)]
+85: 
+86: 
+87: def matrix_scale(field, scalar, a):
+88:     return [[field.mul(scalar, value) for value in row] for row in a]
+89: 
+90: 
+91: def lower_kernel(field, coefficients):
+92:     n = len(coefficients)
+93:     return [[coefficients[i-j] if i >= j else field.zero for j in range(n)] for i in range(n)]
+94: 
+95: 
+96: def build_operators(field, plan, kernel):
+97:     """Dense matrices exist only in this independent audit helper."""
+98:     n = plan.n
+99:     a = [[field.one if i == j+1 else field.zero for j in range(n)] for i in range(n)]
+100:     b = [[plan.upper[i] if j == i+1 else field.zero for j in range(n)] for i in range(n)]
+101:     u = [[plan.diagonal[i] if i == j else field.zero for j in range(n)] for i in range(n)]
+102:     corner = [[plan.corner if i == n-1 and j == 0 else field.zero for j in range(n)] for i in range(n)]
+103:     w = matrix_add(field, b, corner)
+104:     c = matrix_add(field, u, w)
+105:     ha = lower_kernel(field, kernel)
+106:     hb = [[field.zero for _ in range(n)] for _ in range(n)]
+107:     for i in range(n):
+108:         product = field.one
+109:         for j in range(i, n):
+110:             if j > i:
+111:                 product = field.mul(product, plan.upper[j-1])
+112:             hb[i][j] = field.mul(kernel[j-i], product)
+113:     return {'A': a, 'B': b, 'U': u, 'W': w, 'C': c,
+114:             'corner': corner, 'H_A': ha, 'H_B': hb}

@@ -1,0 +1,121 @@
+1: """Targeted independent checks: modular range, carries, keys and duplicates.
+2: 
+3: This does not rerun the author's complete audit or claim exhaustive validation.
+4: """
+5: import hashlib
+6: import json
+7: from pathlib import Path
+8: from correction_graph import run,as_integer,fresh_weight
+9: 
+10: 
+11: def check_products(result,queries,b,base):
+12:     for q,digits in zip(queries,result['outputs']):
+13:         assert len(digits)==2*len(b)
+14:         assert all(isinstance(x,int) and 0<=x<base for x in digits)
+15:         assert as_integer(digits,base)==as_integer(q,base)*as_integer(b,base)
+16: 
+17: 
+18: def rejects(call):
+19:     try:call()
+20:     except ValueError:return True
+21:     raise AssertionError('invalid argument/cache key accepted')
+22: 
+23: 
+24: def digits_of(value,n,base):
+25:     result=[]
+26:     for _ in range(n):
+27:         value,digit=divmod(value,base);result.append(digit)
+28:     assert value==0
+29:     return result
+30: 
+31: 
+32: def main():
+33:     boundary=[]
+34:     for n,base in ((1,257),(3,16),(291,16)):
+35:         b=[base-1]*n
+36:         queries=[[base-1]*n,[0]*n]
+37:         # Include a negative signed correction and a duplicate target.
+38:         modified=list(queries[0]);modified[n//2]-=1
+39:         queries += [modified,list(modified)]
+40:         result=run(queries,b,base,graph=True)
+41:         check_products(result,queries,b,base)
+42:         boundary.append({'n':n,'base':base,'coefficient_bound':n*(base-1)**2,
+43:                          'products_checked':len(queries),'status':'PASS'})
+44:     invalid_bounds=[
+45:         rejects(lambda:run([[257]],[257],258)),
+46:         rejects(lambda:run([[15]*292],[15]*292,16)),
+47:     ]
+48:     b=[7,6,5];a=[9,8,7];queries=[a,list(a),list(a)]
+49:     duplicate=run(queries,b,16,graph=True)
+50:     check_products(duplicate,queries,b,16)
+51:     assert duplicate['product_arithmetic']==fresh_weight(3,duplicate['context'].m)
+52:     assert duplicate['counts']['fresh_products']==1
+53:     assert duplicate['counts']['correction_products']==2
+54:     assert duplicate['counts']['identical_product_copy_reads']==2*5
+55:     assert duplicate['counts']['identical_product_copy_writes']==2*5
+56:     assert duplicate['counts']['full_output_digit_writes']==3*6
+57:     seed=(duplicate['context'],0,list(a),list(duplicate['coefficients'][0]))
+58:     changed_a=[list(a),list(a)];changed_a[0][0]-=1
+59:     key_controls={
+60:         'A':rejects(lambda:run(changed_a,b,16,warm_index=0,warm_state=seed)),
+61:         'B':rejects(lambda:run(queries,[6,6,5],16,warm_index=0,warm_state=seed)),
+62:         'base':rejects(lambda:run(queries,b,17,warm_index=0,warm_state=seed)),
+63:         'length':rejects(lambda:run([[9,8]]*3,[7,6],16,warm_index=0,warm_state=seed)),
+64:         'index':rejects(lambda:run(queries,b,16,warm_index=1,warm_state=seed)),
+65:         'negative_index':rejects(lambda:run(queries,b,16,warm_index=-1,warm_state=seed)),
+66:         'out_of_range_index':rejects(lambda:run(queries,b,16,warm_index=3,warm_state=seed)),
+67:         'noninteger_base':rejects(lambda:run(queries,b,16.0)),
+68:         'base_one':rejects(lambda:run([[0]],[0],1)),
+69:     }
+70:     # The API accepts a trusted internal cache, not a signed/authenticated one.
+71:     corrupted=list(seed[3]);corrupted[0]+=1
+72:     bad_seed=(seed[0],seed[1],seed[2],corrupted)
+73:     bad=run(queries,b,16,warm_index=0,warm_state=bad_seed)
+74:     assert as_integer(bad['outputs'][0],16)!=as_integer(a,16)*as_integer(b,16)
+75:     carry_cases=[]
+76:     for n in (3,64):
+77:         base=16;b=[15]*n;center=base**(n-1)
+78:         queries=[digits_of(center+k,n,base) for k in (-16,-2,-1,0,1,2,16)]
+79:         result=run(queries,b,base,numeric_patches=True)
+80:         check_products(result,queries,b,base)
+81:         assert all(result['coefficients'][j]==result['outputs'][j]
+82:                    for j in range(len(queries)))
+83:         raw=run(queries,b,base,numeric_patches=False)
+84:         assert result['outputs']==raw['outputs']
+85:         raw_seed=(raw['context'],0,queries[0],raw['coefficients'][0])
+86:         canonical_seed=(result['context'],0,queries[0],result['coefficients'][0])
+87:         assert rejects(lambda:run(queries,b,base,warm_index=0,warm_state=raw_seed,numeric_patches=True))
+88:         assert rejects(lambda:run(queries,b,base,warm_index=0,warm_state=canonical_seed,numeric_patches=False))
+89:         warm=run(queries,b,base,warm_index=0,warm_state=canonical_seed,numeric_patches=True)
+90:         check_products(warm,queries,b,base)
+91:         carry_cases.append({'n':n,'center':'base^(n-1)','offsets':[-16,-2,-1,0,1,2,16],
+92:                             'products_checked':3*len(queries),
+93:                             'numeric_patches_selected':result['counts']['numeric_patches_selected'],
+94:                             'raw_canonical_cache_mismatch_rejected':True})
+95:     n=3;base=16;b=[15]*n;center=base**(n-1)
+96:     queries=[digits_of(center+k,n,base) for k in (-16,-2,-1,0,1,2,16)]
+97:     candidate_cases=[]
+98:     for edges,expected_fresh in (([],7),([(0,1),(2,3)],5),
+99:                                   ([(j,j+1) for j in range(6)]+[(1,0),(0,1)],1)):
+100:         result=run(queries,b,base,numeric_patches=True,candidate_edges=edges)
+101:         check_products(result,queries,b,base)
+102:         assert result['counts']['fresh_products']==expected_fresh
+103:         assert result['counts'].get('candidate_edge_records_read',0)==len(edges)
+104:         candidate_cases.append({'supplied_edge_records':len(edges),
+105:                                  'fresh_products':expected_fresh,'outputs':len(queries)})
+106:     assert rejects(lambda:run(queries,b,base,candidate_edges=[(0,0)]))
+107:     assert rejects(lambda:run(queries,b,base,candidate_edges=[(0,7)]))
+108:     root=Path(__file__).resolve().parent
+109:     report={'status':'PASS','boundary_cases':boundary,'invalid_bound_controls':invalid_bounds,
+110:             'duplicate_arithmetic_edge_weight':0,'duplicate_copy_entries_per_edge':5,
+111:             'duplicate_all_output_digits':18,'warm_key_controls':key_controls,
+112:             'cache_coefficients_require_trusted_provenance':True,
+113:             'numeric_long_carry_cases':carry_cases,
+114:             'candidate_graph_cases':candidate_cases,
+115:             'source_sha256':{name:hashlib.sha256((root/name).read_bytes()).hexdigest()
+116:                              for name in ('correction_graph.py','audit.py','audit_numeric_shifts.py')}}
+117:     (root/'independent_review_checks.json').write_text(json.dumps(report,indent=2)+'\n')
+118:     print(json.dumps(report,indent=2))
+119: 
+120: 
+121: if __name__=='__main__':main()

@@ -1,0 +1,40 @@
+"""Reviewer-authored report assembly from authored notes and inert read receipts."""
+import hashlib,json
+from pathlib import Path
+B=Path('material_extension_source_review_0500/worker_materials')
+rows=json.loads((B/'ROWS.json').read_text())
+notes=json.loads((B/'NOTES_00_12.json').read_text())+json.loads((B/'NOTES_13_33.json').read_text())
+assert len(notes)==len(rows)==34
+chunks={'00_04':'5b61ff','04_07':'14a793','07_10':'d78c55','10_13':'21d1e5','13_15':'6211e6','15_18':'12a90e','18_21':'948043','21_24':'dce40d','24_26':'93cf46','26_29':'05f820','29_31':'82a78d','31_34':'5fd1c5'}
+receipts=[]
+for path in sorted(B.glob('READ_*.txt.json')):
+ rec=json.loads(path.read_text());key=path.name.removeprefix('READ_').removesuffix('.txt.json')
+ rec.update(tool='exec_command',tool_output_chunk_id=chunks[key],exit_code=0,output_truncated=False,output_displayed_first_to_last=True,interpretation='The exact full numbered text was returned in this tool receipt and statically read, not merely loaded into a file. Numbering is presentation only; source hash binds raw original bytes.')
+ assert hashlib.sha256(Path(rec['output_file']).read_bytes()).hexdigest()==rec['output_sha256']
+ receipts.append(rec)
+coverage={rec['index']:r for r in receipts for rec in r['records']}
+recon=json.loads((B/'RECONCILIATION.json').read_text())
+findings=[
+ {'id':'MAT-01','classification':'trust boundary','indices':[12],'lines_inclusive':[[20,24],[159,184]],'finding':'SeedCache products are trusted internal values. Matching operands and canonical shape do not authenticate multiplication; forged cache values can corrupt output. This does not refute the explicitly trusted-cache contract.'},
+ {'id':'MAT-02','classification':'trust boundary','indices':[23,24],'source_lines':{'23':[[77,86],[98,103]],'24':[[140,164]]},'finding':'Verified reuse checks the query relation, not the correctness of the supplied nonzero anchor transform. Full-output validity is conditional on a correct paid anchor. Zero-anchor cold specialization avoids this trust boundary.'},
+ {'id':'MAT-03','classification':'precondition','indices':[21,23,27],'source_lines':{'21':[[34,66]],'23':[[38,53]],'27':[[107,114],[132,148]]},'finding':'Primitive q is a supplied precondition, not validated by these rational/extended paths, including sparse fallback. This differs from qlinear.py lines 95-101 and galois_defect.py lines 35-50, which verify order.'},
+ {'id':'MAT-04','classification':'scope limitation','indices':[0,6,9,16,21,27,29,30],'finding':'All apparent linear or sub-N-log-N improvements are explicitly restricted to verified structural input families, reuse workloads, or restricted aggregates. None establishes an arbitrary-input full FFT improvement.'},
+ {'id':'MAT-05','classification':'evidence limitation','indices':[33],'lines_inclusive':[[8,18],[23,38]],'finding':'Integration PASS is only nine entry-script exit statuses. Stored script hashes bind entry sources, not transitive dependencies; historical PASS is not current execution or full source review.'},
+ {'id':'MAT-06','classification':'representation scope','indices':[30],'lines_inclusive':[[124,149],[152,185]],'finding':'O(Nt) mode evaluation consumes a supplied compressed Fourier description. It does not include discovering such a description from arbitrary N coefficients; selected full-rank examples remain structured.'},
+ {'id':'MAT-07','classification':'cost-model limitation','indices':[12,16,21,27,29],'source_lines':{'12':[[1,5],[47,59]],'16':[[1,4],[9,18]],'21':[[99,133]],'27':[[79,104]],'29':[[127,136]]},'finding':'Opaque M(8n) seed multiplication, unit exact-field inversions, and logical-array counters belong to different models. They must not be added indiscriminately, interpreted as bit complexity, or converted into wall-clock speedups.'},
+ {'id':'MAT-08','classification':'environment-dependent evidence','indices':[10],'lines_inclusive':[[134,163]],'finding':'One-parent comparator is optional and dynamically imports a file only when present. A PASS without that file can omit the comparison; result reconciliation must inspect its stored field separately.'},
+ {'id':'MAT-09','classification':'trust boundary','indices':[9],'lines_inclusive':[[111,115],[145,152]],'finding':'evaluate accepts manually editable certificates without authenticating them. Only transform constructs and verifies its own fresh-input certificate; source explicitly documents this distinction.'},
+ {'id':'MAT-10','classification':'bounded evidence','indices':[28,32],'source_lines':{'28':[[12,36]],'32':[[105,124],[128,141]]},'finding':'Exhaustive acceptance is only F5^4 at caps 0 and 1. Computed orbit-family closure exclusions are limited to listed field/size instances; neither finite evidence is an all-size proof.'}
+]
+reviews=[]
+for i,(row,note) in enumerate(zip(rows,notes)):
+ assert i==note['index']; raw=Path(row['local_content']).read_bytes();line_count=len(raw.decode('utf-8').splitlines())
+ assert hashlib.sha256(raw).hexdigest()==row['sha256']
+ for ev in note['source_line_evidence']:assert 1<=ev['lines_inclusive'][0]<=ev['lines_inclusive'][1]<=line_count
+ report={'index':i+1,'assignment_index':i,'sha256':row['sha256'],'size_bytes':len(raw),'line_count':line_count,'representative_path':row['representative_path'],'snapshot_path':'sources/'+row['sha256'],'static_inspection_complete':True,'full_static_inspection':True,'inspection_method':'Direct first-to-last inert numbered-text reading of exact bytes. No supplied source execution, import, compilation, or AST parsing.','coverage_intervals':{'bytes_half_open':[[0,len(raw)]],'lines_inclusive':[[1,line_count]]},**{k:v for k,v in note.items() if k!='index'},'source_executed_in_review':False,'source_imported_in_review':False,'source_compiled_in_review':False,'source_ast_parsed_in_review':False,'provenance':{k:row[k] for k in ['batch_name','occurrences','root_archive_sha256s','origin_class','origin_basis']},'finding_ids':[f['id'] for f in findings if i in f['indices']],'dependency_closure_complete':False,'current_review_test_status':'Supplied source/tests not run. Stored PASS statements are historical only. No current execution evidence inferred from stored output.','read_receipt_output_file':coverage[i]['output_file'],'read_receipt_tool_output_chunk_id':coverage[i]['tool_output_chunk_id']}
+ reviews.append(report)
+(B/'REVIEWS.json').write_text(json.dumps(reviews,indent=2)+'\n')
+inventory=Path('post_v22_review_registry_0308/ADDITIVE_CODE_COVERAGE.json')
+evidence={'scope':'34 exact source hashes from materials extension batches 02,03,04; current full static reads, no supplied execution.','hash_count':len(rows),'source_bytes':sum(r['size_bytes'] for r in rows),'source_lines':sum(r['line_count'] for r in reviews),'read_receipts':receipts,'full_read_intervals':[{'sha256':r['sha256'],**r['coverage_intervals'],'line_count':r['line_count']} for r in reviews],'significant_findings':findings,'original_sources_preserved':True,'archive_exact_source_matches':34,'reconciliation_file':'RECONCILIATION.json','reconciliation_tool_output_chunk_id':'2d641a','stored_result_count':19,'stored_result_status':'All nineteen stored reports say PASS; this is historical stored evidence, not a current run or correctness certification.','prior_registry':{'path':str(inventory),'sha256':hashlib.sha256(inventory.read_bytes()).hexdigest(),'overlap_hashes':recon['prior_registry_overlap'],'modified_by_worker':False},'dependency_closure_complete':False,'source_executed_in_review':False,'source_imported_in_review':False,'source_compiled_in_review':False,'source_ast_parsed_in_review':False,'fresh_independent_mathematical_controls':'Not run by this worker; parent may include separately labeled independent controls.'}
+(B/'READ_EVIDENCE.json').write_text(json.dumps(evidence,indent=2)+'\n')
+print(json.dumps({'reviews':len(reviews),'bytes':evidence['source_bytes'],'lines':evidence['source_lines'],'receipts':len(receipts),'reviews_sha256':hashlib.sha256((B/'REVIEWS.json').read_bytes()).hexdigest(),'evidence_sha256':hashlib.sha256((B/'READ_EVIDENCE.json').read_bytes()).hexdigest()},indent=2))

@@ -1,0 +1,17 @@
+from pathlib import Path
+import sys,time
+root=Path('fft_three_stage_bitrev_gate_2026-10-10');sys.path[:0]=[str(root),str(root/'fft_scan_network_gate_2026-10-09')]
+from fast_mincut import ScanFlowOracle
+from research_gate import bitrev
+for n in (128,256):
+    P=bitrev(n); G=ScanFlowOracle(n,[1]*4,[P]*3)
+    cases={}
+    s=time.time()
+    for k in sorted(set([1,2,3,4,5,6,7,8,9,10,12,13,16,17,20,24,26,32,33,40,48,52,64,65,72,76,80,96,104,112,128,130,144,160,192,208,224,240]+[round(n*x/32) for x in range(1,32)])):
+        if k>=n:continue
+        res=[]
+        for R,C in ((range(k),range(n-k,n)),(range(n-k,n),range(k)),(range(k),range(k)),(range(n-k,n),range(n-k,n))):
+            b=G.bound(R,C);res.append(b)
+        cases[k]=res
+        if min(res)<k: print('DEFICIT',n,k,res,flush=True)
+    print('done',n,'mins',min(min(v)-k for k,v in cases.items()),'seconds',round(time.time()-s,2),flush=True)

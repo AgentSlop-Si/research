@@ -1,0 +1,91 @@
+import sys,unittest,random,json
+from pathlib import Path
+HERE=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(HERE))
+from two_stage_ct import P,root,TwoStage,verify,modular_rank
+from prime_gate import field_root_of_unity,four_corners
+from cut_rank_gate import exact_corner_bound,bitrev
+from interval_gate import boundary_count
+from rank_certificate import determinant_mod,certify_64
+from cost_audit import PreparedRadix2,PreparedTwoStage
+
+
+def generate_qs(n,r,seed):
+    rng=random.Random(seed)
+    l=[[rng.randrange(P) for z in range(r)] for i in range(n)]
+    s=[[rng.randrange(P) for z in range(r)] for i in range(n)]
+    u=[[rng.randrange(P) for z in range(r)] for i in range(n)]
+    v=[[rng.randrange(P) for z in range(r)] for i in range(n)]
+    d=[rng.randrange(1,P) for _ in range(n)]
+    return [[sum(l[i][z]*s[j][z] for z in range(r))%P if i>j else
+             sum(u[i][z]*v[j][z] for z in range(r))%P if i<j else d[i]
+             for j in range(n)] for i in range(n)]
+
+class ResearchTests(unittest.TestCase):
+    def test_cooley_tukey_exact_full_basis(self):
+        for a,b in [(2,2),(4,4),(4,8),(8,8),(16,16)]:
+            self.assertEqual(verify(a,b,2)['n'],a*b)
+
+    def test_prime_full_minor_gate_independent_permutations(self):
+        rng=random.Random(20261009)
+        for n in (5,7,11,17,19):
+            p,w=field_root_of_unity(n)
+            h=n//2
+            for t in range(15):
+                I=list(range(n));O=list(range(n));P0=list(range(n))
+                rng.shuffle(I);rng.shuffle(O);rng.shuffle(P0)
+                d=four_corners(n,I,O,P0,p,w)
+                self.assertEqual(d['ranks'],[h,h,h,h+1])
+                self.assertGreaterEqual(d['lower_bound'],(h+1)//2)
+
+    def test_pow2_halfcut_is_not_full_gate(self):
+        for n in (16,32):
+            h=n//2
+            I=O=list(range(0,n,2))+list(range(1,n,2))
+            P0=list(range(h//2))+list(range(h,h+h//2))+list(range(h//2,h))+list(range(h+h//2,n))
+            d=four_corners(n,I,O,P0,P,root(n))
+            self.assertEqual(d['ranks'],[n//4]*4)
+            self.assertEqual(d['lower_bound'],0)
+            self.assertGreaterEqual(exact_corner_bound(I,O,P0)['bound'],n//4)
+
+    def test_multinterval_rank_bound_for_generated_stages(self):
+        n=16
+        S1=generate_qs(n,2,37);S2=generate_qs(n,2,71)
+        rng=random.Random(49)
+        perm=list(range(n));rng.shuffle(perm)
+        A=[[sum(S2[i][k]*S1[perm[k]][j] for k in range(n))%P for j in range(n)] for i in range(n)]
+        for _ in range(100):
+            R=[i for i in range(n) if rng.randrange(2)]
+            C=[j for j in range(n) if rng.randrange(2)]
+            if not R or not C:continue
+            br=boundary_count(R,n);bc=boundary_count(C,n)
+            self.assertLessEqual(modular_rank([[S2[i][j] for j in range(n) if j not in set(R)] for i in R]),br*2)
+            self.assertLessEqual(modular_rank([[S1[i][j] for j in C] for i in range(n) if i not in set(C)]),bc*2)
+            overlap=len({perm[i] for i in R}&set(C))
+            self.assertLessEqual(modular_rank([[A[i][j] for j in C] for i in R]),overlap+2*br+2*bc)
+
+    def test_modular_minor_has_complex_rank_implication(self):
+        doc=json.loads((HERE/'minor_certificate_N64.json').read_text())
+        self.assertEqual(doc['middle_overlap'],14)
+        self.assertEqual(doc['required_rank_sum_at_least'],4)
+        for ev in doc['field_evidence']:
+            q=ev['prime'];a=ev['root64']
+            self.assertEqual(pow(a,64,q),1)
+            self.assertNotEqual(pow(a,32,q),1)
+            w=[pow(a,j,q) for j in range(64)]
+            A=[[w[i*j%64] for j in ev['minor_input_indices']] for i in ev['minor_output_indices']]
+            self.assertEqual(determinant_mod(A,q),ev['det_mod_prime'])
+            self.assertNotEqual(ev['det_mod_prime'],0)
+
+    def test_cost_audit_same_field_exact(self):
+        for n in (16,64,256):
+            a=1<<((n.bit_length()-1)//2);b=n//a
+            exact=PreparedTwoStage(a,b)
+            std=PreparedRadix2(n)
+            rng=random.Random(n)
+            inp=[rng.randrange(P) for _ in range(n)]
+            self.assertEqual(exact.apply(inp),std.apply(inp))
+            self.assertEqual(exact.mul,n*(a+b+1))
+            self.assertEqual(std.mul,(n//2)*(n.bit_length()-1))
+
+if __name__=='__main__':unittest.main()

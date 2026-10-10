@@ -1,0 +1,597 @@
+
+===== SOURCE 10 5b871bec5e48920e84e2aefc903ecdbdb4fc443ed57fabee45b51421909db4b6 fft_materials_extension_20261009/fft_multiparent_products_research/audit.py | 9710 bytes 218 lines =====
+   1 """Exact product, relation, cold/warm, and one-parent comparison audit."""
+   2 import importlib.util
+   3 import json
+   4 from pathlib import Path
+   5 from random import Random
+   6 
+   7 from multiparent import (Ledger, SeedCache, baseline_batch, make_seed_cache,
+   8                         polynomial_batch, secant_batch, signed_patch)
+   9 
+  10 ROOT = Path(__file__).resolve().parent
+  11 
+  12 
+  13 def digits(value, n):
+  14     return list(value.to_bytes(n, 'little'))
+  15 
+  16 
+  17 def integer(value):
+  18     return int.from_bytes(bytes(value), 'little')
+  19 
+  20 
+  21 def assert_products(pairs, result):
+  22     for (a,b), out in zip(pairs, result['outputs']):
+  23         assert len(out) == 2*len(a)
+  24         assert integer(out) == integer(a)*integer(b)
+  25         assert all(0 <= v < 256 for v in out)
+  26     assert len(result['outputs']) == len(pairs)
+  27     assert result['counts']['full_output_digit_writes'] == 2*len(pairs)*len(pairs[0][0])
+  28 
+  29 
+  30 def summary(result):
+  31     return {k:v for k,v in result.items() if k != 'outputs'}
+  32 
+  33 
+  34 def affine_pairs(n, q, both=False, descending=False):
+  35     rng = Random(7123+n+q)
+  36     da = [rng.randrange(1,8) for _ in range(n)]
+  37     db = [rng.randrange(1,8) for _ in range(n)]
+  38     a0 = [rng.randrange(1,15) for _ in range(n)]
+  39     b0 = [rng.randrange(1,15) for _ in range(n)]
+  40     fixed_b = [rng.randrange(1,256) for _ in range(n)]
+  41     pairs = []
+  42     for i in range(q):
+  43         t = q-1-i if descending else i
+  44         a = [u+t*v for u,v in zip(a0,da)]
+  45         b = [u+t*v for u,v in zip(b0,db)] if both else list(fixed_b)
+  46         assert max(a+b) < 256
+  47         pairs.append((a,b))
+  48     return pairs
+  49 
+  50 
+  51 def main():
+  52     rows = []
+  53     product_checks = 0
+  54     for n in (1, 16, 64, 1024):
+  55         pairs = affine_pairs(n, 12)
+  56         baseline = baseline_batch(pairs)
+  57         secant = secant_batch(pairs)
+  58         poly = polynomial_batch(pairs)
+  59         for result in (baseline, secant, poly):
+  60             assert_products(pairs, result)
+  61             product_checks += len(pairs)
+  62         assert secant['counts']['seed_multiplications'] == 2
+  63         assert secant['residual_supports'] == [0]*10
+  64         assert poly['degrees'] == [1,0]
+  65         assert poly['counts']['seed_multiplications'] == 2
+  66         # Every coordinate and every actual signed-numeric difference is dense.
+  67         pair_supports = []
+  68         for i in range(len(pairs)):
+  69             for j in range(i+1,len(pairs)):
+  70                 coordinate = sum(u != v for u,v in zip(pairs[i][0],pairs[j][0]))
+  71                 delta = integer(pairs[j][0])-integer(pairs[i][0])
+  72                 numeric = sum(v != 0 for v in delta.to_bytes(n,'little'))
+  73                 assert coordinate == numeric == n
+  74                 pair_supports.append(numeric)
+  75         rows.append(dict(case='same_B_dense_first_zero_second', n=n, queries=len(pairs),
+  76                          baseline=summary(baseline), secant=summary(secant),
+  77                          polynomial=summary(poly),
+  78                          all_pair_first_difference_support_min=min(pair_supports)))
+  79 
+  80     for descending in (False, True):
+  81         pairs = affine_pairs(64, 12, both=True, descending=descending)
+  82         result = polynomial_batch(pairs)
+  83         assert_products(pairs,result)
+  84         product_checks += len(pairs)
+  85         assert result['degrees'] == [1,1]
+  86         assert result['counts']['seed_multiplications'] == 3
+  87         assert result['schedule'][3:] == ['polynomial']*9
+  88         rows.append(dict(case='both_affine_descending' if descending else 'both_affine',
+  89                          n=64,queries=12,result=summary(result)))
+  90 
+  91     pairs = [(digits(2**40+1234567*i+5329*i*i+77*i**3,8),
+  92               digits(2**39+2323*i+91*i*i,8)) for i in range(12)]
+  93     result = polynomial_batch(pairs)
+  94     assert_products(pairs,result)
+  95     product_checks += len(pairs)
+  96     assert result['degrees'] == [3,2]
+  97     assert result['counts']['seed_multiplications'] == 6
+  98     rows.append(dict(case='cubic_times_quadratic',n=8,queries=12,result=summary(result)))
+  99 
+ 100     pairs = affine_pairs(64, 12)
+ 101     pairs = [(digits(integer(a)+10*(i%3),64),b) for i,(a,b) in enumerate(pairs)]
+ 102     result = secant_batch(pairs,max_patch=1)
+ 103     assert_products(pairs,result)
+ 104     product_checks += len(pairs)
+ 105     assert max(result['residual_supports']) == 1
+ 106     assert result['counts']['seed_multiplications'] == 2
+ 107     rows.append(dict(case='signed_sparse_second_difference',n=64,queries=12,result=summary(result)))
+ 108 
+ 109     warm_rows=[]
+ 110     for mode,both,seeds in ((secant_batch,False,2),(polynomial_batch,True,3)):
+ 111         pairs = affine_pairs(64,12,both=both)
+ 112         cache,creation = make_seed_cache(pairs,seeds)
+ 113         cold = mode(pairs)
+ 114         warm = mode(pairs,cache=cache)
+ 115         assert cold['outputs'] == warm['outputs']
+ 116         assert_products(pairs,warm)
+ 117         product_checks += len(pairs)
+ 118         assert warm['counts'].get('seed_multiplications',0)==0
+ 119         assert creation['counts']['seed_multiplications'] == cold['counts']['seed_multiplications']
+ 120         warm_rows.append(dict(mode=mode.__name__,seed_creation=creation,
+ 121                               cold=summary(cold),warm=summary(warm)))
+ 122 
+ 123     rng=Random(61913)
+ 124     fixed_b=[rng.randrange(256) for _ in range(32)]
+ 125     pairs=[([rng.randrange(256) for _ in range(32)],list(fixed_b)) for _ in range(12)]
+ 126     adversaries=[]
+ 127     for mode in (secant_batch,polynomial_batch):
+ 128         result=mode(pairs)
+ 129         assert_products(pairs,result)
+ 130         product_checks+=len(pairs)
+ 131         assert result['counts']['seed_multiplications']==len(pairs)
+ 132         adversaries.append(dict(mode=mode.__name__,result=summary(result)))
+ 133 
+ 134     # Exact same target integers as the original fixed-modulus one-parent graph.
+ 135     previous=ROOT.parent/'fft_route_barriers_research'/'correction_graph.py'
+ 136     previous_comparison=None
+ 137     if previous.exists():
+ 138         spec=importlib.util.spec_from_file_location('previous_correction_graph',previous)
+ 139         module=importlib.util.module_from_spec(spec)
+ 140         import sys
+ 141         sys.modules[spec.name]=module
+ 142         spec.loader.exec_module(module)
+ 143         nhex,q=128,8
+ 144         ah=[[i+1]*nhex for i in range(q)]
+ 145         bh=[rng.randrange(1,16) for _ in range(nhex)]
+ 146         old_base=module.run(ah,bh,base=16,graph=False,numeric_patches=True)
+ 147         old_graph=module.run(ah,bh,base=16,graph=True,numeric_patches=True)
+ 148         def pack_hex(v): return [v[j]+16*v[j+1] for j in range(0,len(v),2)]
+ 149         pairs=[(pack_hex(a),pack_hex(bh)) for a in ah]
+ 150         result=secant_batch(pairs)
+ 151         assert_products(pairs,result)
+ 152         product_checks+=q
+ 153         assert result['outputs']==[pack_hex(out) for out in old_graph['outputs']]
+ 154         assert result['outputs']==[pack_hex(out) for out in old_base['outputs']]
+ 155         assert old_graph['counts']['fresh_products']==q
+ 156         assert min(old_graph['correction_supports'])==nhex
+ 157         previous_comparison=dict(n_hex=nhex,n_bytes=nhex//2,queries=q,
+ 158             original_baseline_scalar_arithmetic=old_base['total_arithmetic'],
+ 159             original_graph_scalar_arithmetic=old_graph['total_arithmetic'],
+ 160             original_graph_fresh_products=old_graph['counts']['fresh_products'],
+ 161             original_all_pair_support_min=min(old_graph['correction_supports']),
+ 162             multi_parent=summary(result),
+ 163             caution='Models differ: do not add opaque seed calls to old scalar counts or infer a wall-clock ratio.')
+ 164 
+ 165     # Focused carry boundaries, including signed residuals through long carries.
+ 166     carry_cases=0
+ 167     for n in (1,3,32):
+ 168         for v in (-(256**n-1),-257,-1,0,1,257,256**n-1):
+ 169             c=Ledger()
+ 170             patch=signed_patch([v],n+2,c)
+ 171             assert sum(sign*digit*256**j for j,sign,digit in patch)==v
+ 172             carry_cases+=1
+ 173     for length in (1,2,3):
+ 174         pairs=[(digits(i+1,2),digits(7-i,2)) for i in range(length)]
+ 175         result=polynomial_batch(pairs)
+ 176         assert_products(pairs,result)
+ 177         product_checks+=length
+ 178 
+ 179     invalid=0
+ 180     def rejects(fn):
+ 181         nonlocal invalid
+ 182         try: fn()
+ 183         except (ValueError,TypeError): invalid+=1
+ 184         else: raise AssertionError('invalid call accepted')
+ 185     pairs=affine_pairs(3,8)
+ 186     cache,_=make_seed_cache(pairs,2)
+ 187     rejects(lambda:secant_batch([],max_patch=2))
+ 188     rejects(lambda:secant_batch(pairs,max_patch=-1))
+ 189     rejects(lambda:polynomial_batch(pairs,max_degree=4))
+ 190     rejects(lambda:polynomial_batch(pairs,max_degree=True))
+ 191     rejects(lambda:signed_patch([-255,1],1,Ledger()))
+ 192     rejects(lambda:secant_batch([([256],[0])]))
+ 193     rejects(lambda:secant_batch([([True],[0])]))
+ 194     changed=[(list(a),list(b)) for a,b in pairs]
+ 195     changed[0][0][0]^=1
+ 196     rejects(lambda:secant_batch(changed,cache=cache))
+ 197     rejects(lambda:secant_batch(pairs,cache=SeedCache(4,cache.entries)))
+ 198     a,b,p=cache.entries[0]
+ 199     rejects(lambda:secant_batch(pairs,cache=SeedCache(3,((a,b,p[:-1]),))))
+ 200     changed=[(list(a),list(b)) for a,b in pairs]
+ 201     changed[2][1][0]^=1
+ 202     rejects(lambda:secant_batch(changed))
+ 203     all_cache,_=make_seed_cache(pairs,3)
+ 204     rejects(lambda:secant_batch(pairs,cache=all_cache))
+ 205 
+ 206     payload=dict(status='PASS',exact_product_comparisons=product_checks,
+ 207         signed_carry_checks=carry_cases,invalid_calls_rejected=invalid,
+ 208         rows=rows,warm=warm_rows,unrelated_adversaries=adversaries,
+ 209         original_one_parent_same_targets=previous_comparison,
+ 210         model='Opaque paid M(8n) seed multiplications plus explicit word/digit/carry/output work; no FFT breakthrough.')
+ 211     (ROOT/'audit.json').write_text(json.dumps(payload,indent=2)+'\n')
+ 212     print(json.dumps({k:payload[k] for k in ('status','exact_product_comparisons','signed_carry_checks','invalid_calls_rejected')},indent=2))
+ 213     if previous_comparison:
+ 214         print(json.dumps({k:v for k,v in previous_comparison.items() if k!='multi_parent'},indent=2))
+ 215 
+ 216 
+ 217 if __name__=='__main__':
+ 218     main()
+
+===== SOURCE 11 7e3a7a265ceb75f233ba7468bdd92674e8e62cf1541040844948140b527c871c fft_materials_extension_20261009/fft_multiparent_products_research/independent_review_checks.py | 3670 bytes 74 lines =====
+   1 """Targeted multi-parent review: carry chains, mixed terms and highest degree."""
+   2 import hashlib
+   3 import json
+   4 from pathlib import Path
+   5 from multiparent import Ledger,make_seed_cache,polynomial_batch,secant_batch,signed_patch
+   6 
+   7 
+   8 def digits(value,n):return list(value.to_bytes(n,'little'))
+   9 def integer(values):return int.from_bytes(bytes(values),'little')
+  10 def exact(pairs,result):
+  11     assert len(result['outputs'])==len(pairs)
+  12     for (a,b),out in zip(pairs,result['outputs']):
+  13         assert len(out)==2*len(a)
+  14         assert integer(out)==integer(a)*integer(b)
+  15 
+  16 
+  17 def main():
+  18     carry_cases=[];checked=0
+  19     offsets=[-2,-1,0,1,3,4,5,7]
+  20     for n in (3,64):
+  21         center=256**(n-1);b=[255]*n
+  22         pairs=[(digits(center+offset,n),b) for offset in offsets]
+  23         result=secant_batch(pairs,max_patch=1)
+  24         exact(pairs,result);checked+=len(pairs)
+  25         assert result['counts']['seed_multiplications']==2
+  26         assert result['residual_supports']==[0,0,1,1,0,1]
+  27         carry_cases.append({'n':n,'offsets':offsets,'seed_multiplications':2,
+  28                             'residual_supports':result['residual_supports']})
+  29     pairs=[(digits(255+3*i,2),digits(256-2*i,2)) for i in range(10)]
+  30     both=polynomial_batch(pairs)
+  31     exact(pairs,both);checked+=len(pairs)
+  32     assert both['degrees']==[1,1] and both['counts']['seed_multiplications']==3
+  33     naive=2*integer(both['outputs'][2])-integer(both['outputs'][1])
+  34     true=integer(both['outputs'][3])
+  35     assert true-naive==-12 # 2*(delta A)*(delta B), the required mixed term.
+  36     cache,creation=make_seed_cache(pairs,1)
+  37     warm=polynomial_batch(pairs,cache=cache)
+  38     exact(pairs,warm);checked+=len(pairs)
+  39     assert warm['outputs']==both['outputs']
+  40     assert creation['counts']['seed_multiplications']==1
+  41     assert warm['counts']['seed_multiplications']==2
+  42     # Maximum supported degree pair: order seven, including coefficients 35.
+  43     pairs=[(digits(2**48-100+i**3,8),digits(2**48-200+2*i**3-i*i,8)) for i in range(11)]
+  44     high=polynomial_batch(pairs)
+  45     exact(pairs,high);checked+=len(pairs)
+  46     assert high['degrees']==[3,3] and high['counts']['seed_multiplications']==7
+  47     # Signed-width guard must reject silently truncated coefficients.
+  48     try:signed_patch([-255,1],1,Ledger())
+  49     except ValueError:pass
+  50     else:raise AssertionError('oversize coefficient buffer was silently truncated')
+  51     boundaries=0
+  52     for width in (1,2,4):
+  53         for value in (-256**width,-256**width+1,-1,0,1,256**width-1,256**width):
+  54             if abs(value)>=256**width:
+  55                 try:signed_patch([value],width,Ledger())
+  56                 except ValueError:pass
+  57                 else:raise AssertionError('outside signed width accepted')
+  58             else:
+  59                 patch=signed_patch([value],width,Ledger())
+  60                 assert sum(sign*digit*256**j for j,sign,digit in patch)==value
+  61             boundaries+=1
+  62     root=Path(__file__).resolve().parent
+  63     result={'status':'PASS','exact_product_comparisons':checked,'long_carry_cases':carry_cases,
+  64             'both_affine_degrees':[1,1],'mixed_term_negative_control_difference':true-naive,
+  65             'partial_cache_seed_calls':{'creation':1,'warm':2,'cold':3},
+  66             'highest_supported_degree_pair':[3,3],'highest_degree_seed_calls':7,
+  67             'signed_width_boundary_controls':boundaries,'oversize_buffer_rejected':True,
+  68             'source_sha256':{name:hashlib.sha256((root/name).read_bytes()).hexdigest()
+  69                              for name in ('multiparent.py','audit.py')}}
+  70     (root/'independent_review_checks.json').write_text(json.dumps(result,indent=2)+'\n')
+  71     print(json.dumps(result,indent=2))
+  72 
+  73 
+  74 if __name__=='__main__':main()
+
+===== SOURCE 12 6d027a50dc9cca6765b2927fefc1141442b7d5851d23454ebaf38ec89ecfb0b8 fft_materials_extension_20261009/fft_multiparent_products_research/multiparent.py | 11745 bytes 299 lines =====
+   1 """Exact byte-digit products with paid seeds and verified multi-parent reuse.
+   2 
+   3 Seed multiplication is an explicit black box M(8*n), not one word operation.
+   4 All other numerical work uses bounded digit/carry loops. No FFT is imported.
+   5 """
+   6 from collections import Counter
+   7 from dataclasses import dataclass
+   8 from math import comb
+   9 
+  10 BASE = 256
+  11 MAX_DEGREE = 3
+  12 
+  13 
+  14 class Ledger(Counter):
+  15     def word_operations(self):
+  16         return sum(self[k] for k in (
+  17             'word_add', 'word_sub', 'small_mul', 'digit_mul', 'word_divmod'))
+  18 
+  19 
+  20 @dataclass(frozen=True)
+  21 class SeedCache:
+  22     n: int
+  23     # Trusted internal entries (A digits, B digits, canonical product digits).
+  24     entries: tuple
+  25 
+  26 
+  27 def validate(pairs, c):
+  28     if not pairs or len(pairs[0]) != 2:
+  29         raise ValueError('a nonempty sequence of operand pairs is required')
+  30     n = len(pairs[0][0])
+  31     if n < 1:
+  32         raise ValueError('at least one byte per operand is required')
+  33     for pair in pairs:
+  34         if len(pair) != 2:
+  35             raise ValueError('every query must have two operands')
+  36         for digits in pair:
+  37             if len(digits) != n:
+  38                 raise ValueError('all operands must have the same padded length')
+  39             for value in digits:
+  40                 c['validation_digit_reads'] += 1
+  41                 c['validation_digit_tests'] += 1
+  42                 if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value < BASE:
+  43                     raise ValueError('operands must be canonical byte digits')
+  44     return n
+  45 
+  46 
+  47 def seed_product(pair, n, c):
+  48     a, b = pair
+  49     left = int.from_bytes(bytes(a), 'little')
+  50     right = int.from_bytes(bytes(b), 'little')
+  51     c['seed_input_pack_bytes'] += 2*n
+  52     # Intentionally opaque cost: one multiplication of at most 8n-bit integers.
+  53     product = left*right
+  54     c['seed_multiplications'] += 1
+  55     c['seed_bound_bits_sum'] += 8*n
+  56     out = list(product.to_bytes(2*n, 'little'))
+  57     c['seed_output_conversion_bytes'] += 2*n
+  58     c['seed_canonical_digit_writes'] += 2*n
+  59     return out
+  60 
+  61 
+  62 def combine(vectors, weights, width, c):
+  63     """Signed linear combination in redundant digits; never creates a bigint."""
+  64     out = [0]*width
+  65     c['coefficient_zero_writes'] += width
+  66     for vector, weight in zip(vectors, weights):
+  67         if len(vector) > width:
+  68             raise ValueError('linear combination exceeds its buffer')
+  69         for j, value in enumerate(vector):
+  70             c['combination_digit_reads'] += 1
+  71             if abs(weight) != 1:
+  72                 value *= abs(weight)
+  73                 c['small_mul'] += 1
+  74             if weight >= 0:
+  75                 out[j] += value
+  76                 c['word_add'] += 1
+  77             else:
+  78                 out[j] -= value
+  79                 c['word_sub'] += 1
+  80             c['combination_accumulator_writes'] += 1
+  81     return out
+  82 
+  83 
+  84 def carry_pass(coefficients, width, c):
+  85     carry = 0
+  86     out = []
+  87     for j in range(width):
+  88         value = (coefficients[j] if j < len(coefficients) else 0)+carry
+  89         carry, digit = divmod(value, BASE)
+  90         c['word_add'] += 1
+  91         c['word_divmod'] += 1
+  92         c['carry_digit_reads'] += int(j < len(coefficients))
+  93         c['carry_digit_writes'] += 1
+  94         out.append(digit)
+  95     return out, carry
+  96 
+  97 
+  98 def signed_patch(coefficients, width, c):
+  99     """Canonical signed magnitude, for -256**width < value < 256**width."""
+ 100     if len(coefficients) > width:
+ 101         raise ValueError('signed coefficients exceed their normalization width')
+ 102     digits, carry = carry_pass(coefficients, width, c)
+ 103     if carry not in (-1, 0):
+ 104         raise ValueError('signed relation exceeds its proven width')
+ 105     sign = 1
+ 106     if carry == -1:
+ 107         sign, carry = -1, 1
+ 108         for j, digit in enumerate(digits):
+ 109             value = (BASE-1)-digit+carry
+ 110             carry, digits[j] = divmod(value, BASE)
+ 111             c['word_sub'] += 1
+ 112             c['word_add'] += 1
+ 113             c['word_divmod'] += 1
+ 114             c['signed_magnitude_digit_writes'] += 1
+ 115         if carry:
+ 116             raise ValueError('negative value at or beyond the signed width boundary')
+ 117     patch = []
+ 118     for j, digit in enumerate(digits):
+ 119         c['patch_zero_tests'] += 1
+ 120         if digit:
+ 121             # The sign is metadata; applying it uses a counted add/subtract.
+ 122             patch.append((j, sign, digit))
+ 123             c['numeric_patch_records'] += 1
+ 124     return patch
+ 125 
+ 126 
+ 127 def product_digits(coefficients, n, c):
+ 128     # An extra byte checks cancellation of any signed correction overflow.
+ 129     digits, carry = carry_pass(coefficients, 2*n+1, c)
+ 130     c['product_range_checks'] += 2
+ 131     if carry != 0 or digits[-1] != 0:
+ 132         raise ValueError('computed product is outside the canonical output range')
+ 133     return digits[:-1]
+ 134 
+ 135 
+ 136 def finite_difference_patch(vectors, order, n, c):
+ 137     weights = [(-1)**j*comb(order, j) for j in range(order+1)]
+ 138     c['relation_coefficients_prepared'] += order+1
+ 139     raw = combine(vectors, weights, n+1, c)
+ 140     return signed_patch(raw, n+1, c)
+ 141 
+ 142 
+ 143 def discover_degree(pairs, operand, max_degree, n, c):
+ 144     for degree in range(max_degree+1):
+ 145         order = degree+1
+ 146         c['degree_candidates_tested'] += 1
+ 147         valid = True
+ 148         for i in range(order, len(pairs)):
+ 149             c['trajectory_relations_tested'] += 1
+ 150             vectors = [pairs[i-j][operand] for j in range(order+1)]
+ 151             if finite_difference_patch(vectors, order, n, c):
+ 152                 valid = False
+ 153                 break
+ 154         if valid:
+ 155             return degree
+ 156     return None
+ 157 
+ 158 
+ 159 def cached_prefix(cache, pairs, n, maximum, c):
+ 160     if cache is None:
+ 161         return []
+ 162     if not isinstance(cache, SeedCache) or cache.n != n or len(cache.entries) > maximum:
+ 163         raise ValueError('cache width or prefix length does not match this schedule')
+ 164     products = []
+ 165     for i, entry in enumerate(cache.entries):
+ 166         if len(entry) != 3:
+ 167             raise ValueError('invalid cache entry')
+ 168         a, b, product = entry
+ 169         for old, current in ((a, pairs[i][0]), (b, pairs[i][1])):
+ 170             if len(old) != n:
+ 171                 raise ValueError('invalid cached operand width')
+ 172             for u, v in zip(old, current):
+ 173                 c['cache_key_digit_comparisons'] += 1
+ 174                 if u != v:
+ 175                     raise ValueError('stale cache operands')
+ 176         if len(product) != 2*n:
+ 177             raise ValueError('invalid cached product width')
+ 178         for digit in product:
+ 179             c['cache_product_digit_tests'] += 1
+ 180             if not isinstance(digit, int) or isinstance(digit, bool) or not 0 <= digit < BASE:
+ 181                 raise ValueError('invalid cached product digit')
+ 182         products.append(list(product))
+ 183         c['cache_product_copy_bytes'] += 2*n
+ 184     return products
+ 185 
+ 186 
+ 187 def finish(products, c, schedule, **details):
+ 188     outputs = [list(value) for value in products]
+ 189     c['full_output_digit_writes'] += sum(map(len, outputs))
+ 190     return dict(outputs=outputs, counts=dict(c), word_operations=c.word_operations(),
+ 191                 schedule=schedule, **details)
+ 192 
+ 193 
+ 194 def make_seed_cache(pairs, count):
+ 195     c = Ledger()
+ 196     n = validate(pairs, c)
+ 197     if not isinstance(count, int) or isinstance(count, bool) or not 0 <= count <= len(pairs):
+ 198         raise ValueError('invalid cache prefix count')
+ 199     entries = []
+ 200     for pair in pairs[:count]:
+ 201         product = seed_product(pair, n, c)
+ 202         entries.append((tuple(pair[0]), tuple(pair[1]), tuple(product)))
+ 203         c['cache_key_copy_bytes'] += 2*n
+ 204         c['cache_product_copy_bytes'] += 2*n
+ 205     return SeedCache(n, tuple(entries)), dict(counts=dict(c), word_operations=c.word_operations())
+ 206 
+ 207 
+ 208 def baseline_batch(pairs, cache=None):
+ 209     c = Ledger()
+ 210     n = validate(pairs, c)
+ 211     products = cached_prefix(cache, pairs, n, len(pairs), c)
+ 212     schedule = ['cached']*len(products)
+ 213     for pair in pairs[len(products):]:
+ 214         products.append(seed_product(pair, n, c))
+ 215         schedule.append('fresh')
+ 216     return finish(products, c, schedule)
+ 217 
+ 218 
+ 219 def secant_batch(pairs, max_patch=2, cache=None):
+ 220     """Fixed verified 2-parent schedule; dense residuals fall back to paid seeds."""
+ 221     c = Ledger()
+ 222     n = validate(pairs, c)
+ 223     if not isinstance(max_patch, int) or isinstance(max_patch, bool) or max_patch < 0:
+ 224         raise ValueError('max_patch must be a nonnegative integer')
+ 225     for pair in pairs[1:]:
+ 226         for u, v in zip(pairs[0][1], pair[1]):
+ 227             c['same_b_digit_comparisons'] += 1
+ 228             if u != v:
+ 229                 raise ValueError('secant mode requires the same B in every query')
+ 230     products = cached_prefix(cache, pairs, n, min(2, len(pairs)), c)
+ 231     schedule = ['cached']*len(products)
+ 232     residual_supports = []
+ 233     for i in range(len(products), len(pairs)):
+ 234         if i < 2:
+ 235             products.append(seed_product(pairs[i], n, c))
+ 236             schedule.append('fresh')
+ 237             continue
+ 238         c['secant_relations_tested'] += 1
+ 239         raw = combine([pairs[i][0], pairs[i-1][0], pairs[i-2][0]], [1,-2,1], n+1, c)
+ 240         numeric = signed_patch(raw, n+1, c)
+ 241         coordinate = []
+ 242         for j, value in enumerate(raw):
+ 243             c['coordinate_patch_zero_tests'] += 1
+ 244             if value:
+ 245                 coordinate.append((j, 1 if value > 0 else -1, abs(value)))
+ 246                 c['coordinate_patch_records'] += 1
+ 247         patch = numeric if len(numeric) < len(coordinate) else coordinate
+ 248         residual_supports.append(len(patch))
+ 249         if len(patch) > max_patch:
+ 250             products.append(seed_product(pairs[i], n, c))
+ 251             schedule.append('fresh_dense_residual')
+ 252             continue
+ 253         coefficients = combine([products[i-1], products[i-2]], [2,-1], 2*n+1, c)
+ 254         for j, sign, digit in patch:
+ 255             for k, value in enumerate(pairs[i][1]):
+ 256                 term = digit*value
+ 257                 c['digit_mul'] += 1
+ 258                 if sign > 0:
+ 259                     coefficients[j+k] += term
+ 260                     c['word_add'] += 1
+ 261                 else:
+ 262                     coefficients[j+k] -= term
+ 263                     c['word_sub'] += 1
+ 264                 c['residual_convolution_updates'] += 1
+ 265         products.append(product_digits(coefficients, n, c))
+ 266         schedule.append('secant')
+ 267     return finish(products, c, schedule, residual_supports=residual_supports)
+ 268 
+ 269 
+ 270 def polynomial_batch(pairs, max_degree=MAX_DEGREE, cache=None):
+ 271     """Verify each operand trajectory, then use their product-degree recurrence."""
+ 272     c = Ledger()
+ 273     n = validate(pairs, c)
+ 274     if (not isinstance(max_degree, int) or isinstance(max_degree, bool)
+ 275             or not 0 <= max_degree <= MAX_DEGREE):
+ 276         raise ValueError('supported discovery degree is 0 through 3')
+ 277     degrees = [discover_degree(pairs, j, max_degree, n, c) for j in (0,1)]
+ 278     if None in degrees:
+ 279         products = cached_prefix(cache, pairs, n, len(pairs), c)
+ 280         schedule = ['cached']*len(products)
+ 281         for pair in pairs[len(products):]:
+ 282             products.append(seed_product(pair, n, c))
+ 283             schedule.append('fresh_unstructured')
+ 284         return finish(products, c, schedule, degrees=degrees, verified=False)
+ 285     order = sum(degrees)+1
+ 286     products = cached_prefix(cache, pairs, n, min(order, len(pairs)), c)
+ 287     schedule = ['cached']*len(products)
+ 288     weights = [(-1)**(j+1)*comb(order,j) for j in range(1,order+1)]
+ 289     c['recurrence_coefficients_prepared'] += order
+ 290     for i in range(len(products), len(pairs)):
+ 291         if i < order:
+ 292             products.append(seed_product(pairs[i], n, c))
+ 293             schedule.append('fresh')
+ 294         else:
+ 295             previous = [products[i-j] for j in range(1, order+1)]
+ 296             coefficients = combine(previous, weights, 2*n+1, c)
+ 297             products.append(product_digits(coefficients, n, c))
+ 298             schedule.append('polynomial')
+ 299     return finish(products, c, schedule, degrees=degrees, verified=True)

@@ -1,0 +1,68 @@
+1: """Audit-authored checks. No imports or execution from the uploaded archive."""
+2: from pathlib import Path
+3: from fractions import Fraction
+4: from math import gcd
+5: from itertools import product
+6: import json, random, hashlib, ast
+7: import argparse
+8: parser=argparse.ArgumentParser(description=__doc__)
+9: parser.add_argument('--source',type=Path,help='Optional extracted source root containing MANIFEST.json; only read as data')
+10: args=parser.parse_args()
+11: R=Path(__file__).resolve().parent
+12: src=args.source
+13: if src is None and (R/'extracted').is_dir():
+14:     src=next((R/'extracted').iterdir())
+15: manifest={}; mismatches=[];parse_count=0
+16: if src is not None:
+17:     manifest=json.loads((src/'MANIFEST.json').read_text())
+18:     for rel,m in manifest.items():
+19:         p=src/rel
+20:         if not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest()!=m['sha256'] or p.stat().st_size!=m['bytes']: mismatches.append(rel)
+21:     for p in src.rglob('*.py'):
+22:         ast.parse(p.read_text());parse_count+=1
+23: 
+24: def f(coords):
+25:  N=len(coords);q=gcd(N,4);n=N//q
+26:  S=[[sum(coords[j][c] for j in range(s,N,q)) for c in range(2)] for s in range(q)]
+27:  chosen=[[S[s][c] if sum(abs(n*coords[j][c]-S[s][c]) for j in range(s,N,q))<=n*sum(abs(coords[j][c]) for j in range(s,N,q)) else 0 for c in range(2)] for s in range(q)]
+28:  rho=[tuple(n*x[c]-chosen[j%q][c] for c in range(2)) for j,x in enumerate(coords)]
+29:  mass=lambda a:sum(abs(t) for v in a for t in v)
+30:  assert mass(rho)<=n*mass(coords)
+31:  for j,x in enumerate(coords):
+32:   for c in range(2):assert Fraction(chosen[j%q][c]+rho[j][c],n)==x[c]
+33:  # Independent rational reference spectrum at q exact frequencies.
+34:  roots=[(1,0),(0,-1),(-1,0),(0,1)]
+35:  def short(sums,t):
+36:   real=imag=0
+37:   for s,(a,b) in enumerate(sums):
+38:    u,v=roots[(4*s*t//q)%4];real+=a*u-b*v;imag+=a*v+b*u
+39:   return (real,imag)
+40:  for t in range(q):
+41:   raw=(0,0)
+42:   for j,(a,b) in enumerate(coords):
+43:    u,v=roots[(4*j*t//q)%4];raw=(raw[0]+a*u-b*v,raw[1]+a*v+b*u)
+44:   assert raw==short(S,t)
+45:  # Medians independently minimize L1 cluster mass among all integer candidates.
+46:  med=[[sorted(coords[j][c] for j in range(s,N,q))[(n-1)//2] for c in range(2)] for s in range(q)]
+47:  rmass=sum(abs(x[c]-med[j%q][c]) for j,x in enumerate(coords) for c in range(2))
+48:  assert rmass*n<=mass(rho)
+49:  return {'input_mass':mass(coords),'mean_residual_mass':str(Fraction(mass(rho),n)),'median_residual_mass':rmass}
+50: 
+51: rng=random.Random(72410); cases=0
+52: for N in [1,2,3,4,5,6,7,8,9,12,16,20,24,31,32]:
+53:  q=gcd(N,4);n=N//q
+54:  for _ in range(100):
+55:   coords=[(rng.randint(-100,100),rng.randint(-100,100)) for j in range(N)];f(coords);cases+=1
+56:   comparison=[(Fraction(rng.randint(-20,20),3),Fraction(rng.randint(-20,20),7)) for _ in range(q)]
+57:   means=[[Fraction(sum(coords[j][c] for j in range(s,N,q)),n) for c in range(2)] for s in range(q)]
+58:   meanmass=sum(abs(x[c]-means[j%q][c]) for j,x in enumerate(coords) for c in range(2))
+59:   emass=sum(abs(x[c]-comparison[j%q][c]) for j,x in enumerate(coords) for c in range(2))
+60:   assert meanmass<=2*emass
+61:   baseline=[(rng.randint(-10,10),rng.randint(-10,10)) for _ in range(q)]
+62:   assert f([baseline[j%q] for j in range(N)])['mean_residual_mass']=='0';cases+=1
+63: worst=f([(1,0)]*4+[(-1,0)]*4)
+64: assert worst['input_mass']==int(worst['mean_residual_mass'])==worst['median_residual_mass']
+65: # A one-cluster inlier-heavy example approaching the factor-two mean loss.
+66: example=f([(100,0)]*20+[(101,0)])
+67: result={'source_manifest_supplied':src is not None,'manifest_entries_verified':len(manifest),'manifest_mismatches':mismatches,'uploaded_python_ast_parsed':parse_count,'uploaded_code_executed':False,'independent_rational_cases':cases,'worst_case_N8':worst,'near_periodic_N21':example,'status':'PASS' if not mismatches else 'FAIL'}
+68: (R/'independent_residual_results.json').write_text(json.dumps(result,indent=2));print(json.dumps(result,indent=2))

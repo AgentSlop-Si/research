@@ -1,0 +1,136 @@
+   1	"""Exact cyclotomic/orbit certificates for fresh binary-input DFTs.
+   2	
+   3	All vector FFT values are represented in Z[zeta_N], in the power basis
+   4	1,zeta,...,zeta^(N/2-1) with zeta^(N/2)=-1 for N=2^L.
+   5	No numerical FFT, complex-roundoff, parallel execution or prior transform cache.
+   6	"""
+   7	from __future__ import annotations
+   8	from itertools import product
+   9	
+  10	
+  11	def validate_n(n: int) -> None:
+  12	    if n < 2 or n & (n-1):
+  13	        raise ValueError('N must be a power of two >= 2')
+  14	
+  15	
+  16	def frequency_conductor(n: int, k: int) -> int:
+  17	    validate_n(n)
+  18	    if not (0 <= k < n):
+  19	        raise ValueError('bad frequency')
+  20	    return 1 if k == 0 else n // (k & -k)
+  21	
+  22	
+  23	def orbits(n: int) -> dict[int, tuple[int, ...]]:
+  24	    validate_n(n)
+  25	    return {m: tuple(k for k in range(n) if frequency_conductor(n, k) == m)
+  26	            for m in [1] + [1 << j for j in range(1, n.bit_length())]}
+  27	
+  28	
+  29	def representatives(n: int) -> tuple[int, ...]:
+  30	    """One frequency per cyclotomic orbit: 0 and the powers of two below N."""
+  31	    validate_n(n)
+  32	    return (0,) + tuple(n//m for m in (1 << j for j in range(1,n.bit_length())))
+  33	
+  34	
+  35	def root_power(n: int, exponent: int) -> tuple[int, ...]:
+  36	    """Exactly zeta_N**exponent in the cyclotomic integer power basis."""
+  37	    validate_n(n)
+  38	    m = n // 2
+  39	    exponent %= n
+  40	    out = [0]*m
+  41	    out[exponent % m] = 1 if exponent < m else -1
+  42	    return tuple(out)
+  43	
+  44	
+  45	def dft_bin_exact(x: list[int] | tuple[int, ...], k: int) -> tuple[int, ...]:
+  46	    n = len(x)
+  47	    validate_n(n)
+  48	    if not (0 <= k < n):
+  49	        raise ValueError('bad frequency')
+  50	    m=n//2
+  51	    y=[0]*m
+  52	    for j,value in enumerate(x):
+  53	        exponent=(j*k)%n
+  54	        y[exponent % m] += int(value) * (1 if exponent < m else -1)
+  55	    return tuple(y)
+  56	
+  57	
+  58	def dft_selected_exact(x, qs):
+  59	    return tuple(dft_bin_exact(x, k) for k in qs)
+  60	
+  61	
+  62	def binary_collision_family(n: int, conductor: int, mask: int) -> list[int]:
+  63	    """2^phi(conductor) different binary inputs indistinguishable off that orbit.
+  64	
+  65	    m=1: zero or all-one vectors; otherwise periodic swapped pairs:
+  66	    x[r] = bit, x[r+m/2]=1-bit, repeated every m positions.
+  67	    """
+  68	    validate_n(n)
+  69	    if conductor < 1 or conductor > n or conductor & (conductor - 1):
+  70	        raise ValueError('conductor must divide N and be a power of two')
+  71	    if conductor == 1:
+  72	        if mask not in (0,1):
+  73	            raise ValueError('one bit for conductor 1')
+  74	        return [mask]*n
+  75	    m=conductor
+  76	    half=m//2
+  77	    if not 0 <= mask < 1<<half:
+  78	        raise ValueError('invalid mask')
+  79	    pattern = [0]*m
+  80	    for j in range(half):
+  81	        bit=(mask>>j)&1
+  82	        pattern[j]=bit
+  83	        pattern[j+half]=1-bit
+  84	    return pattern*(n//m)
+  85	
+  86	
+  87	def binary_coset_collision_witness(n: int, conductor: int):
+  88	    """Explicit pair of distinct binary vectors whose FFT difference lives
+  89	    solely in one conductor orbit."""
+  90	    a=binary_collision_family(n,conductor,0)
+  91	    b=binary_collision_family(n,conductor,1)
+  92	    assert a!=b
+  93	    return a,b
+  94	
+  95	
+  96	def orbit_support_of_difference(a,b):
+  97	    if len(a)!=len(b):
+  98	        raise ValueError('unequal lengths')
+  99	    n=len(a)
+ 100	    v=[x-y for x,y in zip(a,b)]
+ 101	    return tuple(k for k in range(n) if any(dft_bin_exact(v,k)))
+ 102	
+ 103	
+ 104	def subset_sum_cyclotomic_coeffs(n: int, mask: int):
+ 105	    """Alpha(mask) = sum_{j < N/2} mask_j * zeta_N^j."""
+ 106	    validate_n(n)
+ 107	    m=n//2
+ 108	    if not 0<=mask<1<<m:
+ 109	        raise ValueError('invalid mask')
+ 110	    return tuple((mask>>j)&1 for j in range(m))
+ 111	
+ 112	
+ 113	def target_conjugate_coeffs(n: int, u: int, mask: int):
+ 114	    validate_n(n)
+ 115	    m=n//2
+ 116	    if u%2!=1 or u%n==1:
+ 117	        raise ValueError('use nontrivial odd u')
+ 118	    y=[0]*m
+ 119	    for j in range(m):
+ 120	        if (mask>>j)&1:
+ 121	            e=(u*j)%n
+ 122	            y[e%m]+=1 if e<m else -1
+ 123	    return tuple(y)
+ 124	
+ 125	
+ 126	def lower_bounds(n: int) -> dict:
+ 127	    """Lower bounds for P(alpha) or P(alpha)/Q(alpha) = beta,
+ 128	    based on 2^(m-1) distinct subsets of the other m-1 coordinates."""
+ 129	    validate_n(n)
+ 130	    if n<4:
+ 131	        raise ValueError('N >= 4 required')
+ 132	    m=n//2
+ 133	    return {'N':n,'m':m,
+ 134	            'poly_degree_lower_bound':(1<<(m-1))+1,
+ 135	            'rational_num_den_degree_lower_bound':1<<(m-2),
+ 136	            'rational_circuit_gate_lower_bound':m-2}

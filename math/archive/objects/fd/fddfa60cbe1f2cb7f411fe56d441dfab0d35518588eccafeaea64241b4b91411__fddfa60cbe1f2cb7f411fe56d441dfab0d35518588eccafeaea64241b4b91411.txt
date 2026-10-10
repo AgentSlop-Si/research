@@ -1,0 +1,104 @@
+"""Exact rational column-sum norm audit for the globally dense two-Green stage.
+
+Every S column is nonnegative, making the l1 matrix norm a rational column sum.
+This is an exact small-instance control of the ALL-N Neumann-series proof.
+"""
+from fractions import Fraction as Q
+from pathlib import Path
+import json
+
+
+def tri_solve(n,d,rhs,off=-1):
+    d=[Q(d) for _ in range(n)]
+    mult=[]
+    for i in range(1,n):
+        m=Q(off)/d[i-1]
+        mult.append(m)
+        d[i]=d[i]-m*Q(off)
+    y=[Q(v) for v in rhs]
+    for i in range(1,n):y[i]-=mult[i-1]*y[i-1]
+    y[-1]/=d[-1]
+    for i in range(n-2,-1,-1):y[i]=(y[i]-Q(off)*y[i+1])/d[i]
+    return y
+
+
+def exact_green_norm(n):
+    if n<2:raise ValueError('n>=2')
+    columns=[]
+    for j in range(n):
+        x=[int(i==j) for i in range(n)]
+        a=tri_solve(n,3,x);b=tri_solve(n,4,x)
+        assert all(v>0 for v in a+b)
+        columns.append(sum((u+v for u,v in zip(a,b)),Q(0)))
+    return max(columns)
+
+
+def exact_green_condition1(n):
+    """Return exact (||S||_1,||S^-1||_1,kappa_1) for the real Green sum."""
+    if n<2:raise ValueError('n>=2')
+    s_norm=exact_green_norm(n)
+    inv_column_sums=[]
+    for j in range(n):
+        e=[Q(int(i==j)) for i in range(n)]
+        g=tri_solve(n,7,e,off=-2)
+        # S^-1 = (1/2)T+(1/4)I-(1/4)(2T+I)^-1.
+        col=[]
+        for i in range(n):
+            Tij=Q(3) if i==j else (Q(-1) if abs(i-j)==1 else Q(0))
+            col.append(Q(1,2)*Tij+Q(1,4)*e[i]-Q(1,4)*g[i])
+        inv_column_sums.append(sum((abs(v) for v in col),Q(0)))
+    inverse_norm=max(inv_column_sums)
+    return s_norm,inverse_norm,s_norm*inverse_norm
+
+
+def minimal_stages_condition(n):
+    """Smallest t with (17/4)^t >= N; exact integer arithmetic."""
+    if n<2:raise ValueError('n>=2')
+    t=0
+    while 17**t < n*4**t:t+=1
+    return t
+
+
+def minimal_stages(n):
+    """Smallest t satisfying (3/2)^t >= sqrt(n); compare squared INTEGERS."""
+    if n<2:raise ValueError('n>=2')
+    t=0
+    while 3**(2*t)<n*2**(2*t):t+=1
+    return t
+
+
+def run():
+    out={'exact_real_column_norm':[], 'lower_bound_stages_for_green_sums':[], 'exact_condition1':[], 'condition1_stage_bounds':[]}
+    for n in (2,4,8,16,32):
+        c=exact_green_norm(n)
+        assert c < Q(3,2)
+        out['exact_real_column_norm'].append({'n':n,'norm1_num':c.numerator,'norm1_den':c.denominator,'norm1':float(c)})
+    for n in (2,4,8,16,32):
+        a,b,k=exact_green_condition1(n)
+        assert b<Q(17,6), k<Q(17,4)
+        out['exact_condition1'].append({'n':n,'norm1_S':float(a),
+             'norm1_inverse_S':float(b),'kappa_1_S':float(k),
+             'kappa_1_numerator':k.numerator,'kappa_1_denominator':k.denominator})
+    for n in (16,64,256,1024,4096,65536,1048576):
+        t=minimal_stages(n)
+        assert 3**(2*t)>=n*2**(2*t)
+        assert 3**(2*(t-1))<n*2**(2*(t-1))
+        out['lower_bound_stages_for_green_sums'].append({'n':n,'minimum_required':t,'radix2_stages':n.bit_length()-1})
+    for n in (16,64,256,1024,4096,65536,1048576):
+        t=minimal_stages_condition(n)
+        assert 17**t>=n*4**t
+        assert 17**(t-1)<n*4**(t-1)
+        out['condition1_stage_bounds'].append({'n':n,'lower_bound_even_with_global_scalar':t})
+    Path(__file__).with_name('norm_results.json').write_text(json.dumps(out,indent=2)+'\n')
+    for v in out['exact_real_column_norm']:
+        print('exact norm n=',v['n'],'norm1=',v['norm1'])
+    for v in out['exact_condition1']:
+        print('exact kappa1 n=',v['n'],'value=',v['kappa_1_S'])
+    for v in out['condition1_stage_bounds']:
+        print('scale-invariant stage min N=',v['n'],'t=',v['lower_bound_even_with_global_scalar'])
+    for v in out['lower_bound_stages_for_green_sums']:
+        print('N=',v['n'],'green_stage_lower_bound=',v['minimum_required'],
+              'radix2_levels=',v['radix2_stages'])
+    return out
+
+if __name__=='__main__':run()

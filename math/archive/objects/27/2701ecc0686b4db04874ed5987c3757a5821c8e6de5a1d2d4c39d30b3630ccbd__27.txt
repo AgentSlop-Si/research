@@ -1,0 +1,246 @@
+   1 """A fully exact, single-threaded audit of Boolean-quotient linear extraction.
+   2 
+   3 NOT a new FFT algorithm. Given an arithmetic DAG, compute its degree <= 1
+   4 multilinear projection on {0,1}^n via one-hot evaluations, and construct an
+   5 ordinary linear arithmetic DAG for the projection.
+   6 
+   7 Only +,-,* and constants over a prime field.  A projected scalar coefficient
+   8 requires input-independent preparation.  `audit` explicitly charges dictionary
+   9 arithmetic during the preparation; the resulting linear DAG's gate count is
+  10 reported separately.  No complex numeric oracle, memoized FFT, or threads.
+  11 """
+  12 from __future__ import annotations
+  13 from dataclasses import dataclass
+  14 import random
+  15 
+  16 P=998244353
+  17 PRIMITIVE=3
+  18 
+  19 
+  20 @dataclass(frozen=True)
+  21 class Node:
+  22     op: str
+  23     a: int=-1
+  24     b: int=-1
+  25     val: int=0
+  26 
+  27 
+  28 class Circuit:
+  29     def __init__(self, n: int, p: int=P):
+  30         if n < 1 or p < 2:
+  31             raise ValueError("n must be positive and modulus >= 2")
+  32         self.n=n; self.p=p; self.nodes:list[Node]=[]
+  33         self.inputs=[self._put('input', val=i) for i in range(n)]
+  34         self._consts={}
+  35 
+  36     def _put(self, op, a=-1, b=-1, val=0):
+  37         i=len(self.nodes);self.nodes.append(Node(op,a,b,val));return i
+  38 
+  39     def const(self, v:int):
+  40         v%=self.p
+  41         if v not in self._consts:
+  42             self._consts[v]=self._put('const',val=v)
+  43         return self._consts[v]
+  44 
+  45     def add(self, a,b):return self._put('add',a,b)
+  46     def sub(self, a,b):return self._put('sub',a,b)
+  47     def mul(self, a,b):return self._put('mul',a,b)
+  48     def neg(self,a):return self.sub(self.const(0),a)
+  49 
+  50     def eval_all(self,x):
+  51         if len(x)!=self.n:raise ValueError("incorrect input length")
+  52         p=self.p;vs=[]
+  53         for node in self.nodes:
+  54             op=node.op
+  55             if op=='input':v=int(x[node.val])
+  56             elif op=='const':v=node.val
+  57             elif op=='add':v=vs[node.a]+vs[node.b]
+  58             elif op=='sub':v=vs[node.a]-vs[node.b]
+  59             elif op=='mul':v=vs[node.a]*vs[node.b]
+  60             else:raise ValueError(op)
+  61             vs.append(v%p)
+  62         return vs
+  63 
+  64     def eval(self,x,outputs):
+  65         vals=self.eval_all(x)
+  66         return [vals[i] for i in outputs]
+  67 
+  68     def work(self):
+  69         return sum(node.op in ('add','sub','mul') for node in self.nodes)
+  70 
+  71     def onehot_audit(self):
+  72         """Return per-wire f(0), (f(e_i)-f(0)) coefficients.
+  73 
+  74         The operation count is a *proxy* for coefficient dictionary work, not a
+  75         C/word-RAM exact instruction trace. It includes all visited entries.
+  76         """
+  77         p=self.p
+  78         base=[];delta=[];pair_overlap=0;prod_hist=[];meta=0
+  79         for v,node in enumerate(self.nodes):
+  80             if node.op=='input':
+  81                 c=0; d={node.val:1}; meta+=1
+  82             elif node.op=='const':
+  83                 c=node.val;d={}
+  84             else:
+  85                 ac,bc=base[node.a],base[node.b]
+  86                 ad,bd=delta[node.a],delta[node.b]
+  87                 keys=ad.keys()|bd.keys()
+  88                 d={};meta+=len(ad)+len(bd)+1
+  89                 if node.op=='add':
+  90                     c=(ac+bc)%p
+  91                     for i in keys:
+  92                         t=(ad.get(i,0)+bd.get(i,0))%p
+  93                         if t:d[i]=t
+  94                 elif node.op=='sub':
+  95                     c=(ac-bc)%p
+  96                     for i in keys:
+  97                         t=(ad.get(i,0)-bd.get(i,0))%p
+  98                         if t:d[i]=t
+  99                 elif node.op=='mul':
+ 100                     c=ac*bc%p
+ 101                     overlap=len(ad.keys()&bd.keys())
+ 102                     pair_overlap+=overlap;prod_hist.append((v,overlap))
+ 103                     meta+=overlap
+ 104                     for i in keys:
+ 105                         da,db=ad.get(i,0),bd.get(i,0)
+ 106                         t=(ac*db+bc*da+da*db)%p
+ 107                         if t:d[i]=t
+ 108                 else:raise ValueError(node.op)
+ 109             base.append(c);delta.append(d)
+ 110         return {'base':base,'delta':delta,'overlap':pair_overlap,
+ 111                 'product_overlap_histogram':prod_hist,'metadata_work_proxy':meta,
+ 112                 'max_support':max(map(len,delta)),'total_support':sum(map(len,delta))}
+ 113 
+ 114     def project_linear(self, outputs, audit=None):
+ 115         """Construct linear/affine circuit for f(0)+sum_i(f(e_i)-f(0))*x_i.
+ 116 
+ 117         All new multiplication gates have a constant input. The preparation
+ 118         of scalar coefficients is separate and *not* assumed free in audits.
+ 119         """
+ 120         if audit is None:audit=self.onehot_audit()
+ 121         q=Circuit(self.n,self.p);p=self.p
+ 122         zero=q.const(0)
+ 123         ids=[]
+ 124         def plus(a,b):
+ 125             if a==zero:return b
+ 126             if b==zero:return a
+ 127             return q.add(a,b)
+ 128         def minus(a,b):
+ 129             if b==zero:return a
+ 130             if a==zero:return q.sub(zero,b)
+ 131             return q.sub(a,b)
+ 132         def scaled(a,c):
+ 133             c%=p
+ 134             if a==zero or c==0:return zero
+ 135             if c==1:return a
+ 136             return q.mul(a,q.const(c))
+ 137         for v,node in enumerate(self.nodes):
+ 138             if node.op=='input':lv=q.inputs[node.val]
+ 139             elif node.op=='const':lv=zero
+ 140             elif node.op=='add':lv=plus(ids[node.a],ids[node.b])
+ 141             elif node.op=='sub':lv=minus(ids[node.a],ids[node.b])
+ 142             elif node.op=='mul':
+ 143                 a,b=node.a,node.b
+ 144                 lv=plus(scaled(ids[a],audit['base'][b]),
+ 145                         scaled(ids[b],audit['base'][a]))
+ 146                 for i in sorted(audit['delta'][a].keys() & audit['delta'][b].keys()):
+ 147                     coef=audit['delta'][a][i]*audit['delta'][b][i]%p
+ 148                     lv=plus(lv,scaled(q.inputs[i],coef))
+ 149             else:raise ValueError(node.op)
+ 150             ids.append(lv)
+ 151         result=[]
+ 152         for j in outputs:
+ 153             result.append(plus(q.const(audit['base'][j]),ids[j]))
+ 154         return q,result
+ 155 
+ 156     def check_linear(self):
+ 157         """All data-data nonlinear multiplications forbidden."""
+ 158         symbolic=[]
+ 159         for node in self.nodes:
+ 160             if node.op=='input':symbolic.append(False)
+ 161             elif node.op=='const':symbolic.append(True)
+ 162             elif node.op in ('add','sub'):
+ 163                 symbolic.append(symbolic[node.a] and symbolic[node.b])
+ 164             elif node.op=='mul':
+ 165                 if not(symbolic[node.a] or symbolic[node.b]):return False
+ 166                 symbolic.append(symbolic[node.a] and symbolic[node.b])
+ 167             else:raise ValueError(node.op)
+ 168         return True
+ 169 
+ 170 
+ 171 def fft_circuit(c:Circuit,x):
+ 172     n=len(x)
+ 173     if n==1:return list(x)
+ 174     if n & (n-1):raise ValueError("power-of-two length required")
+ 175     if (c.p-1)%n:raise ValueError("field lacks primitive nth root")
+ 176     half=n//2
+ 177     even=fft_circuit(c,x[::2])
+ 178     odd=fft_circuit(c,x[1::2])
+ 179     w=pow(PRIMITIVE,(c.p-1)//n,c.p)
+ 180     y=[-1]*n
+ 181     for j in range(half):
+ 182         term=c.mul(odd[j],c.const(pow(w,j,c.p)))
+ 183         y[j]=c.add(even[j],term)
+ 184         y[j+half]=c.sub(even[j],term)
+ 185     return y
+ 186 
+ 187 
+ 188 def nonlinear_fft_case(n,variant='squares',p=P):
+ 189     c=Circuit(n,p)
+ 190     if variant=='plain':xs=list(c.inputs)
+ 191     elif variant=='squares':xs=[c.mul(t,t) for t in c.inputs]
+ 192     elif variant=='boolean_null':
+ 193         # x + x(1-x) == x on binary inputs, false for arbitrary field input.
+ 194         one=c.const(1)
+ 195         xs=[c.add(t,c.mul(t,c.sub(one,t))) for t in c.inputs]
+ 196     elif variant=='hybrid':
+ 197         one=c.const(1)
+ 198         xs=[c.add(c.mul(t,t),c.mul(t,c.sub(one,t))) for t in c.inputs]
+ 199     else:raise ValueError(variant)
+ 200     return c,fft_circuit(c,xs)
+ 201 
+ 202 
+ 203 def direct_dft(x,p=P):
+ 204     """Independent defining-sum reference; skips literal zero coefficients."""
+ 205     n=len(x);w=pow(PRIMITIVE,(p-1)//n,p)
+ 206     active=[(j,int(t)%p) for j,t in enumerate(x) if int(t)%p]
+ 207     return [sum(v*pow(w,(k*j)%n,p) for j,v in active)%p for k in range(n)]
+ 208 
+ 209 
+ 210 def experiment(sizes=(4,8,16,32,64),seed=20261009):
+ 211     rng=random.Random(seed);rows=[]
+ 212     for n in sizes:
+ 213         for variant in ('plain','squares','boolean_null','hybrid'):
+ 214             c,out=nonlinear_fft_case(n,variant)
+ 215             audit=c.onehot_audit(); q,z=c.project_linear(out,audit)
+ 216             assert q.check_linear()
+ 217             for i in range(n):
+ 218                 x=[int(j==i) for j in range(n)]
+ 219                 assert c.eval(x,out)==direct_dft(x)
+ 220                 assert q.eval(x,z)==direct_dft(x)
+ 221             for _ in range(10):
+ 222                 xb=[rng.randrange(2) for _ in range(n)]
+ 223                 xf=[rng.randrange(P) for _ in range(n)]
+ 224                 assert c.eval(xb,out)==direct_dft(xb)
+ 225                 assert q.eval(xf,z)==direct_dft(xf)
+ 226             rows.append({'n':n,'variant':variant,'original_gates':c.work(),
+ 227                          'projected_linear_gates':q.work(),
+ 228                          'multiplication_overlap':audit['overlap'],
+ 229                          'metadata_work_proxy':audit['metadata_work_proxy'],
+ 230                          'total_support_storage':audit['total_support'],
+ 231                          'verified_columns':n,'verified_binary_vectors':10,
+ 232                          'verified_field_vectors':10})
+ 233     return rows
+ 234 
+ 235 
+ 236 if __name__=='__main__':
+ 237     import json,argparse
+ 238     parser=argparse.ArgumentParser()
+ 239     parser.add_argument('--output',default='audit_results.json')
+ 240     args=parser.parse_args()
+ 241     rows=experiment()
+ 242     with open(args.output,'w') as f:json.dump({'model':'F_998244353','rows':rows},f,indent=2)
+ 243     for x in rows:
+ 244         print(f"n={x['n']:>3} {x['variant']:<12} gates={x['original_gates']:>5}"
+ 245               f" lift={x['projected_linear_gates']:>5} overlaps={x['multiplication_overlap']:>4}"
+ 246               f" prep_proxy={x['metadata_work_proxy']:>7}")

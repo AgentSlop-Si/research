@@ -1,0 +1,266 @@
+[
+  {
+    "index": 0,
+    "role": "Composite unit-step chirp implementation and full-FFT oracle.",
+    "logic": "Lines 28\u201341 enforce unit multiplier, beta range, N=KM and K>=M. Compression forms d_r=sum_t S_rt x_rt; projected input is conjugate(S_rt)d_r, so P^2=MP and P/M is the orthogonal projector. Lines 124\u2013154 use the parity-twisted gauge with monodromy -1, one K-point FFT, seed half the total gauged forcing, balanced exclusive prefix scan and permutation scatter. Both even and odd composite N are covered; prime-power factorization is not required.",
+    "cost": "O(N+K log K) complex arithmetic and O(N) temporary storage for a row, including phase construction and padded reductions. The N-point FFT at lines 163\u2013166 is explicitly a reference oracle. Rejection sampling has a finite call cap, not a certified bit cap.",
+    "guards": "int64 phase products may overflow before reduction; float64 phase/complex128 FFT accuracy is not exact arithmetic. A wider dtype does not upgrade phases or the FFT, and pairwise_sum returns a Python complex. Conditional uniformity after accepted unit sampling is sound; aborts require a separate probability term.",
+    "evidence": "The saved 1916 cycle and covariance artifacts and v13 direct comparisons remain accepted as finite numerical/history evidence. No broadening to exact DFT of arbitrary input, unlimited-size binary64, or zero-abort guarantees. No concrete stored-case failure identified."
+  },
+  {
+    "index": 1,
+    "role": "Audit-owned independent composite/covariance, median, sampler and offset checks, now itself treated as inert supplied source.",
+    "logic": "Read all 264 lines. Scalar integer phase exponents independently implement the parity-twisted cycle; full-state covariance uses the correct labeled coefficient row S sum(f conjugate(S)) at lines 77\u201380. Fraction-based totient/Mobius bounds, binomial tails, grid geometry and modulation identities are separate controls. The driver checks N<=600 plus larger selected pairs, seven exhaustive covariance cases and exact inequalities through N=2000.",
+    "cost": "Cycle controls cost O(N+(N/M)log(N/M)) per selected row plus the oracle FFT. Full-state covariance enumeration costs O(phi(N)N^3) scalar work and O(N^2) storage before eigensolve. The median geometry enumerates 5^R tuples, and explicit modulation verification is quadratic in N. These are verifier costs.",
+    "guards": "The scalar cycle utility trusts admissible dimensions/units supplied by the driver. static_source_check parses one source module and hashes a manifest, but that behavior was not executed here. Its FFT-call AST count is not whole-source correctness. Assertions rely on normal Python assertion settings.",
+    "evidence": "CHECK_RESULTS.json stores 5,781 factor pairs, 19,787 gcd-group inequalities, 210 tails, and 81,375 geometry cases. Preserve as historical checks with exact-rational versus floating distinction. The checker does not itself prove every-N results or validate all source APIs."
+  },
+  {
+    "index": 2,
+    "role": "Top-level composite versus historical v11 timing script.",
+    "logic": "Reads three fixed lengths, chooses a direct divisor plan, draws one state per compared method, warms each function, records five timings, and computes error against the true normalized FFT. A random row and exact FFT have different accuracy contracts; the file says this is not a competitive native benchmark.",
+    "cost": "Direct row O(N+K log K); prior fused method has rank-dependent scan/FFT work; exact reference O(N log N). Five repeats and independent warm-up are included in recorded wall time only through each timed call.",
+    "guards": "Imports composite modules before testing a hard-coded /mnt/data historical directory. If absent, exits successfully with no comparison. sys.path.append does not pin the imported prototype version or defeat earlier name shadowing. Local unit_step_core is the identified exact hash; historical prototype is unresolved from this script alone.",
+    "evidence": "composite_benchmark.json and logs are source-reported timings, not replayed results. Their finite measured errors can be retained, but cannot establish same-accuracy speedup, reproducibility in this workspace, or asymptotic improvement."
+  },
+  {
+    "index": 3,
+    "role": "Top-level offset-class versus v11 Python/SciPy benchmark.",
+    "logic": "Plans four listed lengths, skips the radix-3 comparison, then times seven calls after warm-up and records normalized error. Both estimators use a shared admissible chirp state. The benchmark deliberately compares Python prototypes, not optimized library complexity.",
+    "cost": "Offset work is O(h[Q+(Q/M)log(Q/M)]) plus planning/grouping; v11 work depends on Bessel rank. np.unique and class extraction are extra actual work. Error calculation calls a full FFT outside each measured interval.",
+    "guards": "Hard-coded historical directory and unpinned appended import path can prevent or alter the comparison. A missing directory returns process success, so success alone is not evidence a benchmark ran. Fixed seeds are reproducibility devices, not uniform guarantees.",
+    "evidence": "Saved benchmark.json and benchmark_offset.log remain historical finite observations. No claim of independent timing reproduction or equal-error superiority is accepted."
+  },
+  {
+    "index": 4,
+    "role": "Small dense covariance-spectrum exploration.",
+    "logic": "Cached totient enumerates all residues; Mobius uses trial factoring. profile constructs the real output-zero Ramanujan covariance from intersected signed displacement sets and reports largest Hermitian eigenvalue, trace and ratio to M/N. Its main loop supplies positive N and divisors M<=sqrt(N).",
+    "cost": "Covariance formation has O(N^2 M) displacement visits, with cached number-theory costs, O(N^2) storage and O(N^3) dense eigensolve. Uncached totient takes O(q) gcd calls; this is not a fast transform.",
+    "guards": "profile does not independently validate divisibility, positivity or theorem regime. Those missing helper checks do not affect its listed driver inputs. Spectral values are floating diagnostics, not interval enclosures.",
+    "evidence": "composite_ratios.txt is accepted only as saved finite exploration. It does not certify all-N spectral upper bounds or exact rank from float thresholds."
+  },
+  {
+    "index": 5,
+    "role": "Divisor-window composite plan, randomized rows and coordinate medians.",
+    "logic": "CompositePlan.build searches a logarithmic divisor window, restricts M<=sqrt(N), and refuses lengths with no qualifying divisor. row_estimate checks signal length and delegates the exact labeled projected-FFT identity. robust_estimate requires positive odd rows and takes coordinate medians. Variance and median helpers use the coarse M(M-1)/phi(N) bound.",
+    "cost": "O(log N) divisor-window tests at fixed window factors, then R times O(N+K log K), plus O(RN) row storage/aggregation. Totient inspection uses O(sqrt(N)) trial divisions. Fixed R and M=Theta(log N) give linear arithmetic on qualifying lengths.",
+    "guards": "The manually constructible dataclass is not a validation proof. Probability bounds require fixed input independent of random states, independent row draws and treatment of sampler aborts. Default fixed seed is not all-input random protection. Failure helper lacks general N/M/finite-number checks.",
+    "evidence": "Direct composite approximation theorem remains supported; broader arbitrary-length exact DFT and unconditional advertised abort-free failure probabilities do not. Existing 1916 audit already preserves stronger covariance bounds and these qualifications."
+  },
+  {
+    "index": 6,
+    "role": "Exact fractional-offset-class lift over a prime-power sketch.",
+    "logic": "Prime radix checked by trial division; plan uses exact Python-integer nearest-grid indices and centered offset numerators, with int64 storage and distinctness assertions. h=N/gcd(N,Q). Each class modulates one padded input, applies one Q sketch under the same state, and retains only its frequency targets with sqrt(Q/N) scaling. Rows use independent states before coordinate median aggregation.",
+    "cost": "O(h[Q+(Q/M)log(Q/M)]) row arithmetic, O(Q+N) streaming workspace, O(RN) robust buffer. classes() actually sorts via np.unique and scans N entries per class, adding O(N log N+hN); plan also sorts for injectivity. Hence the advertised ideal O(hQ) omits literal sorting costs, even though an arithmetic-progression implementation can remove them.",
+    "guards": "The optional class cap is enforced. N=1 is intentionally padded to the chosen prime here, unlike the later offset_core boundary behavior. Shape is flattened; invalid hand-made plans and nonfinite arrays are not fully validated. int64/float root limits persist.",
+    "evidence": "Saved modulation identities and projection equivalence are valid finite support for exact expectation, not exact single-row recovery. Full-state covariance tests use a relabeled conjugated state distribution; see source 08. No stored error invalidation found."
+  },
+  {
+    "index": 7,
+    "role": "Inherited 663-line prime-power core, streaming majority aggregator, probability/precision models and experiments.",
+    "logic": "Prime-power factoring, same-prime M and K>=M support the covariance projector formula. Local parity twist gives antiperiodic monodromy and a single-cycle balanced decoder. Sequential decoder uses an independently computed seed. Covariance utilities, worst-case active mode, three-grid Boyer\u2013Moore counters, KL tails, conditional roundoff models and experiments were all read. The quantized aggregator returns median grid centers, not medians of the raw samples.",
+    "cost": "Main row O(N+K log K) arithmetic/O(N) memory; streaming R rows O(R[N+K log K]) and O(N) retained memory. Dense covariance formation repeatedly calls prime_power inside O(N^2 M) displacement loops, potentially O(N^2 M sqrt(N)) trial operations, then O(N^3) eigensolve. draw_state has unbounded rejection trials. Tests and Monte Carlo are separate workloads.",
+    "guards": "validate_dimensions evaluates N%M before rejecting M=0. Sequential helper does not validate the state or summary shape, whereas balanced public path does. g must ultimately produce finite positive tau; advertised tail needs g>sqrt(2). int64 phase products and finite grid integer bins are bounded-machine assumptions. Wider dtype still starts with complex128 FFT/phases. M=1 has zero covariance, so the header claim norm=M/N is only an upper bound in this accepted boundary case.",
+    "evidence": "Preserve saved finite recurrence, variance and precision diagnostics. Conditional error-model constants are not measured universal numerical certificates. The three-grid radius is compatible with its own theory, but cannot be substituted into a coordinate-median certificate; this causes the concrete source 14 contract failure."
+  },
+  {
+    "index": 8,
+    "role": "Offset-lift numerical/high-precision verification and full-state covariance controls.",
+    "logic": "Compares fast recurrence with explicit projected full FFT, checks modulation by direct high-precision sums, enumerates all states for small Q covariance and lifted covariance, then records empirical medians. Lines 60 and 90 construct conjugate(S) sum(f S), whereas the actual core uses S sum(f conjugate(S)) for a coefficient row.",
+    "cost": "Direct high-precision modulation O(N^2) transcendental operations; full-state covariance O(phi(Q)Q^3), dense storage/eigensolve; empirical runs incur every offset class and every row. These are finite verifier costs.",
+    "guards": "The labeled projector row is reversed, but conjugating S is the bijection (a,beta)->(-a,-beta-h) mod Q with h=Q mod 2. Full enumeration therefore has the same covariance distribution; it is not a same-state identity check. Assertions are numerical tolerances, not exact fields.",
+    "evidence": "Do not reject saved full-state mean/eigenvalue observations solely for this labeling error. The recurrence comparison is a separate same-state check. Empirical accuracy and timing rows remain finite source observations, not universal guarantees."
+  },
+  {
+    "index": 9,
+    "role": "Composite finite identity, covariance, fuzzing and robust accuracy tests.",
+    "logic": "Recurrence uses the full projected-FFT oracle with the same state. Covariance enumeration again uses the conjugated projection row but compares spectral and entrywise values allowing conjugation. Full state distribution is preserved by the state relabeling. Broad fuzzer checks up to three representative divisors per length, not every divisor despite its docstring.",
+    "cost": "Dense covariance O(phi(N)N^3) plus O(N^3) eigensolve, with formula number-theory work; fuzzing and accuracy use finite selected row costs and full reference FFTs. profile calls remain dense explorations.",
+    "guards": "assert_close uses err>tol and can accept NaN; this is a hypothetical nonfinite-input robustness gap, not a failure of stored finite cases. Random finite tests do not cover every state/input. The fuzzer\u2019s bounded divisor selection is explicit at lines 105\u2013108.",
+    "evidence": "Saved composite_results.json and verification log remain source-reported finite evidence. The 1916 independent checker uses correct labeled covariance rows and all admissible divisor pairs through its stated limit, separately strengthening the coverage. No finite saved result is contradicted."
+  },
+  {
+    "index": 10,
+    "role": "Independent Phase26 exact common-cut, weighted-cycle, conjugation and rank verifier.",
+    "logic": "Exact integer roots and pigeonhole boxes enforce r*shift<N. Power-of-two character cuts, Hamiltonian cycle hypotheses, modular pivot rank/inverse and product-gamma!=1 cycle solve are explicit. The driver includes zero weights over four primes, non-Hamiltonian counterexample, exact N=256 rank 38, outer monomials, affine interstage conjugations, Fourier rank controls, coarse thresholds, all balanced cuts only at N=16, and seeded Weyl failures.",
+    "cost": "Cycle application is O(N) field operations, but building cut matrices costs one application per selected basis vector and dense rank is cubic. Exact pigeonhole search uses up to O(Ns) coordinates/storage. Exhaustive Hamiltonian and balanced-cut controls are factorial/binomial. recursive_dft computes pow(root,k,p) independently: literal modular multiplication count can be O(N log^2 N), not optimized N log N. Large-N threshold calculations are symbolic integer arithmetic, not transforms.",
+    "guards": "Root availability is checked for tested Fourier sizes; P=998244353 only supports dyadic roots through 2^23. Public utilities assume complete permutation orders and compatible shapes. make_stage asserts nonsingularity rather than resampling. Fixed tests are finite samples, and modular ranks do not certify complex singular values.",
+    "evidence": "Saved PASS, 564,480 Hamiltonian tests, 768 inverse columns, 704 cut ranks and rank-38 result agree with code scope and archive hash b3b03e...206e. Strict-witness correction was already in this audit; no original Phase26 code is rerun. Accept restricted theorem evidence, not unrestricted FFT impossibility or construction."
+  },
+  {
+    "index": 11,
+    "role": "Exact rational/modular sparse-defect, scan-inverse, repair and Woodbury verifier.",
+    "logic": "All 251 lines read. Pivoted determinants/ranks/inverses, exact primitive roots, closed S inverse, sparse support witness and product telescoping are checked. Witness picks separated row/column intervals and a low-degree independent set, certifying ceil(floor(N/(q+2))/(2q+1)). Boundary q=0 and q>=N handled by driver/empty witnesses. Exact rational scans, modular exceptions, NTT sparse stages, Woodbury singular K and no-pivot chart exceptions are distinct controls.",
+    "cost": "Dense multiplication/elimination is cubic; support adjacency and greedy scans are at least quadratic in witness size. Exhausting per-row supports costs (sum_{j<=q} binom(N,j))^N. NTT check materializes dense stage matrices and is a verifier, not the fast NTT execution cost. Rational integer bit growth is outside unit-field operation counts.",
+    "guards": "Utilities trust rectangular/square compatible shapes and prime moduli; zip truncation is not general shape validation. Root/order and invertible denominators are checked for driver choices; arbitrary modular parameters can invalidate formulas. pow(...,-1,p) correctly refuses zero denominators.",
+    "evidence": "INDEPENDENT_CHECKS.json embeds exactly this source hash and reports 23,042 exhaustive support patterns, 444 Fourier cases, 305 repair cases. Those historical records are accepted within finite scope; no replay claim. The source itself includes characteristic exceptions, so they do not refute its rational/complex theorem."
+  },
+  {
+    "index": 12,
+    "role": "Direct-composite numerical timing/check CSV generator.",
+    "logic": "Five fixed (N,M) pairs include semiprimes and composite divisors. Warms direct and NumPy paths, times three direct and seven FFT calls, compares actual direct row to same-state materialized projected FFT, then records sharp/coarse variance factors.",
+    "cost": "Row timing O(N+K log K) and reference O(N log N), with full oracle and variance setup outside timed blocks. Median timing is finite wall-clock evidence. Both outputs do not have the same approximation contract.",
+    "guards": "Imports exact local v13 prototype and composite core identified in dependency metadata. repeats is assumed positive; no general benchmark correctness assertions beyond numerical error recording. No execution in this review.",
+    "evidence": "benchmark_results.csv and benchmark.log retained as historical measurements. Low direct-vs-materialized error supports the projected identity only; it does not show each row equals the original DFT or beats an equal-accuracy FFT."
+  },
+  {
+    "index": 13,
+    "role": "699-line v12 offset-class executor, reusable/batched row plan, planner and restricted scan-fusion certificate.",
+    "logic": "Validates prime lift, exact nearest-grid map and classes; row plans retain phase/gauge/boundary/source indices and decode one K FFT plus Q scan. Streaming and batch paths share algebra but differ in storage/reductions. Exact Chebyshev-Vandermonde Fraction rank certifies a black-box linear channel-state bound with enough distinct offsets. Planner compares costs only.",
+    "cost": "Single row O(L[Q+K log K]) plus map/grouping; O(Q+N) streaming memory, O(LQ) batched memory. np.unique gives literal O(N log N) map work (twice in row construction). Rank certificate has O(R^3) rational elimination and bit growth. Streaming majority repeats rows with O(N) retained counters; generic L can be Theta(N).",
+    "guards": "choose_prime_power_block(q=0,prime) loops forever because positivity is not checked; next_prime_power(N=1)=1 but the underlying core rejects Q=1. These are public-helper/boundary gaps outside saved driver inputs. Batched path and streaming zero shortcut have weaker validation than ordinary row path. Fraction rank gate does not establish independence of channels derived from one input or a universal Fourier lower bound.",
+    "evidence": "Saved finite expectation/variance/projection controls remain admissible; Monte Carlo maxima are not hard bounds. No asymptotic O(N) claim for unbounded class count or sorting-based implementation. Exact coordinate-median certificate does not cover this module\u2019s quantized streaming aggregator."
+  },
+  {
+    "index": 14,
+    "role": "559-line v13 divisor-spectrum planner and dispatcher.",
+    "logic": "Trial factorization/divisor generation, exact rational divisor variance sum, direct coordinate medians, all route candidates, dispatch, covariance checks and experiments reviewed. Direct row theorem is sound under N=KM,K>=M. Candidate bounds use coordinate-median probability for every route, but offset/Bessel dispatch executes three-grid quantized routines. Bessel planner uses log(Q) block while executor chooses log2(Q), and records only global tail, omitting local addition error.",
+    "cost": "Direct runtime O(R[N+K log K]), O(RN) stored rows. Planner repeats totient factorizations per divisor/displacement; the proxy\u2019s single sqrt(N) charge is not literal setup. A divisor-count argument bounds setup by N^(1/2+o(1)) word operations, preserving O(N) asymptotics without validating exact proxy numbers. Dense covariance is O(phi(N)N^3), separate from execution.",
+    "guards": "Failure target defaults to 1, making every clipped candidate feasible. Four saved choices have bound 1. Stored Bessel N=1,048,573: Q=1,048,576,R=9,rank=8,planned M=8,K=131,072,bias=0.0029297666508160333,bound=0.0016252298067681939; execution uses M=16,H=0,g=3. No candidate input-length validation or consistency with candidate.n is enforced. Probability floats are not outward-rounded.",
+    "evidence": "General executed offset certificate is actually false: preserved exact N=3,p=2,Q=4,M=1,R=51,g=3,x=e0,tolerance=2 gives error squared 37/6 and actual failure 1 versus 67108864/847288609443. This is pre-existing audit evidence, not a newly run experiment. Saved Bessel claim is unsupported for its actual method; no observed saved Bessel error violation is asserted. Direct results remain accepted. See CLAIM_DISPOSITION.md."
+  },
+  {
+    "index": 15,
+    "role": "v13 direct-composite and planner unittest suite.",
+    "logic": "Named methods test factors, totients, divisor versus coarse bound, least-factor closed form, same-state projected executor, exhaustive covariance/means, semiprime work proxies, median helper monotonicity, planner choices and finite direct execution. All method bodies and assertions read.",
+    "cost": "Full-state rows store O(phi(N)N^2) samples; covariance work is dense/high polynomial. Work tests inspect formula proxies, not runtime scaling. Planner invokes all divisor alternatives.",
+    "guards": "test_candidate_execution_direct checks shape/finiteness, not advertised tolerance. The inherited aggregator/Bessel dispatcher mismatches are not tested here. Monotonic failure test is only the selected finite parameters, not a general property of clipped exponential upper bounds.",
+    "evidence": "COLD_TESTS.log preserves source-reported pass status. Accepted tests support finite direct route claims; they cannot validate the generic execution certificate or asymptotic speed merely by passing. No failed stored direct test inferred."
+  },
+  {
+    "index": 16,
+    "role": "Five inherited offset/Bessel route regression tests.",
+    "logic": "Tests exact modulated lift for small lengths, complete small-state unbiasedness, streamed versus materialized Bessel row, finite fused row plus deterministic center bound, and exact scan-fusion rank. The test named fused_error explicitly compares the deterministic center, not the random row against target.",
+    "cost": "Small full-state enumeration plus explicit reference FFTs and Fraction rank. Runtime is test workload; no throughput theorem.",
+    "guards": "The suite never tests planner parameters against execute_candidate, never compares quantized output to candidate tolerance, and never validates tail-only fused bias. Its own center bound correctly includes addition error, making the dispatch mismatch visible rather than fixed.",
+    "evidence": "Saved pass log is consistent with these narrow assertions and does not contradict the counterexample. All imported module exact hashes resolved within this batch; no execution performed."
+  },
+  {
+    "index": 17,
+    "role": "812-line v11 fused Bessel/Chebyshev reference, executors, error models and experiments.",
+    "logic": "Exact integer grid, streamed Chebyshev and Clenshaw, selected decoder, materialized reference, streamed exact truncated row, local Bessel-addition fusion, exact centers, bias/variance/roundoff bounds and experiment driver all inspected. Selected decoder omits odd parity because callers use even dyadic Q. H-channel compression reduces input passes but leaves R short FFTs and Q scans.",
+    "cost": "For H fixed: O(Q+R[Q+K log K]) arithmetic and O(N+Q+(2H+1)K) main workspace; general H additionally O(QH+RKH). Materialized reference stores R length-N Chebyshev arrays. Rank-dependent scipy Bessel evaluation has additional implementation cost not a unit-cost bit theorem. Exact-center oracles perform full Q FFTs per order.",
+    "guards": "Main grid and state bounds enforced, but generic rank<=0 or tiny N and arbitrary SelectedDecoderPlan odd-Q misuse are not uniformly guarded. Core int64 and numerical restrictions persist. Fused deterministic epsilon is explicitly tail+(2R-1)small_argument_tail(pi(M-1)/Q,H); variance inflates by (1+epsilon)^2. Quantized aggregation has its own (5/sqrt(2))g radius, not coordinate-median tolerance.",
+    "evidence": "Saved equivalence, finite precision, empirical variance and robust diagnostics remain finite source observations with no rerun. Scalar formula experiments at huge exponents are not huge vector executions. Correct standalone fusion terms do not repair v13 dispatcher\u2019s failure to include them."
+  },
+  {
+    "index": 18,
+    "role": "Historical recursive archive byte-comparison script.",
+    "logic": "Hashes byte blobs, deduplicates archive streams globally, opens ZIPs without importing members, indexes member content hashes, and traverses nested .zip suffixes. Enforces depth<=20, member<=150MB and a total expanded-read budget of 1GB. Writes inherited comparison metadata to fixed materials directory.",
+    "cost": "Linear in bytes actually hashed/decompressed plus member/path metadata and archive enumeration; storage holds indexes, active blobs and inventories. Global dedup avoids repeated expansion but means not every nested occurrence path is retained.",
+    "guards": "Read budget is checked after a member is decompressed; a single admitted member can exceed remaining budget before rejection. Non-ZIP blobs silently ignored after hash. This is in-memory reading, so no ZIP path extraction occurs. Fixed paths and mutations make this an unsafe substitute for current fresh metadata work; it was not run.",
+    "evidence": "COMPARISON_SCOPE.json is accepted as a historical deduplicated-content scan, not full occurrence enumeration/source review. The script adds master_recursive_archive_matches; stored content_inventory also contains older master_archive_member_matches from antecedent work. No saved metadata missing-key failure observed."
+  },
+  {
+    "index": 19,
+    "role": "Historical top-level archive extraction/content triage.",
+    "logic": "Builds full master regular-file content index, then reads originals ZIPs, rejects oversized declared expansion, absolute/traversal/symlink entries, extracts raw bytes under named archive directories and records exact hashes and matches. No source execution is present in the inspected text.",
+    "cost": "O(total bytes hashed/read/decompressed) plus filesystem operations and content index memory; no mathematical runtime claim.",
+    "guards": "Path checks are PurePosix and suitable for this Linux use. Duplicate member names can overwrite an earlier extracted path; pre-existing symlinks/targets are not revalidated, and general encrypted/corrupt files propagate errors. These are potential robustness gaps, not evidence that saved archives used malicious entries. It writes files; not executed here.",
+    "evidence": "Stored content inventory records first-level members and exact hashes. Hash matches alone establish byte identity, never theorem acceptance or complete static review. Existing preserved metadata includes additional comparisons produced outside this single script."
+  },
+  {
+    "index": 20,
+    "role": "Historical ZIP CRC, manifests, syntax/data and novelty metadata checker.",
+    "logic": "Reads content inventory, checks archive CRC, parses .py syntax with ast and .json data, reads three manifest formats, compares size/hash, emits counts and prints failures. It neither runs numerical algorithms nor requires zero failures before writing its output.",
+    "cost": "O(archive expanded bytes+source/data/manifest bytes) plus syntax tree memory and inventory traversal. This is metadata validation, not algorithmic analysis.",
+    "guards": "This review did not execute its AST path. Manifest relative targets are not contained by validation, and stored metadata paths are trusted. The script requires master_archive_member_matches, while scripts 18/19 alone do not create it; the actual stored inventory has both old and recursive keys, so no saved KeyError follows. Counts of syntax_parsed_python count entries including failed parses; failures must be examined.",
+    "evidence": "STATIC_VALIDATION.json has 114/114 verified manifest entries and 45 parsed-program entries in six archives. All are historical; syntax/CRC/manifest success is not source correctness or execution evidence. No actual stored claim invalidation found."
+  },
+  {
+    "index": 21,
+    "role": "Historical Delta/Newton provenance/seal writer.",
+    "logic": "Validates manifest bytes/hashes, AST-counts class test methods, writes fixed source records and a hand-authored claim ledger, hashes prior references and all files, then writes manifest and SHA256 list. Supplied program not executed by this review.",
+    "cost": "O(bytes hashed plus source AST/data processing) and metadata memory; no theorem/runtime proof.",
+    "guards": "Manifest names and prior absolute paths trusted. Static test enumeration is not test execution or coverage; nested class traversal and inheritance do not provide a behavioral test count. Final status says all independent checks PASS without reading/validating their results in this script. Therefore the seal authenticates content, not truth of the ledger.",
+    "evidence": "Saved source/claim/seal artifacts remain provenance records. Mathematical claims and counterexamples require their reports/checkers, outside this source\u2019s own validation. No coverage credit transferred to those dependencies and no new certification inferred from a matching seal."
+  },
+  {
+    "index": 22,
+    "role": "Phase14 accuracy and charged-cost diagnostic driver.",
+    "logic": "Three (G,m,M) cases generate one-bank, noisy, impulse and Gaussian inputs, compare bank outputs against normalized FFT, then exercise two-slope Gram union and full stationary frame. Records 18 experiments and explicitly warns against same-accuracy speed interpretation.",
+    "cost": "Runs full reference FFTs plus selected-bank/adaptive/union/full-rank evaluators. Adaptive bank analysis includes O(N log M) and sorting; q=M stationary computation is FFT-scale. Ratios are work proxies, not timings.",
+    "guards": "The independent mixedradix dependency is identified by exact archived sibling hash but not fully reviewed here. Floating residual certificates may clamp to zero while actual output error is nonzero; this is acknowledged diagnostic behavior, not a rigorous enclosure.",
+    "evidence": "EXPERIMENT_RESULTS.json reports finite nonzero errors even for exact-arithmetic zero certificates. Accept as numerical observations with arithmetic-model identity, not interval-certified error. The source explicitly says full stationary generic exactness costs Omega(NM) scans, so no unrestricted fast-FFT claim is invalidated."
+  },
+  {
+    "index": 23,
+    "role": "Exact finite-field two-slope Gram and Fourier all-basis verifier.",
+    "logic": "Finds/validates primitive roots at supplied primes, computes two-state Gram determinant and coefficients with exact modular inverse, checks projector idempotence and noncommutation, derives a direct-K-DFT/Green decoder, compares every projected input basis response and rejects dropping a slope. Driver uses four explicit compatible cases.",
+    "cost": "Decoder uses K direct sums of K terms: O(K^2) modular exponentiation terms plus O(G) scan. Decoder-basis sweeps and all N^2 output entries cost much more than an executor; no FFT backend in the modular decoder. Local exponentiation/number-theory cost is not free at bit level.",
+    "guards": "Prime status is assumed for given known primes; root order and divisibility verified. decode helper assumes even dyadic G, M divisor, unit a and nonsingular factor 2; driver satisfies them. Formal inverse phases in a finite field are not positive-definite Hermitian conjugation.",
+    "evidence": "FINITE_FIELD_RESULTS.json contains 43,520 all-basis entries and 5,120 decoder entries for listed cases. Accept exact finite-instance stored evidence; it does not prove all sizes, numerical stability, or runtime advantage. No saved-case defect identified."
+  },
+  {
+    "index": 24,
+    "role": "Exact finite-field stationary full-rank chart verifier.",
+    "logic": "Constructs distinct exponent nodes E(u), inverts Vandermonde W with pivoting, verifies W inverse and Toeplitz Gram, caches per-channel per-summary impulse responses only for verification, and compares all N^2 Fourier entries. Wrong-node mutation checks inverse coefficient differences.",
+    "cost": "O(M^3) inversion; basis cache has m*M*K*G=mG^2 scalar entries and its construction repeatedly uses the quadratic direct-K decoder. All-basis composition is high polynomial. Explicit verifier cache is not charged as a fast fresh-input transform.",
+    "guards": "Known finite fields and compatible dyadic M supplied; helper guards do not independently require M|G, but cases satisfy it. Wrong mutation proves the inverse differs, rather than directly comparing its full transformed outputs; stronger independent audit later checks actual output mutations.",
+    "evidence": "FIELD_STATIONARY_RESULTS.json reports 202,240 exact Fourier entries over five cases. Accept stored finite exact algebra with formal inverse-root convention; it is not a complex norm proof or sub-FFT algorithm. No reported result contradicted."
+  },
+  {
+    "index": 25,
+    "role": "Noncommuting local chirp-union orthogonal projector and shared mixed-radix decoder.",
+    "logic": "Builds V=conjugate(S) for each column/state family, computes b=V*x,Gamma=V*V, rejects singular/ill-conditioned numerical Grams, solves coefficients, accumulates b*Gamma^-1 b energy and one Green decoder per state before one odd FFT layer. q=0/odd-only cases handled. Constructed signals and local commutator diagnostics are separate utilities.",
+    "cost": "O(N[1+log(m+1)]+G sum(q_s+q_s^2)+K sum(q_s log(K+1)+q_s^3)) arithmetic. Stores per-column K M q phase tensors and K q^2 Grams: growing-q memory is not uniformly O(N). Constant q and fixed m,M~log G yield linear arithmetic for promised families.",
+    "guards": "Length/q/state/condition_limit validation is meaningful; a float condition estimate is not exact rank or a certified error enclosure. Energy subtraction clamped to zero can lose small residuals. One-root multiplication drift and int64 phase products apply. Helper constructed_union_signal lacks the full entry-point validation.",
+    "evidence": "Finite complex and modular union controls support exact-arithmetic projection identity within supplied dimensions. Fixed proper family only transforms its subspace exactly; worst-case relative error is one over arbitrary inputs. Bounded-q dense structured examples do not establish arbitrary-input exactness."
+  },
+  {
+    "index": 26,
+    "role": "Sparse Green-forcing density sharpness verifier.",
+    "logic": "For B=LF, exact modular row evaluations test two-entry support N-gcd(a,N), consecutive polynomial support N-w+1, and subgroup support N/w. Constructs polynomials with chosen roots and nonzero constant term, compatible with invertibility after replacing one identity row.",
+    "cost": "A row costs O(Nw) modular power terms; constructing a degree-(w-1) polynomial costs O(w^2). These support counts are not operation lower bounds for a shared structured dense transform.",
+    "guards": "Primitive-root routine/known primes and separate positions/values assumed. zip can silently truncate arbitrary mismatched lists; driver lists match. Universal complex support uncertainty needs its analytical proof, not inference from finite-field sharp examples.",
+    "evidence": "GREEN_FORCING_RESULTS.json preserves 3,408 checked frequency values. Accept precise support examples and scope; no general arithmetic circuit or FFT lower bound follows. No actual stored evidence failure identified."
+  },
+  {
+    "index": 27,
+    "role": "Fixed-frame leverage witness construction and numerical experiment.",
+    "logic": "Forms local V/Gamma, solves for projector diagonal, chooses the minimum-leverage coordinate in each block, and evaluates its Fourier projection. Since leverage sums to q, the impulse witness residual squared is at least 1-q/M. Driver checks four small two-slope families and trace defects.",
+    "cost": "Per family O(K[Mq^2+q^3+q^2M]) dense Gram/solve work, plus full union evaluator. Leverage arrays and phase tensors use growing-q storage; not an independent linear-time generic procedure.",
+    "guards": "No separate condition guard here before solve; supported example families and union evaluator provide checks. Floating leverage/trace tolerances are diagnostics. The theorem is for a fixed family, not input-adaptive state selection. Its sharpness over impulses must not be mistaken for minimax over all vectors.",
+    "evidence": "LEVERAGE_RESULTS.json accepted as finite numerical witnesses. Exact broader proper-projector worst-case error one remains compatible. No invalidation of listed finite comparisons."
+  },
+  {
+    "index": 28,
+    "role": "Dyadic one-root phase/gauge table and compact chirp decoder.",
+    "logic": "Generates root table recursively from one primitive G-root, indexes local exponents, compresses blocks, performs one K FFT, uses half-total closure and balanced prefix scan. All caller-dependent arrays and shapes inspected. For even dyadic G/unit a the parity-free monodromy is -1.",
+    "cost": "O(G+K log K) arithmetic per decode with O(G) table and buffers; root setup O(G) must be charged once when shared. Claim concerns algebraic roots/arithmetic, not exact binary root generation.",
+    "guards": "Table creator requires dyadic G>=2; lower helpers only verify shape and inherited dimensions, not that table entries really are powers of the right primitive root. Intended callers supply correct table. Sequential multiplication causes O(Gu) drift; inverse root indexing and conjugation are only algebraically exact. int64 exponent overflow remains unguarded.",
+    "evidence": "Source warning explicitly disclaims certified numeric implementation. Finite comparisons with np.exp and modular all-basis controls retained; no universal fixed-precision or exact integer-index certificate inferred."
+  },
+  {
+    "index": 29,
+    "role": "Exact same-clock destination-collision enumeration.",
+    "logic": "For a_i=1+iK, destinations at clock j number M/gcd(j,M). Dyadic valuation sum is (2M^2+1)/3; repeating K times yields K(2M^2+1)/3. Explicit sets and gcd-sum are compared across 15 driver cases.",
+    "cost": "explicit_unique_pairs performs Theta(GM) integer residue visits and up to O(M) set memory per clock; analytic gcd sum O(G) gcd calls; closed formula O(1) big-integer operations. These are enumeration costs, not a fused transform implementation.",
+    "guards": "predicted helper evaluates G%M before rejecting M=0 and does not require positive G. Driver uses valid positive dyadic parameters. exact helper relies on assumed dimensions. No saved-domain failure follows.",
+    "evidence": "ORBIT_COLLISION_RESULTS.json agrees with the exact formula. The 2/3 limit shows only same-clock destination collisions save a constant fraction of visits; values need not agree and cross-clock algebraic reuse is outside scope. No universal complexity obstruction accepted."
+  },
+  {
+    "index": 30,
+    "role": "Orthogonal beta-bank analysis, selection, energy identity and mixed-radix decoding.",
+    "logic": "Setup validates dyadic factor dimensions/states or odd-only fallback. Masks normalize/deduplicate indices. Known-bank path applies P/M; analyzed path uses positive-sign local FFT_M summaries and exact energy ordering. Threshold/fixed-count selection is optimal among these bank-column subsets. Final Cooley\u2013Tukey phase/odd FFT performed once. Independent projected-input helper and constructed signals also read.",
+    "cost": "Known L banks: O(N+L[G+K log K]+N log(m+1)), memory O(N). Analysis adds O(N log M), selection sorting O(mM log(mM)); worst L=mM recovers FFT-scale or greater scanning. evaluate_mask proxy sets root setup to zero although fresh analyze_banks already constructed it, so fresh-input proxy needs +G. This changes constants, not asymptotic conclusion.",
+    "guards": "Masks coerce int values; manually constructed BankAnalysis could bypass invariants. Exact epsilon=0 conservatively retains all banks. Float energy subtraction/clamping is explicitly diagnostic. In the odd-only case calls a full N FFT. Base phases via one-root tables share numerical limitations.",
+    "evidence": "Saved experiments/PHASE14_SUMMARY distinguish exact-arithmetic identities from numerical outputs. Accept structured exactness and input-dependent energy identity, not zero numeric error or a guaranteed small bank count for every input. Dependency mixedradix exact identity pinned, not full dependency-closure coverage."
+  },
+  {
+    "index": 31,
+    "role": "Top-level subprocess orchestrator for Phase14 and inherited tests.",
+    "logic": "Nine commands use the current Python executable, fixed cwd and check=True: one unittest discovery invocation then finite fields, precision probe, new gates and experiments. Stops on subprocess failure; final all-passed/count string is hard-coded, not derived from unittest reports.",
+    "cost": "Sum of every invoked workload, dominated by numerical/modular verifiers and inherited tests; no runtime theorem. Child stdout/stderr behavior is inherited. It executes code if launched, so it was only read here.",
+    "guards": "Exact dependency module/script identities are mapped through the archive. Eight nonassigned dependency hashes were snapshotted hash-only and receive no full-read credit. Exit success does not independently prove the literal count 63 if tests change; imports resolve runtime cwd and environment.",
+    "evidence": "RUN_ALL_LOG.txt and summary are accepted as historical reported executions only. No fresh run or certification of all child code is claimed. Per-source read completion is independent of dependency closure."
+  },
+  {
+    "index": 32,
+    "role": "Stationary Toeplitz Gram chart and full-rank Fourier evaluator.",
+    "logic": "States a_i=1+iK,beta=3s+i(K+1) give V=D W; exponent nodes reduce to u mod K, so Vandermonde columns are independent and q=M spans all local input blocks. Gram Toeplitz is input/block independent. Public evaluator validates dimensions via bank setup, estimates Gram condition, solves all K right-hand sides for each odd column and decodes q streams.",
+    "cost": "O(Mq^2+mq^3+Nq+(N/M)q^2+qN+q(N/M)log(K+1)+Nlog(m+1)) literal arithmetic, including an SVD condition check. np.linalg.solve refactors Gamma for each odd column rather than reusing one factorization; extra mq^3 is absorbed because q<=K. At q=M actual work is O(NM+Nlog(K+1)+Nlog(m+1)), FFT-scale for M~log G. Memory O(N) for supported q<=M,K>=M.",
+    "guards": "Standalone stationary_states/construction omit M|G/M dyadic; G=32,M=3,q=3 passes early guards but the extra iKMr u term need not vanish. Public stationary_eval calls correct inherited validation, so this does not invalidate saved supported cases. Floating Gram condition/residual clamp do not certify exact output error.",
+    "evidence": "Stored q=M all-basis and numerical diagnostics remain supported. Fixed odd factor and bounded q give restricted subspace linear arithmetic, not arbitrary-input exact fast FFT. The helper guard and repeated factorization discrepancies were already recorded in the preserved Phase14 audit."
+  }
+]

@@ -1,0 +1,79 @@
+   1 """Independent all-z transform for a supplied permuted geometric input.
+   2 
+   3 Returns all unnormalized DFT bins, with F[k,j] = omega**(k*j).
+   4 Prerequisites: p is a known odd prime, N is dyadic, omega is supplied as a
+   5 primitive Nth root. The root is verified; choosing p and constructing omega
+   6 are separate, explicitly charged prerequisites. No dense Fourier matrix,
+   7 permutation sort, linear solve, or N-by-N transform is used here.
+   8 
+   9 Cost after field/root selection: O(N(s+1)) additions/multiplications, one
+  10 field inversion, O(N) stored field/index words, where s counts successor
+  11 mismatches versus the ordinary cyclic shift. This is a restricted-input
+  12 algorithm, not an arbitrary-input faster FFT. Constant-size field operations
+  13 are not constant-time bit operations when p grows.
+  14 """
+  15 
+  16 
+  17 def permuted_geometric_dft(order, z, p, omega):
+  18     n = len(order)
+  19     if n < 2 or n & (n-1):
+  20         raise ValueError('dyadic length N >= 2 required')
+  21     if p <= 2 or (p-1) % n:
+  22         raise ValueError('known odd prime with N dividing p-1 required')
+  23     z, omega = z % p, omega % p
+  24     if pow(omega, n, p) != 1 or pow(omega, n//2, p) == 1:
+  25         raise ValueError('omega must have exact order N')
+  26     seen = [False]*n
+  27     for j in order:
+  28         if not isinstance(j, int) or j < 0 or j >= n or seen[j]:
+  29             raise ValueError('order must permute 0,...,N-1')
+  30         seen[j] = True
+  31     successor = [0]*n
+  32     for t in range(n):
+  33         successor[order[t]] = order[(t+1) % n]
+  34     x, power = [0]*n, 1
+  35     for j in order:
+  36         x[j] = power
+  37         power = power*z % p
+  38     # At this point power == z**N. No separate exponentiation is needed.
+  39     d = [0]*n
+  40     d[order[0]] = (1-power) % p
+  41     for j, wj in enumerate(successor):
+  42         zj = (j+1) % n
+  43         if wj != zj:
+  44             contribution = z*x[j] % p
+  45             d[wj] = (d[wj]+contribution) % p
+  46             d[zj] = (d[zj]-contribution) % p
+  47     roots, power = [], 1
+  48     for _ in range(n):
+  49         roots.append(power)
+  50         power = power*omega % p
+  51     numerator = [0]*n
+  52     for j, value in enumerate(d):
+  53         if not value:
+  54             continue
+  55         step, power = roots[j], 1
+  56         for k in range(n):
+  57             numerator[k] = (numerator[k]+value*power) % p
+  58             power = power*step % p
+  59     denominators = [(1-z*r) % p for r in roots]
+  60     regular = [k for k, value in enumerate(denominators) if value]
+  61     exceptional = [k for k, value in enumerate(denominators) if not value]
+  62     if len(exceptional) > 1:
+  63         raise ArithmeticError('root or field prerequisites violated')
+  64     prefix = [1]
+  65     for k in regular:
+  66         prefix.append(prefix[-1]*denominators[k] % p)
+  67     back = pow(prefix[-1], -1, p)
+  68     output = [0]*n
+  69     for t in range(len(regular)-1, -1, -1):
+  70         k = regular[t]
+  71         output[k] = numerator[k]*back*prefix[t] % p
+  72         back = back*denominators[k] % p
+  73     for k in exceptional:
+  74         step, power, value = roots[k], 1, 0
+  75         for a in x:
+  76             value = (value+a*power) % p
+  77             power = power*step % p
+  78         output[k] = value
+  79     return output

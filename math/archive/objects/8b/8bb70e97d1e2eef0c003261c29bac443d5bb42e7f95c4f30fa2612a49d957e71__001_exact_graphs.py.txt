@@ -1,0 +1,387 @@
+"""Exact fresh-input Fourier factorization laboratory.
+
+No numerical zero tests are used. Modular certificates apply to that field;
+Cyclotomic certificates apply to Q[z]/(z**(N/2)+1), for power-of-two N.
+This is a deliberately direct research evaluator, not a fast FFT library.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from fractions import Fraction as Q
+from math import gcd
+
+
+class PrimeField:
+    def __init__(self, p):
+        if p < 3 or any(p % d == 0 for d in range(2, int(p**0.5)+1)):
+            raise ValueError("p must be an odd prime")
+        self.p, self.zero, self.one = p, 0, 1
+
+    def add(self, a, b): return (a+b) % self.p
+    def sub(self, a, b): return (a-b) % self.p
+    def neg(self, a): return -a % self.p
+    def mul(self, a, b): return a*b % self.p
+    def inv(self, a): return pow(a, -1, self.p)
+    def integer(self, a): return a % self.p
+    def power(self, a, n): return pow(a, n, self.p)
+
+    def root(self, n):
+        if n < 2 or n & (n-1) or (self.p-1) % n:
+            raise ValueError("power-of-two n must divide p-1")
+        for a in range(2, self.p):
+            w = pow(a, (self.p-1)//n, self.p)
+            if pow(w, n//2, self.p) != 1:
+                return w
+        raise AssertionError("primitive root missing")
+
+    def encode(self, a): return a
+
+
+def _trim(a):
+    while a and a[-1] == 0: a.pop()
+    return a
+
+
+def _poly_sub(a, b):
+    c = [Q(0)] * max(len(a), len(b))
+    for i,x in enumerate(a): c[i] += x
+    for i,x in enumerate(b): c[i] -= x
+    return _trim(c)
+
+
+def _poly_mul(a, b):
+    if not a or not b: return []
+    c = [Q(0)] * (len(a)+len(b)-1)
+    for i,x in enumerate(a):
+        if x:
+            for j,y in enumerate(b):
+                if y: c[i+j] += x*y
+    return _trim(c)
+
+
+def _poly_divmod(a, b):
+    a, b = _trim(list(a)), _trim(list(b))
+    if not b: raise ZeroDivisionError
+    q = [Q(0)] * max(0, len(a)-len(b)+1)
+    while len(a) >= len(b):
+        shift, value = len(a)-len(b), a[-1]/b[-1]
+        q[shift] = value
+        for j,x in enumerate(b): a[shift+j] -= value*x
+        _trim(a)
+    return _trim(q), a
+
+
+class CyclotomicField:
+    """Exact coefficients in the irreducible power-of-two cyclotomic field."""
+    def __init__(self, n):
+        if n < 2 or n & (n-1): raise ValueError("power-of-two n >= 2")
+        self.n, self.d = n, n//2
+        self.zero = (Q(0),)*self.d
+        self.one = (Q(1),)+(Q(0),)*(self.d-1)
+
+    def integer(self, a): return (Q(a),)+(Q(0),)*(self.d-1)
+    def add(self, a, b): return tuple(x+y for x,y in zip(a,b))
+    def sub(self, a, b): return tuple(x-y for x,y in zip(a,b))
+    def neg(self, a): return tuple(-x for x in a)
+
+    def mul(self, a, b):
+        c = [Q(0)]*self.d
+        for i,x in enumerate(a):
+            if x:
+                for j,y in enumerate(b):
+                    if y:
+                        k=i+j
+                        if k >= self.d: c[k-self.d] -= x*y
+                        else: c[k] += x*y
+        return tuple(c)
+
+    def inv(self, a):
+        if a == self.zero: raise ZeroDivisionError
+        old_r, r = [Q(1)]+[Q(0)]*(self.d-1)+[Q(1)], _trim(list(a))
+        old_s, s = [], [Q(1)]
+        while r:
+            q, rem = _poly_divmod(old_r, r)
+            old_r, r = r, rem
+            old_s, s = s, _poly_sub(old_s, _poly_mul(q,s))
+        if len(old_r) != 1: raise AssertionError("field polynomial must be irreducible")
+        ans=[x/old_r[0] for x in old_s]
+        _, ans = _poly_divmod(ans, [Q(1)]+[Q(0)]*(self.d-1)+[Q(1)])
+        return tuple(ans+[Q(0)]*(self.d-len(ans)))
+
+    def root(self, n=None):
+        if n is not None and n != self.n: raise ValueError("wrong field root")
+        if self.d == 1: return self.integer(-1)
+        return (Q(0),Q(1))+(Q(0),)*(self.d-2)
+
+    def power(self, a, n):
+        if n < 0: return self.power(self.inv(a), -n)
+        out=self.one
+        while n:
+            if n & 1: out=self.mul(out,a)
+            a=self.mul(a,a); n//=2
+        return out
+
+    def encode(self, a): return [str(x) for x in a]
+
+
+def root_powers(field, n):
+    w=field.root(n)
+    out=[field.one]
+    for _ in range(1,n): out.append(field.mul(out[-1],w))
+    assert field.mul(out[-1],w) == field.one
+    assert out[n//2] != field.one
+    return out
+
+
+def fourier(field, n):
+    """Positive-exponent DFT; negative-exponent convention permutes rows."""
+    p=root_powers(field,n)
+    return [[p[(i*j)%n] for j in range(n)] for i in range(n)]
+
+
+def mm(field, a, b):
+    if not a or not b or len(a[0]) != len(b): raise ValueError("matrix shape")
+    out=[[field.zero for _ in b[0]] for _ in a]
+    for i,row in enumerate(a):
+        for k,x in enumerate(row):
+            if x != field.zero:
+                for j,y in enumerate(b[k]):
+                    if y != field.zero:
+                        out[i][j]=field.add(out[i][j],field.mul(x,y))
+    return out
+
+
+def inverse(field, a):
+    n=len(a)
+    if any(len(row)!=n for row in a): raise ValueError("square matrix required")
+    m=[list(row)+[field.one if i==j else field.zero for j in range(n)]
+       for i,row in enumerate(a)]
+    for col in range(n):
+        p=next((i for i in range(col,n) if m[i][col]!=field.zero),None)
+        if p is None: raise ValueError("singular anchor minor")
+        m[col],m[p]=m[p],m[col]
+        scale=field.inv(m[col][col])
+        m[col]=[field.mul(x,scale) for x in m[col]]
+        for i in range(n):
+            if i!=col and m[i][col]!=field.zero:
+                scale=m[i][col]
+                m[i]=[field.sub(x,field.mul(scale,y)) for x,y in zip(m[i],m[col])]
+    return [row[n:] for row in m]
+
+
+def rank(field, a):
+    if not a: return 0
+    a=[list(row) for row in a]; pos=0
+    for col in range(len(a[0])):
+        pivot=next((i for i in range(pos,len(a)) if a[i][col]!=field.zero),None)
+        if pivot is None: continue
+        a[pos],a[pivot]=a[pivot],a[pos]
+        scale=field.inv(a[pos][col])
+        a[pos]=[field.mul(x,scale) for x in a[pos]]
+        for i in range(pos+1,len(a)):
+            if a[i][col]!=field.zero:
+                scale=a[i][col]
+                a[i]=[field.sub(x,field.mul(scale,y)) for x,y in zip(a[i],a[pos])]
+        pos+=1
+        if pos==len(a): break
+    return pos
+
+
+def mv(field, a, x):
+    return [row[0] for row in mm(field,a,[[z] for z in x])]
+
+
+def matrix_cost(field, a):
+    """Direct row dots: +/- is 1 gate; scale except +/-1 is 1 gate.
+
+    Signs fold into addition/subtraction. A lone -x is explicitly one negation.
+    Indexing and output traffic are reported separately, never called free time.
+    """
+    minus=field.neg(field.one)
+    adds=scales=negs=nonzero=0
+    for row in a:
+        nz=[x for x in row if x!=field.zero]
+        nonzero+=len(nz)
+        adds+=max(0,len(nz)-1)
+        scales+=sum(x!=field.one and x!=minus for x in nz)
+        if nz and all(x==minus for x in nz): negs+=1
+    return dict(add_sub=adds,scales=scales,negations=negs,
+                coefficient_reads=nonzero,total=adds+scales+negs)
+
+
+@dataclass
+class Skeleton:
+    field: object
+    n: int
+    rows: list
+    cols: list
+    U: list
+    V: list
+    E: list
+
+    def apply(self, x):
+        if len(x)!=self.n: raise ValueError("wrong input size")
+        a=mv(self.field,self.U,mv(self.field,self.V,x))
+        b=mv(self.field,self.E,x)
+        return [self.field.add(u,v) for u,v in zip(a,b)]
+
+    def cost(self):
+        blocks=[matrix_cost(self.field,z) for z in (self.U,self.V,self.E)]
+        merges=sum(any(x!=self.field.zero for x in row) for row in self.E)
+        return dict(arithmetic=sum(z['total'] for z in blocks)+merges,
+                    add_sub=sum(z['add_sub'] for z in blocks)+merges,
+                    scales=sum(z['scales'] for z in blocks),
+                    negations=sum(z['negations'] for z in blocks),
+                    stored_nonzero_coefficients=sum(z['coefficient_reads'] for z in blocks),
+                    residual_nonzeros=blocks[2]['coefficient_reads'],
+                    materialized_output_elements=self.n,rank_budget=len(self.cols))
+
+    def verify(self):
+        f=self.field
+        uv=mm(f,self.U,self.V)
+        exact=fourier(f,self.n)
+        return all(f.add(uv[i][j],self.E[i][j])==exact[i][j]
+                   for i in range(self.n) for j in range(self.n))
+
+    def compile(self):
+        """Emit the actual scalar straight-line graph counted by cost()."""
+        f=self.field
+        graph=LinearGraph(f,self.n)
+        def dot(row, ids):
+            plus,minus=[],[]
+            for c,idx in zip(row,ids):
+                if c==f.zero: continue
+                if c==f.neg(f.one): minus.append(idx)
+                elif c==f.one: plus.append(idx)
+                else: plus.append(graph.emit('scale',idx,c))
+            if not plus:
+                if not minus: return 0
+                out=minus[0]
+                for idx in minus[1:]: out=graph.emit('add',out,idx)
+                return graph.emit('neg',out,None)
+            out=plus[0]
+            for idx in plus[1:]: out=graph.emit('add',out,idx)
+            for idx in minus: out=graph.emit('sub',out,idx)
+            return out
+        inputs=list(range(1,self.n+1))
+        latent=[dot(row,inputs) for row in self.V]
+        low=[dot(row,latent) for row in self.U]
+        residual=[dot(row,inputs) for row in self.E]
+        graph.outputs=[graph.emit('add',a,b) if b else a for a,b in zip(low,residual)]
+        assert len(graph.ops)==self.cost()['arithmetic']
+        return graph
+
+    def certificate(self):
+        return dict(n=self.n,rows=self.rows,cols=self.cols,
+                    field=(dict(prime=self.field.p) if isinstance(self.field,PrimeField)
+                           else dict(cyclotomic_order=self.field.n)),
+                    cost=self.cost(),
+                    U=[[self.field.encode(x) for x in row] for row in self.U],
+                    V=[[self.field.encode(x) for x in row] for row in self.V],
+                    E=[[self.field.encode(x) for x in row] for row in self.E])
+
+
+class LinearGraph:
+    def __init__(self,field,n):
+        self.field,self.n,self.ops,self.outputs=field,n,[],[]
+
+    def emit(self,op,a,b):
+        self.ops.append((op,a,b))
+        return self.n+len(self.ops)
+
+    def apply(self,x):
+        if len(x)!=self.n: raise ValueError('input length')
+        f=self.field
+        values=[f.zero]+list(x)
+        for op,a,b in self.ops:
+            if op=='add': value=f.add(values[a],values[b])
+            elif op=='sub': value=f.sub(values[a],values[b])
+            elif op=='scale': value=f.mul(values[a],b)
+            elif op=='neg': value=f.neg(values[a])
+            else: raise ValueError('unknown operation')
+            values.append(value)
+        return [values[idx] for idx in self.outputs]
+
+    def verify_all_inputs(self):
+        """Linearity + checking every basis vector is an all-input certificate."""
+        f=self.field; F=fourier(f,self.n)
+        for j in range(self.n):
+            x=[f.zero]*self.n; x[j]=f.one
+            if self.apply(x)!=[row[j] for row in F]: return False
+        return True
+
+    def certificate(self):
+        return dict(n=self.n,outputs=self.outputs,
+                    operations=[dict(op=op,a=a,b=(self.field.encode(b) if op=='scale' else b))
+                                for op,a,b in self.ops])
+
+
+def skeleton(field, n, rows, cols, f=None):
+    rows,cols=list(rows),list(cols)
+    if len(rows)!=len(cols) or not rows or len(set(rows))!=len(rows) or len(set(cols))!=len(cols):
+        raise ValueError("distinct equally sized nonempty anchors required")
+    if any(i<0 or i>=n for i in rows+cols): raise ValueError("anchor out of range")
+    if f is None: f=fourier(field,n)
+    U=[[row[j] for j in cols] for row in f]
+    core=[[f[i][j] for j in cols] for i in rows]
+    V=mm(field,inverse(field,core),[f[i] for i in rows])
+    uv=mm(field,U,V)
+    E=[[field.sub(x,y) for x,y in zip(a,b)] for a,b in zip(f,uv)]
+    return Skeleton(field,n,rows,cols,U,V,E)
+
+
+def progression_rank(n, row_count, col_count, row_step=1, col_step=1):
+    if min(n,row_count,col_count)<1: raise ValueError("positive dimensions")
+    return min(row_count,col_count,n//gcd(n,row_step*col_step))
+
+
+def consecutive_column_residual_lower(n, r):
+    """Proved bound for ANY rank <= r L in F_N=L+E, not just skeletons."""
+    if not 0<=r<n: raise ValueError("0 <= r < n required")
+    return (n-r)*(n//(r+1))
+
+
+def coset_residual_min(n,r):
+    """Minimum nnz(F-L), col(L) inside r subgroup Fourier columns, dyadic N."""
+    if min(n,r)<1 or n&(n-1) or r&(r-1) or n%r: raise ValueError("dyadic divisor required")
+    t=(n//r).bit_length()-1
+    return n*n-(n*r*(2+t))//2
+
+
+def radix2_cost(n):
+    if n<2 or n&(n-1): raise ValueError("power-of-two n>=2 required")
+    L=n.bit_length()-1
+    # Count +/-i as scalar multiplication, consistently with generic field.
+    adds=n*L
+    scales=n*L//2-n+1
+    return dict(add_sub=adds,scales=scales,arithmetic=adds+scales,
+                materialized_output_elements=n)
+
+
+def compile_radix2(field,n):
+    """Factoring the half-rank coset residual recovers this classical graph.
+
+    Root powers require n-1 field multiplications to prepare. This diagnostic
+    expands O(n log n) graph nodes; an implicit FFT plan need not expand them.
+    The supplied primitive root and index arithmetic are outside scalar gates.
+    """
+    powers=root_powers(field,n)
+    graph=LinearGraph(field,n)
+    def go(ids):
+        m=len(ids)
+        if m==1: return ids
+        even,odd=go(ids[::2]),go(ids[1::2])
+        lo,hi=[],[]
+        for k,(a,b) in enumerate(zip(even,odd)):
+            c=powers[k*(n//m)]
+            t=b if c==field.one else graph.emit('scale',b,c)
+            lo.append(graph.emit('add',a,t))
+            hi.append(graph.emit('sub',a,t))
+        return lo+hi
+    graph.outputs=go(list(range(1,n+1)))
+    assert len(graph.ops)==radix2_cost(n)['arithmetic']
+    return graph
+
+
+def direct_decoder_lower(n,r):
+    return n*(r-1)+consecutive_column_residual_lower(n,r)

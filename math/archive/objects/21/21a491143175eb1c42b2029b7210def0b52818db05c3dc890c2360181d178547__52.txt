@@ -1,0 +1,63 @@
+1: """Numerical exploratory comparisons. NOT part of exact theorem.
+2: Outputs a JSON table contrasting affine/nonlinear/shuffle families.
+3: """
+4: from __future__ import annotations
+5: import json, sys
+6: from pathlib import Path
+7: import numpy as np
+8: from scipy.sparse import coo_matrix
+9: from scipy.sparse.linalg import eigsh
+10: ROOT=Path(__file__).resolve().parent
+11: from verify_exact import affine,scan_path_edges
+12: LAYOUT=json.loads((ROOT/'AFFINE_LAYOUT.json').read_text())
+13: 
+14: def make_matrix(paths,n=256):
+15:     edges=scan_path_edges(paths)
+16:     a=np.array([v[0] for v in edges]);b=np.array([v[1] for v in edges])
+17:     rr=np.r_[a,b,a,b];cc=np.r_[a,b,b,a]
+18:     vv=np.r_[np.ones(2*len(a),dtype=np.int64),-np.ones(2*len(a),dtype=np.int64)]
+19:     return coo_matrix((vv,(rr,cc)),shape=(n,n)).tocsr()
+20: 
+21: def lam(p):
+22:     L=make_matrix(p)
+23:     return float(sorted(eigsh(L,k=2,which='SM',tol=1e-9,return_eigenvectors=False))[1])
+24: 
+25: def gf2_rank_cols(cols,k):
+26:     rank=0;basis={}
+27:     for x in cols:
+28:         v=int(x)
+29:         while v:
+30:             b=v.bit_length()-1
+31:             if b in basis:v^=basis[b]
+32:             else:
+33:                 basis[b]=v;rank+=1;break
+34:     return rank
+35: 
+36: def random_cols(rng,k):
+37:     while True:
+38:         v=[int(i) for i in rng.integers(0,1<<k,size=k)]
+39:         if gf2_rank_cols(v,k)==k:return v
+40: 
+41: def mcnot(k,controls,target):
+42:     n=1<<k;p=np.arange(n,dtype=np.int64)
+43:     cm=sum(1<<c for c in controls)
+44:     t=1<<target
+45:     for i in range(n):
+46:         if (i&cm)==cm:p[i]=i^t
+47:     return p
+48: 
+49: base=[affine(cols) for cols in LAYOUT['affine_shuffle_columns']]
+50: modified=[p.copy() for p in base]
+51: for gate in LAYOUT['toffoli_gate_sequence_in_shuffle_2']:
+52:     modified[2]=modified[2][mcnot(8,gate['controls'],gate['target'])]
+53: out={'base':lam(base),'five_toffoli_modified':lam(modified)}
+54: rng=np.random.default_rng(776619)
+55: for kind in ('random_affine','random_permutation'):
+56:  vals=[]
+57:  for trial in range(20):
+58:     if kind=='random_affine':p=[affine(random_cols(rng,8)) for _ in range(3)]
+59:     else:p=[rng.permutation(256).astype(np.int64) for _ in range(3)]
+60:     vals.append(lam(p))
+61:  out[kind]={'n':len(vals),'min':min(vals),'median':float(np.median(vals)),'max':max(vals),'certifiable_by_gap_gt_2':sum(v>2 for v in vals),'all':vals}
+62: (ROOT/'EXPLORATORY_SPECTRAL_RESULTS.json').write_text(json.dumps(out,indent=2))
+63: print(json.dumps({k:v if isinstance(v,float) else {t:vv for t,vv in v.items() if t!='all'} for k,v in out.items()},indent=2))

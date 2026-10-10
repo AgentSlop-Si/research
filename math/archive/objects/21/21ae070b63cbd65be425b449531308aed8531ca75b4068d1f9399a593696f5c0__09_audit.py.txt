@@ -1,0 +1,72 @@
+"""Independent finite-field Phase21 audit. All claims beyond finite checks are in THEOREM.md."""
+from __future__ import annotations
+import json,math,random
+from phase21_weyl import (
+    P,root,chirp_coefficients,chirp_factorized_dft,ntt_reference,
+    random_input,CyclicGreen,SecondCyclicGreen,random_weighted_green,
+    matrix_rank,hankel,block_rank,sum_apply,twisted_shift,
+    second_shift,small_weyl_defect_counts,full_green_dictionary,
+    polynomial_green_sum, sqrt_mod, prony_squarefree_certificate
+)
+
+def audit():
+    info={'field':P,'normalization':'root of N selected in F_p',
+          'chirp_exact':[],'hankel':[], 'green_flat':[], 'common_order':[],
+          'noncommuting':[], 'positive_dictionary':[], 'prony_complex_existence':[]}
+    for n in (4,8,16,32,64,128,256,512,1024):
+        x=random_input(n,2021)
+        good=chirp_factorized_dft(x)==ntt_reference(x)
+        assert good
+        info['chirp_exact'].append({'n':n,'matched_exact_ntt':good})
+    for n in (4,8,16,32,64,128,256):
+        q=n//2
+        r=matrix_rank(hankel(chirp_coefficients(n),q))
+        assert r==q
+        info['hankel'].append({'n':n,'hankel_size':q,'rank':r,
+                               'minimal_pole_budget':q})
+    for n in (8,16,32,64):
+        g=CyclicGreen.prepare(n,1)
+        mat=[]
+        for k in range(n):
+            e=[0]*n;e[k]=1;mat.append(g.apply(e))
+        unique=set(v for col in mat for v in col)
+        assert len(unique)>1
+        # Multiplying a Green entry by 2 yields an Nth root, whose complex magnitude is 1.
+        assert all(pow((2*v)%P,n,P)==1 for col in mat for v in col)
+        info['green_flat'].append({'n':n,'twice_each_entry_is_nth_root':True,
+                                    'complex_condition_number_formula':'cot(pi/(2*N))'})
+    for n in (8,16,32,64):
+        gs=[random_weighted_green(n,12+k) for k in range(4)]
+        s1=lambda x:sum_apply(gs[:2],x)
+        s2=lambda x:sum_apply(gs[2:],x)
+        ph=[pow(root(n), j*j+j,P) for j in range(n)]
+        c=lambda x:s2([v*ph[j]%P for j,v in enumerate(s1(x))])
+        r1=block_rank(s1,n,n//2)
+        r2=block_rank(c,n,n//2)
+        rank_f=block_rank(ntt_reference,n,n//2)
+        assert r1<=2 and r2<=4 and rank_f==n//2
+        info['common_order'].append({'n':n,'first_stage_cut_rank':r1,
+                                     'two_stage_cut_rank':r2,'fourier_cut_rank':rank_f})
+    for n in (8,16,32,64):
+        gt=CyclicGreen.prepare(n,3)
+        gu=SecondCyclicGreen.prepare(n,2)
+        mix=lambda x:[(a+b)%P for a,b in zip(gt.apply(x),gu.apply(x))]
+        defects=small_weyl_defect_counts(mix,n)
+        assert min(defects)>0
+        info['noncommuting'].append({'n':n,'weyl_bad_coordinates':list(defects)})
+    for n in (4,8,16,32):
+        a,b=full_green_dictionary(n)
+        x=random_input(n,2025)
+        y=polynomial_green_sum(x,a,b)
+        w=root(n);scale=pow(sqrt_mod(n),-1,P)
+        reconstruct=[v*pow(w,j*j,P)*scale%P for j,v in enumerate(y)]
+        assert reconstruct==ntt_reference(x)
+        info['positive_dictionary'].append({'n':n,'q':len(a),'matched':True})
+    for n in (4,8,16,32,64,128,256,512,1024,2048,4096,8192):
+        cert=prony_squarefree_certificate(n)
+        assert cert['certifies_N_over_2_distinct_admissible_complex_poles']
+        info['prony_complex_existence'].append(cert)
+    return info
+
+if __name__=='__main__':
+    print(json.dumps(audit(),indent=2))

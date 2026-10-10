@@ -1,0 +1,130 @@
+   1 """Fresh independent next-pivot checks. Executes no supplied source/constructor code."""
+   2 from independent_linear import *
+   3 from pathlib import Path
+   4 import json
+   5 
+   6 def operators(N,W,p):
+   7  l=N//4;k=N//8
+   8  B=[[0]*l for _ in range(l)];T=[[0]*k for _ in range(k)];U=[[0]*l for _ in range(k)];V=[[0]*k for _ in range(l)]
+   9  for j in range(l):B[(2*j+1)%l][j]=W[(4*j+3)%N];U[(2*j+1)%k][j]=W[(8*j+6)%N]
+  10  for j in range(k):T[(4*j+2)%k][j]=W[(16*j+10)%N];V[(4*j+2)%l][j]=W[(8*j+5)%N]
+  11  return B,T,U,V
+  12 
+  13 def rawH(N,W,z,p):
+  14  # Direct finite polynomial sum C sum(z^t(A0^t-e0*1^T)) J.
+  15  n=N.bit_length()-1;m=N//2;H=[[0]*m for _ in range(m)]
+  16  for j in range(m):
+  17   pos=2*j+1;phase=1
+  18   for t in range(n):
+  19    if pos<m:H[pos][j]=(H[pos][j]+W[pos]*phase)%p
+  20    else:H[pos-m][j]=(H[pos-m][j]-W[pos-m]*phase)%p
+  21    H[0][j]=(H[0][j]-phase)%p
+  22    pos=2*pos%N;phase=phase*z%p
+  23  return H
+  24 
+  25 def prefix(N,p,W,B,T,U,V,S):
+  26  n=N.bit_length()-1;k=N//8;l=N//4;v=[(j*j+17*j+2)%p for j in range(len(S))]
+  27  base=[0]*k
+  28  for s,c in zip(S,v):base[s]=c
+  29  # Independent dense-vector power/convolution oracle.
+  30  truth=[[0]*len(S) for _ in range(n+1)];truth[0]=v[:];ta=base[:]
+  31  for a in range(max(0,(n-3)//2+1)):
+  32   vb=mv(V,ta,p)
+  33   for b in range(n-2-2*a):
+  34    vals=mv(U,vb,p);degree=3+2*a+b
+  35    for j,s in enumerate(S):truth[degree][j]=(truth[degree][j]-vals[s])%p
+  36    vb=mv(B,vb,p)
+  37   ta=mv(T,ta,p)
+  38  # Compressed structural state propagation with scalar arrays and stamps.
+  39  spaces={k:([0]*k,[-1]*k),l:([0]*l,[-1]*l)};tick=0
+  40  def advance(state,mod,mul,shift,weight):
+  41   nonlocal tick
+  42   tick+=1;vals,seen=spaces[mod];active=[]
+  43   for i,value in state:
+  44    d=(mul*i+shift)%mod
+  45    if seen[d]!=tick:seen[d]=tick;vals[d]=0;active.append(d)
+  46    vals[d]=(vals[d]+weight(i)*value)%p
+  47   return [(i,vals[i]) for i in active]
+  48  # The compressed branch reuses stamped workspaces and emits contributions.
+  49  state=list(zip(S,v));terms=[(s,c) for s,c in zip(S,v)];visits=0;previsits=0;exact=[]
+  50  for a in range(max(0,(n-3)//2+1)):
+  51   previsits+=len(state);mid=advance(state,l,4,2,lambda i:W[(8*i+5)%N])
+  52   for b in range(n-2-2*a):
+  53    bound=max(k//(2*4**a*2**b),1);assert len(mid)<=bound
+  54    visits+=len(mid);exact.append({'a':a,'b':b,'states':len(mid),'cap':bound})
+  55    out=advance(mid,k,2,1,lambda i:W[(8*i+6)%N])
+  56    for s,c in out:
+  57     assert s in S;terms.append(((3+2*a+b)*k+s,-c%p))
+  58    mid=advance(mid,l,2,1,lambda i:W[(4*i+3)%N])
+  59   state=advance(state,k,4,2,lambda i:W[(16*i+10)%N])
+  60  # Stable radix-N sort uses two passes for keys < (n+1)*k <= N^2.
+  61  assert all(key<N*N for key,value in terms)
+  62  for radix in [1,N]:
+  63   count=[0]*N
+  64   for key,value in terms:count[(key//radix)%N]+=1
+  65   where=[0]*N
+  66   for i in range(1,N):where[i]=where[i-1]+count[i-1]
+  67   sorted_terms=[None]*len(terms)
+  68   for term in terms:
+  69    digit=(term[0]//radix)%N;sorted_terms[where[digit]]=term;where[digit]+=1
+  70   terms=sorted_terms
+  71  merged=[]
+  72  for key,value in terms:
+  73   if merged and merged[-1][0]==key:merged[-1]=(key,(merged[-1][1]+value)%p)
+  74   else:merged.append((key,value))
+  75  # Dict below is verification lookup only; sorted merged is the produced jet.
+  76  got={(key//k,key%k):value for key,value in merged}
+  77  assert [[got.get((d,s),0) for s in S] for d in range(n+1)]==truth
+  78  assert visits<=4*k/3+n*n
+  79  marker=[(19*j+11)%p for j in range(len(S))]
+  80  assert [sum(marker[j]*got.get((d,s),0) for j,s in enumerate(S))%p for d in range(n+1)]==[dot(marker,r,p) for r in truth]
+  81  return {'N':N,'p':p,'active_mid_visits':visits,'T_input_visits':previsits,'stored_sparse_slots':len(got),'emitted_contributions':len(terms),'radix_passes':2,'workspace_array_slots':2*(k+l),'exact_frontiers':exact}
+  82 
+  83 def case(N,p,z):
+  84  n=N.bit_length()-1;m=N//2;l=N//4;k=N//8;w,W=root_table(N,p);B,T,U,V=operators(N,W,p)
+  85  q=(1-z*pow(w,-1,p))%p;D=add(eye(l),B,p,-z);di=inverse(D,p);assert bool(q)==bool(di)
+  86  S=sorted({(2**(a+3)*j+3*2**(a+1)-1)%k for a in range(n+2) for j in range(k)})
+  87  assert len(S)==(1 if k==2 else k//4+1)
+  88  uv=mm(U,V,p);expected=[[0]*k for _ in range(k)]
+  89  for j in range(k):expected[(8*j+5)%k][j]=W[(40*j+27)%N]
+  90  assert uv==expected and rank(uv,p)==max(k//8,1)
+  91  power=eye(l)
+  92  for a in range(n+2):
+  93   actual=mm(mm(U,power,p),V,p);expr=[[0]*k for _ in range(k)]
+  94   for s in range(k):expr[(2**(a+3)*s+3*2**(a+1)-1)%k][s]=W[((48*2**a-8)*s+36*2**a-9-a)%N]
+  95   assert actual==expr;power=mm(B,power,p)
+  96  root=(-2*pow(3,-1,k))%k;lam=W[(16*root+10)%N];delta=(1-z*z*lam)%p
+  97  A=add(eye(k),T,p,-z*z);assert det(A,p)==delta
+  98  result={'N':N,'p':p,'z':z,'q':q,'delta':delta,'support':S,'leading_rank':rank(uv,p),'support_size':len(S),'tree_root':root}
+  99  if di is None:result['chart']='q_zero';return result
+ 100  H=rawH(N,W,z,p);even=list(range(0,m,2));odd=list(range(1,m,2))
+ 101  assert block(H,odd,odd)==B
+ 102  sch=add(add(eye(l),block(H,even,even),p,-z),mm(mm(block(H,even,odd),di,p),block(H,odd,even),p),p,-z*z)
+ 103  Z=block(sch,list(range(1,l,2)),list(range(1,l,2)))
+ 104  transfer=mm(mm(U,di,p),V,p);assert Z==add(A,transfer,p,-z**3)
+ 105  assert all(not any(transfer[i]) for i in range(k) if i not in S)
+ 106  result['transfer_rank']=rank(transfer,p);result['Z_determinant']=det(Z,p)
+ 107  if not delta:result['chart']='delta_zero';return result
+ 108  ai=inverse(A,p);aE=block(ai,list(range(k)),S);small=add(eye(len(S)),mm(block(transfer,S,list(range(k))),aE,p),p,-z**3)
+ 109  assert det(Z,p)==delta*det(small,p)%p
+ 110  si=inverse(small,p)
+ 111  if si is None:assert inverse(Z,p) is None;result['chart']='coupled_zero';return result
+ 112  Wsmall=block(transfer,S,list(range(k)));prediction=add(ai,mm(mm(mm(aE,si,p),Wsmall,p),ai,p),p,z**3)
+ 113  assert prediction==inverse(Z,p)
+ 114  x=[(i*i+3*i+9)%p for i in range(k)];h=[(11*i+5)%p for i in range(k)];first=mv(ai,x,p);eta=mv(si,mv(Wsmall,first,p),p);y=mv(prediction,x,p)
+ 115  assert mv(Z,y,p)==x
+ 116  left=[sum(h[i]*aE[i][j] for i in range(k))%p for j in range(len(S))]
+ 117  assert dot(h,y,p)==(dot(h,first,p)+z**3*dot(left,eta,p))%p
+ 118  result['chart']='guarded_solve';return result
+ 119 
+ 120 if __name__=='__main__':
+ 121  cases=[case(N,p,z) for p in [257,65537] for N in [16,32,64,128] for z in [0,1,2,3]]
+ 122  for N in [16,32,64]:
+ 123   p=65537;w,W=root_table(N,p);cases.append(case(N,p,w))
+ 124  prefixes=[]
+ 125  for p in [257,65537]:
+ 126   for N in [16,32,64,128,256]:
+ 127    w,W=root_table(N,p);prefixes.append(prefix(N,p,W,*operators(N,W,p),sorted({(2**(a+3)*j+3*2**(a+1)-1)%(N//8) for a in range(N.bit_length()+1) for j in range(N//8)})))
+ 128  out={'status':'passed','constructor_code_executed':False,'cases':cases,'constant_input_prefixes':prefixes}
+ 129  Path('NEXT_PIVOT_INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2,sort_keys=True)+'\n')
+ 130  print(json.dumps({'status':'passed','cases':len(cases),'guarded_solves':sum(c['chart']=='guarded_solve' for c in cases),'guard_failures':[c for c in cases if c['chart']!='guarded_solve'],'prefixes':len(prefixes)},sort_keys=True))

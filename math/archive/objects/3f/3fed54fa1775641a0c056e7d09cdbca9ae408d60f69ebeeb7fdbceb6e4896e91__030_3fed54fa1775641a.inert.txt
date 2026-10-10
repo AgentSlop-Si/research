@@ -1,0 +1,157 @@
+# Global algebraic reuse for the exact DFT: a chirp-recurrence falsification
+
+**Date:** 2026-10-09  
+**Status:** Exact identities, a restricted all-length negative argument, and reproducible finite-field verification. **No new fast general FFT, no claimed research priority.**  
+**Objective:** Stay on the user's original *fresh, arbitrary, complete, exact Fourier transform* problem, not CrocSwap's integer-multiplication certificate-constant race, dynamic updates, small subsets of output bins, or table-oracle variants.
+
+## 1. A very compact global representation
+
+For even N, let zeta be a primitive 2Nth root of unity, omega=zeta^2, and define
+
+- F[k,j] = omega^(kj) (an unnormalized DFT; sign convention does not matter);
+- d_j = zeta^(j^2);
+- h_j = zeta^(-j^2);
+- D=diag(d_0,...,d_(N-1));
+- C_h[k,j]=h_((k-j) mod N), the N-by-N cyclic-convolution matrix.
+
+The identity 2kj=k^2+j^2-(k-j)^2 gives exactly
+
+**F_N = D C_h D.**
+
+The kernel is cyclic rather than negacyclic because h_(j+N)=(-1)^N h_j=h_j for even N. The inverse reduction is
+
+**C_h=D^(-1) F_N D^(-1).**
+
+These are exact equalities over any field of characteristic not dividing N containing zeta. The finite verifier uses F_998244353 and N a power of two with 2N | (p-1). They also hold over the complex numbers. Preparation of zeta, phase coefficients and memory access is not free in a claimed uniform implementation.
+
+**Conditional reduction:** If a uniform method can apply this fixed *chirp* cyclic convolution to any fresh vector in O(N) operations while paying to construct all coefficients and addressing, then it can compute an arbitrary full DFT in O(N), and conversely. Diagonal scaling is O(N). The reduction itself is classical Bluestein/chirp-z algebra; it is not a breakthrough or an improvement.
+
+## 2. Why the kernel *looks* surprisingly easy
+
+Let g_k = zeta^(-2k-1). Then
+
+**h_(k+1)=g_k h_k**, modulo N.
+
+This is a first-order recurrence with *position-dependent* multiplier: generating all N kernel entries takes O(N) field multiplications if zeta is available. The recurrence closes cyclically because product_k g_k=zeta^(-N^2)=1 (N even).
+
+A natural conjecture is that applying a first-order variable-coefficient difference operator might sparsify y=C_h x for arbitrary x. Set
+
+(Ly)_k = y_(k+1) - g_k y_k, where indices are taken modulo N.
+
+Certainly **L h = 0**. But **L C_h is not a sparse-output transform on arbitrary inputs.**
+
+## 3. Exact theorem: the filtered convolution retains N-1 degrees of freedom
+
+**Proposition.** Over any field with an even N and primitive 2Nth root zeta, the chirp operator C_h is invertible; L has rank N-1; hence **rank(L C_h)=N-1**.
+
+Proof, invertibility: Let h'_j=1/h_j=zeta^(j^2). Circular convolution satisfies
+
+(h*h')_k = sum_j zeta^(-j^2+(k-j)^2)
+           = zeta^(k^2) sum_j omega^(-kj)
+           = N delta_(k,0).
+
+Because the characteristic does not divide N, C_h^(-1) = N^(-1) C_(h'). Thus C_h has rank N.
+
+Proof, L rank: L y=0 means y_(k+1)=g_k y_k for every k. All entries are then determined by the freely chosen y_0, and cyclic consistency holds because product g_k=1. Therefore ker L has dimension exactly 1, so rank L=N-1. Multiplying by the invertible C_h does not change rank. QED.
+
+**Density corollary.** Let x be uniform in F_p^N (p>2, 2N | p-1). Every coordinate of (L C_h)x is a nonzero linear functional applied to a uniform random vector, hence uniform in F_p. Each such coordinate is zero with probability 1/p. A union bound gives
+
+**Pr[all N entries of (L C_h)x are nonzero] >= 1-N/p.**
+
+Thus on a large field, the first-order annihilator kills its own kernel yet yields a **fully dense filtered output** for almost every random fresh input. This proposition rejects this specific O(N)-via-variable-differences idea. **Rank alone is NOT a general Omega(N log N) arithmetic-circuit lower bound.**
+
+## 4. An independent obstruction: the missing N-dimensional moment state
+
+To derive y_(k+1) from y_k, introduce
+
+M_r(k) = sum_j x_j omega^(rj) h_(k-j).
+
+The quadratic-chirp recurrence implies
+
+**M_r(k+1) = g_k M_(r+1)(k)** (r modulo N).
+
+In particular y_k=M_0(k), so traversing k requires the next moment every time. At k=0,
+
+M_r(0)=sum_j omega^(rj) h_j x_j,
+
+which is the full DFT of the chirp-scaled input. The N-by-N matrix of all initial moments is F_N diag(h), hence has exact rank N. The recurrence is compact to write, but it **does not generate arbitrary complete outputs from O(1) initial moments**.
+
+Indeed, expanding the moment ladder gives
+
+M_0(k)=h_k M_k(0),
+
+which simply reproduces the inverse reduction C_h=diag(h) F_N diag(h).
+
+This rules out a *specific constant-sized moment propagation scheme*. It does not prove a new general FFT lower bound: N independent linear forms might in principle be evaluated by a new circuit with O(N) operations in a more permissive model. That is precisely the remaining open challenge.
+
+## 5. Stronger periodic-recurrence statement
+
+For any length-N sequence y repeated periodically, the dimension of its cyclic shift span, equivalently the minimum order of an **N-periodic constant-coefficient recurrence**, equals the number of nonzero coordinates of F_N y (where the field contains N distinct roots and N is invertible).
+
+Here the chirp spectrum is explicit:
+
+(F_N h)_k = G d_k, where G=sum_j h_j != 0.
+
+The formula follows by completing the square and cyclically shifting the sum. If G were zero, F_N h would vanish at every index, contradicting invertibility of F_N and h_0=1. Therefore all N eigenvalues of C_h are nonzero, so the Fourier support of y=C_h x equals the Fourier support of x.
+
+For uniform x in F_p^N, F_N x is itself a uniform independent N-vector. Thus
+
+**Pr[periodic recurrence order of C_h x is exactly N] = (1-1/p)^N.**
+
+The exact distribution is Binomial(N,1-1/p), counting nonzero Fourier bins. In particular, random fresh inputs have *maximal* periodic recurrence order with probability approaching one when p is large relative to N. This is NOT a statement about Berlekamp--Massey on an unextended finite prefix of only N values; it refers to the N-periodic extension.
+
+There is also an exact shift-basis interpretation: all N cyclic shifts of h are linearly independent. Over the complex numbers they are orthogonal, since h is a constant-amplitude, zero-autocorrelation quadratic chirp. **No low-rank shift orbit exists to collapse.**
+
+## 6. Very important limits
+
+- This audit does **not** establish Omega(N log N) in unrestricted complex exact arithmetic, and cannot refute OpenAI #130's smaller asymptotic exponent.
+- First-order *variable* recurrence for h is not equivalent to a constant-coefficient recurrence for C_h x. Conflating those is the trap investigated here.
+- Rank(N-1) means no low-dimensional *linear image*, but not that a cleverly structured full-rank map requires quadratic or FFT work. Identity matrices have rank N and are O(N) to apply.
+- The input is **fresh** and all N outputs are calculated. We do not grant cached transforms, repeated queries, related inputs or a subset of outputs.
+- The finite-field construction is a separate exact arithmetic model from complex bit-precision and numerical stability. The identities and rank proofs also extend to complex roots, but bit-level costs are not addressed.
+- An O(N) circuit for the fixed chirp convolution would be a genuine FFT result by the reduction, but a chirp-output recurrence of order one does **not** supply such a circuit.
+- Standard lower bounds of Morgenstern (bounded coefficients, unnormalized Fourier) and Ailon (unitary / well-conditioned 2-coordinate-gate models) also transfer to the conjugated chirp operator because the conjugating diagonals are unit-modulus and cost O(N). These are restricted-model barriers, not full algebraic complexity lower bounds.
+
+## 7. Reproduction
+
+No external packages, threads or floating point are needed:
+
+```sh
+cd fft_chirp_global_reuse_audit
+python -m unittest discover -s tests -v
+python run_audit.py
+```
+
+The audit explicitly checks **all basis columns** at N=2,4,8,16,32,64, so it checks the complete finite-dimensional matrix identity at each length. It independently compares a direct O(N^2) finite-field Fourier sum with an O(N log N) iterative NTT and with a direct cyclic-chirp convolution. It checks the exact chirp inverse, ranks of C_h, L C_h, the entire moment matrix, random-vector density, and periodic recurrence order via cyclic-Hankel rank. Random seed fixed at 20261009.
+
+Captured run: **126 matrix columns, 144 fresh random vectors, 18 matrix-rank certificates**, with every tested random filtered vector fully nonzero and every tested random output of full periodic recurrence order. These tests verify finite instances; the algebra in sections 2-5 supplies the general proof under the stated algebraic conditions.
+
+## 8. Cross-reference to older work and novelty boundary
+
+- **Earlier Phase 11:** Short constant-coefficient annihilator filters successfully exploit fresh *structured* inputs but provably fail to sparsify typical random binary vectors. This experiment is different: the fixed chirp kernel has an easy **variable-coefficient** annihilator, which we prove does **not** sparsify its convolution with generic input. Do not restart the original filters.
+- **Earlier compact-operator audit:** Rank-one displacement and full-rank Fourier blocks were already checked, alongside stable 2-coordinate lower bounds. This experiment does **not** restate that as a new result: it checks a concrete global convolution reduction and rigorously falsifies a proposed fast evaluator via recurrence and moments.
+- **Earlier exact-subtree caching:** Collisions remove only a vanishing fraction of large-block FFT work on random input. This experiment uses no collisions or data-dependent cache.
+- **OpenAI/CrocSwap circuits:** No attempt here to retune recursion constants, frame ranks or multiplication exponent.
+
+**Novelty:** Quadratic chirps, Bluestein's identity, CAZAC, spectral support and variable-coefficient recurrences are classical ideas. The combination is a new falsification checkpoint in *our project*, not a claim of first discovery in the literature.
+
+## 9. The next precise, independent challenge
+
+Propose a fully charged **exact algorithm for multiplying by C_h** on all fresh inputs in which the output generation itself uses fewer than N log N arithmetic operations. To avoid repeating this failure, it must NOT merely:
+
+1. store C_h compactly or list its O(N) recurrence coefficients;
+2. generate all N output moments by an ordinary FFT but count only propagation;
+3. apply an annihilator to the kernel while ignoring its commutator with convolution;
+4. use a constant number of bounded-fan-in sparse mixing stages (their combined row support would be too small); or
+5. reuse numerical results from related inputs or replace the exact transform by a fixed-precision approximation.
+
+A credible candidate needs a new composition/evaluation identity with all coefficient construction, intermediate data, full N outputs, and memory moves charged. If it uses strongly nonunitary maps, test coefficient blowup and conditioning. If it is a form of unrestricted shared linear circuit, compare it with the known exact-DFT result instead of claiming new ground.
+
+### Prior-art references
+
+- Bluestein chirp-z algorithm and even-N cyclic case: https://en.wikipedia.org/wiki/Chirp_Z-transform
+- AMD rocFFT Bluestein implementation background: https://rocm.docs.amd.com/projects/rocFFT/en/docs-6.3.0/design/bluestein.html
+- Quadratic chirp/CAZAC sequences: https://doi.org/10.1049/EL.2010.3510
+- Morgenstern FFT bounded-coefficient lower bound: https://doi.org/10.1145/321752.321761
+- Nir Ailon, well-conditioned linear model: https://arxiv.org/abs/1403.1307
+- Prior checkpoints: `FFT_RESEARCH_CANONICAL_CHECKPOINT_2026-10-09.md`, `fft_exact_compact_operator/NEXT_EXACT_TARGET.md`.

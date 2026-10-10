@@ -1,0 +1,168 @@
+# New-material fusion: shrinking error and Green graph operators
+
+9 October 2026. The new material is compatible with two parts of our research.
+The strongest completed fusion is an approximate all-output transform with
+vanishing error and linear bounded-word work. The Green material also yields
+useful exact operator identities and a mixer that escapes its particular
+constant-condition obstruction. **An exact arbitrary-input o(N log N) FFT is
+still not established.**
+
+## What is new, reused, or rejected
+
+| Supplied material | Decision | Reason |
+| --- | --- | --- |
+| `fft_wordram_shrinking_error_v4(1).zip` | Fuse its parameter schedule with our certified eager decoder and exact periodic baseline | Variable precision remains affordable; preprocessing, sampling, and explicit output writes can all be charged. |
+| `fft_nonunitary_global_green_research_2026-10-09(3).zip` | Retain its condition and gauge checks; extend the operator family and Fourier conjugacy | Dense linear-cost stages alone do not imply a faster FFT. The additional constructions identify which barriers survive. |
+| `fft_macro_wordram_checkpoint_20261009(1).zip` | Reuse as an existing dependency | Its SHA256 is exactly the same as our previous macro checkpoint, not a new research result. |
+
+The original uploads are preserved without edits. The two new packages are
+included under `fft_new_fusion_materials_20261009/`; the identical old macro
+archive is represented by its provenance record and the specific dependencies
+needed for reproduction.
+
+## 1. Compatible approximate fusion
+
+Write L=log2(N), ell=log2(L), and
+L_box(x)=sum_j (|Re(x_j)|+|Im(x_j)|). Constants and finite base cases are made
+explicit in the integer/rational planner. In the asymptotic regime, choose
+
+    K = B = Theta(L^2 / ell^2),
+    g = Theta(L / ell),
+    eta_N = Theta(ell / sqrt(L)).
+
+K is the sample count, B the output block width, and g the samples represented
+by one table key. The complete table is generated and packed before decoding.
+Its at most N^gamma rows require N^gamma polylog(N)=o(N) preparation for fixed
+0<gamma<1. Each row occupies Theta(L/ell) bounded words. Descriptor generation
+and packed accumulation each require O(N) work, including the last partial
+block. Sampling, the fresh input scan, and writing all N outputs are charged.
+
+Now fit the existing q-periodic baseline h, q=gcd(N,4), and use the same
+algorithm on r=x-h. This fit uses exact integer arithmetic and chooses between
+the class mean and zero component by component, ensuring
+
+    L_box(r) <= L_box(x).
+
+For normalized Fourier U, with probability at least 1-N^(-c), fixed c>=1,
+the fused guarantee is
+
+    ||output - Ux||_infinity
+       <= C * (log log N / sqrt(log N)) * L_box(r) / sqrt(N).
+
+All work, including this fit and the residual construction, remains O(N) in
+the specified randomized Word-RAM model. The quarter-root frequencies are
+computed exactly by the input scan; zero residual gives an entirely exact
+structured-input result. For an arbitrary input the remaining outputs are
+approximate.
+
+The model uses O(log N)-bit signed integer components, or a common bounded
+fixed-point scale; sufficiently large Theta(log N)-bit words; bounded-word
+arithmetic including integer division; and fresh uniform random words. The
+stored coefficients are rational approximations of the unnormalized DFT,
+with a declared common normalization for the unitary error statement. Python
+big integers and transcendental functions are not assumed to be unit-cost
+primitives in the theorem.
+
+The guarantee concerns maximum coefficient error relative to a global signal
+scale. It does not promise coefficient-relative accuracy, vanishing relative
+error of the entire output vector, or exact integer multiplication.
+
+### A wider time/error tradeoff
+
+For 1<=tau<=L, the same architecture gives
+
+    K = B = Theta(tau L^2 / ell^2),
+    T = O(N tau),
+    error factor = O(ell / sqrt(tau L)).
+
+Taking tau=L/ell recovers the supplied sub-FFT point:
+T=O(N log N/log log N) and error factor O((log log N)^(3/2)/log N).
+More generally, any h(N)->infinity with h<=L gives
+T=O(N L/h) and error factor O(ell sqrt(h)/L).
+These are upper bounds for this construction, not optimality claims.
+Baseline subtraction multiplies every bound by the measured residual ratio
+L_box(r)/L_box(x), which need not tend to zero on arbitrary inputs.
+
+### Important prototype repair
+
+The uploaded v4 code caches unpacked arrays and repacks every B-lane row on
+every lookup. That adds Theta(N G) scalar work, where G=K/g. At its linear
+schedule, this is Theta(N log N/log log N), not O(N). Its saved counters omit
+these lane visits. The existing `GuardedDecoder` already builds every row
+once, packs it once, and directly indexes packed words. We use that decoder
+with the new schedule. The gap is in the supplied implementation and cost
+ledger; it does not refute the repaired schedule.
+
+The new executable checks separately test finite eager tables and symbolic
+parameter bounds. They do not allocate an asymptotic-size input or establish
+a practical runtime crossover against an optimized FFT.
+
+## 2. Green operators and exact graph reuse
+
+The supplied Green stages are useful structured operators. For
+T=3I-A_path, its Fourier conjugate is a diagonal matrix plus two rank-one
+boundary corrections. Consequently the path Green inverse, and the supplied
+sum T^-1+(T+I)^-1, admit compatible source and target formulas. This supplies
+an exact algebraic bridge to our graph-filter framework without calling an
+FFT as a subroutine in the target operator.
+
+The supplied fixed-stage bound uses induced 1-norm condition numbers:
+the normalized Fourier matrix has kappa_1=N. Products of a fixed family with
+uniformly bounded kappa_1 therefore need Omega(log N) stages. Global scalar
+rescaling cannot evade that condition-number bound. It is not a universal
+FFT lower bound, and kappa_1 growth alone is not a statement about numerical
+stability in the Euclidean norm.
+
+Our new candidate is
+
+    K(M) = I + (I-M)^-1,       M^N = -I,
+
+where M is a full weighted cycle with unit-modulus weights. It and its inverse
+are dense and admit linear-cost scalar-field applications. For N>=2,
+
+    kappa_1(K) = (N+2) 2^(N-1) / (2^N+1) = Theta(N).
+
+Thus it escapes this particular constant-kappa_1 obstruction. It also
+intertwines with the Fourier-conjugate affine cycle. This is a surviving
+building block, not a factorization of Fourier into fewer stages.
+Exact denominators and algebraic coefficients are not automatically
+O(log N)-bit words; these exact scalar-field results are kept separate from
+the approximate Word-RAM theorem.
+
+Applying a cheap filter to a completely arbitrary input still leaves a
+transform to compute. A smaller source residual alone is insufficient if the
+inverse target operator amplifies its error. The bridge audit charges that
+amplification and identifies exact sparse-head removal plus approximate-tail
+decoding as the conditional fusion worth retaining.
+
+For the supplied two-Green operator, the new proof gives a target inverse
+infinity-norm bound of 73/18, independent of N. This controls mathematical
+error transport; a certified bounded-word implementation of that complete
+Green-to-sampler pipeline remains to be built.
+
+The supplied gauge construction telescopes to the ordinary FFT. Its density
+and nonunitarity therefore do not establish an algorithmic improvement. Its
+reported gauge-addition counter also omits the accumulator initialization
+addition used in its literal implementation; the independent audit records
+the correction.
+The new audit also recognizes stage-dependent rank-one gauges that the
+uploaded single-gauge detector misses. Its dense verification cost is
+explicitly excluded from any linear-time evaluator claim.
+
+## Reproduction and provenance
+
+Use Python 3.12 with NumPy installed, then run `python3 run_all.py` from this
+directory. The finite eager-table checks deliberately charge tens of millions
+of prototype operations and may take longer than the other checks.
+`VALIDATION.json` records the
+new checks actually run, while each component contains its implementation,
+results, and assumptions. Previously saved checks are included only as
+dependency context, not counted as new evidence. `MANIFEST.json` records
+file hashes. No external paid service or network access is needed for the
+reproduction scripts.
+
+Dense structured linear-time multiplication is established background, not
+a novelty claim here. See Clement Pernet, [Computing with quasiseparable
+matrices](https://arxiv.org/abs/1602.01246). The research contribution of this
+checkpoint is the specific fusion, cost repairs, exact identities, and
+reproducible checks described above; a broader novelty review is not claimed.

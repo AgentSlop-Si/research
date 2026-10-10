@@ -1,0 +1,94 @@
+   1 """Own exact reconstruction of the N16 finite-field tangent proof object.
+   2 Only JSON data and our independently authored flow routines are read.
+   3 """
+   4 from pathlib import Path
+   5 import json, random
+   6 import numpy as np
+   7 from independent_nonlinear_checks import Flow, network
+   8 
+   9 ROOT=Path(__file__).resolve().parent
+  10 SOURCE = ROOT / 'nonlinear_tangent_certificate_N16.json'
+  11 cert=json.loads(SOURCE.read_text())
+  12 n,r,p=cert['n'],cert['rank_per_stage'],cert['modulus']
+  13 perm=cert['shuffle']
+  14 
+  15 def reduce(a):
+  16     a=np.array(a,dtype=np.int64,copy=True)%p
+  17     pivots=[]; row=0
+  18     for c in range(a.shape[1]):
+  19         if row==len(a): break
+  20         nz=np.flatnonzero(a[row:,c])
+  21         if not len(nz): continue
+  22         k=row+int(nz[0]); a[[row,k]]=a[[k,row]]
+  23         a[row]=(a[row]*pow(int(a[row,c]),-1,p))%p
+  24         ids=np.flatnonzero(a[:,c]); ids=ids[ids!=row]
+  25         if len(ids): a[ids]=(a[ids]-a[ids,c,None]*a[row])%p
+  26         pivots.append(c); row+=1
+  27     return a,pivots
+  28 
+  29 def kernel(a):
+  30     red,piv=reduce(a)
+  31     out=[]
+  32     for j in range(red.shape[1]):
+  33         if j in piv: continue
+  34         v=np.zeros(red.shape[1],dtype=np.int64);v[j]=1
+  35         for row,c in enumerate(piv): v[c]=-red[row,j]%p
+  36         assert not np.any(a@v%p)
+  37         out.append(v)
+  38     return out
+  39 
+  40 rng=random.Random(cert['generator_seed'])
+  41 def params():
+  42     arrays=[np.array([[rng.randrange(1,p) for a in range(r)] for i in range(n)],dtype=np.int64) for z in range(4)]
+  43     arrays.append(np.array([rng.randrange(1,p) for i in range(n)],dtype=np.int64))
+  44     return arrays
+  45 
+  46 def matrix(q):
+  47     l,v,u,w,d=q
+  48     return (np.tril(l@v.T,-1)+np.triu(u@w.T,1)+np.diag(d))%p
+  49 
+  50 def derivs(q):
+  51     for i in range(n):
+  52         a=np.zeros((n,n),dtype=np.int64);a[i,i]=1;yield a
+  53     for typ in range(4):
+  54         for i in range(n):
+  55             for lane in range(r):
+  56                 a=np.zeros((n,n),dtype=np.int64)
+  57                 if typ==0: a[i,:i]=q[1][:i,lane]
+  58                 if typ==1: a[i+1:,i]=q[0][i+1:,lane]
+  59                 if typ==2: a[i,i+1:]=q[3][i+1:,lane]
+  60                 if typ==3: a[:i,i]=q[2][:i,lane]
+  61                 yield a
+  62 
+  63 aa,bb=params(),params();a,b=matrix(aa),matrix(bb)
+  64 pa=a[perm,:];m=b@pa%p
+  65 columns=[(b@da[perm,:]%p).ravel() for da in derivs(aa)]
+  66 columns += [(db@pa%p).ravel() for db in derivs(bb)]
+  67 j=np.stack(columns,axis=1)
+  68 rank_j=len(reduce(j)[1]); assert rank_j==232
+  69 
+  70 edges,ids,src,sink=network(n,r,perm)
+  71 tangent=[]
+  72 for entry in cert['unique_nontrivial_cut_rectangles']:
+  73     rows,cols=entry['R'],entry['C']
+  74     e=edges+[(src,ids[0,'x',c,0],n+1) for c in cols]+[(ids[1,'y',rr,1],sink,n+1) for rr in rows]
+  75     bound=Flow(len(ids),e).value(src,sink)
+  76     block=m[np.ix_(rows,cols)]
+  77     assert bound==entry['bound']==len(reduce(block)[1])
+  78     for left in kernel(block.T):
+  79         for right in kernel(block):
+  80             g=np.zeros((n,n),dtype=np.int64)
+  81             g[np.ix_(rows,cols)]=np.outer(left,right)%p
+  82             tangent.append(g.ravel())
+  83 g=np.stack(tangent)
+  84 delta=np.zeros(n*n,dtype=np.int64)
+  85 for k,v in cert['delta_sparse_flattened'].items(): delta[int(k)]=v
+  86 q=np.array(cert['normal_vector_flattened'],dtype=np.int64)
+  87 rank_g=len(reduce(g)[1]); assert rank_g==14
+  88 assert not np.any(g@j%p)
+  89 assert not np.any(g@delta%p)
+  90 assert not np.any(q@j%p)
+  91 pairing=int(q@delta%p);assert pairing==4599
+  92 result={'uploaded_code_executed':False,'field_prime':p,'jacobian_shape':list(j.shape),'jacobian_rank':rank_j,'saved_rectangles_recomputed':len(cert['unique_nontrivial_cut_rectangles']),'cut_tangent_rows':len(g),'cut_tangent_rank':rank_g,'q_dot_delta':pairing,'delta_support':cert['delta_sparse_flattened'],'checks':['all saved graph capacities','all saved block ranks','G J = 0','G delta = 0','q J = 0','q delta = 4599'],'scope':'35 saved rectangles; the original 20000-query sampling sequence was not rerun; finite-field first-order statement only'}
+  93 (ROOT/'independent_tangent_results.json').write_text(json.dumps(result,indent=2)+'\n')
+  94 print(json.dumps(result,indent=2))

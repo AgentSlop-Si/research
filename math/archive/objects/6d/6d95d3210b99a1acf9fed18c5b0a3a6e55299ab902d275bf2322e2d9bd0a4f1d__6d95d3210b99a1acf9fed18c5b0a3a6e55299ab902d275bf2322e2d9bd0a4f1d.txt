@@ -1,0 +1,93 @@
+"""Numerical feasibility probe for F8=B P A, rank-one separated-generator stages.
+
+Complex 60-parameter gauge chart (A diagonal fixed to 1, valid only if A diagonal is nonzero).
+Residuals and the analytic Jacobian are realifications of complex polynomial equations.
+A near-fit is NOT a proof of exact factorization, and nonzero residual is NOT a proof of nonexistence.
+"""
+import numpy as np
+from scipy.optimize import least_squares
+from dataclasses import dataclass
+import json,sys,time
+P8=np.array([7,0,6,3,4,1,2,5]); n=8
+
+def stage(z, diag_fixed):
+    assert len(z)==(26 if diag_fixed else 34)
+    S=np.zeros((8,8),dtype=complex); ds=[]
+    for _ in range(len(z)):ds.append(np.zeros_like(S))
+    k=0
+    if diag_fixed:
+        np.fill_diagonal(S,1)
+    else:
+        for j in range(8):
+            S[j,j]=z[k];ds[k][j,j]=1;k+=1
+    # lower: first row vector [x1..x6,1], and col vector [y0..y6]
+    x=np.concatenate([[0],z[k:k+6],[1]])
+    ki=k;k+=6
+    v=np.concatenate([z[k:k+7],[0]])
+    kv=k;k+=7
+    for i in range(1,8):
+        for j in range(i):
+            S[i,j]=x[i]*v[j]
+            if i<7:ds[ki+i-1][i,j]=v[j]
+            ds[kv+j][i,j]=x[i]
+    # upper: row vector [1,u1..u6,0], col vector [0,w1..w7]
+    u=np.concatenate([[1],z[k:k+6],[0]])
+    ku=k;k+=6
+    w=np.concatenate([[0],z[k:k+7]])
+    kw=k;k+=7
+    for i in range(7):
+        for j in range(i+1,8):
+            S[i,j]=u[i]*w[j]
+            if i>0:ds[ku+i-1][i,j]=w[j]
+            ds[kw+j-1][i,j]=u[i]
+    assert k==len(z)
+    return S,ds
+
+def result(z, perm=P8):
+    A,dA=stage(z[:26],True)
+    B,dB=stage(z[26:],False)
+    M=B@A[perm]
+    J=np.array([(B@D[perm]).reshape(-1) for D in dA]+[(D@A[perm]).reshape(-1) for D in dB]).T
+    return M,J
+
+def realify(M):return np.concatenate([M.real.reshape(-1),M.imag.reshape(-1)])
+def rjac(J):return np.block([[J.real,-J.imag],[J.imag,J.real]])
+
+def solve(seed=0,permutation=P8,max_calls=300,positive=False,quiet=False):
+    rng=np.random.default_rng(seed)
+    target=np.exp(2j*np.pi*np.outer(np.arange(8),np.arange(8))/8)
+    if positive:
+        known=(rng.normal(size=60)+1j*rng.normal(size=60))*.25
+        known[:26]*=.4
+        target=result(known,permutation)[0]
+        initial=known + (rng.normal(size=60)+1j*rng.normal(size=60))*.01
+    else:
+        initial=(rng.normal(size=60)+1j*rng.normal(size=60))*.36
+        initial[:26]*=.5
+        # force finite starting diagonal for B
+        initial[26:34] = 1+(.05*rng.normal(size=8))
+    cache={}
+    def cached(z):
+        key=z.tobytes()
+        if key not in cache:
+            zz=z[:60]+1j*z[60:]
+            M,J=result(zz,permutation)
+            cache.clear();cache[key]=(realify(M-target),rjac(J))
+        return cache[key]
+    t=time.time()
+    fit=least_squares(lambda z:cached(z)[0],realify(initial),jac=lambda z:cached(z)[1],max_nfev=max_calls,ftol=1e-12,gtol=1e-12,xtol=1e-12,verbose=0,method='trf')
+    deviation=np.linalg.norm(fit.fun)
+    out=dict(seed=seed,positive_control=positive,perm=permutation.tolist(),normalized_residual=float(deviation/np.linalg.norm(target)),max_entry_error=float(np.max(np.abs(fit.fun))),nfev=fit.nfev,status=int(fit.status),seconds=round(time.time()-t,2))
+    if not quiet:print(json.dumps(out),flush=True)
+    return out
+
+if __name__=='__main__':
+    mode=sys.argv[1] if len(sys.argv)>1 else 'search'
+    if mode=='check':
+        rng=np.random.default_rng(321);x=(rng.normal(size=60)+1j*rng.normal(size=60))*.31
+        _,J=result(x); h=1e-7
+        Jnum=np.array([((result(x+h*np.eye(60)[i])[0]-result(x)[0])/h).reshape(-1) for i in range(60)]).T
+        print('analytic-jacobian-max-error',float(np.max(np.abs(J-Jnum))))
+    elif mode=='positive':solve(39,positive=True,max_calls=150)
+    else:
+        for seed in range(int(sys.argv[2]) if len(sys.argv)>2 else 3):solve(seed,max_calls=250)

@@ -1,0 +1,76 @@
+   1 #!/usr/bin/env python3
+   2 """All-input algebraic identity verifier; deliberately uses M K-NTTs (NOT fast)."""
+   3 from __future__ import annotations
+   4 import json,random
+   5 from phase9_dense_cycle import P,exact_reference_dft,root_of_unity
+   6 from phase8_weyl_cycle import exact_ntt
+   7 from test_phase9 import matrix_rank_mod
+   8 
+   9 
+  10 def verify(n,m,seed,singularity=False):
+  11     k=n//m;rng=random.Random(seed)
+  12     wn=root_of_unity(n);wk=pow(wn,m,P);wi=pow(wk,P-2,P)
+  13     tab=[pow(wn,j,P) for j in range(n)]
+  14     x=[rng.randrange(P) for _ in range(n)]
+  15     cols=[[x[b*m+t] for b in range(k)] for t in range(m)]
+  16     # These M full K-FFTs are *explicitly* charged to the oracle/check,
+  17     # and are the outstanding obstacle for an unrestricted input.
+  18     f=[exact_ntt(v,wi) for v in cols]
+  19     lam=[rng.randrange(1,P) for _ in range(k)]
+  20     if singularity:
+  21         lam[0]=1
+  22         lam[1]=tab[(1+k)%n]
+  23     e=[[ (f[t+1][ell]-lam[ell]*f[t][ell])%P for ell in range(k)]
+  24        for t in range(m-1)]
+  25     oracle=exact_reference_dft(x)
+  26     singular_count=0
+  27     checks=0
+  28     for ell in range(k):
+  29         for j in range(m):
+  30             index=ell+j*k;z=tab[(-index)%n]
+  31             r=lam[ell]*z%P
+  32             den=(1-r)%P
+  33             # Valid for all inputs, but H requires all fresh column spectra.
+  34             H=0;zp=1;B=0
+  35             for t in range(m-1):
+  36                 H=(H+e[t][ell]*zp)%P
+  37                 B=(B+e[t][ell]*pow(lam[ell],m-1-t,P))%P
+  38                 zp=zp*z%P
+  39             if den:
+  40                 numerator=(f[0][ell]*(1-pow(r,m,P)) + z*H-pow(z,m,P)*B)%P
+  41                 value=numerator*pow(den,P-2,P)%P
+  42                 # Telescoping numerator is a second independent formulation.
+  43                 reduced=(f[0][ell]+z*H-lam[ell]*pow(z,m,P)*f[m-1][ell])%P
+  44                 assert numerator==reduced
+  45             else:
+  46                 singular_count+=1
+  47                 value=(m*f[0][ell]+sum(
+  48                     e[t][ell]*pow(z,t+1,P)*(m-1-t) for t in range(m-1)))%P
+  49             direct=sum(f[t][ell]*pow(z,t,P) for t in range(m))%P
+  50             assert direct==value==oracle[index]
+  51             checks+=1
+  52     rank=matrix_rank_mod([[e[t][ell] for t in range(m-1)] for ell in range(k)])
+  53     return {'n':n,'k':k,'m':m,'seed':seed,'singularity_forced':singularity,
+  54             'all_output_checks':checks,'singular_denominators':singular_count,
+  55             'innovation_matrix_column_rank':rank,'maximum_possible_innovation_rank':m-1,
+  56             'naive_full_K_NTTs_required_by_this_verifier':m,'identity_residuals':0}
+  57 
+  58 
+  59 def main():
+  60     records=[]
+  61     for k,m in [(8,4),(16,4),(16,8),(32,8),(64,8),(64,16)]:
+  62         for seed in (10,27,51):
+  63             records.append(verify(k*m,m,seed,singularity=seed==27))
+  64     assert all(r['innovation_matrix_column_rank']==r['maximum_possible_innovation_rank']
+  65                for r in records)
+  66     summary={'tested_records':len(records),'output_equalities':sum(x['all_output_checks'] for x in records),
+  67              'records':records,
+  68              'no_asymptotic_claim':
+  69              'Each all-input identity check computes M K-FFTs. This is an exact identity, not a sub-NlogN algorithm.'}
+  70     open('UNIVERSAL_IDENTITY_AUDIT.json','w').write(json.dumps(summary,indent=2))
+  71     print('ALL INPUTS UNIVERSAL RATIONAL IDENTITY PASSED')
+  72     print('records:',len(records),'exact entries:',summary['output_equalities'])
+  73     print('innovation matrix full column rank in all',len(records),'records')
+  74     print('singular denominator cases:',sum(r['singular_denominators'] for r in records))
+  75 
+  76 if __name__=='__main__':main()

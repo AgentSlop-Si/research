@@ -1,0 +1,124 @@
+1: #!/usr/bin/env python3
+2: """Automated checks for the v7 global quadratic-chirp median sketch."""
+3: from __future__ import annotations
+4: 
+5: import math
+6: import unittest
+7: 
+8: import numpy as np
+9: 
+10: from prototype import (
+11:     ChirpState,
+12:     chirp_median_fft,
+13:     covariance_matrix_formula,
+14:     covariance_operator_norm,
+15:     direct_row_estimate,
+16:     draw_state,
+17:     exact_unitary_dft,
+18:     median_uniform_bound,
+19:     one_row_estimate,
+20:     row_work_proxy,
+21:     variance_bound,
+22:     worst_case_signal,
+23: )
+24: 
+25: 
+26: class GlobalChirpMedianTests(unittest.TestCase):
+27:     def test_recurrence_matches_materialized_projection(self) -> None:
+28:         rng = np.random.default_rng(1)
+29:         for n, m in [(32, 2), (64, 4), (256, 8), (1024, 16)]:
+30:             x = rng.normal(size=n) + 1j * rng.normal(size=n)
+31:             state = draw_state(n, rng)
+32:             got = one_row_estimate(x, m, state)
+33:             ref = direct_row_estimate(x, m, state)
+34:             self.assertLess(float(np.max(np.abs(got - ref))), 2e-10)
+35: 
+36:     def test_formula_matches_bruteforce_covariance(self) -> None:
+37:         # Tiny independent enumeration over every odd a and every beta.
+38:         n, m, output = 8, 2, 3
+39:         brute = np.zeros((n, n), dtype=np.complex128)
+40:         exact_basis_output = np.exp(-2j * np.pi * output * np.arange(n) / n) / math.sqrt(n)
+41:         count = 0
+42:         for a in range(1, n, 2):
+43:             for beta in range(n):
+44:                 state = ChirpState(a, beta)
+45:                 coeff = np.empty(n, dtype=np.complex128)
+46:                 for j in range(n):
+47:                     e = np.zeros(n, dtype=np.complex128)
+48:                     e[j] = 1.0
+49:                     coeff[j] = direct_row_estimate(e, m, state)[output] - exact_basis_output[j]
+50:                 brute += np.outer(np.conj(coeff), coeff)
+51:                 count += 1
+52:         brute /= count
+53:         formula = covariance_matrix_formula(n, m, output)
+54:         self.assertLess(float(np.max(np.abs(brute - formula))), 2e-12)
+55: 
+56:     def test_exact_operator_norm(self) -> None:
+57:         for n, m in [(16, 2), (32, 4), (128, 8), (512, 16)]:
+58:             self.assertGreaterEqual(n // m, 2 * m)
+59:             got = covariance_operator_norm(n, m, 0)
+60:             self.assertAlmostEqual(got, 2.0 * m / n, places=12)
+61: 
+62:     def test_output_index_only_unitarily_conjugates_covariance(self) -> None:
+63:         n, m = 32, 4
+64:         spectra = []
+65:         for output in [0, 1, 5, 17, 31]:
+66:             spectra.append(np.linalg.eigvalsh(covariance_matrix_formula(n, m, output)))
+67:         for eigenvalues in spectra[1:]:
+68:             self.assertLess(float(np.max(np.abs(eigenvalues - spectra[0]))), 1e-12)
+69: 
+70:     def test_worst_case_signal_attains_bound(self) -> None:
+71:         for n, m in [(64, 4), (128, 8), (512, 16)]:
+72:             x = worst_case_signal(n, m)
+73:             q = covariance_matrix_formula(n, m, 0)
+74:             rayleigh = float(np.vdot(x, q @ x).real)
+75:             self.assertAlmostEqual(rayleigh, 2.0 * m / n, places=12)
+76: 
+77:     def test_unbiasedness_empirically(self) -> None:
+78:         rng = np.random.default_rng(2)
+79:         n, m, trials = 256, 8, 1500
+80:         x = rng.normal(size=n) + 1j * rng.normal(size=n)
+81:         exact = exact_unitary_dft(x)
+82:         accum = np.zeros(n, dtype=np.complex128)
+83:         for _ in range(trials):
+84:             accum += one_row_estimate(x, m, draw_state(n, rng))
+85:         err = float(np.max(np.abs(accum / trials - exact)))
+86:         # Monte Carlo standard error is on the order sqrt(M/trials)*||x||/sqrt(N).
+87:         self.assertLess(err, 0.45)
+88: 
+89:     def test_variance_bound_finite_and_exact_limit(self) -> None:
+90:         rng = np.random.default_rng(3)
+91:         x = rng.normal(size=1024) + 1j * rng.normal(size=1024)
+92:         self.assertGreater(variance_bound(x, 16), 0.0)
+93:         # M=1 makes the block projection exactly the identity.
+94:         self.assertEqual(variance_bound(x, 1), 0.0)
+95:         got = one_row_estimate(x, 1, draw_state(1024, rng))
+96:         self.assertLess(float(np.max(np.abs(got - exact_unitary_dft(x)))), 1e-10)
+97: 
+98:     def test_median_interface_and_bound(self) -> None:
+99:         rng = np.random.default_rng(4)
+100:         x = rng.normal(size=1024) + 1j * rng.normal(size=1024)
+101:         got = chirp_median_fft(x, 16, 3, rng)
+102:         self.assertEqual(got.shape, x.shape)
+103:         bound = median_uniform_bound(x, 16, 3, 0.05)
+104:         self.assertTrue(math.isfinite(bound) and bound > 0.0)
+105: 
+106:     def test_constant_row_linear_work_regime(self) -> None:
+107:         # Symbolically choose M on the log_2 N scale.  K log K <= N when M>=log K.
+108:         for log2_n in [16, 32, 64, 128, 256, 512]:
+109:             # Proxy uses dimensions only; use floating algebra for the asymptotic inequality.
+110:             m = 2 ** math.ceil(math.log2(log2_n))
+111:             k_log_k_over_n = (log2_n - math.log2(m)) / m
+112:             self.assertLessEqual(k_log_k_over_n, 1.0)
+113: 
+114:     def test_growing_rows_are_sub_nlogn(self) -> None:
+115:         ratios = []
+116:         for log2_n in [64, 128, 256, 512, 1024, 2048, 4096]:
+117:             rows = 2 * math.ceil(log2_n / math.log2(log2_n)) - 1
+118:             ratios.append(rows / log2_n)
+119:         self.assertLess(ratios[-1], ratios[0])
+120:         self.assertLess(ratios[-1], 0.2)
+121: 
+122: 
+123: if __name__ == "__main__":
+124:     unittest.main(verbosity=2)

@@ -1,0 +1,135 @@
+1: """Exact modular Jacobian of multi-stage separated-generator rank-one QS products.
+2: 
+3: M = S_t P_(t-1) S_(t-1) ... P_1 S_1, where (P_j X)[i,:]=X[perm_j[i],:].
+4: Each S is diag(d)+tril(a b^T,-1)+triu(c e^T,1).
+5: 
+6: This is NOT an FFT construction. Uses numpy.int64 only with moduli such that
+7: n*(p-1)**2 <= 2**63-1. Independent complete finite-difference checks.
+8: """
+9: from pathlib import Path
+10: 
+11: SEED_MOD=12289
+12: 
+13: def stage(n,r,rng):
+14:     a=lambda:np.array([[rng.randrange(1,SEED_MOD) for _ in range(r)] for _ in range(n)],dtype=np.int64)
+15:     return {'L':a(),'V':a(),'U':a(),'W':a(),
+16:             'd':np.array([rng.randrange(1,SEED_MOD) for _ in range(n)],dtype=np.int64)}
+17: 
+18: def variants(par):
+19:     n=len(par['d']);r=par['L'].shape[1]
+20:     for i in range(n):
+21:         d=np.zeros((n,n),dtype=np.int64);d[i,i]=1
+22:         yield ('d',i,0),d
+23:     for typ,partner in [('L','V'),('V','L'),('U','W'),('W','U')]:
+24:         for i in range(n):
+25:             for k in range(r):
+26:                 d=np.zeros((n,n),dtype=np.int64)
+27:                 if typ=='L':d[i,:i]=par['V'][:i,k]
+28:                 elif typ=='V':d[i+1:,i]=par['L'][i+1:,k]
+29:                 elif typ=='U':d[i,i+1:]=par['W'][i+1:,k]
+30:                 elif typ=='W':d[:i,i]=par['U'][:i,k]
+31:                 yield (typ,i,k),d
+32: import numpy as np
+33: import random
+34: 
+35: 
+36: def stage_value(par,p):
+37:     n=len(par['d'])
+38:     low=np.tril(par['L'] @ par['V'].T,k=-1)
+39:     upp=np.triu(par['U'] @ par['W'].T,k=1)
+40:     return (low+upp+np.diag(par['d']))%p
+41: 
+42: 
+43: def multiply(A,B,p):
+44:     return (A @ B) % p
+45: 
+46: 
+47: def compose(mats,perms,p):
+48:     x = mats[0]
+49:     for j in range(1,len(mats)):
+50:         x=multiply(mats[j],x[perms[j-1],:],p)
+51:     return x
+52: 
+53: 
+54: def materialize(n,t,perms,seed,p=12289):
+55:     rng=random.Random(seed)
+56:     pars=[stage(n,1,rng) for _ in range(t)]
+57:     mats=[stage_value(v,p) for v in pars]
+58:     output=compose(mats,perms,p)
+59:     jcols=[]
+60:     for k in range(t):
+61:         before=compose(mats[:k],perms[:k-1],p) if k>0 else None
+62:         for param_id,d in variants(pars[k]):
+63:             if k==0:
+64:                 deriv=d%p
+65:             else:
+66:                 deriv=multiply(d, before[perms[k-1],:],p)
+67:             for j in range(k+1,t):
+68:                 deriv=multiply(mats[j],deriv[perms[j-1],:],p)
+69:             jcols.append(deriv.reshape(n*n))
+70:     J=np.array(jcols,dtype=np.int64).T%p
+71:     return output,J,pars,mats
+72: 
+73: 
+74: def check_differences(n,t,perms,pars,base,J,seed,p=12289,num=20):
+75:     rng=random.Random(seed)
+76:     orig=[{k:np.copy(v) for k,v in par.items()} for par in pars]
+77:     count=5*n
+78:     for x in rng.sample(range(t*count),min(num,t*count)):
+79:         s,k=divmod(x,count)
+80:         par=[{k:np.copy(v) for k,v in pa.items()} for pa in orig]
+81:         # same coordinate enumeration as jacobian_gate.variants()
+82:         label=list(variants(par[s]))[k][0]
+83:         if label[0]=='d':
+84:             par[s]['d'][label[1]]=(par[s]['d'][label[1]]+1)%p
+85:         else:
+86:             par[s][label[0]][label[1],label[2]]=(par[s][label[0]][label[1],label[2]]+1)%p
+87:         got=compose([stage_value(pa,p) for pa in par],perms,p)
+88:         if not np.array_equal((got-base).reshape(-1)%p,J[:,x]):
+89:             raise AssertionError(('differential mismatch',x,label))
+90:     return True
+91: 
+92: 
+93: def rank_minor(A,p):
+94:     """Returns (rank, pivot columns, det pivot rows/cols) by row Gauss elimination.
+95:        At full-row-rank Jacobian the recorded full-row determinant is a certificate.
+96:     """
+97:     A=np.array(A,copy=True,dtype=np.int64)%p
+98:     nr,nc=A.shape
+99:     row=0; cols=[];pivrows=[]; determinant=1;sign=1
+100:     for col in range(nc):
+101:         if row>=nr:break
+102:         inds=np.flatnonzero(A[row:,col]);
+103:         if not len(inds): continue
+104:         pivotrow=row+int(inds[0])
+105:         if pivotrow!=row:
+106:             A[[row,pivotrow],:]=A[[pivotrow,row],:];sign=-sign
+107:         z=int(A[row,col]);determinant=determinant*z%p
+108:         inverse=pow(z,-1,p)
+109:         A[row,col:]=(A[row,col:]*inverse)%p
+110:         below=np.flatnonzero(A[row+1:,col])+row+1
+111:         if len(below):
+112:             A[below,col:]=(A[below,col:]-A[below,col:col+1]*A[row:row+1,col:])%p
+113:         cols.append(col);row+=1
+114:     # invariant: row swaps among the N x N pivot-column minor reflected in sign
+115:     return row,cols,(determinant*sign)%p
+116: 
+117: 
+118: def evaluate(n,t,seed=99017,p=12289):
+119:     rng=random.Random(seed+n*31+t*997)
+120:     perms=[]
+121:     for _ in range(t-1):
+122:         a=list(range(n));rng.shuffle(a);perms.append(a)
+123:     base,J,pars,mats=materialize(n,t,perms,seed,p)
+124:     check_differences(n,t,perms,pars,base,J,seed+299,p)
+125:     rk,pivs,det=rank_minor(J,p)
+126:     upper=min(n*n,t*(5*n-6)-(t-1)*n)
+127:     return {'n':n,'t':t,'p':p,'seed':seed,'permutations':perms,'jac_shape':list(J.shape),
+128:             'rank':rk,'gauge_dimension_bound':upper,'pivot_columns':pivs,
+129:             'pivot_minor_det_mod_p':det if rk==n*n else None,
+130:             'finite_differences':'passed'}
+131: 
+132: if __name__=='__main__':
+133:     import json
+134:     for n,t in [(8,2),(8,3),(16,2),(16,3),(16,4),(16,5)]:
+135:         x=evaluate(n,t);print(json.dumps({k:v for k,v in x.items() if k not in ('pivot_columns','permutations')}),flush=True)

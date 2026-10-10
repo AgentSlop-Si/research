@@ -1,0 +1,113 @@
+1: #!/usr/bin/env python3
+2: """Automated consistency tests for the v5 frequency-shift sketch checkpoint."""
+3: from __future__ import annotations
+4: 
+5: import math
+6: import unittest
+7: 
+8: import numpy as np
+9: 
+10: from prototype import (
+11:     arithmetic_cost_proxy,
+12:     balanced_bucket_per_bin_variance,
+13:     balanced_bucket_sketch,
+14:     direct_expansion_estimate,
+15:     draw_randomness,
+16:     exact_unitary_dft,
+17:     frequency_shift_sketch,
+18:     frequency_shift_sketch_with_state,
+19:     median_frequency_shift_fft,
+20:     median_uniform_bound,
+21:     per_bin_variance,
+22: )
+23: 
+24: 
+25: class FrequencyShiftSketchTests(unittest.TestCase):
+26:     def test_fast_evaluator_matches_direct_expansion(self) -> None:
+27:         rng = np.random.default_rng(101)
+28:         for k, m in [(5, 3), (8, 4), (12, 5)]:
+29:             x = rng.normal(size=k * m) + 1j * rng.normal(size=k * m)
+30:             state = draw_randomness(k, m, rng)
+31:             fast = frequency_shift_sketch_with_state(x, m, state)
+32:             direct = direct_expansion_estimate(x, m, state)
+33:             self.assertLess(np.max(np.abs(fast - direct)), 1e-11)
+34: 
+35:     def test_m_equals_one_is_exact(self) -> None:
+36:         rng = np.random.default_rng(102)
+37:         x = rng.normal(size=128) + 1j * rng.normal(size=128)
+38:         estimate = frequency_shift_sketch(x, 1, rng)
+39:         exact = exact_unitary_dft(x)
+40:         self.assertLess(np.max(np.abs(estimate - exact)), 1e-11)
+41:         self.assertEqual(per_bin_variance(x, 1), 0.0)
+42: 
+43:     def test_variance_identity_empirically(self) -> None:
+44:         rng = np.random.default_rng(103)
+45:         k, m = 32, 8
+46:         x = rng.normal(size=k * m) + 1j * rng.normal(size=k * m)
+47:         exact = exact_unitary_dft(x)
+48:         predicted = per_bin_variance(x, m)
+49:         trials = 300
+50:         observed = 0.0
+51:         for _ in range(trials):
+52:             error = frequency_shift_sketch(x, m, rng) - exact
+53:             observed += float(np.mean(np.abs(error) ** 2))
+54:         observed /= trials
+55:         self.assertLess(abs(observed / predicted - 1.0), 0.08)
+56: 
+57:     def test_balanced_bucket_variance_and_exact_limit(self) -> None:
+58:         rng = np.random.default_rng(106)
+59:         k, m = 32, 8
+60:         x = rng.normal(size=k * m) + 1j * rng.normal(size=k * m)
+61:         exact = exact_unitary_dft(x)
+62: 
+63:         # One column per bucket has no collisions and is algebraically exact.
+64:         no_collision = balanced_bucket_sketch(x, m, m, rng)
+65:         self.assertLess(np.max(np.abs(no_collision - exact)), 1e-11)
+66:         self.assertEqual(balanced_bucket_per_bin_variance(x, m, m), 0.0)
+67: 
+68:         # A nontrivial collision size follows the exact variance formula.
+69:         bucket_count = 2
+70:         predicted = balanced_bucket_per_bin_variance(x, m, bucket_count)
+71:         trials = 300
+72:         observed = 0.0
+73:         for _ in range(trials):
+74:             err = balanced_bucket_sketch(x, m, bucket_count, rng) - exact
+75:             observed += float(np.mean(np.abs(err) ** 2))
+76:         observed /= trials
+77:         self.assertLess(abs(observed / predicted - 1.0), 0.08)
+78: 
+79:     def test_median_interface_and_finite_bound(self) -> None:
+80:         rng = np.random.default_rng(104)
+81:         x = rng.normal(size=512) + 1j * rng.normal(size=512)
+82:         estimate = median_frequency_shift_fft(x, 8, 5, rng)
+83:         self.assertEqual(estimate.shape, x.shape)
+84:         bound = median_uniform_bound(x, 8, 5, 0.05)
+85:         self.assertTrue(math.isfinite(bound) and bound > 0.0)
+86: 
+87:     def test_sub_fft_cost_regimes(self) -> None:
+88:         # For powers of two N, choose power-of-two M near log N or log log N.
+89:         # The normalized cost must trend to zero along both regimes.
+90:         ratios_fast = []
+91:         ratios_trade = []
+92:         for log2_n in [32, 64, 128, 256, 512, 1024]:
+93:             m_fast = 1 << int(math.floor(math.log2(log2_n)))
+94:             m_trade = 1 << max(1, int(math.floor(math.log2(math.log2(log2_n)))))
+95:             # Divide the proxy by N before evaluating, avoiding gigantic integers.
+96:             fast_per_n = 1.0 + math.log2(m_fast) + (log2_n - math.log2(m_fast)) / m_fast
+97:             trade_per_n = 1.0 + math.log2(m_trade) + (log2_n - math.log2(m_trade)) / m_trade
+98:             ratios_fast.append(fast_per_n / log2_n)
+99:             ratios_trade.append(trade_per_n / log2_n)
+100:         self.assertLess(ratios_fast[-1], ratios_fast[0])
+101:         self.assertLess(ratios_trade[-1], ratios_trade[0])
+102:         self.assertLess(ratios_fast[-1], 0.03)
+103:         self.assertLess(ratios_trade[-1], 0.2)
+104: 
+105:     def test_rows_must_be_odd(self) -> None:
+106:         rng = np.random.default_rng(105)
+107:         x = np.ones(64, dtype=np.complex128)
+108:         with self.assertRaises(ValueError):
+109:             median_frequency_shift_fft(x, 8, 4, rng)
+110: 
+111: 
+112: if __name__ == "__main__":
+113:     unittest.main(verbosity=2)

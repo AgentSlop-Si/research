@@ -1,0 +1,202 @@
+   1 """Independent unit/mutation tests for Phase17. Run: python3 -m unittest -v test_phase17"""
+   2 import random,unittest,sys,cmath,math
+   3 sys.path.insert(0,__file__.rsplit('/',1)[0])
+   4 from green_sparse import (GreenSparse, candidate_library, transform_adaptive, direct_dft,
+   5                           P0,G0,CyclicSolver,Cost)
+   6 from rational_forcing import (AllLengthGreen, general_root, rational_fraction,forcing_from_sparse,
+   7                               direct_dft_any,bluestein_transform,inv_series,conv,PolyStats,prime_divisors)
+   8 
+   9 PAIRS=[(3,P0,G0),(5,P0,G0),(7,998244353,3),(8,P0,G0),(15,P0,G0),
+  10        (17,998244353,3),(30,P0,G0),(34,998244353,3),(60,P0,G0),
+  11        (119,998244353,3),(128,P0,G0),(256,P0,G0)]
+  12 
+  13 class Tests(unittest.TestCase):
+  14     def setUp(self):self.rng=random.Random(20261010)
+  15 
+  16     def test_root_orders(self):
+  17         for n,p,g in PAIRS:
+  18             w=general_root(n,p,g)
+  19             self.assertEqual(pow(w,n,p),1)
+  20             self.assertTrue(all(pow(w,n//q,p)!=1 for q in prime_divisors(n)))
+  21 
+  22     def test_all_length_pruned_forcing(self):
+  23         for n,p,g in PAIRS:
+  24             e=AllLengthGreen(n,p,g)
+  25             for k in sorted(set((0,1,2,3,min(7,n),n))):
+  26                 if k>n:continue
+  27                 entries={j:self.rng.randrange(1,p) for j in self.rng.sample(range(n),k)}
+  28                 actual,st=forcing_from_sparse(entries,n,e.omega,p,g)
+  29                 expected=direct_dft_any([entries.get(j,0) for j in range(n)],e.omega,p)
+  30                 self.assertEqual(actual,expected,(n,k))
+  31                 if k:
+  32                     self.assertEqual(st.max_den_degree,k)
+  33                     self.assertLessEqual(st.max_ntt_length,4*max(1,k))
+  34                 else:self.assertEqual(actual,[0]*n)
+  35 
+  36     def test_rational_polynomial_identity(self):
+  37         for n,p,g in PAIRS:
+  38             e=AllLengthGreen(n,p,g)
+  39             for k in (1,2,min(7,n)):
+  40                 entries={j:self.rng.randrange(1,p) for j in self.rng.sample(range(n),k)}
+  41                 num,den=rational_fraction(entries,e.omega,p,g)
+  42                 self.assertEqual(len(num),k)
+  43                 self.assertEqual(len(den),k+1)
+  44                 b=min(32,1<<(k-1).bit_length())
+  45                 inv=inv_series(den,b,p,g)
+  46                 check=conv(den,inv,p,g)[:b]
+  47                 self.assertEqual(check,[1]+[0]*(b-1))
+  48                 out,_=forcing_from_sparse(entries,n,e.omega,p,g)
+  49                 check=conv(den,out,p,g)[:n]
+  50                 self.assertEqual(check,num+[0]*(n-len(num)))
+  51 
+  52     def test_green_intertwining_entire_basis(self):
+  53         for n,p,g in [(3,P0,G0),(7,998244353,3),(17,998244353,3),(32,P0,G0),(60,P0,G0)]:
+  54             e=AllLengthGreen(n,p,g)
+  55             for j in range(n):
+  56                 x=[0]*n;x[j]=1
+  57                 f=direct_dft_any(x,e.omega,p)
+  58                 lf=e.L.apply(f)
+  59                 fp=direct_dft_any(e.P.apply(x),e.omega,p)
+  60                 self.assertEqual(lf,fp,(n,j))
+  61 
+  62     def test_dense_green_impulses(self):
+  63         for n,p,g in PAIRS:
+  64             e=AllLengthGreen(n,p,g)
+  65             for j in sorted(set((0,n//3,n-1))):
+  66                 x=e.structured_dense({j:1})
+  67                 self.assertEqual(sum(bool(z) for z in x),n,(n,j))
+  68                 y,info=e.transform(x,'rational')
+  69                 self.assertEqual(info['K'],1)
+  70                 self.assertEqual(info['stats'].max_ntt_length,0) # K=1 never calls NTT
+  71                 self.assertEqual(y,direct_dft_any(x,e.omega,p))
+  72 
+  73     def test_all_length_full_vs_bluestein(self):
+  74         for n,p,g in PAIRS:
+  75             e=AllLengthGreen(n,p,g)
+  76             for _ in range(4):
+  77                 x=[self.rng.randrange(p) for _ in range(n)]
+  78                 expected=direct_dft_any(x,e.omega,p)
+  79                 act,_=e.transform(x,method='bluestein')
+  80                 self.assertEqual(act,expected,(n,'full'))
+  81                 act,_=e.transform(x,method='auto')
+  82                 self.assertEqual(act,expected,(n,'auto'))
+  83 
+  84     def test_all_length_rational_dense_inputs(self):
+  85         for n,p,g in PAIRS:
+  86             e=AllLengthGreen(n,p,g)
+  87             for k in (2,3,min(8,n)):
+  88                 entries={j:self.rng.randrange(1,p) for j in self.rng.sample(range(n),k)}
+  89                 x=e.structured_dense(entries)
+  90                 actual,info=e.transform(x,'rational')
+  91                 self.assertEqual(info['K'],k,(n,k))
+  92                 self.assertEqual(actual,direct_dft_any(x,e.omega,p),(n,k))
+  93 
+  94     def test_dyadic_input_pruning(self):
+  95         for n in (2,4,8,16,64,256):
+  96             e=GreenSparse(n)
+  97             for k in sorted(set((0,1,2,min(9,n),n))):
+  98                 entries={j:self.rng.randrange(1,P0) for j in self.rng.sample(range(n),k)}
+  99                 y,co=e.pruned.from_entries(entries)
+ 100                 self.assertEqual(y,direct_dft([entries.get(j,0) for j in range(n)],e.omega))
+ 101                 if k:
+ 102                     self.assertLessEqual(co.node_size_sum,n*((k-1).bit_length()+2))
+ 103                 self.assertLessEqual(co.ntt_mults,n*(n.bit_length()-1)//2)
+ 104 
+ 105     def test_dyadic_adaptive_multi_green(self):
+ 106         for n in (8,32,128):
+ 107             cs=candidate_library(n)
+ 108             for cand in cs:
+ 109                 entries={self.rng.randrange(n):self.rng.randrange(1,P0)}
+ 110                 x=cand.structured_dense(entries)
+ 111                 actual,meta=transform_adaptive(x,cs)
+ 112                 self.assertLessEqual(meta['K'],1)
+ 113                 self.assertEqual(actual,direct_dft(x,cand.omega))
+ 114             x=[self.rng.randrange(P0) for _ in range(n)]
+ 115             actual,meta=transform_adaptive(x,cs)
+ 116             self.assertEqual(actual,direct_dft(x,cs[0].omega))
+ 117 
+ 118     def test_short_kernel_cache_is_exact_and_paid(self):
+ 119         for n,p,g in ((119,998244353,3),(256,P0,G0),(1024,P0,G0)):
+ 120             e=AllLengthGreen(n,p,g)
+ 121             k=min(32,n)
+ 122             data={j:self.rng.randrange(1,p) for j in self.rng.sample(range(n),k)}
+ 123             cached,stat=forcing_from_sparse(data,n,e.omega,p,g,cache_fixed_kernels=True)
+ 124             plain,oldstat=forcing_from_sparse(data,n,e.omega,p,g,cache_fixed_kernels=False)
+ 125             self.assertEqual(cached,plain)
+ 126             self.assertEqual(cached,direct_dft_any([data.get(j,0) for j in range(n)],e.omega,p))
+ 127             self.assertEqual(stat.cached_kernel_transforms,2)
+ 128             self.assertGreater(stat.cached_kernel_hits,0)
+ 129             self.assertGreater(stat.twiddle_tables_built,0)
+ 130             self.assertGreater(stat.twiddle_table_hits,0)
+ 131             self.assertGreater(stat.twiddle_plan_setup_mults,0)
+ 132             if n>=256:
+ 133                 self.assertLess(stat.total_field_ops(),oldstat.total_field_ops())
+ 134 
+ 135     def test_kernel_cache_must_change_on_changed_support(self):
+ 136         e=AllLengthGreen(60,P0,G0)
+ 137         dat1={0:19,3:89,7:101}
+ 138         dat2={0:19,4:89,7:101}
+ 139         _,den1=rational_fraction(dat1,e.omega,e.p,e.primitive_gen)
+ 140         _,den2=rational_fraction(dat2,e.omega,e.p,e.primitive_gen)
+ 141         self.assertNotEqual(den1,den2)
+ 142         y1,st1=forcing_from_sparse(dat1,e.n,e.omega,e.p,e.primitive_gen)
+ 143         y2,st2=forcing_from_sparse(dat2,e.n,e.omega,e.p,e.primitive_gen)
+ 144         self.assertNotEqual(y1,y2)
+ 145         self.assertEqual(y2,direct_dft_any([dat2.get(j,0) for j in range(e.n)],e.omega,e.p))
+ 146 
+ 147     def test_mutation_wrong_fourier_phase(self):
+ 148         for n,p,g in ((8,P0,G0),(17,998244353,3),(60,P0,G0)):
+ 149             e=AllLengthGreen(n,p,g)
+ 150             x=[self.rng.randrange(p) for _ in range(n)]
+ 151             rwrong=[( (7+2*e.powers[j])*x[j]+x[j-1])%p for j in range(n)]
+ 152             wrong=e.L.solve(direct_dft_any(rwrong,e.omega,p))
+ 153             self.assertNotEqual(wrong,direct_dft_any(x,e.omega,p))
+ 154 
+ 155     def test_mutation_wrong_rational_denominator(self):
+ 156         e=AllLengthGreen(17,998244353,3)
+ 157         data={2:59,7:79,13:91}
+ 158         num,den=rational_fraction(data,e.omega,e.p,e.primitive_gen)
+ 159         mutated=list(den)
+ 160         mutated[1]=(-mutated[1])%e.p
+ 161         self.assertNotEqual(mutated,den)
+ 162         self.assertNotEqual(conv(mutated,direct_dft_any([data.get(j,0) for j in range(e.n)],e.omega,e.p),e.p,e.primitive_gen)[:e.n],num+[0]*(e.n-len(num)))
+ 163 
+ 164     def test_green_solve_both_directions(self):
+ 165         for n,p,g in PAIRS:
+ 166             e=AllLengthGreen(n,p,g)
+ 167             for solver in (e.L,e.P):
+ 168                 rhs=[self.rng.randrange(p) for _ in range(n)]
+ 169                 self.assertEqual(solver.apply(solver.solve(rhs)),rhs)
+ 170 
+ 171     def test_rational_ntt_small_call_restriction(self):
+ 172         for n,p,g in ((60,P0,G0),(119,998244353,3),(256,P0,G0)):
+ 173             e=AllLengthGreen(n,p,g)
+ 174             k=4
+ 175             data={j:11+j for j in range(k)}
+ 176             _,stat=forcing_from_sparse(data,n,e.omega,p,g)
+ 177             self.assertLessEqual(stat.max_ntt_length,4*k)
+ 178             self.assertGreaterEqual(stat.rational_blocks,(n+k-1)//k)
+ 179 
+ 180     def test_complex_norm_certificate(self):
+ 181         try:import numpy as np
+ 182         except ImportError:self.skipTest('numpy is not installed')
+ 183         for n in (8,16,32):
+ 184             w=np.exp(-2j*np.pi/n)
+ 185             diag=7+w**np.arange(n)
+ 186             mat=np.diag(diag)+2*np.roll(np.eye(n),1,axis=0)
+ 187             self.assertLessEqual(np.linalg.cond(mat),2.5+1e-9)
+ 188             rng=np.random.default_rng(n)
+ 189             x=rng.normal(size=n)+1j*rng.normal(size=n)
+ 190             right=7*x+np.roll(x,1)+2*w**(-np.arange(n))*x
+ 191             true=np.fft.fft(x)/np.sqrt(n)
+ 192             out=np.linalg.solve(mat,np.fft.fft(right)/np.sqrt(n))
+ 193             self.assertLess(np.linalg.norm(out-true),1e-10)
+ 194             indices=np.argsort(np.abs(right))[-max(1,n//4):]
+ 195             short=np.zeros(n,dtype=complex);short[indices]=right[indices]
+ 196             approx=np.linalg.solve(mat,np.fft.fft(short)/np.sqrt(n))
+ 197             err=np.linalg.norm(true-approx)
+ 198             tail=np.linalg.norm(right-short)
+ 199             self.assertLessEqual(err,tail/4+1e-10)
+ 200             self.assertGreaterEqual(err,tail/10-1e-10)
+ 201 
+ 202 if __name__=='__main__':unittest.main(verbosity=2)

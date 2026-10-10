@@ -1,0 +1,399 @@
+
+===== SOURCE 29 272eb4fbbe68950926e67a761e8bd1d3c4472c7893723b1354deb0c0d8eda383 fft_materials_extension_20261009/fft_tail_fusion_research/fused_modulated.py | 7900 bytes 210 lines =====
+   1 """Exact fusion of noncommuting, diagonally modulated q-Weyl tails.
+   2 
+   3 Returns sum_j Q**j C**(N-r) p_j(C) Q**j x using one projected inverse
+   4 convolution and one decoding convolution. No full N-output term is formed.
+   5 This is a restricted aggregate, not the complete H_q(C) or a faster FFT.
+   6 """
+   7 from pathlib import Path
+   8 import sys
+   9 from dataclasses import dataclass,replace
+  10 from collections import Counter
+  11 ROOT=Path(__file__).resolve().parent.parent
+  12 sys.path.insert(0,str(ROOT/'fft_resolvent_aggregate_research'))
+  13 from tail_blocks import (prepare_tail,apply_tail,Counted,FFTPlan,fft,
+  14     expected_preparation as tail_preparation,expected_online as tail_online)
+  15 
+  16 
+  17 @dataclass
+  18 class FusionPlan:
+  19     n: int
+  20     r: int
+  21     steps: int
+  22     window: int
+  23     projection: object
+  24     middle_fft: object
+  25     middle_spectra: list
+  26     roots: list
+  27     polynomials: list
+  28     preparation: dict
+  29 
+  30 
+  31 def _polynomials(field,r,polynomials):
+  32     if not polynomials or any(not p or len(p)>r for p in polynomials):
+  33         raise ValueError('nonempty list of nonempty polynomials of degree <r required')
+  34     return [list(p)+[field.zero]*(r-len(p)) for p in polynomials]
+  35 
+  36 
+  37 def _upper(field,polynomial,r):
+  38     out=[field.zero]*(2*r)
+  39     out[0]=polynomial[0]
+  40     for j in range(1,r):
+  41         out[2*r-j]=polynomial[j]
+  42     return out
+  43 
+  44 
+  45 def prepare_fused(field,n,r,q,polynomials):
+  46     polynomials=_polynomials(field,r,polynomials)
+  47     steps=len(polynomials)
+  48     window=1<<(r+steps-2).bit_length()
+  49     if r<1 or r&(r-1) or 2*window>n:
+  50         raise ValueError('r power of two; next_power_of_two(r+s-1)<=N/2 required')
+  51     # Reuse the old projection/decode implementation's fixed banks. Its
+  52     # unused zero-polynomial spectrum is conservatively charged too.
+  53     base=prepare_tail(field,n,window,q,[field.zero])
+  54     c=Counted(field)
+  55     roots=[field.one]
+  56     for _ in range(1,n):
+  57         roots.append(c.mul(roots[-1],q))
+  58     multiplier=field.one
+  59     for _ in range((window//r).bit_length()-1):
+  60         multiplier=c.add(multiplier,multiplier)
+  61     inverse_length=c.mul(base.fft.inverse_length,multiplier)
+  62     permutation=[0]
+  63     while len(permutation)<2*r:
+  64         doubled=[2*j for j in permutation]
+  65         permutation=doubled+[j+1 for j in doubled]
+  66     small=FFTPlan(r,base.fft.powers[::window//r],permutation,
+  67                   inverse_length,inverse_length)
+  68     spectra=[fft(c,small,_upper(field,p,r)) for p in polynomials]
+  69     counts=Counter(base.preparation);counts.update(c.count)
+  70     return FusionPlan(n,r,steps,window,base,small,spectra,roots,
+  71                       polynomials,dict(counts))
+  72 
+  73 
+  74 def _project(c,plan,x):
+  75     m=plan.window
+  76     combined=None
+  77     for b,spectrum in enumerate(plan.projection.projection_spectra):
+  78         value=fft(c,plan.projection.fft,list(x[b*m:(b+1)*m])+[c.zero]*m)
+  79         value=[c.mul(a,b) for a,b in zip(value,spectrum)]
+  80         combined=value if combined is None else [c.add(a,b) for a,b in zip(combined,value)]
+  81     return fft(c,plan.projection.fft,combined,inverse=True)[:m]
+  82 
+  83 
+  84 def _decode(c,plan,state):
+  85     m=plan.window
+  86     value=fft(c,plan.projection.fft,state+[c.zero]*(2*m-len(state)))
+  87     out=[]
+  88     for spectrum in plan.projection.decoding_spectra:
+  89         product=[c.mul(a,b) for a,b in zip(value,spectrum)]
+  90         out.extend(fft(c,plan.projection.fft,product,inverse=True)[:m])
+  91     return out
+  92 
+  93 
+  94 def apply_fused(field,plan,x):
+  95     if len(x)!=plan.n:
+  96         raise ValueError('wrong input length')
+  97     n,r,s,m=plan.n,plan.r,plan.steps,plan.window
+  98     c=Counted(field)
+  99     suffix=_project(c,plan,x)
+ 100     start=n-m
+ 101     heads=[]
+ 102     for j in range(s):
+ 103         scaled=[c.mul(g,a) for g,a in zip(plan.projection.g_tail[-r:],suffix[-r:])]
+ 104         transformed=fft(c,plan.middle_fft,scaled+[field.zero]*r)
+ 105         product=[c.mul(a,b) for a,b in zip(transformed,plan.middle_spectra[j])]
+ 106         small=fft(c,plan.middle_fft,product,inverse=True)[:r]
+ 107         heads.append([c.mul(g,a) for g,a in zip(plan.projection.inverse_g_head[:r],small)])
+ 108         if j+1<s:
+ 109             # D=(I-A)Q; discard the first coordinate, whose predecessor is
+ 110             # unavailable. All retained coordinates use known predecessors.
+ 111             suffix=[c.sub(c.mul(plan.roots[start+i],suffix[i]),
+ 112                           c.mul(plan.roots[start+i-1],suffix[i-1]))
+ 113                     for i in range(1,len(suffix))]
+ 114             start+=1
+ 115     state=heads[-1]
+ 116     for j in range(s-2,-1,-1):
+ 117         # Reverse Horner: u_j + D*(u_(j+1)+D*(...)). The prefix grows by one.
+ 118         next_state=[c.mul(plan.roots[0],state[0])]
+ 119         next_state.extend(c.sub(c.mul(plan.roots[i],state[i]),
+ 120                                 c.mul(plan.roots[i-1],state[i-1]))
+ 121                           for i in range(1,len(state)))
+ 122         next_state.append(c.neg(c.mul(plan.roots[len(state)-1],state[-1])))
+ 123         for i in range(r):
+ 124             next_state[i]=c.add(next_state[i],heads[j][i])
+ 125         state=next_state
+ 126     result=_decode(c,plan,state)
+ 127     return result,dict(field_operations=dict(c.count),
+ 128         projected_coordinates=m,decoded_state_coordinates=len(state),
+ 129         stored_middle_coordinates=s*r,full_output_terms_materialized=0,
+ 130         returned_output_count=n,full_output_writes=n,
+ 131         projection_decode_fft_length=2*m,middle_fft_length=2*r,
+ 132         projection_decode_forward_ffts=n//m+1,
+ 133         projection_decode_inverse_ffts=n//m+1,
+ 134         middle_forward_ffts=s,middle_inverse_ffts=s,
+ 135         logical_source_input_reads=n,
+ 136         model='exact field arithmetic; logical arrays, not interpreter allocation counts')
+ 137 
+ 138 
+ 139 def expected_preparation(n,r,s):
+ 140     m=1<<(r+s-2).bit_length()
+ 141     out=Counter(tail_preparation(n,m))
+ 142     b=s*r*((2*r).bit_length()-1)
+ 143     out.update(mul=n+b,add=(m//r).bit_length()-1+b,sub=b)
+ 144     return dict(out)
+ 145 
+ 146 
+ 147 def expected_online(n,r,s):
+ 148     m=1<<(r+s-2).bit_length()
+ 149     f=2*(n+m)*((2*m).bit_length()-1)+2*s*r*((2*r).bit_length()-1)
+ 150     si=(s-1)*(m-1)-(s-1)*(s-2)//2
+ 151     so=(s-1)*r+(s-1)*(s-2)//2
+ 152     out=dict(mul=f+6*n+2*m+6*s*r+2*(si+so),
+ 153              add=f+2*n-2*m+(s-1)*r,
+ 154              sub=f+si+so-(s-1))
+ 155     if s>1:
+ 156         out['neg']=s-1
+ 157     return out
+ 158 
+ 159 
+ 160 def prepare_independent(field,n,r,q,polynomials):
+ 161     """Same aggregate, shared constant banks, but one full tail output/term."""
+ 162     polynomials=_polynomials(field,r,polynomials)
+ 163     base=prepare_tail(field,n,r,q,polynomials[0])
+ 164     c=Counted(field)
+ 165     plans=[base]
+ 166     for p in polynomials[1:]:
+ 167         spectrum=fft(c,base.fft,_upper(field,p,r))
+ 168         plans.append(replace(base,polynomial=p,middle_spectrum=spectrum))
+ 169     roots=[field.one]
+ 170     for _ in range(1,n):
+ 171         roots.append(c.mul(roots[-1],q))
+ 172     counts=Counter(base.preparation);counts.update(c.count)
+ 173     return dict(n=n,r=r,steps=len(plans),plans=plans,roots=roots,preparation=dict(counts))
+ 174 
+ 175 
+ 176 def apply_independent(field,plan,x):
+ 177     n=plan['n']
+ 178     if len(x)!=n:
+ 179         raise ValueError('wrong input length')
+ 180     c=Counted(field)
+ 181     current=list(x)
+ 182     diagonal=[field.one]*n
+ 183     result=None
+ 184     count=Counter()
+ 185     for j,tail in enumerate(plan['plans']):
+ 186         if j:
+ 187             current=[c.mul(a,b) for a,b in zip(plan['roots'],current)]
+ 188             diagonal=[c.mul(a,b) for a,b in zip(plan['roots'],diagonal)]
+ 189         value,details=apply_tail(field,tail,current)
+ 190         count.update(details['field_operations'])
+ 191         if j:
+ 192             value=[c.mul(a,b) for a,b in zip(diagonal,value)]
+ 193             result=[c.add(a,b) for a,b in zip(result,value)]
+ 194         else:
+ 195             result=value
+ 196     count.update(c.count)
+ 197     return result,dict(field_operations=dict(count),full_output_terms_materialized=plan['steps'])
+ 198 
+ 199 
+ 200 def expected_independent_preparation(n,r,s):
+ 201     out=Counter(tail_preparation(n,r))
+ 202     f=(s-1)*r*((2*r).bit_length()-1)
+ 203     out.update(mul=n-1+f,add=f,sub=f)
+ 204     return dict(out)
+ 205 
+ 206 
+ 207 def expected_independent_online(n,r,s):
+ 208     out=Counter({k:s*v for k,v in tail_online(n,r).items()})
+ 209     out.update(mul=3*n*(s-1),add=n*(s-1))
+ 210     return dict(out)
+
+===== SOURCE 30 f102d98cfb983f963411d6fec638b04af3c72bc54ef77b2c7e23de746b601f69 fft_materials_extension_20261009/fft_tail_fusion_research/rank_one_orbit.py | 6581 bytes 185 lines =====
+   1 """Fused Q-modulated highest-power corrections via classical pruned FFTs.
+   2 
+   3 Computes sum_j c_j Q**j C**(N-1) Q**j x, with all N outputs.
+   4 O(N(1+log s)) for s supplied coefficients, O(N) cold preparation.
+   5 This is a rank-s restricted family, not a faster complete H_q(C) evaluator.
+   6 """
+   7 from dataclasses import dataclass
+   8 from collections import Counter
+   9 from operator import index
+  10 from fused_modulated import Counted,FFTPlan,fft
+  11 from fixed_kernel import prepare
+  12 
+  13 
+  14 @dataclass
+  15 class OrbitPlan:
+  16     n: int
+  17     count: int
+  18     rounded: int
+  19     roots: list
+  20     coefficients: list
+  21     left: list
+  22     right: list
+  23     leaf: object
+  24     preparation: dict
+  25 
+  26 
+  27 def prepare_orbit(field,n,q,coefficients):
+  28     if not coefficients or len(coefficients)>n:
+  29         raise ValueError('1..N coefficients required')
+  30     kernel=prepare(field,n,q)
+  31     c=Counted(field)
+  32     roots=[field.one]
+  33     for _ in range(1,n):
+  34         roots.append(c.mul(roots[-1],q))
+  35     # g_(N-1)=N/q; f_(N-1)=N. No independent input-dependent inversion.
+  36     last_g=c.mul(kernel.factorial[-1],roots[-1])
+  37     right=[c.mul(last_g,a) for a in reversed(kernel.middle)]
+  38     rounded=1<<(len(coefficients)-1).bit_length()
+  39     permutation=[0]
+  40     while len(permutation)<rounded:
+  41         doubled=[2*j for j in permutation]
+  42         permutation=doubled+[j+1 for j in doubled]
+  43     leaf=None if rounded==1 else FFTPlan(rounded//2,
+  44         roots[::n//rounded],permutation,field.zero,field.zero)
+  45     counts=Counter(kernel.preparation);counts.update(c.count)
+  46     return OrbitPlan(n,len(coefficients),rounded,roots,list(coefficients),
+  47                      kernel.kernel,right,leaf,dict(counts))
+  48 
+  49 
+  50 def partial_forward(c,plan,x):
+  51     """First R Fourier coefficients, R the dyadic rounded requested count."""
+  52     n,r=plan.n,plan.rounded
+  53     def visit(start,stride,size):
+  54         if size==r:
+  55             values=[x[start+stride*k] for k in range(r)]
+  56             return values if r==1 else fft(c,plan.leaf,values)
+  57         even=visit(start,2*stride,size//2)
+  58         odd=visit(start+stride,2*stride,size//2)
+  59         return [c.add(a,c.mul(plan.roots[k*(n//size)],b))
+  60                 for k,(a,b) in enumerate(zip(even,odd))]
+  61     return visit(0,1,n)
+  62 
+  63 
+  64 def partial_transpose(c,plan,coefficients):
+  65     """Transpose (not conjugate transpose) of partial_forward, all N outputs."""
+  66     n,r=plan.n,plan.rounded
+  67     if len(coefficients)!=r:
+  68         raise ValueError('R coefficients required')
+  69     out=[c.zero]*n
+  70     def visit(start,stride,size,values):
+  71         if size==r:
+  72             result=values if r==1 else fft(c,plan.leaf,values)
+  73             for k,a in enumerate(result):
+  74                 out[start+stride*k]=a
+  75             return
+  76         right=[c.mul(plan.roots[k*(n//size)],a) for k,a in enumerate(values)]
+  77         visit(start,2*stride,size//2,values)
+  78         visit(start+stride,2*stride,size//2,right)
+  79     visit(0,1,n,coefficients)
+  80     return out
+  81 
+  82 
+  83 def apply_orbit(field,plan,x):
+  84     if len(x)!=plan.n:
+  85         raise ValueError('wrong input length')
+  86     c=Counted(field)
+  87     scaled=[c.mul(a,b) for a,b in zip(plan.right,x)]
+  88     spectrum=partial_forward(c,plan,scaled)
+  89     weighted=[c.mul(a,b) for a,b in zip(plan.coefficients,spectrum)]
+  90     weighted += [field.zero]*(plan.rounded-plan.count)
+  91     decoded=partial_transpose(c,plan,weighted)
+  92     out=[c.mul(a,b) for a,b in zip(plan.left,decoded)]
+  93     return out,dict(field_operations=dict(c.count),
+  94         partial_frequency_count=plan.rounded,requested_frequency_count=plan.count,
+  95         leaf_fft_length=plan.rounded,leaf_fft_calls=0 if plan.rounded==1 else 2*plan.n//plan.rounded,
+  96         full_output_terms_materialized=0,full_output_writes=plan.n,
+  97         returned_output_count=plan.n,input_coordinate_reads=plan.n,
+  98         graph='one pruned partial FFT and its exact transposed graph')
+  99 
+ 100 
+ 101 def expected_preparation(n):
+ 102     l=n.bit_length()-1
+ 103     return dict(mul=8*n+l-4,sub=n-1,neg=n-1,constant_inverse=1)
+ 104 
+ 105 
+ 106 def expected_online(n,s):
+ 107     r=1<<(s-1).bit_length()
+ 108     f=n*(r.bit_length()-1)
+ 109     out=dict(mul=f+4*n-2*r+s,add=f+n-r)
+ 110     if f:
+ 111         out['sub']=f
+ 112     return out
+ 113 
+ 114 
+ 115 @dataclass
+ 116 class ModePlan:
+ 117     base: OrbitPlan
+ 118     modes: list
+ 119     scaled_left: list
+ 120     single_weights: object
+ 121     preparation: dict
+ 122 
+ 123 
+ 124 def prepare_modes(field,n,q,modes):
+ 125     """Input is t pairs (a,gamma), describing c_j=sum gamma*q**(a*j).
+ 126 
+ 127 The N individual c_j are never expanded. Duplicate indices are allowed and
+ 128 their work is conservatively retained. A single-mode specialization stores
+ 129 its weighted permutation directly, with its extra preparation charged.
+ 130 """
+ 131     if n<2 or n&(n-1):
+ 132         raise ValueError('N must be a power of two at least 2')
+ 133     if not modes:
+ 134         raise ValueError('at least one Fourier-description mode required')
+ 135     normalized=[]
+ 136     for a,gamma in modes:
+ 137         if isinstance(a,bool):
+ 138             raise TypeError('Fourier mode indices must be integers, not booleans')
+ 139         normalized.append((index(a)%n,gamma))
+ 140     base=prepare_orbit(field,n,q,[field.one])
+ 141     c=Counted(field)
+ 142     scaled_left=[c.mul(c.integer(n),a) for a in base.left]
+ 143     single=None
+ 144     if len(normalized)==1:
+ 145         a,gamma=normalized[0]
+ 146         single=[c.mul(c.mul(value,gamma),base.right[(-i-a)%n])
+ 147                 for i,value in enumerate(scaled_left)]
+ 148     counts=Counter(base.preparation);counts.update(c.count)
+ 149     return ModePlan(base,normalized,scaled_left,single,dict(counts))
+ 150 
+ 151 
+ 152 def apply_modes(field,plan,x):
+ 153     n=plan.base.n
+ 154     if len(x)!=n:
+ 155         raise ValueError('wrong input length')
+ 156     c=Counted(field)
+ 157     if plan.single_weights is not None:
+ 158         a,_=plan.modes[0]
+ 159         out=[c.mul(value,x[(-i-a)%n]) for i,value in enumerate(plan.single_weights)]
+ 160     else:
+ 161         scaled=[c.mul(a,b) for a,b in zip(plan.base.right,x)]
+ 162         out=[]
+ 163         first,coefficient=plan.modes[0]
+ 164         for i,left in enumerate(plan.scaled_left):
+ 165             value=c.mul(coefficient,scaled[(-i-first)%n])
+ 166             for mode,gamma in plan.modes[1:]:
+ 167                 value=c.add(value,c.mul(gamma,scaled[(-i-mode)%n]))
+ 168             out.append(c.mul(left,value))
+ 169     return out,dict(field_operations=dict(c.count),description_mode_count=len(plan.modes),
+ 170         expanded_orbit_weight_count=0,full_output_terms_materialized=0,
+ 171         full_output_writes=n,returned_output_count=n,
+ 172         input_coordinate_reads=n if len(plan.modes)==1 else n,
+ 173         transform_calls=0)
+ 174 
+ 175 
+ 176 def expected_modes_preparation(n,t):
+ 177     out=Counter(expected_preparation(n))
+ 178     out.update(mul=3*n if t==1 else n)
+ 179     return dict(out)
+ 180 
+ 181 
+ 182 def expected_modes_online(n,t):
+ 183     if t==1:
+ 184         return dict(mul=n)
+ 185     return dict(mul=(t+2)*n,add=(t-1)*n)

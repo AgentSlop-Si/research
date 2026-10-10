@@ -1,0 +1,242 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh inert-input symbolic audit. No uploaded executable is used.
+   3 
+   4 Rebuilds the inherited polynomial generators from the defining recurrences,
+   5 then verifies all gate minors in Q[z]/(z^4+1)[h0,h1,h2,h6].
+   6 Requires Python 3 and SymPy. All paths are relative to this file.
+   7 """
+   8 from pathlib import Path
+   9 from itertools import combinations
+  10 import json, time
+  11 import sympy as sp
+  12 from sympy.polys.rings import ring
+  13 
+  14 HERE = Path(__file__).resolve().parent
+  15 started = time.monotonic()
+  16 zz = sp.Symbol('z')
+  17 FIELD = sp.QQ.alg_field_from_poly(sp.Poly(zz**4 + 1, zz), alias='z')
+  18 R, h0, h1, h2, h6 = ring('h0,h1,h2,h6', FIELD)
+  19 ZERO, ONE = R.zero, R.one
+  20 z = R.ground_new(FIELD.unit)
+  21 
+  22 
+  23 def det(rows):
+  24     """Exterior-product determinant, with exact sparse polynomial arithmetic."""
+  25     n = len(rows)
+  26     assert all(len(row) == n for row in rows)
+  27     state = {0: ONE}
+  28     for row in rows:
+  29         nxt = {}
+  30         for mask, value in state.items():
+  31             for col, entry in enumerate(row):
+  32                 if entry and not (mask & (1 << col)):
+  33                     key = mask | (1 << col)
+  34                     sign = -1 if (mask >> (col + 1)).bit_count() % 2 else 1
+  35                     nxt[key] = nxt.get(key, ZERO) + sign * value * entry
+  36         state = {key: value for key, value in nxt.items() if value}
+  37     return state.get((1 << n) - 1, ZERO)
+  38 
+  39 
+  40 def scalar_coefficients(value):
+  41     assert not any(any(mon) for mon in value)
+  42     c = value.get((0, 0, 0, 0), FIELD.zero)
+  43     coeffs = list(reversed(c.to_list()))
+  44     return [str(v) for v in (coeffs + [0] * 4)[:4]]
+  45 
+  46 
+  47 def record(poly):
+  48     terms = []
+  49     for mon, c in sorted(poly.items(), key=lambda kv: (sum(kv[0]), kv[0])):
+  50         coeffs = (list(reversed(c.to_list())) + [0] * 4)[:4]
+  51         assert all(not v or v.denominator == 1 for v in coeffs)
+  52         terms.append([[j for j, exponent in enumerate(mon) for _ in range(exponent)],
+  53                       [int(v) for v in coeffs]])
+  54     return {'term_count': len(poly), 'degree': max(map(sum, poly), default=0), 'terms': terms}
+  55 
+  56 
+  57 def parse_record(data):
+  58     terms = {}
+  59     for indices, coefficients in data['terms']:
+  60         exponents = [0] * 4
+  61         for index in indices:
+  62             exponents[index] += 1
+  63         assert tuple(exponents) not in terms
+  64         terms[tuple(exponents)] = sum((int(c) * FIELD.unit**i for i, c in enumerate(coefficients)), FIELD.zero)
+  65     return R.from_dict(terms)
+  66 
+  67 
+  68 def reduce_mod(poly, prime, root, parameters=(0, 0, 0, 0)):
+  69     result = 0
+  70     for exponents, c in poly.items():
+  71         value = 0
+  72         for coefficient in c.to_list():
+  73             value = (value * root + int(coefficient.numerator) * pow(int(coefficient.denominator), -1, prime)) % prime
+  74         for parameter, exponent in zip(parameters, exponents):
+  75             value = value * pow(parameter, exponent, prime) % prime
+  76         result = (result + value) % prime
+  77     return result
+  78 
+  79 
+  80 # The upper sequence obeys the three-mode recurrence with roots 1,z^-1,z^-2.
+  81 frequencies = [ONE, z**7, z**6]
+  82 e1 = sum(frequencies, ZERO)
+  83 e2 = sum((frequencies[i] * frequencies[j] for i, j in combinations(range(3), 2)), ZERO)
+  84 e3 = frequencies[0] * frequencies[1] * frequencies[2]
+  85 H = [h0, h1, h2]
+  86 while len(H) < 6:
+  87     H.append(e1 * H[-1] - e2 * H[-2] + e3 * H[-3])
+  88 H += [h6, ONE]
+  89 
+  90 # Write the pre-rescaling lower generator as L=c+t*a+beta*b.
+  91 c, a, b = [ZERO] * 8, [ZERO] * 8, [ZERO] * 8
+  92 for k in range(1, 7):
+  93     inverse_character = z**((-k) % 8)
+  94     c[k] = z - inverse_character
+  95     a[k] = inverse_character - ONE
+  96     b[k] = (z - ONE) * (H[k] - h0) + (h0 - ONE) * a[k]
+  97 a[7] = z - ONE
+  98 f = [z, z**2, z**3]
+  99 s1 = sum(f, ZERO)
+ 100 s2 = sum((f[i] * f[j] for i, j in combinations(range(3), 2)), ZERO)
+ 101 s3 = f[0] * f[1] * f[2]
+ 102 
+ 103 
+ 104 def tail_recurrence(values, k):
+ 105     return values[k + 3] - s1 * values[k + 2] + s2 * values[k + 1] - s3 * values[k]
+ 106 
+ 107 
+ 108 aa, bb, cc = [tail_recurrence(values, 3) for values in (a, b, c)]
+ 109 dd, ee, ff = [tail_recurrence(values, 4) for values in (a, b, c)]
+ 110 Delta = aa * ee - bb * dd
+ 111 T = bb * ff - cc * ee
+ 112 Vcoef = cc * dd - aa * ff
+ 113 U = H[:7] + [ZERO]
+ 114 L = [Delta * c[k] + T * a[k] + Vcoef * b[k] for k in range(8)]
+ 115 assert tail_recurrence(L, 3) == tail_recurrence(L, 4) == ZERO
+ 116 
+ 117 Y = {}
+ 118 for j, height in ((1, 5), (2, 5), (4, 4), (5, 5)):
+ 119     Y[j] = [[z**((i * j) % 8),
+ 120              sum((U[k] * z**((i * k) % 8) for k in range(j)), ZERO),
+ 121              sum((L[k] * z**((i * k) % 8) for k in range(j + 1, 8)), ZERO)]
+ 122             for i in range(height)]
+ 123 eta = [(-1)**i * det(Y[4][:i] + Y[4][i + 1:]) for i in range(4)]
+ 124 ell = [sum((eta[i] * Y[1][i][j] for i in range(4)), ZERO) for j in range(3)]
+ 125 K = ([Y[1][i] + [-x for x in Y[2][i]] + [ZERO] * 3 for i in range(5)] +
+ 126      [Y[1][i] + [ZERO] * 3 + [-x for x in Y[5][i]] for i in range(5)] +
+ 127      [ell + [ZERO] * 6])
+ 128 DB = det(Y[2][:3])
+ 129 DH = det([Y[1][i] + Y[5][i] for i in range(5)] + [ell + [ZERO] * 3])
+ 130 Dhat = -DB * DH
+ 131 expected = json.loads((HERE / 'input_data' / 'prior_independent_polynomials.json').read_text())
+ 132 polys = {'Delta': Delta, 'T': T, 'V': Vcoef, 'M': L[7], 'DB': DB, 'DH': DH, 'Dhat': Dhat}
+ 133 for name, poly in polys.items():
+ 134     assert poly == parse_record(expected[name]), name
+ 135 print('Independently rebuilt generators and inherited factors match exactly.', flush=True)
+ 136 
+ 137 # Reconstruct the spectral-tail coordinates directly from its first three terms.
+ 138 tail_basis = [[z**((r * k) % 8) for r in (1, 2, 3)] for k in (3, 4, 5)]
+ 139 tail_denom = det(tail_basis)
+ 140 tail_numerators = []
+ 141 for j in range(3):
+ 142     replaced = [[L[k] if col == j else tail_basis[row][col] for col in range(3)]
+ 143                 for row, k in enumerate((3, 4, 5))]
+ 144     tail_numerators.append(det(replaced))
+ 145 assert tail_denom
+ 146 for k in range(3, 8):
+ 147     assert tail_denom * L[k] == sum((tail_numerators[r - 1] * z**((r * k) % 8) for r in (1, 2, 3)), ZERO)
+ 148 
+ 149 V = [[z**((i * j) % 8) for j in range(3)] for i in range(5)]
+ 150 subspace_checks = 0
+ 151 for j in (1, 2):
+ 152     for col in range(3):
+ 153         for rows in combinations(range(5), 4):
+ 154             assert not det([V[i] + [Y[j][i][col]] for i in rows])
+ 155             subspace_checks += 1
+ 156 vd0 = det(V[:3])
+ 157 minor_data = []
+ 158 for rows in combinations(range(5), 3):
+ 159     vd = det([V[i] for i in rows])
+ 160     yd = det([Y[2][i] for i in rows])
+ 161     assert vd and yd and yd * vd0 == DB * vd
+ 162     minor_data.append({'top_rows': list(rows), 'vandermonde': scalar_coefficients(vd)})
+ 163 print('All 30 subspace determinants and 10 Plucker identities pass.', flush=True)
+ 164 
+ 165 zero_minors, nonzero_minors = [], []
+ 166 for rows in combinations(range(11), 9):
+ 167     determinant = det([K[i] for i in rows])
+ 168     allowed = set(range(5, 11)).issubset(rows) and len(set(rows).intersection(range(5))) == 3
+ 169     if allowed:
+ 170         top_rows = [i for i in rows if i < 5]
+ 171         target = -det([Y[2][i] for i in top_rows]) * DH
+ 172         assert determinant == target and determinant
+ 173         assert determinant * vd0 == Dhat * det([V[i] for i in top_rows])
+ 174         nonzero_minors.append(list(rows))
+ 175     else:
+ 176         assert not determinant, rows
+ 177         zero_minors.append(list(rows))
+ 178 assert len(zero_minors) == 45 and len(nonzero_minors) == 10
+ 179 print('All 55 maximal minors independently computed: 45 zero, 10 proportional.', flush=True)
+ 180 
+ 181 S = [[ZERO for _ in range(5)] for _ in range(5)]
+ 182 for mon, coefficient in DB.items():
+ 183     indices = [j for j, exponent in enumerate(mon) for _ in range(exponent)]
+ 184     assert 1 <= len(indices) <= 2
+ 185     if len(indices) == 1:
+ 186         indices.append(4)
+ 187     i, j = indices
+ 188     value = R.ground_new(coefficient)
+ 189     if i == j:
+ 190         S[i][i] += value
+ 191     else:
+ 192         S[i][j] += value / 2
+ 193         S[j][i] += value / 2
+ 194 four_minor = det([row[:4] for row in S[:4]])
+ 195 assert four_minor and not det(S)
+ 196 assert all(not S[i][j] for i in (2, 3, 4) for j in (2, 3, 4))
+ 197 matrix_mod = [[reduce_mod(v, 12289, 8246) for v in row] for row in S]
+ 198 assert reduce_mod(four_minor, 12289, 8246) == 11251
+ 199 certificate = json.loads((HERE / 'input_data' / 'COLLAPSE_CERTIFICATE.json').read_text())
+ 200 assert matrix_mod == certificate['DB_irreducibility']['homogeneous_quadratic_form_matrix']
+ 201 assert [r['vandermonde'] for r in minor_data] == [[str(v) for v in r[1]] for r in certificate['exact_gate_collapse']['vandermonde_constants']]
+ 202 print('Quadric matrix has exact rank four; modular minor 11251 reproduced.', flush=True)
+ 203 
+ 204 # Small useful refinement: its unique projective singular point is affine
+ 205 # and lies on h0=h1=0, outside the inherited regular h0!=0 chart.
+ 206 Bdet = S[0][2] * S[1][3] - S[0][3] * S[1][2]
+ 207 assert Bdet and four_minor == Bdet**2
+ 208 vertex_h2 = (-S[0][4] * S[1][3] + S[0][3] * S[1][4]) / Bdet
+ 209 vertex_h6 = (-S[0][2] * S[1][4] + S[0][4] * S[1][2]) / Bdet
+ 210 vertex = [ZERO, ZERO, vertex_h2, vertex_h6, ONE]
+ 211 assert all(not sum((S[i][j] * vertex[j] for j in range(5)), ZERO) for i in range(5))
+ 212 
+ 213 # Record the actual proportionality constants, not only cross products.
+ 214 for entry in minor_data:
+ 215     rows = entry['top_rows']
+ 216     entry['minor_ratio_to_selected'] = scalar_coefficients(det([V[i] for i in rows]) / vd0)
+ 217 
+ 218 result = {
+ 219     'uploaded_code_executed': False,
+ 220     'arithmetic': 'Q[z]/(z^4+1)[h0,h1,h2,h6]; all reconstructed polynomial coefficients integral',
+ 221     'independent_reconstruction_matches': {name: {'terms': len(poly), 'degree': max(map(sum, poly), default=0)} for name, poly in polys.items()},
+ 222     'tail_recurrence_identities': 2,
+ 223     'spectral_tail_coordinate_identities': 5,
+ 224     'subspace_determinants': subspace_checks,
+ 225     'plucker_identities': len(minor_data),
+ 226     'zero_maximal_minors': zero_minors,
+ 227     'nonzero_proportional_maximal_minors': nonzero_minors,
+ 228     'vandermonde_constants': minor_data,
+ 229     'homogeneous_DB_matrix_exact': [[scalar_coefficients(v) for v in row] for row in S],
+ 230     'homogeneous_DB_matrix_mod12289': matrix_mod,
+ 231     'upper_left_4x4_minor_exact': scalar_coefficients(four_minor),
+ 232     'upper_left_4x4_minor_mod12289': 11251,
+ 233     'homogeneous_DB_rank_over_Qz_and_C': 4,
+ 234     'unique_affine_singular_point': {'h0': ['0'] * 4, 'h1': ['0'] * 4,
+ 235                                     'h2': scalar_coefficients(vertex_h2),
+ 236                                     'h6': scalar_coefficients(vertex_h6)},
+ 237     'DB_smooth_on_h0_nonzero_chart': True,
+ 238     'elapsed_seconds': round(time.monotonic() - started, 3),
+ 239 }
+ 240 (HERE / 'symbolic_results.json').write_text(json.dumps(result, indent=2) + '\n')
+ 241 (HERE / 'reconstructed_polynomials.json').write_text(json.dumps({name: record(poly) for name, poly in polys.items()}, indent=2) + '\n')
+ 242 print(json.dumps({k: v for k, v in result.items() if k in ('elapsed_seconds', 'homogeneous_DB_rank_over_Qz_and_C')}, indent=2), flush=True)

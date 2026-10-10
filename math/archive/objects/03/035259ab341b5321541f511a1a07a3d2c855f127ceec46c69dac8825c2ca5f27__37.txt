@@ -1,0 +1,106 @@
+   1 #!/usr/bin/env python3
+   2 """Independent exact checks; never imports or executes submitted research code."""
+   3 from collections import Counter
+   4 from fractions import Fraction
+   5 from itertools import permutations, product
+   6 from math import comb, ceil, exp, log2
+   7 from pathlib import Path
+   8 import json, random
+   9 
+  10 def successor(order):
+  11     n=len(order); out=[None]*n
+  12     for i,j in enumerate(order):
+  13         if not isinstance(j,int) or not 0<=j<n or out[j] is not None:
+  14             raise ValueError('not a permutation')
+  15         out[j]=order[(i+1)%n]
+  16     return out
+  17 
+  18 def stable_successor(bits):
+  19     return successor([j for j,x in enumerate(bits) if not x]+[j for j,x in enumerate(bits) if x])
+  20 
+  21 def cycle_data(w,a):
+  22     n=len(w); seen=[False]*n; cycles=[]
+  23     for j in range(n):
+  24         if seen[j]:continue
+  25         length=0;k=j
+  26         while not seen[k]:
+  27             seen[k]=True;length+=1;k=(w[k]-a)%n
+  28         cycles.append(length)
+  29     return n-len(cycles),sorted(x for x in cycles if x>1)
+  30 
+  31 def rank_mod(matrix,p):
+  32     a=[[x%p for x in row] for row in matrix];r=0
+  33     for c in range(len(a[0])):
+  34         hit=next((i for i in range(r,len(a)) if a[i][c]),None)
+  35         if hit is None:continue
+  36         a[r],a[hit]=a[hit],a[r];iv=pow(a[r][c],-1,p)
+  37         a[r]=[x*iv%p for x in a[r]]
+  38         for i in range(r+1,len(a)):
+  39             t=a[i][c]
+  40             a[i]=[(x-t*y)%p for x,y in zip(a[i],a[r])]
+  41         r+=1
+  42         if r==len(a):break
+  43     return r
+  44 
+  45 def probability_bound(n):
+  46     a=min(n-1,ceil(3*log2(n)))
+  47     return max(0,1-exp(-n/32)-a*(a+1)*exp(-n/(16*(a+1)))-n*2**(-a))
+  48 
+  49 def run():
+  50     out={'uploaded_code_executed':False,'checks':[]}
+  51     exhaustive=[];matching_checks=0;boundary_count=0
+  52     for n in range(2,17):
+  53         counts=Counter()
+  54         for bits in product((0,1),repeat=n):
+  55             w=stable_successor(bits);r,cycles=cycle_data(w,1)
+  56             t=sum(x!=y for x,y in zip(bits,bits[1:]));s=sum(w[j]!=(j+1)%n for j in range(n))
+  57             assert r==2*(t//2)
+  58             assert s==(r+1 if t>=2 else 0)
+  59             assert cycles==([r+1] if t>=2 else [])
+  60             if t==1:boundary_count+=1
+  61             counts[r]+=1
+  62             if n<=10:
+  63                 for a in range(1,n):
+  64                     matches=sum(w[j]==(j+a)%n for j in range(n))
+  65                     q=sum(bits[j]==bits[j+a] and all(bits[k]!=bits[j] for k in range(j+1,j+a)) for j in range(n-a))
+  66                     ra,_=cycle_data(w,a)
+  67                     assert matches<=q+2
+  68                     assert 2*ra>=n-matches
+  69                     matching_checks+=1
+  70         expected={r:2*comb(n,r+1) for r in range(0,n,2)}
+  71         assert dict(counts)==expected
+  72         mean=sum(Fraction(r*c,2**n) for r,c in counts.items())
+  73         variance=sum(Fraction(c,2**n)*(r-mean)**2 for r,c in counts.items())
+  74         assert mean==Fraction(n,2)-1
+  75         if n>=3:assert variance==Fraction(n,4)
+  76         exhaustive.append({'n':n,'words':2**n,'counts':dict(sorted(counts.items())),'mean':str(mean),'variance':str(variance)})
+  77     exact_matrix_checks=0
+  78     for n in range(2,6):
+  79         for order in permutations(range(n)):
+  80             w=successor(order)
+  81             for stride in range(n):
+  82                 r,_=cycle_data(w,stride)
+  83                 for p in (2,3,5):
+  84                     m=[[int(i==w[j])-int(i==(j+stride)%n) for j in range(n)] for i in range(n)]
+  85                     assert rank_mod(m,p)==r
+  86                     exact_matrix_checks+=1
+  87     rng=random.Random(202610091845);samples=[]
+  88     for n in (32,64,128,256,512):
+  89         ranks=[]
+  90         for _ in range(6):
+  91             b=[rng.randrange(2) for _ in range(n)];w=stable_successor(b)
+  92             rank=min(cycle_data(w,a)[0] for a in range(1,n))
+  93             assert 8*rank>=n
+  94             ranks.append(rank)
+  95         samples.append({'n':n,'all_stride_minima':ranks})
+  96     out.update(status='PASS',exhaustive=exhaustive,total_binary_words=sum(x['words'] for x in exhaustive),
+  97                all_stride_matching_checks=matching_checks,exact_matrix_checks=exact_matrix_checks,
+  98                corrected_one_transition_cases=boundary_count,random_samples=samples,
+  99                explicit_probability_bound={str(n):probability_bound(n) for n in (16,64,256,1024,4096,8192,16384)},
+ 100                minimal_boundary_counterexample={'bits':[0,1],'successor':[1,0],'rank':0,'changed_edges':0,'nontrivial_cycles':0})
+ 101     return out
+ 102 
+ 103 if __name__=='__main__':
+ 104     result=run();path=Path(__file__).with_name('CHECK_RESULTS.json')
+ 105     path.write_text(json.dumps(result,indent=2)+'\n')
+ 106     print(json.dumps({k:result[k] for k in ('status','total_binary_words','all_stride_matching_checks','exact_matrix_checks','corrected_one_transition_cases')},indent=2))

@@ -1,0 +1,189 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh exact checks for batched Fourier reductions; no uploaded-code imports."""
+   3 import json
+   4 from pathlib import Path
+   5 
+   6 P = 65537
+   7 
+   8 
+   9 def zeros(n):
+  10     return [[0] * n for _ in range(n)]
+  11 
+  12 
+  13 def identity(n):
+  14     z = zeros(n)
+  15     for i in range(n):
+  16         z[i][i] = 1
+  17     return z
+  18 
+  19 
+  20 def mm(a, b):
+  21     n = len(a)
+  22     c = zeros(n)
+  23     sb = [[(j, v) for j, v in enumerate(row) if v] for row in b]
+  24     for i, row in enumerate(a):
+  25         for k, v in enumerate(row):
+  26             if v:
+  27                 for j, w in sb[k]:
+  28                     c[i][j] += v * w
+  29         c[i] = [v % P for v in c[i]]
+  30     return c
+  31 
+  32 
+  33 def add(a, b):
+  34     return [[(x + y) % P for x, y in zip(r, s)] for r, s in zip(a, b)]
+  35 
+  36 
+  37 def rt(n):
+  38     if n == 1:
+  39         return 1
+  40     z = pow(3, (P - 1) // n, P)
+  41     assert pow(z, n, P) == 1 and pow(z, n // 2, P) != 1
+  42     return z
+  43 
+  44 
+  45 def fourier(n):
+  46     w = rt(n)
+  47     return [[pow(w, i * j, P) for j in range(n)] for i in range(n)]
+  48 
+  49 
+  50 def bank(m, q, active, inverse=False):
+  51     z = zeros(m * q)
+  52     eta = pow(rt(m), -1, P) if inverse else rt(m)
+  53     norm = pow(m, -1, P) if inverse else 1
+  54     for b in range(q):
+  55         for i in range(m):
+  56             for j in range(m):
+  57                 z[b * m + i][b * m + j] = norm * pow(eta, i * j, P) % P if b in active else int(i == j)
+  58     return z
+  59 
+  60 
+  61 def batch(m, q):
+  62     z = zeros(m * q)
+  63     w = rt(q)
+  64     for u in range(q):
+  65         for r in range(q):
+  66             for t in range(m):
+  67                 z[u * m + t][r * m + t] = pow(w, u * r, P)
+  68     return z
+  69 
+  70 
+  71 def twiddle(m, q, inverse=False):
+  72     z = zeros(m * q)
+  73     w = pow(rt(m * q), -1, P) if inverse else rt(m * q)
+  74     for r in range(q):
+  75         for t in range(m):
+  76             z[r * m + t][r * m + t] = pow(w, r * t, P)
+  77     return z
+  78 
+  79 
+  80 def support_cover(pj, m, q, start, length):
+  81     n = m * q
+  82     dinv = twiddle(m, q, True)
+  83     result = zeros(n)
+  84     count = (q + length - 1) // length
+  85     pieces = []
+  86     for ell in range(count):
+  87         low, high = ell * length, min((ell + 1) * length, q)
+  88         shift = (start - low) % q
+  89         masked_shift = zeros(n)
+  90         for r in range(low, high):
+  91             for t in range(m):
+  92                 masked_shift[((r + shift) % q) * m + t][r * m + t] = 1
+  93         term = mm(pj, mm(dinv, masked_shift))
+  94         for u in range(q):
+  95             phase = pow(rt(q), (-shift * u) % q, P)
+  96             for t in range(m):
+  97                 term[u * m + t] = [v * phase % P for v in term[u * m + t]]
+  98         result = add(result, term)
+  99         pieces.append({'input_interval': [low, high], 'shift': shift})
+ 100     return result, pieces
+ 101 
+ 102 
+ 103 def bank_from_batch(ell, m, q):
+ 104     assert m % q == 0
+ 105     radix = m // q
+ 106     n = m * q
+ 107     pre, post = zeros(n), zeros(n)
+ 108     for b in range(q):
+ 109         for h in range(radix):
+ 110             for s in range(q):
+ 111                 pre[s * m + (b * radix + h)][b * m + h + radix * s] = 1
+ 112     for b in range(q):
+ 113         for t in range(q):
+ 114             for u in range(radix):
+ 115                 for h in range(radix):
+ 116                     post[b * m + t + q * u][t * m + b * radix + h] = pow(rt(m), h * t, P) * pow(rt(radix), h * u, P) % P
+ 117     return mm(post, mm(ell, pre)), radix
+ 118 
+ 119 
+ 120 def check(m, q, start, length):
+ 121     n = m * q
+ 122     active = {(start + h) % q for h in range(length)}
+ 123     complement = set(range(q)) - active
+ 124     ell, delta, dinv = batch(m, q), twiddle(m, q), twiddle(m, q, True)
+ 125     c, ci = bank(m, q, complement), bank(m, q, complement, True)
+ 126     pj, pall = mm(ell, mm(delta, c)), mm(ell, delta)
+ 127     assert mm(pj, ci) == pall
+ 128     assert mm(pj, mm(ci, dinv)) == ell
+ 129     if length == q:
+ 130         assert mm(pj, dinv) == ell
+ 131     record = {'N': n, 'm': m, 'q': q, 'active_start': start, 'active_length': length,
+ 132               'inverse_bank_transforms_charged': q - length,
+ 133               'C_and_Delta_commute': mm(c, delta) == mm(delta, c),
+ 134               'incorrect_reordered_strip_happens_to_pass': mm(pj, mm(dinv, ci)) == ell}
+ 135     if length:
+ 136         recovered, pieces = support_cover(pj, m, q, start, length)
+ 137         assert recovered == ell
+ 138         record['support_cover_calls'] = len(pieces)
+ 139         record['cover_pieces'] = pieces
+ 140         if m % q == 0:
+ 141             full_bank, radix = bank_from_batch(recovered, m, q)
+ 142             assert full_bank == bank(m, q, set(range(q)))
+ 143             active_bank = identity(n)
+ 144             for r in active:
+ 145                 for t in range(m):
+ 146                     active_bank[r * m + t] = full_bank[r * m + t][:]
+ 147             stride = zeros(n)
+ 148             for r in range(q):
+ 149                 for t in range(m):
+ 150                     stride[r * m + t][r + q * t] = 1
+ 151             assert mm(pj, mm(active_bank, stride)) == fourier(n)
+ 152             record['full_F_N_calls_to_P_J'] = len(pieces) + 1
+ 153             record['paid_additional_small_radix'] = radix
+ 154             record['small_radix_transform_count'] = n // radix
+ 155             if m == q:
+ 156                 complement_bank = identity(n)
+ 157                 for r in complement:
+ 158                     for t in range(m):
+ 159                         complement_bank[r * m + t] = full_bank[r * m + t][:]
+ 160                 assert mm(ell, mm(delta, complement_bank)) == pj
+ 161                 record['reverse_P_J_from_L_calls'] = 1 if length == q else 2
+ 162     else:
+ 163         stride = zeros(n)
+ 164         for r in range(q):
+ 165             for t in range(m):
+ 166                 stride[r * m + t][r + q * t] = 1
+ 167         assert mm(pj, stride) == fourier(n)
+ 168         record['full_F_N_calls_to_P_J'] = 1
+ 169     return record
+ 170 
+ 171 
+ 172 def main():
+ 173     records = []
+ 174     for m, q in ((2, 2), (2, 4), (4, 4), (4, 8), (8, 8), (4, 2), (8, 4), (8, 2)):
+ 175         choices = {(0, 0), (0, q), (0, max(1, q // 2)), (q - 1, max(1, q // 2)), (q - 1, max(1, q // 2 - 1))}
+ 176         for start, length in sorted(choices):
+ 177             records.append(check(m, q, start, length))
+ 178     result = {'field': P, 'case_count': len(records),
+ 179               'noncommuting_C_Delta_controls': sum(not r['C_and_Delta_commute'] for r in records),
+ 180               'support_cover_controls': sum('support_cover_calls' in r for r in records),
+ 181               'full_F_N_reconstructions': sum('full_F_N_calls_to_P_J' in r for r in records),
+ 182               'all_exact_assertions_passed': True, 'cases': records,
+ 183               'scope': 'Exact reductions and cost accounting only; no evaluator for P_J is constructed.'}
+ 184     Path(__file__).with_name('BATCHED_EQUIVALENCE_CONTROLS.json').write_text(json.dumps(result, indent=2) + '\n')
+ 185     print(json.dumps({key: value for key, value in result.items() if key != 'cases'}, indent=2))
+ 186 
+ 187 
+ 188 if __name__ == '__main__':
+ 189     main()

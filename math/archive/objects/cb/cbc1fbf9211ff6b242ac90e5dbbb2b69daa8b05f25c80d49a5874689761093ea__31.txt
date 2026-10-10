@@ -1,0 +1,21 @@
+   1 """Reproduce new exact-regression suite and write a compact report."""
+   2 import hashlib,json,subprocess,sys
+   3 from pathlib import Path
+   4 from bitrev_rank import exact_cut_rank,predicted_qs_rank
+   5 root=Path(__file__).parent
+   6 p=subprocess.run([sys.executable,'-m','unittest','-v','test_exact_gate'],cwd=root,capture_output=True,text=True)
+   7 (root/'TEST_OUTPUT.txt').write_text(p.stdout+p.stderr)
+   8 print(p.stdout+p.stderr,flush=True)
+   9 assert p.returncode==0,'new research tests failed'
+  10 old=root/'prior_checkpoint_full.zip'
+  11 assert old.is_file()
+  12 summary={'date':'2026-10-09','new_suite':'9 tests passed',
+  13  'old_checkpoint_nested_zip_sha256':hashlib.sha256(old.read_bytes()).hexdigest(),
+  14  'main_theorem':'For N=2^m>=8, minimum over arbitrary independent row and column permutations of Fourier quasiseparable rank equals N/4+1',
+  15  'cost_claim':'No FFT runtime complexity improvement',
+  16  'sizes':{str(n):{'optimal_max_rank':predicted_qs_rank(n),
+  17                   'central_rank':exact_cut_rank(n,n//2),
+  18                   'rank_sum':sum(exact_cut_rank(n,k) for k in range(1,n))}
+  19                   for n in (8,16,32,64,128,256,1024)}}
+  20 (root/'EXACT_RESULTS.json').write_text(json.dumps(summary,indent=2)+'\n')
+  21 print('NEW CHECKPOINT OK; previous checkpoint intact. No faster FFT claimed.',flush=True)

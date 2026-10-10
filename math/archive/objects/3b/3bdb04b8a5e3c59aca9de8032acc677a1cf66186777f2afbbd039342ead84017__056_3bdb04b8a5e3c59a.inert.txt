@@ -1,0 +1,86 @@
+THIN MATRIX MULTIPLICATION: TOTAL-ARITHMETIC AUDIT
+9 October 2026
+
+RESULT
+This pass found stronger published claims than the previous note, but did NOT obtain the original Brockett–Dobkin formulas needed to certify the complete addition/encoding/decoding cost. Therefore it does not establish or refute O(N) total arithmetic for arbitrary k=Theta(log N) exponential sums. It does resolve a separate, explicit O(n^2) finite-alphabet thin-MM path and explains exactly why that path does not apply to arbitrary roots of unity.
+
+1. IMPORTANT SOURCE UPDATE: LITERATURE SAYS MORE THAN THE ABSTRACT
+
+Correct 1976 title: Roger W. Brockett and David Dobkin, “On the Number of Multiplications Required for Matrix Multiplication,” SIAM J. Comput. 5(4), 624–628, DOI 10.1137/0205041. “Rapid Multiplication of Rectangular Matrices” is Coppersmith’s 1982 paper.
+
+A. Original abstract, verified directly at publisher:
+https://epubs.siam.org/doi/10.1137/0205041
+It states n^2+o(n^2) multiplications for n-by-p times p-by-n, p<=log_2 n, with multiplication/division by 2. The abstract itself still does not certify total arithmetic work.
+
+B. Timothy M. Chan, “Speeding up the Four Russians Algorithm by About One More Logarithmic Factor,” SODA 2015, author PDF, Section 3 / printed page 5:
+https://tmc.web.engr.illinois.edu/bmm9_14.pdf
+In a comparison with algebraic algorithms, Chan explicitly says an n-by-log n and log n-by-n product takes O(n^2) operations, citing Brockett–Dobkin as reference [4]. This is NOT merely a statement about tensor rank. However, that paragraph is a citation, not a reconstruction or proof of the 1976 implementation. The paper's own algorithm is for Boolean multiplication and does not reproduce B–D’s generic arithmetic algorithm.
+
+C. Roy Nissim and Gregory Schwartzman, “Revisiting ‘Rapid multiplication of rectangular matrices’,” Research in Mathematics 11(1), 2024, introduction:
+https://www.tandfonline.com/doi/abs/10.1080/27684830.2024.2388334
+https://www.tandfonline.com/doi/pdf/10.1080/27684830.2024.2388334
+This also describes B–D as Theta(n^2)+o(n^2) ARITHMETIC operations, in the cyclically permuted n-by-n times n-by-log n shape. The article is open access CC BY 4.0. Again the relevant sentence is a citation rather than the construction.
+
+D. Contrast with Huang–Pan PASCO 1997, Section 2 / PDF page 2:
+https://www.csd.uwo.ca/~mmorenom/CS855/Ressources/Huang-Pan-PASCO-1997.pdf
+This source carefully separates A(m,n,p), arithmetic work, from M(m,n,p), bilinear rank. It places the cited B–D fact under M, with an inner size r(n)=o(log n). Its nearby rank-to-arithmetic asymptotic conversion is for tensor powers of a FIXED base algorithm; it cannot be substituted for a uniform total-arithmetic bound at growing p.
+
+The proper status is therefore: there is explicit literature support for O(n^2) TOTAL operations, including a respected author’s research paper, so it is too pessimistic to say all available sources only claim multiplication count. But an independent gate-level audit has not been completed here. Do not silently choose either interpretation; identify the missing original proof.
+
+2. WHAT O(n^2) TOTAL THIN-MM WOULD GIVE, WITH ALL OTHER COSTS COUNTED
+
+Let n=ceil(sqrt(N)). Pad output indices to n^2, set B=n, and form
+ U[r,s]=z_s^r, 0<=r<n;
+ W[s,b]=a_s(z_s^n)^b, 0<=b<n.
+Then (UW)[r,b]=f_(r+bn). Extra outputs can simply be discarded.
+
+Assume k<=C log_2 N with fixed C. Partition the inner index set into groups of size <=floor(log_2 n), so their number g=ceil(k/floor(log_2 n))=O(C), independent of N asymptotically.
+
+Actual non-MM costs:
+- Consecutive U powers: <=k(n-1) multiplications (starting with 1).
+- z_s^n: one extra multiplication after the last U power, per s.
+- W sequences starting from a_s: <=k(n-1) multiplications.
+- Sum the g matrix outputs: (g-1)n^2 additions.
+- Write/extract N requested outputs: O(N).
+Thus, if each generic thin product has TOTAL work <=K n^2 with uniform K, the entire computation has total O_C(N)+O(k sqrt(N))=O_C(N). Fresh support is included in table formation. Roots-of-unity structure is not required by this reduction at all; it works for arbitrary field elements z_s, in a field where the hypothetical MM algorithm is valid.
+
+This proof is conditional on TOTAL thin-MM work, not on rank. Conversely, the table formation and constant-number grouping are not the unresolved bottleneck. Fixed-support precomputation is not needed for this implication.
+
+3. A FULLY EXPLICIT ALTERNATIVE: FINITE-ALPHABET THIN MM
+
+Primary complete source: Edo Liberty and Steven W. Zucker, “The Mailman algorithm: a note on matrix vector multiplication,” author PDF:
+https://edoliberty.github.io/papers/mailmanAlgorithm.pdf
+Also Yale technical report:
+https://cpsc.yale.edu/sites/default/files/files/tr1402.pdf
+The theorem assumes a CONSTANT-size alphabet in one matrix, with arbitrary real vector inputs. The same addition/scalar-multiplication construction works over complex numbers.
+
+Here is a self-contained total-operation proof for the transposed orientation needed in thin MM. Let U be n-by-p, with entries from an alphabet Sigma={c_1,...,c_q}, q constant. For one vector x of length p, precompute c_j*x_s for all s,j in qp multiplications. Build the table of all q^p possible dot products for alphabet-valued rows. At level t, append one of q choices c_j*x_t to each length-(t-1) partial sum. This needs at most sum_(t=1)^p q^t=O(q^p) additions for q>=2. Each desired row of U then selects one table value. A preprocessing pass over U records its row-pattern indexes in O(np) work/storage; no arithmetic comparisons of variable x are needed. For q=1 the formula is even simpler.
+
+Choose block length t=floor(log_q n), with harmless t>=1. For p<=C log_q n, there are O(C) column blocks. For each of the n columns of an arbitrary p-by-n W, perform the above O(n) table computation per block, select n values, and sum the O(C) block contributions. Total:
+ preprocessing O(np), input table O(qp n), table additions O(n^2), output combining O(n^2), reads/writes O(n^2).
+Hence O_C,q(n^2) TOTAL work, with every operation accounted for.
+
+Why it DOES NOT settle arbitrary U[r,s]=z_s^r:
+For B=n and a primitive Nth root z_s, its U column alone contains n distinct field values. Thus an exact alphabet for U has q>=n, not a fixed q. Then floor(log_q n)<=1: the table technique cannot group a logarithmic number of coordinates. Applying one-coordinate blocks gives O(n^2 p), i.e. O(Nk). Treating Nth roots as a finite alphabet does not make its size constant. Likewise arbitrary amplitudes and high-order z_s^B do not make W a fixed-alphabet matrix. A small exponent representation does not change the number of distinct field coefficients in the table construction.
+
+This is a concrete total-arithmetic O(n^2) algorithm in the finite-alphabet setting, not a generic thin-MM theorem, and not a proof that the generic theorem is false.
+
+4. ACCESS BOUNDARY / NEXT USEFUL INPUT
+
+The SIAM PDF/EPDF links redirected to a subscription abstract. No paywall bypass or unverified mirror was used. The erratum remains only a sign correction per the earlier verified note.
+
+Located a legitimate public primary source that may help: Dobkin’s 1973 thesis, “On the Arithmetic Complexity of a Class of Arithmetic Computations,” Yale technical report 023. Yale’s official index links it here:
+https://engineering.yale.edu/academic-study/departments/computer-science/technical-reports
+Exact linked PDF:
+https://engineering.yale.edu/download_file/view/[private-id]/3815
+The web tool identifies it as a 103-page PDF with no extracted text. Rendering and download were unavailable in this pass. I did not inspect its contents and do not assert it contains the later 1976 construction. The paper was submitted in December 1974.
+
+The shortest path to a definitive B–D addition audit remains an authorized readable copy of the original five pages (624–628), together with the 1978 sign correction. A citation saying operations is useful evidence, but it is not the requested reconstruction.
+
+5. FINAL ACCESS / CORROBORATION UPDATE
+
+An additional source is John H. Reif’s Duke algorithm lecture notes, ALG3.1. Its indexed text labels the Brockett–Dobkin bound as time n^2+o(n^2) for m=O(log n):
+https://courses.cs.duke.edu/fall05/cps130/lectures/reif.lectures/ALG3.1.pdf
+This adds independent total-time wording to Chan and Nissim–Schwartzman. It is not an explicit additions recurrence.
+
+A further read-only access attempt was made to the publicly indexed electronicsandbooks issue page and volume-5 scan. Both returned fetch timeouts, so no content from that mirror was inspected or relied upon. This does not alter the mathematical status: missing construction audit, not disproven arithmetic claim.

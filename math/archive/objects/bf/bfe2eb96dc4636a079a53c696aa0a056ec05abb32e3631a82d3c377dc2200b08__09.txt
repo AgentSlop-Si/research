@@ -1,0 +1,125 @@
+   1 #!/usr/bin/env python3
+   2 """Independent finite controls for the common-parity-cut theorem."""
+   3 import argparse
+   4 from fractions import Fraction
+   5 import json
+   6 from pathlib import Path
+   7 import random
+   8 
+   9 
+  10 def parity(x):
+  11     return x.bit_count() & 1
+  12 
+  13 
+  14 def null_vector(rows, k):
+  15     echelon = {}
+  16     for row in rows:
+  17         while row:
+  18             pivot = row.bit_length()-1
+  19             if pivot in echelon:
+  20                 row ^= echelon[pivot]
+  21             else:
+  22                 echelon[pivot] = row
+  23                 break
+  24     free = next(i for i in range(k) if i not in echelon)
+  25     f = 1 << free
+  26     for pivot in sorted(echelon):
+  27         if parity(f & echelon[pivot]):
+  28             f ^= 1 << pivot
+  29     assert f and all(parity(f & row) == 0 for row in rows)
+  30     return f, len(echelon)
+  31 
+  32 
+  33 def invertible_columns(k, rng):
+  34     columns = [1 << i for i in range(k)]
+  35     for _ in range(5*k+1):
+  36         a, b = rng.sample(range(k), 2)
+  37         columns = [col ^ ((1 << a) if col & (1 << b) else 0)
+  38                    for col in columns]
+  39     return columns
+  40 
+  41 
+  42 def linear_apply(columns, x):
+  43     value = 0
+  44     for i, col in enumerate(columns):
+  45         if x & (1 << i):
+  46             value ^= col
+  47     return value
+  48 
+  49 
+  50 def formula_crossings(g, k):
+  51     numerator = sum((1 << (k-h))*parity(g & ((1 << h)-1))
+  52                     for h in range(1, k+1))
+  53     numerator += parity(g & ((1 << k)-1))
+  54     assert numerator % 2 == 0
+  55     return numerator//2
+  56 
+  57 
+  58 def direct_crossings(values):
+  59     return sum(a == 1 and b == 0
+  60                for a, b in zip(values, values[1:]+values[:1]))
+  61 
+  62 
+  63 def main():
+  64     parser = argparse.ArgumentParser()
+  65     parser.add_argument('--output', default='VERIFIED_RESULTS.json')
+  66     args = parser.parse_args()
+  67     formula_rows = []
+  68     for k in range(1, 11):
+  69         n = 1 << k
+  70         for g in range(1, n):
+  71             value = formula_crossings(g, k)
+  72             assert value == direct_crossings([parity(g & x) for x in range(n)])
+  73             low_zeros = (g & -g).bit_length()-1
+  74             assert value <= n//(1 << (low_zeros+1))
+  75         formula_rows.append({'k': k, 'masks_checked': n-1})
+  76     rng = random.Random(90218431)
+  77     banks = []
+  78     for k in range(2, 11):
+  79         n = 1 << k
+  80         r = k//2
+  81         for d in (1, 2, 3, 4, 8):
+  82             u = (k-r-1)//d
+  83             for trial in range(4):
+  84                 columns = [invertible_columns(k, rng) for _ in range(d)]
+  85                 shifts = [rng.randrange(n) for _ in range(d)]
+  86                 rows = [1 << i for i in range(r)]
+  87                 rows += [col for matrix in columns for col in matrix[:u]]
+  88                 f, rank = null_vector(rows, k)
+  89                 assert rank <= r+d*u <= k-1
+  90                 assert sum(parity(f & x) == 0 for x in range(n)) == n//2
+  91                 assert all(parity(f & x) == parity(f & (x//(1<<r)*(1<<r)))
+  92                            for x in range(n))
+  93                 counts, masks = [], []
+  94                 for matrix, shift in zip(columns, shifts):
+  95                     sigma = [linear_apply(matrix, x)^shift for x in range(n)]
+  96                     assert len(set(sigma)) == n
+  97                     values = [parity(f & v) for v in sigma]
+  98                     g = sum(parity(f & col) << i for i, col in enumerate(matrix))
+  99                     assert g and g & ((1 << u)-1) == 0
+ 100                     assert all(values[x] == (parity(g & x)^parity(f & shift))
+ 101                                for x in range(n))
+ 102                     actual = direct_crossings(values)
+ 103                     assert actual == formula_crossings(g, k)
+ 104                     assert actual <= n//(1 << (u+1))
+ 105                     counts.append(actual)
+ 106                     masks.append(g)
+ 107                 # The rank comparison is M*N/2^(u+1) >= N/4.
+ 108                 # Multiplicity M is distinct from the number d of orders.
+ 109                 min_M = Fraction(1 << u, 2)
+ 110                 assert min_M*Fraction(n, 1 << (u+1)) == Fraction(n, 4)
+ 111                 banks.append({'k':k,'d':d,'trial':trial,'r':r,'u':u,
+ 112                               'constraint_rank':rank,'chosen_parity_mask':f,
+ 113                               'pullback_masks':masks,'incoming_counts':counts,
+ 114                               'necessary_total_terms_lower_bound':str(min_M)})
+ 115     result = {'status':'PASS','exhaustive_formula_controls':formula_rows,
+ 116               'formula_masks_total':sum(x['masks_checked'] for x in formula_rows),
+ 117               'banks_checked':len(banks),'banks':banks,
+ 118               'scope':'Necessary total Green occurrences M, not number of allowed orders d; characteristic-zero target rank proof is analytic.'}
+ 119     Path(args.output).write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 120     print(json.dumps({'status':'PASS','formula_masks_total':result['formula_masks_total'],
+ 121                       'banks_checked':len(banks),'maps_checked':sum(b['d'] for b in banks)},sort_keys=True))
+ 122 
+ 123 
+ 124 if __name__ == '__main__':
+ 125     main()

@@ -1,0 +1,97 @@
+   1 """Reproducible, honest arithmetic-count and wall-time measurements."""
+   2 from __future__ import annotations
+   3 from statistics import median
+   4 from pathlib import Path
+   5 import json
+   6 import platform
+   7 import random
+   8 import time
+   9 import numpy as np
+  10 from structural_fft import FFTGraph, CompactSplitRadix, SharedLookupTable, fwht_mod, tabulated_fwht_mod
+  11 
+  12 
+  13 def timed(fn, repeats=5):
+  14     res=[]
+  15     for _ in range(repeats):
+  16         st=time.perf_counter()
+  17         fn()
+  18         res.append(time.perf_counter()-st)
+  19     return median(res)
+  20 
+  21 
+  22 def run():
+  23     data={
+  24         'metadata': {
+  25             'note': 'Educational Python graphs and tabulation; not a sub-NlogN complex FFT',
+  26             'python': platform.python_version(),
+  27             'numpy':np.__version__,
+  28             'system':platform.platform(),
+  29             'units':'seconds',
+  30         },
+  31         'fft_circuits':[],
+  32         'tabulated_wht':[],
+  33     }
+  34     rng=np.random.default_rng(20261009)
+  35     for n in [16,32,64,128,256,512,1024,2048,4096]:
+  36         x=rng.standard_normal(n) + 1j*rng.standard_normal(n)
+  37         simple=FFTGraph(n,'radix2')
+  38         split=FFTGraph(n,'split_radix')
+  39         compact=CompactSplitRadix(n)
+  40         s0=simple.stats()
+  41         s1=split.stats()
+  42         actual=np.array(split.execute(x))
+  43         assert np.allclose(actual,np.fft.fft(x),rtol=1e-12,atol=1e-10)
+  44         assert np.allclose(compact.execute(x),np.fft.fft(x),rtol=1e-12,atol=1e-10)
+  45         data['fft_circuits'].append({
+  46             'n':n,
+  47             'radix2':s0,
+  48             'split_radix':s1,
+  49             'compact_template':compact.stats(),
+  50             'generic_multiplication_reduction_pct':100*(1-s1['nontrivial_complex_multiplies']/s0['nontrivial_complex_multiplies']),
+  51             'radix2_exec_seconds':timed(lambda:simple.execute(x),3),
+  52             'split_exec_seconds':timed(lambda:split.execute(x),3),
+  53             'compact_exec_seconds':timed(lambda:compact.execute(x),3),
+  54             'numpy_fft_seconds':timed(lambda:np.fft.fft(x),9),
+  55             'max_split_vs_numpy_abs_error':float(np.max(np.abs(actual-np.fft.fft(x)))),
+  56         })
+  57     p=3
+  58     cache=SharedLookupTable(p)
+  59     cache.ensure(8)
+  60     cache_info=cache.stats()
+  61     data['lookup_precomputation']=cache_info
+  62     r=random.Random(20261009)
+  63     for n in (256,1024,4096,16384):
+  64         x=[r.randrange(p) for _ in range(n)]
+  65         direct=fwht_mod(x,p)
+  66         for b in [2,4,8]:
+  67             y,info=tabulated_fwht_mod(x,p,b,cache)
+  68             assert direct==y, f'mismatch N={n}, block={b}'
+  69             data['tabulated_wht'].append({
+  70                 **info,
+  71                 'python_baseline_seconds':timed(lambda:fwht_mod(x,p),4),
+  72                 'python_lookup_seconds':timed(lambda:tabulated_fwht_mod(x,p,b,cache),4),
+  73                 'precomputation_amortized':True,
+  74             })
+  75     path=Path(__file__).with_name('benchmark_results.json')
+  76     path.write_text(json.dumps(data,indent=2)+'\n',encoding='utf-8')
+  77     print(f'Results saved: {path}')
+  78     print('Complex FFT (all inputs):')
+  79     print(' N   Radix-2 mul   Split mul reduction  expanded (ms) compact (ms) NumPy (ms)')
+  80     for row in data['fft_circuits']:
+  81         a=row['radix2']['nontrivial_complex_multiplies']
+  82         b=row['split_radix']['nontrivial_complex_multiplies']
+  83         print(f"{row['n']:>4} {a:>12} {b:>11} {row['generic_multiplication_reduction_pct']:>8.1f}% "
+  84               f"{row['split_exec_seconds']*1000:>14.3f} {row['compact_exec_seconds']*1000:>12.3f} "
+  85               f"{row['numpy_fft_seconds']*1000:>10.3f}")
+  86     print('Lookup compiler:',cache_info)
+  87     print('WHT mod 3, block=8:')
+  88     print(' N    baseline butterfly additions  lookups passes  baseline (ms) lookup (ms)')
+  89     for row in data['tabulated_wht']:
+  90         if row['block']==8:
+  91             print(f"{row['n']:>5} {row['baseline_modular_add_sub']:>27} {row['lookups']:>8} "
+  92                   f"{row['passes']:>6} {row['python_baseline_seconds']*1000:>12.3f} "
+  93                   f"{row['python_lookup_seconds']*1000:>11.3f}")
+  94 
+  95 
+  96 if __name__=='__main__':
+  97     run()

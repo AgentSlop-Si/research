@@ -1,0 +1,41 @@
+import json
+import time
+from statistics import median
+from pathlib import Path
+import numpy as np
+from scipy import fft
+from phase import phases_tiled
+from lazy_fft import LazyRealFFT
+
+def timing(f,reps=5):
+    ts=[];out=None
+    for _ in range(reps):
+        t=time.perf_counter_ns();out=f();ts.append((time.perf_counter_ns()-t)/1e6)
+    return median(ts),out
+
+records=[]
+for n in [4096,16384,65536,262144,1048576]:
+    p=n//7
+    qs=np.arange(n//2+1, dtype=np.int64)
+    vec=lambda: np.exp((-2j*np.pi/n) * ((p*qs)%n))
+    tile=lambda: phases_tiled(n,p,tile=1024)
+    vec_ms,expected=timing(vec)
+    tile_ms,actual=timing(tile)
+    err=float(np.max(np.abs(actual-expected)))
+    rng=np.random.default_rng(n)
+    x=rng.standard_normal(n)
+    cache=LazyRealFFT(x)
+    cache.edit(p,1.75)
+    fft.rfft(x)
+    direct_ms,direct=timing(cache.materialize_direct)
+    scipy_ms,sci=timing(cache.materialize_fresh)
+    spectrum_err=float(np.max(np.abs(direct-sci)))
+    assert np.allclose(actual,expected,rtol=1e-11,atol=1e-11)
+    assert np.allclose(direct,sci,rtol=1e-9,atol=1e-8)
+    row={'n':n,'phase_vector_exp_ms':round(vec_ms,4),'phase_tiled_ms':round(tile_ms,4),'phase_speedup':round(vec_ms/tile_ms,3),
+         'phase_max_abs_error':err,'single_edit_materialize_tiled_ms':round(direct_ms,4),
+         'single_edit_scipy_rfft_ms':round(scipy_ms,4), 'single_edit_spectrum_error':spectrum_err,
+         'single_edit_speedup_vs_rfft':round(scipy_ms/direct_ms,3)}
+    records.append(row)
+    print(json.dumps(row))
+Path('fft_phase4/phase_benchmark_results.json').write_text(json.dumps(records,indent=2))

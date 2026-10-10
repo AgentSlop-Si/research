@@ -1,0 +1,72 @@
+"""Optional computational check of two-stage scan superconcentrator status.
+
+For any side partition S of signal graph, define a=#input nodes on S,
+b=#output nodes outside S.  An adversarial mincut rank violation exists
+iff the minimum of cut_capacity-min(a,b) is strictly negative.
+
+This MILP optimizes both the graph cut and the endpoint selection at once.
+Large-capacity edges >n cannot cross a violating cut, hence can be replaced
+by hard directed-closure inequalities without losing any negative witness.
+
+It is an optimization certificate, not a formal proof of a zero optimum.
+"""
+import json
+import sys
+from pathlib import Path
+import numpy as np
+from scipy.optimize import milp, Bounds, LinearConstraint
+from scipy.sparse import coo_matrix
+ROOT=Path(__file__).resolve().parent/'prior_checkpoint'
+sys.path.insert(0,str(ROOT))
+from scan_flow import make_graph
+from fast_mincut import ScanFlowOracle
+
+P8=[7,0,6,3,4,1,2,5]
+def lift(r):return [r*j+k for j in P8 for k in range(r)]
+
+def solve(n,r,shuffle,time_limit=45):
+    G,big=make_graph(n,[r,r],[shuffle]);nodes=list(G.nodes);V=len(nodes)
+    where={node:i for i,node in enumerate(nodes)}
+    fin=[(where[u],where[v],int(d['capacity'])) for u,v,d in G.edges(data=True) if d['capacity']<big]
+    inf=[(where[u],where[v]) for u,v,d in G.edges(data=True) if d['capacity']>=big]
+    E=len(fin);k=V+E;total=k+1
+    inp=[where[(0,'x',j,'i')] for j in range(n)]
+    out=[where[(1,'y',j,'o')] for j in range(n)]
+    bounds_lo=np.zeros(total);bounds_hi=np.ones(total);bounds_lo[k]=1;bounds_hi[k]=n
+    integ=np.zeros(total,dtype=int);integ[:V]=1
+    objective=np.zeros(total);objective[V:V+E]=[w for u,v,w in fin];objective[k]=-1
+    rows=[];cols=[];vals=[];upper=[]
+    def constraint(d,ub):
+        row=len(upper);upper.append(ub)
+        for j,coef in d.items():rows.append(row);cols.append(j);vals.append(coef)
+    for u,v in inf:constraint({u:1,v:-1},0)
+    for i,(u,v,w) in enumerate(fin):constraint({u:1,v:-1,V+i:-1},0)
+    constraint({**{j:-1 for j in inp},k:1},0)
+    constraint({**{j:1 for j in out},k:1},n)
+    A=coo_matrix((vals,(rows,cols)),shape=(len(upper),total)).tocsr()
+    result=milp(c=objective,integrality=integ,bounds=Bounds(bounds_lo,bounds_hi),constraints=LinearConstraint(A,-np.inf,upper),options={'time_limit':time_limit,'mip_rel_gap':0.0})
+    answer={'n':n,'r':r,'shuffle':shuffle,'solver_status':int(result.status),
+            'solver_message':str(result.message),'lower_bound':None if getattr(result,'mip_dual_bound',None) is None else float(result.mip_dual_bound),
+            'objective':None if result.fun is None else float(result.fun), 'nodes':V,'finite_edges':E,
+            'infinite_edges':len(inf),'time_limit_s':time_limit}
+    if result.x is not None:
+        side=result.x[:V].round().astype(int)
+        Is=[j for j in range(n) if side[inp[j]]>0]
+        Os=[j for j in range(n) if side[out[j]]<1]
+        t=min(len(Is),len(Os)); cap=int(sum(w for u,v,w in fin if side[u]>0 and side[v]<1))
+        assert (cap-t)==round(result.fun),(cap,t,result.fun)
+        answer.update({'cut_capacity':cap,'can_choose_k':t,'negative_witness_inputs':Is,
+                       'negative_witness_outputs':Os})
+        if cap<t:
+            orc=ScanFlowOracle(n,[r,r],[shuffle])
+            rr=Os[:t];cc=Is[:t]
+            answer.update({'independent_maxflow_for_witness':orc.bound(rr,cc),'witness_R':rr,'witness_C':cc})
+    return answer
+
+if __name__=='__main__':
+    results=[]
+    for r in (1,2,3,4):
+        z=solve(8*r,r,lift(r),time_limit=35)
+        results.append(z)
+        print(json.dumps(z),flush=True)
+    Path(__file__).with_name('milp_results.json').write_text(json.dumps(results,indent=2)+'\n')

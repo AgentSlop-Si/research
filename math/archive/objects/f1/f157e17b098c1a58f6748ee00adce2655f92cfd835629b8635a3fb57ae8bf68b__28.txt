@@ -1,0 +1,59 @@
+1: """Full charged-operation comparisons (not wall-clock FFT speed claims).
+2: 
+3: The quadratic gauge is evaluated for arbitrary field inputs. For binary input,
+4: it vanishes identically; no speedup for computing a Fourier spectrum is claimed.
+5: """
+6: from __future__ import annotations
+7: import json
+8: from pathlib import Path
+9: from random import Random
+10: from degree_boundary import P,Counter,wedge_gauge,wedge_coefficients,ntt,cubic_global_wedge_fft
+11: 
+12: 
+13: def expanded_wedge(x,a,b,meter:Counter):
+14:     n=len(x)
+15:     squares=[meter.m(t,t) for t in x]
+16:     result=0
+17:     for i in range(n):
+18:         for j in range(i+1,n):
+19:             coeff=meter.s(meter.m(a[i],b[j]),meter.m(a[j],b[i]))
+20:             poly=meter.s(meter.m(squares[i],x[j]),meter.m(x[i],squares[j]))
+21:             result=meter.a(result,meter.m(coeff,poly))
+22:     return result
+23: 
+24: 
+25: def run():
+26:     rng=Random(20261009)
+27:     records=[]
+28:     for n in (8,16,32,64,128,256,512,1024):
+29:         a=[rng.randrange(P) for _ in range(n)]
+30:         b=[rng.randrange(P) for _ in range(n)]
+31:         x=[rng.randrange(P) for _ in range(n)]
+32:         c=Counter()
+33:         value=wedge_gauge(x,a,b,c)
+34:         predicted=n+8*(n*(n-1)//2)
+35:         if n<=128:
+36:             baseline=Counter()
+37:             value2=expanded_wedge(x,a,b,baseline)
+38:             assert value2==value
+39:             assert baseline.work==predicted,(n,baseline.work,predicted)
+40:         cn=Counter();ntt(x,cn)
+41:         cw=Counter();cubic_global_wedge_fft(x,a,b,[2]*n,cw)
+42:         records.append({'N':n,'pair_coefficients':n*(n-1)//2,
+43:                         'global_wedge_scalar_ops':c.work,
+44:                         'fully_expanded_wedge_scalar_ops':predicted,
+45:                         'wedge_ops_ratio':round(predicted/c.work,4),
+46:                         'full_fft_reference_scalar_ops':cn.work,
+47:                         'cubic_gauge_full_fft_scalar_ops':cw.work,
+48:                         'cubic_vs_fft_ratio':round(cw.work/cn.work,4),
+49:                         'FFT_speedup':False,
+50:                         'note':'integer op count of specific prototype, not best transform circuit'})
+51:     return records
+52: 
+53: if __name__=='__main__':
+54:     data=run()
+55:     out=Path(__file__).with_name('operation_counts.json')
+56:     out.write_text(json.dumps(data,indent=2)+'\n')
+57:     print('N   pair_terms   wedge_ops   expanded_ops  ratio    FFT_ops    cubic+gauge_ops')
+58:     for d in data:
+59:         print(f"{d['N']:4d} {d['pair_coefficients']:12d} {d['global_wedge_scalar_ops']:11d} {d['fully_expanded_wedge_scalar_ops']:14d} {d['wedge_ops_ratio']:6.1f} {d['full_fft_reference_scalar_ops']:10d} {d['cubic_gauge_full_fft_scalar_ops']:16d}")

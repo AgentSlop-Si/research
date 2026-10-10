@@ -1,0 +1,97 @@
+import random
+import unittest
+from exact_graphs import (PrimeField,CyclotomicField,fourier,rank,skeleton,
+                         inverse,mm,mv,progression_rank,coset_residual_min,
+                         consecutive_column_residual_lower,compile_radix2,
+                         direct_decoder_lower,radix2_cost)
+
+
+class ExactTests(unittest.TestCase):
+    def test_cyclotomic_field_and_inverses(self):
+        rng=random.Random(77)
+        for n in (2,4,8,16,32):
+            f=CyclotomicField(n); z=f.root()
+            self.assertEqual(f.power(z,n),f.one)
+            self.assertEqual(f.power(z,n//2),f.neg(f.one))
+            for _ in range(12):
+                a=tuple(f.integer(rng.randrange(-3,4))[0] for _ in range(f.d))
+                if a!=f.zero: self.assertEqual(f.mul(a,f.inv(a)),f.one)
+
+    def test_exact_basis_certifies_full_input_graph(self):
+        for n in (4,8,16):
+            f=CyclotomicField(n)
+            plan=skeleton(f,n,[0,n//2],[0,1])
+            self.assertTrue(plan.verify())
+            g=plan.compile()
+            self.assertTrue(g.verify_all_inputs())
+            self.assertEqual(len(g.ops),plan.cost()['arithmetic'])
+
+    def test_direct_dft_on_arbitrary_field_inputs(self):
+        rng=random.Random(103)
+        for n,p in ((4,17),(8,17),(16,97),(32,193)):
+            f=PrimeField(p); F=fourier(f,n)
+            plans=[skeleton(f,n,[0,n//2],[0,1]).compile(),compile_radix2(f,n)]
+            for _ in range(20):
+                x=[rng.randrange(p) for _ in range(n)]
+                for g in plans: self.assertEqual(g.apply(x),mv(f,F,x))
+
+    def test_exact_fft_control(self):
+        for n in (2,4,8,16):
+            g=compile_radix2(CyclotomicField(n),n)
+            self.assertTrue(g.verify_all_inputs())
+            self.assertEqual(len(g.ops),radix2_cost(n)['arithmetic'])
+
+    def test_catches_bad_certificate(self):
+        f=CyclotomicField(8)
+        p=skeleton(f,8,[0,4],[0,1])
+        p.E[0][0]=f.one
+        self.assertFalse(p.verify())
+        g=compile_radix2(f,8)
+        op,a,b=g.ops[-1];g.ops[-1]=('add',a,b)
+        self.assertFalse(g.verify_all_inputs())
+
+    def test_progression_rank_exact_and_not_svd(self):
+        f=CyclotomicField(16); F=fourier(f,16)
+        for a,b,s,t in ((4,4,1,1),(4,4,4,4),(4,4,2,2),(3,5,0,3),(8,2,1,1)):
+            A=[[F[(2+s*i)%16][(3+t*j)%16] for j in range(b)] for i in range(a)]
+            self.assertEqual(rank(f,A),progression_rank(16,a,b,s,t))
+
+    def test_coset_bound_attained_in_exact_field(self):
+        f=CyclotomicField(16)
+        for r in (1,2,4,8):
+            for off in (0,1):
+                plan=skeleton(f,16,range(r),[(off+j*(16//r))%16 for j in range(r)])
+                self.assertEqual(plan.cost()['residual_nonzeros'],coset_residual_min(16,r))
+                self.assertGreaterEqual(plan.cost()['residual_nonzeros'],64)
+
+    def test_rank_sparse_residual_bound(self):
+        # Arbitrary rank-r products, not restricted to the skeleton candidates.
+        rng=random.Random(257);f=PrimeField(97);n=16;F=fourier(f,n)
+        for r in (0,1,2,4,8,15):
+            for _ in range(6):
+                if r:
+                    U=[[rng.randrange(97) for _ in range(r)] for _ in range(n)]
+                    V=[[rng.randrange(97) for _ in range(n)] for _ in range(r)]
+                    L=mm(f,U,V)
+                else: L=[[0]*n for _ in range(n)]
+                nz=sum(F[i][j]!=L[i][j] for i in range(n) for j in range(n))
+                self.assertGreaterEqual(nz,consecutive_column_residual_lower(n,r))
+
+    def test_inverse_independent_product(self):
+        f=CyclotomicField(8);F=fourier(f,8)
+        ans=mm(f,F,inverse(f,F))
+        self.assertEqual(ans,[[f.one if i==j else f.zero for j in range(8)] for i in range(8)])
+
+    def test_invalid_or_singular_anchors_rejected(self):
+        f=PrimeField(17)
+        for R,C in (([0,0],[0,1]),([0,1],[0]),([0,8],[0,1]),([0,4],[0,2])):
+            with self.assertRaises(ValueError): skeleton(f,8,R,C)
+
+    def test_lower_bound_within_precise_evaluator(self):
+        f=PrimeField(257);n=32
+        for r in (1,2,4,8,16):
+            plan=skeleton(f,n,range(r),range(r))
+            self.assertGreaterEqual(plan.cost()['arithmetic'],direct_decoder_lower(n,r))
+
+
+if __name__=='__main__': unittest.main()

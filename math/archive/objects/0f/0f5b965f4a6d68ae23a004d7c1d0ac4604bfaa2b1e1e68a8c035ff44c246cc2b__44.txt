@@ -1,0 +1,56 @@
+   1 import unittest
+   2 from random import Random
+   3 from cut_budget import (PRIMES,rank,fourier,stage,qsrank,matmul,middle_shuffle,
+   4                         two_stage_bound,endpoint_certificate,endpoint_patterns,permute)
+   5 
+   6 class TestTwoStageMinorObstruction(unittest.TestCase):
+   7     def test_vandermonde_half_rank(self):
+   8         for p,g in PRIMES:
+   9             for n in (4,8,16,32,64):
+  10                 f=fourier(n,p,g); m=n//2
+  11                 self.assertEqual(rank([row[:m] for row in f[:m]],p),m)
+  12                 self.assertEqual(rank([row[m:] for row in f[:m]],p),m)
+  13 
+  14     def test_either_endpoint_can_be_permuted(self):
+  15         rng=Random(77)
+  16         for p,g in PRIMES:
+  17             for n in (8,16,32):
+  18                 f=fourier(n,p,g);m=n//2
+  19                 order=list(range(n));rng.shuffle(order)
+  20                 self.assertEqual(rank([f[k][:m] for k in order[:m]],p),m)
+  21                 self.assertEqual(rank([f[k][m:] for k in order[:m]],p),m)
+  22                 self.assertEqual(rank([[row[k] for k in order[:m]] for row in f[:m]],p),m)
+  23                 self.assertEqual(rank([[row[k] for k in order[m:]] for row in f[:m]],p),m)
+  24 
+  25     def test_arbitrary_internal_shuffles(self):
+  26         rng=Random(903)
+  27         for p,_ in PRIMES:
+  28             for n in (8,16,32):
+  29                 for ra,rb in ((1,1),(2,3),(3,1)):
+  30                     A=stage(n,ra,p,rng);B=stage(n,rb,p,rng)
+  31                     self.assertLessEqual(qsrank(A,p),ra)
+  32                     self.assertLessEqual(qsrank(B,p),rb)
+  33                     order=list(range(n));rng.shuffle(order)
+  34                     M=matmul(B,middle_shuffle(A,order),p)
+  35                     cert=two_stage_bound(M,A,B,order,p)
+  36                     self.assertLessEqual(cert['left_rank']+cert['right_rank'],
+  37                          n//2+2*(ra+rb))
+  38 
+  39     def test_double_endpoint_weakening(self):
+  40         p,g=PRIMES[0];n=16;f=fourier(n,p,g);o=endpoint_patterns(n)
+  41         original=endpoint_certificate(f,p)
+  42         both=endpoint_certificate(permute(f,o['bit_reversal'],o['bit_reversal']),p)
+  43         self.assertEqual(original['necessary_rank_sum'],4)
+  44         self.assertEqual(both['necessary_rank_sum'],1)
+  45 
+  46     def test_n32_two_stage_r3_unsupported(self):
+  47         # Exact all-parameter certificate, NOT just a finite random search.
+  48         n=32;r=3
+  49         self.assertLess(2*r,n//4)
+  50 
+  51     def test_fft_full_matrix_invertible(self):
+  52         for p,g in PRIMES:
+  53             for n in (4,8,16):
+  54                 self.assertEqual(rank(fourier(n,p,g),p),n)
+  55 
+  56 if __name__=='__main__':unittest.main()

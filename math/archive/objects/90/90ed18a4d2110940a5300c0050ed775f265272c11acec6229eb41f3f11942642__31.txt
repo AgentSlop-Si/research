@@ -1,0 +1,44 @@
+   1 """Exact recurrence-state subtree fusion checks; naive arithmetic, no speed claim."""
+   2 import random,json
+   3 from pathlib import Path
+   4 from check_cyclic_rational_fusion import P,root,mul
+   5 
+   6 def denominator(zs):
+   7     q=[1]
+   8     for z in zs:q=mul(q,[1,-z%P])
+   9     return q
+  10 
+  11 def extend(v,q):
+  12     L=len(v); prod=mul(q,v); R=(prod[L:]+[0]*L)[:L]
+  13     h=[1]+[0]*(L-1)
+  14     for j in range(1,L):h[j]=-sum(q[i]*h[j-i] for i in range(1,min(j,len(q)-1)+1))%P
+  15     return [(-x)%P for x in mul(R,h)[:L]]
+  16 
+  17 def main():
+  18     rng=random.Random(9012026); cases=0;nodes=0;output_checks=0
+  19     for period in [8,16,32]:
+  20         zeta=root(period)
+  21         for k in range(1,min(period,8)+1):
+  22             L=1<<(k-1).bit_length()
+  23             for depth in range(5):
+  24                 for _ in range(3):
+  25                     zs=[pow(zeta,j,P) for j in rng.sample(range(period),k)]
+  26                     a=[rng.randrange(1,P) for _ in zs]; N=L*(1<<depth)
+  27                     direct=[sum(b*pow(z,m,P) for b,z in zip(a,zs))%P for m in range(N)]
+  28                     states={0:direct[:L]}; ws=zs[:]
+  29                     for d in range(depth):
+  30                         q=denominator(ws); new={}
+  31                         for r,v in states.items():
+  32                             both=v+extend(v,q); nodes+=1
+  33                             new[r]=both[::2];new[r+(1<<d)]=both[1::2]
+  34                         states=new;ws=[w*w%P for w in ws]
+  35                     out=[0]*N
+  36                     for r,v in states.items():
+  37                         for j,x in enumerate(v):out[r+(1<<depth)*j]=x
+  38                     assert out==direct
+  39                     cases+=1;output_checks+=N
+  40     data=dict(status='passed',field_prime=P,cases=cases,branch_nodes=nodes,output_coefficients_checked=output_checks,
+  41               limitation='Naive exact test of fused-state identity including root collisions; no fast-FFT benchmark.')
+  42     Path(__file__).with_name('decoded_tree_checks.json').write_text(json.dumps(data,indent=2)+'\n')
+  43     print(json.dumps(data,indent=2))
+  44 if __name__=='__main__':main()

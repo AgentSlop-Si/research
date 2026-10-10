@@ -1,0 +1,89 @@
+1: """Auditor-written checks. Does not read/import/execute supplied research code."""
+2: from fractions import Fraction as Q
+3: import json, math, cmath
+4: from pathlib import Path
+5: 
+6: def eye(n): return [[int(i==j) for j in range(n)] for i in range(n)]
+7: def add(A,B): return [[x+y for x,y in zip(a,b)] for a,b in zip(A,B)]
+8: def scale(a,A): return [[a*x for x in row] for row in A]
+9: def mm(A,B): return [[sum(a[k]*B[k][j] for k in range(len(B))) for j in range(len(B[0]))] for a in A]
+10: def inv(A):
+11:     n=len(A); W=[list(a)+b for a,b in zip(A,eye(n))]
+12:     for j in range(n):
+13:         p=next(i for i in range(j,n) if W[i][j]!=0)
+14:         W[j],W[p]=W[p],W[j]; z=W[j][j]; W[j]=[a/z for a in W[j]]
+15:         for i in range(n):
+16:             if i!=j:
+17:                 z=W[i][j]; W[i]=[a-z*b for a,b in zip(W[i],W[j])]
+18:     return [row[n:] for row in W]
+19: def norm1(A):return max(sum(abs(row[j]) for row in A) for j in range(len(A)))
+20: def norminf(A):return max(sum(abs(x) for x in row) for row in A)
+21: def err(A,B):return max(abs(a-b) for ar,br in zip(A,B) for a,b in zip(ar,br))
+22: def path(n):return [[Q(3 if i==j else -1 if abs(i-j)==1 else 0) for j in range(n)] for i in range(n)]
+23: out={'scope':'Independent algebra, exact rational matrices, and floating reference checks; supplied code never run','cycle':[],'path_exact':[],'path_complex':[]}
+24: for n in (1,2,3,4,8,12,16):
+25:     I=eye(n); C=[[Q(0) for _ in range(n)] for _ in range(n)]
+26:     for j in range(n):C[j][(j+1)%n]=Q(1 if j<n-1 else -1)
+27:     K=add(I,inv(add(I,scale(-1,C)))); Ki=inv(K)
+28:     assert norm1(K)==Q(n+2,2)
+29:     assert norm1(Ki)==Q(2**n,2**n+1)
+30:     assert all(x!=0 for A in (K,Ki) for row in A for x in row)
+31:     assert mm(K,Ki)==I
+32:     out['cycle'].append({'N':n,'norm1':str(norm1(K)),'inverse_norm1':str(norm1(Ki)),'kappa1':str(norm1(K)*norm1(Ki))})
+33: for n in (1,2,3,4,8,16):
+34:     T=path(n);I=eye(n);S=add(inv(T),inv(add(T,I)));Si=inv(S)
+35:     rhs=add(add(scale(Q(1,2),T),scale(Q(1,4),I)),scale(Q(-1,8),inv(add(T,scale(Q(1,2),I)))))
+36:     assert rhs==Si
+37:     assert norm1(Si)<=Q(58,21) and norm1(S)*norm1(Si)<=Q(29,7)
+38:     out['path_exact'].append({'N':n,'S_norm1':str(norm1(S)),'inverse_norm1':str(norm1(Si)),'kappa1':str(norm1(S)*norm1(Si))})
+39: for n in (4,8,16,32):
+40:     q=cmath.exp(2j*math.pi/n); roots=[q**i for i in range(n)]; F=[[roots[(k*j)%n] for j in range(n)] for k in range(n)]; Fi=[[roots[-k*j%n]/n for j in range(n)] for k in range(n)]
+41:     T=[[complex(x) for x in row] for row in path(n)];H=mm(mm(F,T),Fi)
+42:     H_formula=[[(3-roots[k]-roots[-k%n])*int(k==l)+(roots[l]+roots[-k%n])/n for l in range(n)] for k in range(n)]
+43:     formula_error=err(H,H_formula); assert formula_error<1e-11
+44:     I=eye(n); S=add(inv(T),inv(add(T,I)));K=mm(mm(F,S),Fi);Ki=inv(K)
+45:     inverse_formula=add(add(scale(.5,H),scale(.25,I)),scale(-.125,inv(add(H,scale(.5,I)))))
+46:     inverse_error=err(Ki,inverse_formula);assert inverse_error<1e-10
+47:     assert norminf(Ki)<73/18
+48:     woodbury_errors=[]
+49:     for alpha in (0,.5,1):
+50:         g=[1/(3+alpha-roots[k]-roots[-k%n]) for k in range(n)]
+51:         A=[[1,roots[-k%n]] for k in range(n)];B=[[roots[l]/n for l in range(n)],[1/n]*n]
+52:         Di=[[g[k]*int(k==l) for l in range(n)] for k in range(n)]
+53:         W=add(Di,scale(-1,mm(mm(mm(mm(Di,A),inv(add(eye(2),mm(mm(B,Di),A)))),B),Di)))
+54:         actual=inv(add(H,scale(alpha,I)));we=err(W,actual);assert we<1e-10
+55:         assert norminf(actual)<=1/(1+alpha)+4/(1+alpha)**2+1e-12
+56:         woodbury_errors.append(we)
+57:     out['path_complex'].append({'N':n,'conjugacy_max_error':formula_error,'inverse_identity_max_error':inverse_error,'inverse_inf_norm':norminf(Ki),'woodbury_max_errors':woodbury_errors})
+58: # Exact finite-field conjugacy, independent scalar and dense matrix routines.
+59: p=998244353
+60: 
+61: def mp(A,B):return [[sum(a[k]*B[k][j] for k in range(len(B)))%p for j in range(len(B[0]))] for a in A]
+62: def ip(A):
+63:     n=len(A);W=[list(a)+b for a,b in zip(A,eye(n))]
+64:     for j in range(n):
+65:         pos=next(i for i in range(j,n) if W[i][j]%p)
+66:         W[j],W[pos]=W[pos],W[j]; r=pow(W[j][j],-1,p);W[j]=[x*r%p for x in W[j]]
+67:         for i in range(n):
+68:             if i!=j:
+69:                 r=W[i][j];W[i]=[(a-r*b)%p for a,b in zip(W[i],W[j])]
+70:     return [r[n:] for r in W]
+71: def ap(A,B):return [[(a+b)%p for a,b in zip(ar,br)] for ar,br in zip(A,B)]
+72: def sp(c,A):return [[c*x%p for x in row] for row in A]
+73: out['modular_conjugacy']=[]
+74: for n in (2,4,8,16):
+75:     q=pow(3,(p-1)//n,p);F=[[pow(q,k*j,p) for j in range(n)] for k in range(n)];I=eye(n)
+76:     for a,b,c in ((1,1,1),(5,1,1),(9,3,5)):
+77:         M=[[0]*n for _ in range(n)];Mh=[[0]*n for _ in range(n)];ai=pow(a,-1,n)
+78:         for j in range(n):M[j][(a*j+c)%n]=pow(q,b*j,p)
+79:         for k in range(n):
+80:             dest=ai*(k+b)%n;Mh[k][dest]=pow(q,(-c*dest)%n,p)
+81:         assert mp(F,M)==mp(Mh,F)
+82:         K=ap(I,ip(ap(I,sp(-1,M))));Kh=ap(I,ip(ap(I,sp(-1,Mh))))
+83:         assert mp(F,K)==mp(Kh,F)
+84:         assert mp(F,ip(K))==mp(ip(Kh),F)
+85:     out['modular_conjugacy'].append({'N':n,'descriptor_cases':3,'source_target_and_inverse':'exact PASS'})
+86: out['derived_field_counts']={'cycle_prepare':'2N+log2(N)+4','cycle_apply':'5N+1','cycle_inverse_apply':'6N+1','signed_cycle_cold':'3N+1','bridge_prepare':'43N+31','bridge_source_S':'9N-6','bridge_target_S':'19N+12','bridge_source_inverse':'12N-5','bridge_target_inverse':'21N+8'}
+87: out['status']='PASS'
+88: Path(__file__).with_name('independent_results.json').write_text(json.dumps(out,indent=2)+'\n')
+89: print(json.dumps(out,indent=2))

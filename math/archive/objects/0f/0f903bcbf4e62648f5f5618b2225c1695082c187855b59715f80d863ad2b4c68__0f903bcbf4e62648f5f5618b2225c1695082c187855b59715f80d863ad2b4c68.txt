@@ -1,0 +1,81 @@
+"""Numerical *hypothesis generator* for fully overlapping quasiseparable stages.
+
+A local optimizer is NOT a proof of existence or impossibility. Exact algebraic
+verification and a scalable construction would be needed before any claim.
+No optimized stage is used for the verified FFT results.
+"""
+import torch,math,json,random
+from pathlib import Path
+
+torch.set_num_threads(1)
+torch.set_default_dtype(torch.float64)
+
+
+def permutation(n,kind):
+    if kind=='identity':return list(range(n))
+    if kind=='parity':return list(range(0,n,2))+list(range(1,n,2))
+    if kind=='bitrev':
+        b=n.bit_length()-1
+        return [int(f'{i:0{b}b}'[::-1],2) for i in range(n)]
+    raise ValueError(kind)
+
+
+def matrix(theta,diagonal,n,r):
+    z=torch.view_as_complex(theta.contiguous())
+    d=torch.view_as_complex(diagonal.contiguous())
+    # Four independent lower/upper generators: (p,q,u,v) each n*r.
+    lower=z[0] @ z[1].T
+    upper=z[2] @ z[3].T
+    return torch.tril(lower,-1)+torch.triu(upper,1)+torch.diag(d)
+
+
+def try_factor(n,channels=2,stages=2,perm='bitrev',iterations=400,seed=7):
+    torch.manual_seed(seed)
+    target=torch.exp(-2j*math.pi*torch.arange(n)[:,None]*torch.arange(n)[None,:]/n)/math.sqrt(n)
+    order=permutation(n,perm)
+    # First stage applies, then permutes, etc. For 2 stages only 1 shuffle.
+    P=torch.eye(n,dtype=torch.cdouble)[order]
+    parameters=torch.nn.Parameter(torch.randn(stages,4,n,channels,2)*.23)
+    diagonals=torch.nn.Parameter(torch.randn(stages,n,2)*.17)
+    with torch.no_grad():
+        diagonals[:,:,0]+=1.0
+    optim=torch.optim.Adam([parameters,diagonals],lr=.045)
+    best=1e6
+    for step in range(iterations):
+        optim.zero_grad(set_to_none=True)
+        matrices=[matrix(parameters[t],diagonals[t],n,channels) for t in range(stages)]
+        A=matrices[0]
+        for t in range(1,stages): A=matrices[t] @ P @ A
+        # Relative matrix Frobenius error; regularization would bias zero test.
+        err=((A-target).abs()**2).sum()/n
+        err.backward()
+        torch.nn.utils.clip_grad_norm_([parameters,diagonals],5.0)
+        optim.step()
+        val=float(err.item())
+        best=min(best,val)
+    with torch.no_grad():
+        matrices=[matrix(parameters[t],diagonals[t],n,channels) for t in range(stages)]
+        A=matrices[0]
+        for t in range(1,stages): A=matrices[t] @ P @ A
+        final=float(torch.linalg.norm(A-target)/torch.linalg.norm(target))
+    return {'n':n,'channels':channels,'stages':stages,'shuffle':perm,
+            'iterations':iterations,'seed':seed,'relative_error':final,
+            'result':'noncertifying numerical fit'}
+
+
+def run():
+    out=[]
+    for n,stages,channels in [(8,1,2),(8,2,2),(16,2,2),(16,2,3),(32,2,2),(32,2,3),(32,3,2)]:
+        options=['identity','bitrev','parity'] if n<=16 and channels==2 else ['bitrev','parity']
+        for p in options:
+            # Small fixed, auditable search budget. Numerical failure != lower bound.
+            out.append(try_factor(n,channels,stages,p,iterations=350 if n<=16 else 250,seed=2026+n+13*stages+7*channels))
+    file=Path(__file__).with_name('synthesis_probe_results.json')
+    file.write_text(json.dumps(out,indent=2)+'\n')
+    for n in sorted(set(x['n'] for x in out)):
+        x=min((v for v in out if v['n']==n),key=lambda v:v['relative_error'])
+        print(f"N={n}: best numerical relative Frobenius error {x['relative_error']:.4g} "
+              f"({x['channels']} channels, {x['stages']} stages, {x['shuffle']}); NOT A PROOF")
+    return out
+
+if __name__=='__main__':run()

@@ -1,0 +1,75 @@
+"""Verify the stored NEW Fourier-minor/graph-separator witness without search.
+
+Uses only the recorded node partition and field coefficients. Does not run
+maximum flow or depend on the heuristic that found the witness.
+"""
+import json
+from pathlib import Path
+from scan_flow import make_graph
+from cut_rank_gate import bitrev
+
+HERE=Path(__file__).resolve().parent
+
+def determinant(A, p):
+    M=[row[:] for row in A]
+    n=len(M);product=1
+    for j in range(n):
+        pivot=next((i for i in range(j,n) if M[i][j]%p),None)
+        if pivot is None:return 0
+        if pivot!=j:
+            M[j],M[pivot]=M[pivot],M[j]
+            product=-product
+        v=M[j][j]%p
+        product=(product*v)%p
+        inverse=pow(v,p-2,p)
+        for i in range(j+1,n):
+            c=M[i][j]*inverse%p
+            if c:
+                for k in range(j,n):
+                    M[i][k]=(M[i][k]-c*M[j][k])%p
+    return product%p
+
+def verify(filename=HERE/'new_network_certificate_N64.json'):
+    proof=json.loads(Path(filename).read_text())
+    n=proof['n'];assert n==64 and proof['stage_ranks']==[1,1]
+    R=proof['R_stage2'];C=proof['C_stage1'];order=bitrev(n)
+    assert len(set(R))==len(R) and len(set(C))==len(C)
+    assert all(0<=j<n for j in R+C)
+    shuffle=proof['shuffle_stage_2_to_1']
+    G,big=make_graph(n,[1,1],[shuffle])
+    src={tuple(s) for s in proof['network_source_partition']}
+    sink=set(G.nodes)|{('SRC',),('SINK',)}
+    sink-=src
+    assert ('SRC',) in src and ('SINK',) in sink
+    assert all((0,'x',j,'i') in src for j in C)
+    assert all((1,'y',j,'o') in sink for j in R)
+    # The old rank bound is exactly 17, so by itself it does not contradict.
+    rset=set(R);cset=set(C)
+    br=sum((j in rset)!=(j+1 in rset) for j in range(n-1))
+    bc=sum((j in cset)!=(j+1 in cset) for j in range(n-1))
+    free=len(set(shuffle[j] for j in R)&cset)
+    old=min(len(R),len(C),free+br+bc)
+    assert (old,free,br,bc)==(17,9,4,4)
+    # Structural network capacity is independent of the numerical Fourier field.
+    cross={(u,v):data['capacity'] for u,v,data in G.edges(data=True)
+           if u in src and v in sink}
+    assert sum(cross.values())==16 and proof['new_network_maximum_rank']==16
+    observed={(tuple(e['tail']),tuple(e['head'])):e['capacity']
+              for e in proof['network_mincut_crossing_edges']}
+    assert cross==observed
+
+    rows=proof['nonzero_17_minor_physical_rows']
+    cols=proof['nonzero_17_minor_physical_cols']
+    assert len(rows)==len(cols)==17
+    assert set(rows).issubset({order[i] for i in R})
+    assert set(cols).issubset({order[i] for i in C})
+    for evidence in proof['finite_fields']:
+        p=evidence['p'];z=evidence['root']
+        assert pow(z,n,p)==1 and pow(z,n//2,p)!=1
+        B=[[pow(z,(i*j)%n,p) for j in cols] for i in rows]
+        det=determinant(B,p)
+        assert det==evidence['shared_minor_det'] and det!=0
+    print('PASS STORED CERTIFICATE | 17x17 Fourier minor nonzero at 2 primitive roots | cut capacity 16 | old bound 17')
+    return True
+
+if __name__=='__main__':verify()

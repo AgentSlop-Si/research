@@ -1,0 +1,79 @@
+   1	import numpy as np, math
+   2	
+   3	TAU=2*np.pi
+   4	
+   5	def project_blocks_global_chirp(x,K,a,beta):
+   6	    x=np.asarray(x,dtype=np.complex128); N=x.size; assert N%K==0
+   7	    M=N//K
+   8	    n=np.arange(N,dtype=np.int64)
+   9	    # use float phase reduced mod N to avoid huge ints
+  10	    phase=((a*(n.astype(object)*n.astype(object)) + beta*n.astype(object)) % N)
+  11	    sig=np.exp(2j*np.pi*np.array(phase,dtype=np.float64)/N)
+  12	    blocks=x.reshape(K,M); S=sig.reshape(K,M)
+  13	    d=np.sum(S*blocks,axis=1)
+  14	    y=(np.conjugate(S)*d[:,None]).reshape(N)
+  15	    return d,y,S
+  16	
+  17	def decode_reference(d,S):
+  18	    K,M=S.shape; N=K*M
+  19	    y=(np.conjugate(S)*np.asarray(d)[:,None]).reshape(N)
+  20	    return np.fft.fft(y)/math.sqrt(N)
+  21	
+  22	def decode_recurrence(d,N,K,a,beta):
+  23	    M=N//K
+  24	    d=np.asarray(d,dtype=np.complex128)
+  25	    D=np.fft.fft(d)  # D_s=sum_r d_r exp(-2pi i s r/K)
+  26	    # P recurrence with local phase sigma_{r,t}=exp(+2pi i/N [a t^2 + c_r t]) up to block scalar.
+  27	    # Since d generated with global chirp contains block scalar, need account for that in d before local formula.
+  28	    # global sig = exp(+2pi i/N [a(rM+t)^2 + beta(rM+t)])
+  29	    # = q_r * exp(+2pi i/N[a t^2 + (2aMr+beta)t])
+  30	    # q_r=exp(+2pi i/N[a r^2M^2+beta rM])
+  31	    r=np.arange(K,dtype=np.int64)
+  32	    qr=np.exp(2j*np.pi*((a*(r.astype(object)*r.astype(object))*M*M + beta*r.astype(object)*M)%N).astype(float)/N)
+  33	    # local summary dloc = sum local_sigma*x = d_global / q_r
+  34	    dloc=d/qr
+  35	    D=np.fft.fft(dloc)
+  36	
+  37	    step=(2*a)%N
+  38	    g=math.gcd(step,N)
+  39	    Y=np.empty(N,dtype=np.complex128)
+  40	    omega=lambda z: np.exp(-2j*np.pi*(z%N)/N)
+  41	    # direct seeds for residues 0..g-1 using local formula
+  42	    rr=np.arange(K)
+  43	    tt=np.arange(M)
+  44	    for seed in range(g):
+  45	        vals=[]
+  46	        for r0 in range(K):
+  47	            c=(2*a*M*r0+beta)%N
+  48	            P=np.sum(np.exp(-2j*np.pi*((a*(tt.astype(object)*tt.astype(object)) + (seed+c)*tt.astype(object))%N).astype(float)/N))
+  49	            vals.append(dloc[r0]*np.exp(-2j*np.pi*seed*r0/K)*P)
+  50	        Y[seed]=np.sum(vals)/math.sqrt(N)
+  51	
+  52	    # Recurrence: Y_m = D[m%K]/sqrtN + A_m e^{-2pi i beta/N} Y_{m+step}
+  53	    #              - B_m e^{-2pi i beta/K} D[(m+2aM)%K]/sqrtN
+  54	    # So solve forward along m -> m+step: Y_next = (Y_m - forcing_m)/(A_m e^{-2pi i beta/N})
+  55	    sqN=math.sqrt(N)
+  56	    cA=np.exp(-2j*np.pi*beta/N)
+  57	    cB=np.exp(-2j*np.pi*beta/K)
+  58	    for seed in range(g):
+  59	        m=seed
+  60	        while True:
+  61	            nxt=(m+step)%N
+  62	            if nxt==seed: break
+  63	            A=np.exp(-2j*np.pi*(a+m)/N)
+  64	            B=np.exp(-2j*np.pi*((a*M*M + m*M)%N)/N)
+  65	            forcing=D[m%K]/sqN - B*cB*D[(m+2*a*M)%K]/sqN
+  66	            Y[nxt]=(Y[m]-forcing)/(A*cA)
+  67	            m=nxt
+  68	    return Y
+  69	
+  70	if __name__=='__main__':
+  71	    rng=np.random.default_rng(0)
+  72	    for N,K in [(256,16),(1024,32),(4096,64)]:
+  73	      for rep in range(5):
+  74	        a=int(2*rng.integers(0,N//2)+1); beta=int(rng.integers(0,N))
+  75	        x=rng.normal(size=N)+1j*rng.normal(size=N)
+  76	        d,y,S=project_blocks_global_chirp(x,K,a,beta)
+  77	        ref=np.fft.fft(y)/math.sqrt(N)
+  78	        got=decode_recurrence(d,N,K,a,beta)
+  79	        print(N,K,a,beta,np.max(np.abs(ref-got)))

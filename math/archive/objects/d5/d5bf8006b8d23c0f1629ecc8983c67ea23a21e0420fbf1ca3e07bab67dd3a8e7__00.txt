@@ -1,0 +1,291 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh review-authored exact controls. Only Python standard library is used."""
+   3 import itertools
+   4 import json
+   5 from pathlib import Path
+   6 from exact_utils import Field, root
+   7 
+   8 P=998244353
+   9 F=Field(P)
+  10 W=[[(-1)**((u*(e//2)+v*(e%2))%2)%P for e in range(4)] for u in range(2) for v in range(2)]
+  11 WI=[[z*F.inv(4)%P for z in row] for row in W]
+  12 LABELS=[(axis,c,s) for axis in ('H','V') for c in (0,1) for s in (-1,1)]
+  13 
+  14 
+  15 def mulvec(a,x):
+  16     return [sum(v*w for v,w in zip(row,x))%P for row in a]
+  17 
+  18 
+  19 def cycles(p):
+  20     seen=set();out=[]
+  21     for v in range(len(p)):
+  22         if v in seen:continue
+  23         c=[];w=v
+  24         while w not in seen:seen.add(w);c.append(w);w=p[w]
+  25         assert w==v
+  26         out.append(c)
+  27     return out
+  28 
+  29 
+  30 def perm_matrix(p):
+  31     return [[int(i==p[j]) for j in range(len(p))] for i in range(len(p))]
+  32 
+  33 
+  34 def fourier(n,z):
+  35     return [[pow(z,i*j,P) for j in range(n)] for i in range(n)]
+  36 
+  37 
+  38 def fourier_channels():
+  39     records=[]
+  40     for b in (1,2,4,8):
+  41         for a in (b,2*b):
+  42             n=a*b
+  43             for orientation in (1,-1):
+  44                 w=pow(root(4*n,P,3),orientation,P);z=pow(w,4,P)
+  45                 fn=fourier(n,z)
+  46                 powers=[pow(w,j,P) for j in range(4*n)]
+  47                 count=0
+  48                 for u,v in itertools.product(range(2),repeat=2):
+  49                     for x,y in itertools.product(range(a),range(b)):
+  50                         t0=(2*b*x+y)%n;t1=(t0+b)%n
+  51                         for s in range(4):
+  52                             for t in range(n):
+  53                                 j=4*t+s
+  54                                 direct=sum((-1)**(u*ex+v*ey)*powers[((2*b*(x+a*ex)+y+b*ey)*j)%(4*n)] for ex,ey in itertools.product(range(2),repeat=2))%P
+  55                                 predicted=0 if s%2!=u else 2*powers[((2*b*x+y)*s)%(4*n)]*(fn[t0][t]+(-1)**v*powers[b*s%(4*n)]*fn[t1][t])%P
+  56                                 assert direct==predicted
+  57                                 count+=1
+  58                 # Direct full Fourier vector and complete Walsh reconstruction.
+  59                 data=[(j*j*17+j*29+5)%P for j in range(4*n)]
+  60                 shorter=[mulvec(fn,data[s::4]) for s in range(4)]
+  61                 transformed=[sum(data[j]*powers[(i*j)%(4*n)] for j in range(4*n))%P for i in range(4*n)]
+  62                 channels=[]
+  63                 for u,v in itertools.product(range(2),repeat=2):
+  64                     out=[]
+  65                     for x,y in itertools.product(range(a),range(b)):
+  66                         r=2*b*x+y
+  67                         out.append(sum(2*powers[(r*s)%(4*n)]*(shorter[s][r%n]+(-1)**v*powers[b*s%(4*n)]*shorter[s][(r+b)%n]) for s in range(4) if s%2==u)%P)
+  68                     channels.append(out)
+  69                 recovered=[0]*(4*n)
+  70                 for x,y,ex,ey in itertools.product(range(a),range(b),range(2),range(2)):
+  71                     i=2*b*(x+a*ex)+y+b*ey
+  72                     recovered[i]=sum((-1)**(u*ex+v*ey)*channels[2*u+v][b*x+y] for u,v in itertools.product(range(2),repeat=2))*F.inv(4)%P
+  73                 assert recovered==transformed
+  74                 records.append({'a':a,'b':b,'N':n,'orientation':orientation,'entry_checks':count,'four_shorter_transforms_and_inverse_Walsh':'PASS'})
+  75     return records
+  76 
+  77 
+  78 def signed_permutations():
+  79     records=[]
+  80     for p in itertools.permutations(range(4)):
+  81         m=F.mul(F.mul(W,perm_matrix(p)),WI)
+  82         assert m[0]==[1,0,0,0] and [r[0] for r in m]==[1,0,0,0]
+  83         dst=[];signs=[]
+  84         for j in range(1,4):
+  85             nz=[i for i in range(1,4) if m[i][j]]
+  86             assert len(nz)==1 and m[nz[0]][j] in (1,P-1)
+  87             dst.append(nz[0]-1);signs.append(m[nz[0]][j])
+  88         assert sorted(dst)==[0,1,2]
+  89         data={'sheet_permutation':p,'cycle_lengths':[len(c) for c in cycles(p)],'signed_character_destination':dst,'signs':[1 if s==1 else -1 for s in signs]}
+  90         if len(cycles(p))==1:
+  91             cc=cycles(dst);assert sorted(map(len,cc))==[1,2]
+  92             totals=[]
+  93             for c in cc:
+  94                 total=1
+  95                 for j in c:total=total*signs[j]%P
+  96                 assert total==P-1;totals.append(-1)
+  97             data['nontrivial_signed_holonomy_cycles']=[{'length':len(c),'sign':sgn} for c,sgn in zip(cc,totals)]
+  98         records.append(data)
+  99     return records
+ 100 
+ 101 
+ 102 def mgg(a,b,label):
+ 103     axis,c,s=label
+ 104     return [((x+s*(2*y+c))%a)*b+y if axis=='H' else x*b+(y+s*(2*x+c))%b for x in range(a) for y in range(b)]
+ 105 
+ 106 
+ 107 def splice(p,tails):
+ 108     q=p[:]
+ 109     if len(tails)>1:
+ 110         for i,v in enumerate(tails):q[v]=p[tails[(i+1)%len(tails)]]
+ 111     return q
+ 112 
+ 113 
+ 114 def lift(a,b,small,label):
+ 115     n=a*b;ts=mgg(a,b,label);tl=mgg(2*a,2*b,label)
+ 116     eta=[0]*n
+ 117     for v in range(n):eta[ts[v]]=small[v]
+ 118     pi=lambda w: ((w//(2*b))%a)*b+(w%(2*b))%b
+ 119     pre=[]
+ 120     for w in tl:
+ 121         x,y=divmod(w,2*b);xx,yy=divmod(eta[(x%a)*b+y%b],b)
+ 122         pre.append(2*b*(xx+a*(x//a))+yy+b*(y//b))
+ 123     tails=sorted(min(w for w in c if pi(w)==0) for c in cycles(pre))
+ 124     large=splice(pre,tails)
+ 125     assert len(cycles(large))==1 and all(pi(large[w])==small[pi(w)] for w in range(4*n))
+ 126     return large
+ 127 
+ 128 
+ 129 def cycle_green(p,tau,x):
+ 130     """Full finite geometric identity; deliberately not a copy of a scan implementation."""
+ 131     n=len(p);assert len(cycles(p))==1 and pow(tau,n,P)!=1
+ 132     out=[0]*n;term=x[:];weight=1
+ 133     for k in range(n):
+ 134         out=[(a+weight*b)%P for a,b in zip(out,term)]
+ 135         nxt=[0]*n
+ 136         for j in range(n):nxt[p[j]]=term[j]
+ 137         term=nxt;weight=weight*tau%P
+ 138     factor=F.inv(1-pow(tau,n,P))
+ 139     return [a*factor%P for a in out]
+ 140 
+ 141 
+ 142 def inspect_route(a,b,small,large,label,level):
+ 143     n=a*b;order=cycles(small)[0];assert len(order)==n and order[0]==0
+ 144     def physical(v,e):
+ 145         x,y=divmod(v,b)
+ 146         return 2*b*(x+a*(e//2))+y+b*(e%2)
+ 147     def fiber(w):
+ 148         x,y=divmod(w,2*b)
+ 149         return 2*(x//a)+y//b
+ 150     sigma=[]
+ 151     for v in order:sigma.append([fiber(large[physical(v,e)]) for e in range(4)])
+ 152     transport=[list(range(4))]
+ 153     for s in sigma:transport.append([s[e] for e in transport[-1]])
+ 154     hol=transport[-1];assert len(cycles(hol))==1
+ 155     sheet_order=cycles(hol)[0]
+ 156     # Walsh transform of each edge gives signed monomial transport of three channels.
+ 157     signed_dst=[0]*(3*n);signed_weight=[0]*(3*n)
+ 158     for i,s in enumerate(sigma):
+ 159         block=F.mul(F.mul(W,perm_matrix(s)),WI)
+ 160         for j in range(1,4):
+ 161             nz=[k for k in range(1,4) if block[k][j]];assert len(nz)==1
+ 162             signed_dst[3*i+j-1]=3*((i+1)%n)+nz[0]-1
+ 163             signed_weight[3*i+j-1]=block[nz[0]][j]
+ 164     sc=cycles(signed_dst);assert sorted(map(len,sc))==[n,2*n]
+ 165     for c in sc:
+ 166         sign=1
+ 167         for i in c:sign=sign*signed_weight[i]%P
+ 168         assert sign==P-1
+ 169     # Explicit cyclic-character gauge, indexed by the actual base vertices.
+ 170     w=root(4*n,P,3);xi=pow(w,n,P)
+ 171     channel=[]
+ 172     for s in range(4):
+ 173         beta=pow(w,s,P);matrix=[[0]*(4*n) for _ in range(n)]
+ 174         for i,v in enumerate(order):
+ 175             for k,e0 in enumerate(sheet_order):
+ 176                 matrix[v][physical(v,transport[i][e0])]=pow(beta,i,P)*pow(xi,s*k,P)%P
+ 177         # A_s P_large = beta P_small A_s, checked entrywise.
+ 178         inverse_small=[0]*n
+ 179         for j,t in enumerate(small):inverse_small[t]=j
+ 180         for v in range(n):
+ 181             assert [matrix[v][large[j]] for j in range(4*n)]==[(beta*z)%P for z in matrix[inverse_small[v]]]
+ 182         channel.append(matrix)
+ 183     stacked=[row for mat in channel for row in mat]
+ 184     assert F.rank(stacked)==4*n
+ 185     data=[(j*j+11*j+37)%P for j in range(4*n)]
+ 186     guard=[]
+ 187     for tau in (0,2,3):
+ 188         assert pow(tau,4*n,P)!=1
+ 189         lg=cycle_green(large,tau,data)
+ 190         factors=[]
+ 191         for s,mat in enumerate(channel):
+ 192             beta=pow(w,s,P)
+ 193             assert mulvec(mat,lg)==cycle_green(small,tau*beta%P,mulvec(mat,data))
+ 194             factors.append((1-pow(tau*beta%P,n,P))%P)
+ 195         product=1
+ 196         for f in factors:product=product*f%P
+ 197         assert product==(1-pow(tau,4*n,P))%P
+ 198         guard.append({'tau':tau,'denominator_product':product})
+ 199     # Endpoint masks are generally 4 by 4 fiber matrices, not scalar channels.
+ 200     fiber_blocks=[]
+ 201     for v in range(n):
+ 202         block=[[channel[s][v][physical(v,e)] for e in range(4)] for s in range(4)]
+ 203         inv=F.inverse(block)
+ 204         mask=[1,2,4,8]
+ 205         conjugate=F.mul([[z*mask[e]%P for e,z in enumerate(row)] for row in block],inv)
+ 206         assert any(conjugate[i][j] for i in range(4) for j in range(4) if i!=j)
+ 207         fiber_blocks.append(block)
+ 208     return {'a':a,'b':b,'N':n,'label':label,'level':level,'holonomy':hol,'signed_sector_lengths':sorted(map(len,sc)),
+ 209             'signed_sector_signs':[-1,-1],'intertwining_channels':4,'inverse_Walsh_rank':4*n,
+ 210             'resolvent_controls':guard,'nonconstant_endpoint_mixes_channels':True},fiber_blocks
+ 211 
+ 212 
+ 213 def routes():
+ 214     records=[];first_blocks={};mixing=[]
+ 215     for rectangular in (False,True):
+ 216         for label in LABELS:
+ 217             a,b=((4,2) if rectangular else (2,2))
+ 218             ts=mgg(a,b,label);small=splice(ts,[min(c) for c in cycles(ts)])
+ 219             for level in (1,2):
+ 220                 large=lift(a,b,small,label)
+ 221                 rec,blocks=inspect_route(a,b,small,large,label,level);records.append(rec)
+ 222                 if level==1:
+ 223                     if rectangular in first_blocks:
+ 224                         before=first_blocks[rectangular]
+ 225                         nz=0
+ 226                         for x,y in zip(blocks,before):
+ 227                             change=F.mul(x,F.inverse(y))
+ 228                             nz+=sum(bool(change[i][j]) for i in range(4) for j in range(4) if i!=j)
+ 229                         mixing.append({'rectangle':rectangular,'label':label,'off_diagonal_fiber_change_entries':nz})
+ 230                     else:first_blocks[rectangular]=blocks
+ 231                 a,b=2*a,2*b;small=large
+ 232     assert any(r['off_diagonal_fiber_change_entries'] for r in mixing)
+ 233     return records,mixing
+ 234 
+ 235 
+ 236 def banks_and_masks():
+ 237     banks=[]
+ 238     for b in (1,2,4,8,16):
+ 239         for orientation in (1,-1):
+ 240             rho=pow(root(2*b,P,3),orientation,P);z=pow(rho,2,P)
+ 241             small=fourier(b,z);large=fourier(2*b,rho)
+ 242             # Local physical ordering ex*(2b)+Y; channels (u,v), then low y.
+ 243             local_w=[[0]*(4*b) for _ in range(4*b)]
+ 244             for u,v,y in itertools.product(range(2),range(2),range(b)):
+ 245                 for ex,ey in itertools.product(range(2),repeat=2):
+ 246                     local_w[(2*u+v)*b+y][ex*(2*b)+y+b*ey]=(-1)**(u*ex+v*ey)%P
+ 247             inv=[[local_w[j][i]*F.inv(4)%P for j in range(4*b)] for i in range(4*b)]
+ 248             for active in (False,True):
+ 249                 base=[[0]*(4*b) for _ in range(4*b)]
+ 250                 for ex in range(2):
+ 251                     for y in range(2*b):
+ 252                         for t in range(2*b):
+ 253                             base[ex*2*b+y][ex*2*b+t]=large[y][t] if active else int(y==t)
+ 254                 transformed=F.mul(F.mul(local_w,base),inv)
+ 255                 count=0
+ 256                 for u,v,uu,ww,y,zcol in itertools.product(range(2),range(2),range(2),range(2),range(b),range(b)):
+ 257                     predicted=0
+ 258                     if not active:predicted=int(u==uu and v==ww and y==zcol)
+ 259                     elif u==uu:
+ 260                         predicted=pow(rho,v*y,P)*sum(small[y][t]*(-1)**(ww*((2*t+v)//b)) for t in range(b) if (2*t+v)%b==zcol)%P
+ 261                     assert transformed[(2*u+v)*b+y][(2*uu+ww)*b+zcol]==predicted
+ 262                     count+=1
+ 263                 banks.append({'b':b,'orientation':orientation,'active':active,'entry_checks':count})
+ 264     masks=[]
+ 265     for values in ([1,1,1,1],[1,2,4,8],[1,P-1,1,P-1],[0,1,2,4]):
+ 266         coeff=[sum(x*y for x,y in zip(row,values))*F.inv(4)%P for row in W]
+ 267         got=F.mul([[x*values[e]%P for e,x in enumerate(row)] for row in W],WI)
+ 268         want=[[coeff[c^d] for d in range(4)] for c in range(4)]
+ 269         assert got==want
+ 270         prod=1
+ 271         for v in values:prod=prod*v%P
+ 272         assert F.det(got)==prod
+ 273         masks.append({'values':values,'Walsh_coefficients':coeff,'conjugated_determinant':prod,'nonzero_coefficients':sum(bool(c) for c in coeff)})
+ 274     assert masks[0]['nonzero_coefficients']==1 and masks[0]['conjugated_determinant']
+ 275     assert masks[-1]['nonzero_coefficients']==4 and not masks[-1]['conjugated_determinant']
+ 276     return banks,masks
+ 277 
+ 278 
+ 279 def main():
+ 280     f=fourier_channels();s=signed_permutations();r,m=routes();b,k=banks_and_masks()
+ 281     result={'status':'PASS','field':P,'primitive_generator':3,'fourier_channel_controls':f,'all_24_sheet_permutations':s,
+ 282             'hierarchical_route_controls':r,'order_dependent_gauge_controls':m,'bank_controls':b,'mask_controls':k,
+ 283             'summary':{'fourier_layout_sign_cases':len(f),'fourier_entry_equalities':sum(v['entry_checks'] for v in f),
+ 284                        'sheet_permutations':len(s),'four_cycle_holonomies':sum(len(v['cycle_lengths'])==1 for v in s),
+ 285                        'hierarchical_four_sheet_routes':len(r),'resolvent_channel_equalities':12*len(r),
+ 286                        'order_change_controls':len(m),'bank_cases':len(b),'bank_entry_equalities':sum(x['entry_checks'] for x in b),'mask_controls':len(k)}}
+ 287     path=Path(__file__).with_name('VERIFIED_RESULTS.json')
+ 288     path.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 289     print(json.dumps(result['summary'],sort_keys=True));print('PASS')
+ 290 
+ 291 if __name__=='__main__':main()

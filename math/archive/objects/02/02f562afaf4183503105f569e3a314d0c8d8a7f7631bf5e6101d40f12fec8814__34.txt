@@ -1,0 +1,133 @@
+   1 #!/usr/bin/env python3
+   2 """Exact finite-field checks of decoded-state BM fusion. No speed claims."""
+   3 import json, random
+   4 from pathlib import Path
+   5 
+   6 P = 97
+   7 rng = random.Random(20261009)
+   8 counts = {"one_step": 0, "macro_step": 0, "full_tree": 0,
+   9           "bm_intertwining": 0, "remainder_transpose": 0,
+  10           "root_collision_nodes": 0, "generic_convolution_embedding": 0}
+  11 
+  12 def mul(a,b):
+  13     c=[0]*(len(a)+len(b)-1)
+  14     for i,x in enumerate(a):
+  15         for j,y in enumerate(b): c[i+j]=(c[i+j]+x*y)%P
+  16     return c
+  17 
+  18 def inv(q,n):
+  19     h=[pow(q[0],-1,P)]
+  20     for i in range(1,n):
+  21         h.append(-sum(q[j]*h[i-j] for j in range(1,min(i,len(q)-1)+1))*h[0]%P)
+  22     return h
+  23 
+  24 def pad(a,n): return a[:n]+[0]*max(0,n-len(a))
+  25 def q_from_roots(ws):
+  26     q=[1]
+  27     for w in ws: q=mul(q,[1,-w%P])
+  28     return q
+  29 
+  30 def samples(ws,bs,n):
+  31     return [sum(b*pow(w,j,P) for b,w in zip(bs,ws))%P for j in range(n)]
+  32 
+  33 def numerator(ws,bs):
+  34     out=[0]*len(ws)
+  35     for s,b in enumerate(bs):
+  36         pol=q_from_roots(ws[:s]+ws[s+1:])
+  37         for j,c in enumerate(pol): out[j]=(out[j]+b*c)%P
+  38     return out
+  39 
+  40 def extension(q,v,n):
+  41     L=len(v)
+  42     r=mul(q,v)[L:]
+  43     if n<=L: return v[:n]
+  44     tail=pad(mul(r,inv(q,n-L)),n-L)
+  45     return v+[-x%P for x in tail]
+  46 
+  47 def branch(p,q):
+  48     qm=[c if j%2==0 else -c%P for j,c in enumerate(q)]
+  49     u=mul(p,qm)
+  50     qq=mul(q,qm)
+  51     assert not any(qq[1::2])
+  52     return u[::2], u[1::2], qq[::2]
+  53 
+  54 def rem(a,mod):
+  55     a=a[:]
+  56     d=len(mod)-1
+  57     for i in range(len(a)-1,d-1,-1):
+  58         c=a[i]*pow(mod[d],-1,P)%P
+  59         for j in range(d+1): a[i-d+j]=(a[i-d+j]-c*mod[j])%P
+  60     return pad(a,d)
+  61 
+  62 # 5 generates F_97^*. Every divisor N includes valid distinct Nth roots.
+  63 assert len({pow(5,j,P) for j in range(96)}) == 96
+  64 for N in [1,2,3,4,6,8,12,16,24,32,48,96]:
+  65     root=pow(5,96//N,P)
+  66     for trial in range(18):
+  67         k=rng.randrange(1,min(N,12)+1)
+  68         zs=[pow(root,e,P) for e in rng.sample(range(N),k)]
+  69         aa=[rng.randrange(P) for _ in range(k)]
+  70         for L in sorted({k, 1<<(k-1).bit_length(),2*k}):
+  71             D=max(0,(max(1,(N+L-1)//L)-1).bit_length())
+  72             nodes={0:samples(zs,aa,L)}
+  73             ws=zs[:]
+  74             for ell in range(D+1):
+  75                 q=q_from_roots(ws)
+  76                 if len(set(ws))<k: counts["root_collision_nodes"]+=len(nodes)
+  77                 for r,v in nodes.items():
+  78                     bs=[a*pow(z,r,P)%P for a,z in zip(aa,zs)]
+  79                     direct=samples(ws,bs,2*L)
+  80                     assert extension(q,v,2*L)==direct
+  81                     counts["one_step"]+=1
+  82                     macro=samples(ws,bs,4*L)
+  83                     assert extension(q,v,4*L)==macro
+  84                     counts["macro_step"]+=1
+  85                     pp=numerator(ws,bs)
+  86                     pe,po,qn=branch(pp,q)
+  87                     ce=pad(mul(pe,inv(qn,L)),L)
+  88                     co=pad(mul(po,inv(qn,L)),L)
+  89                     assert ce==direct[::2] and co==direct[1::2]
+  90                     counts["bm_intertwining"]+=1
+  91                 if ell<D:
+  92                     nextnodes={}
+  93                     for r,v in nodes.items():
+  94                         ext=extension(q,v,2*L)
+  95                         nextnodes[r]=ext[::2]
+  96                         nextnodes[r+(1<<ell)]=ext[1::2]
+  97                     nodes=nextnodes
+  98                     ws=[w*w%P for w in ws]
+  99             out=[None]*((1<<D)*L)
+ 100             for r,v in nodes.items():
+ 101                 for j,x in enumerate(v): out[r+(1<<D)*j]=x
+ 102             assert out[:N]==samples(zs,aa,N)
+ 103             counts["full_tree"]+=1
+ 104         # Exact full sparse Vandermonde = transpose of polynomial remainder
+ 105         # composed with initial k-sample Vandermonde.
+ 106         q=q_from_roots(zs)
+ 107         A=q[::-1]
+ 108         v=samples(zs,aa,k)
+ 109         n=max(N,k+1)
+ 110         output=[]
+ 111         for m in range(n):
+ 112             r=rem([0]*m+[1],A)
+ 113             output.append(sum(x*y for x,y in zip(r,v))%P)
+ 114         assert output==samples(zs,aa,n)
+ 115         counts["remainder_transpose"]+=1
+ 116 
+ 117 # Generic (not root-of-unity-restricted) J contains arbitrary convolution.
+ 118 for m in range(1,14):
+ 119     for _ in range(10):
+ 120         ac=[rng.randrange(P) for _ in range(m+1)]
+ 121         ac[-1]=rng.randrange(1,P)
+ 122         q=[1]+[0]*(m-1)+ac
+ 123         u=[rng.randrange(P) for _ in range(m)]
+ 124         v=[0]*m+u
+ 125         got=extension(q,v,4*m)[2*m:3*m]
+ 126         want=[-x%P for x in pad(mul(ac,u),m)]
+ 127         assert got==want
+ 128         counts["generic_convolution_embedding"]+=1
+ 129 
+ 130 result={"field":P,"seed":20261009,"status":"all passed","counts":counts,
+ 131         "scope":"Algebraic correctness only; no timing or circuit lower-bound claim."}
+ 132 Path(__file__).with_name('fusion_checks.json').write_text(json.dumps(result,indent=2)+'\n')
+ 133 print(json.dumps(result,indent=2))

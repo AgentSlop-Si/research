@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Deterministic cancellation-aware common-subexpression search; not exhaustive.
+Enumerates all ternary anchors (modulo sign), then tries fixed output-mode
+policies. For each policy, greedily factors repeated signed pairs, including
+inside the anchor. Exact-value hash-consing removes duplicate computed forms.
+"""
+from itertools import product,combinations
+from collections import Counter
+from pathlib import Path
+import json,time
+from anchor_search import canonical,options
+from smt_search import TARGET
+
+def clean(v):return {k:v for k,v in v.items() if v}
+def norm(v):
+ v=clean(v)
+ if not v:return (),1
+ sign=1 if v[min(v)]>0 else -1
+ return tuple(sorted((i,sign*x) for i,x in v.items())),sign
+
+def make(rows,anchor,modes,name):
+ n=len(anchor);exprs=[{i:c for i,c in enumerate(anchor) if c}]
+ for row,mode in zip(rows,modes):
+  e={i:a-mode*b for i,(a,b) in enumerate(zip(row,anchor)) if a-mode*b}
+  if mode:e[n]=mode
+  exprs.append(e)
+ defs={};nextid=n+1
+ while True:
+  counts=Counter()
+  for e in exprs:
+   refs=[(i,1 if v>0 else -1) for i,v in e.items() for _ in range(abs(v))]
+   pairs=set()
+   for a,b in combinations(sorted(refs),2):
+    # same-symbol terms always carry equal sign, so this can be a doubling.
+    pairs.add((a[0],b[0],a[1]*b[1]))
+   for a,b,s in pairs:
+    occ=min(abs(e[a]),abs(e[b])) if a!=b else abs(e[a])//2
+    counts[(a,b,s)]+=occ
+  if not counts:break
+  pair,count=min(counts.items(),key=lambda kv:(-kv[1],kv[0]))
+  if count<2:break
+  a,b,s=pair;node=nextid;nextid+=1;defs[node]=[(a,1),(b,s)]
+  for e in exprs:
+   if a not in e or b not in e:continue
+   if a!=b and (1 if e[a]*e[b]>0 else -1)!=s:continue
+   times=min(abs(e[a]),abs(e[b])) if a!=b else abs(e[a])//2
+   sg=1 if e[a]>0 else -1
+   e[a]-=sg*times;e[b]-=sg*s*times;e[node]=e.get(node,0)+sg*times
+   for k in list(e):
+    if not e[k]:del e[k]
+ # Recipes are a DAG. Emit exact rational/integer forms, merging equality
+ # up to sign but charging each remaining explicit sum or doubling.
+ gates=[];forms=[tuple(int(i==j) for j in range(n)) for i in range(n)]
+ known={v:(i,1) for i,v in enumerate(forms)};refs={i:(i,1) for i in range(n)};busy=set()
+ def add(a,b):
+  raw=tuple(a[1]*x+b[1]*y for x,y in zip(forms[a[0]],forms[b[0]]))
+  if raw in known:return known[raw]
+  minus=tuple(-x for x in raw)
+  if minus in known:
+   r=known[minus];return(r[0],-r[1])
+  sg=next((1 if x>0 else -1 for x in raw if x),1);val=tuple(sg*x for x in raw);i=len(forms)
+  op='double' if a==b else 'add';terms=[[a[0],a[1]*sg]] if op=='double' else [[a[0],a[1]*sg],[b[0],b[1]*sg]]
+  gates.append({'op':op,'terms':terms});forms.append(val);known[val]=(i,1);return(i,sg)
+ def emit_expr(e):
+  terms=[]
+  for node,v in sorted(e.items()):
+   rr=emit(node);terms +=[(rr[0],rr[1]*(1 if v>0 else -1))]*abs(v)
+  if not terms:raise ValueError('zero expression')
+  z=terms[0]
+  for y in terms[1:]:z=add(z,y)
+  return z
+ def emit(node):
+  if node in refs:return refs[node]
+  assert node not in busy,'cycle';busy.add(node)
+  if node==n:z=emit_expr(exprs[0])
+  else:
+   aa,bb=defs[node];a,b=emit(aa[0]),emit(bb[0]);z=add((a[0],a[1]*aa[1]),(b[0],b[1]*bb[1]))
+  busy.remove(node);refs[node]=z;return z
+ outputs=[emit_expr(e) for e in exprs[1:]]
+ # Drop any dead nodes introduced by exact hash-consing of descendants.
+ live=set()
+ def visit(i):
+  if i<n or i in live:return
+  live.add(i)
+  for j,s in gates[i-n]['terms']:visit(j)
+ for i,s in outputs:visit(i)
+ mapping={i:i for i in range(n)};newg=[]
+ for i,g in enumerate(gates,n):
+  if i not in live:continue
+  mapping[i]=n+len(newg);newg.append({'op':g['op'],'terms':[[mapping[j],s]for j,s in g['terms']]})
+ outputs=[[mapping[i],s]for i,s in outputs]
+ cancellation=0
+ for g in newg:
+  if g['op']=='add':
+   (a,sa),(b,sb)=g['terms']
+   # forms renumbering handled below
+ f=[tuple(int(i==j) for j in range(n))for i in range(n)]
+ for g in newg:
+  terms=g['terms'];raw=tuple(sum(s*f[j][k] for j,s in terms)*(2 if g['op']=='double' else 1) for k in range(n))
+  if g['op']=='add':
+   (a,sa),(b,sb)=terms
+   cancellation+=int(any(sa*x*sb*y<0 for x,y in zip(f[a],f[b])))
+  f.append(raw)
+ cert={'name':name,'n_inputs':n,'gates':newg,'outputs':outputs,'target':rows,'normalization':'1/4' if name.startswith('synthetic') else '1','anchor':anchor,'modes':modes}
+ cost=(len(newg),sum(g['op']=='add' for g in newg),sum(g['op']=='double' for g in newg))
+ return cost,cancellation,cert
+
+def run(rows,name):
+ start=time.monotonic();n=len(rows[0]);best=None;bestc=None;hist=Counter();counter=0;anchors=0
+ for anchor in product([-1,0,1],repeat=n):
+  if not canonical(anchor):continue
+  anchors+=1
+  # Fixed, reproducible 4 mode policies. Ties use (cost, additions, mode), so mode -1 precedes 0 and +1.
+  cheap=[];force=[]
+  for row in rows:
+   ops=options(row,anchor)
+   key=lambda o:(o['adds']+o['doubles'].bit_count(),o['adds'],o['mode'])
+   cheap.append(min(ops,key=key)['mode']);force.append(min(ops[1:],key=key)['mode'])
+  policies={tuple([0]*len(rows)),tuple(cheap),tuple(force),tuple([-x for x in force])}
+  # One-row bypass repairs test prefix-sharing interactions cheaply.
+  for i in range(len(rows)):
+   p=force[:];p[i]=0;policies.add(tuple(p))
+  for modes in sorted(policies):
+   cost,cancel,cert=make(rows,anchor,modes,name);counter+=1;hist[cost[0]]+=1
+   key=(cost,tuple(anchor),modes)
+   if best is None or key<best[0]:best=(key,cert,cancel)
+   if cancel and (bestc is None or key<bestc[0]):bestc=(key,cert,cancel)
+ summary={'name':name,'anchors':anchors,'circuits_compiled':counter,'best_cost':best[0][0],'best_cancelling_cost':bestc[0][0] if bestc else None,'best_cancelling_gates':bestc[2] if bestc else None,'operation_histogram':dict(sorted(hist.items())),'elapsed_seconds':time.monotonic()-start,'coverage':'Complete ternary anchor list; fixed policies per anchor, deterministic greedy signed-pair CSE and exact form hash-consing. NOT exhaustive over circuits, modes, pairing order, or coefficient values.'}
+ return summary,best[1],bestc[1] if bestc else None
+if __name__=='__main__':
+ out=Path('results');summaries=[]
+ h4=[[1 if (i&j).bit_count()%2==0 else -1 for j in range(4)]for i in range(4)]
+ for rows,name in [(h4,'h4_cse'),(TARGET,'synthetic_cse')]:
+  summary,cert,cancelcert=run(rows,name);summaries.append(summary);print(json.dumps(summary),flush=True)
+  (out/(name+'_certificate.json')).write_text(json.dumps(cert,indent=2))
+  if cancelcert:(out/(name+'_cancelling_certificate.json')).write_text(json.dumps(cancelcert,indent=2))
+ (out/'heuristic_summary.json').write_text(json.dumps(summaries,indent=2))

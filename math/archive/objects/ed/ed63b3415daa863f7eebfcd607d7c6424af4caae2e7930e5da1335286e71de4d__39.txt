@@ -1,0 +1,120 @@
+   1 import json
+   2 import math
+   3 from pathlib import Path
+   4 import numpy as np
+   5 
+   6 
+   7 def normalized_dft(n: int) -> np.ndarray:
+   8     j = np.arange(n)[:, None]
+   9     k = np.arange(n)[None, :]
+  10     return np.exp(-2j * np.pi * j * k / n) / math.sqrt(n)
+  11 
+  12 
+  13 def random_unitary(n: int, rng: np.random.Generator) -> np.ndarray:
+  14     z = rng.normal(size=(n,n)) + 1j*rng.normal(size=(n,n))
+  15     q, r = np.linalg.qr(z)
+  16     # normalize QR phases so this is deterministic for a fixed RNG stream
+  17     d = np.diag(r)
+  18     phase = np.ones_like(d)
+  19     nz = np.abs(d) > 0
+  20     phase[nz] = d[nz] / np.abs(d[nz])
+  21     return q @ np.diag(np.conj(phase))
+  22 
+  23 
+  24 def permutation_matrix(p: np.ndarray) -> np.ndarray:
+  25     n = len(p)
+  26     P = np.zeros((n,n), dtype=np.complex128)
+  27     P[np.arange(n), p] = 1.0
+  28     return P
+  29 
+  30 
+  31 def local_prefixes(B: int, K: float):
+  32     """A toy exact B-point primitive with a deliberately ill-conditioned prefix.
+  33 
+  34     P1 = D has cond(D)=K.
+  35     P2 = F_B D^{-1}, so P2 P1 = F_B and the completed primitive is unitary.
+  36 
+  37     This is *not* a fast circuit; it is only a sanity-check object for the
+  38     condition-reset lemma.
+  39     """
+  40     F = normalized_dft(B)
+  41     scales = np.geomspace(1.0, float(K), B)
+  42     D = np.diag(scales.astype(np.complex128))
+  43     Dinv = np.diag((1.0/scales).astype(np.complex128))
+  44     return [D, F @ Dinv], F
+  45 
+  46 
+  47 def embed_fiber_operator(local: np.ndarray, N: int, B: int, P: np.ndarray) -> np.ndarray:
+  48     base = np.kron(np.eye(N//B, dtype=np.complex128), local)
+  49     return P.conj().T @ base @ P
+  50 
+  51 
+  52 def run_case(N=64, B=4, macro_levels=8, K=1e4, seed=0):
+  53     assert N % B == 0
+  54     rng = np.random.default_rng(seed)
+  55     prefixes, F = local_prefixes(B, K)
+  56     Q = np.eye(N, dtype=np.complex128)
+  57     rows = []
+  58     max_cond = 1.0
+  59     local_conds = [float(np.linalg.cond(x)) for x in prefixes]
+  60 
+  61     for level in range(macro_levels):
+  62         p = rng.permutation(N)
+  63         P = permutation_matrix(p)
+  64         # During the local primitive, previous completed work Q is unitary.
+  65         running = Q
+  66         for step, local in enumerate(prefixes, start=1):
+  67             G = embed_fiber_operator(local, N, B, P)
+  68             # prefixes[1] is the SECOND gate, not cumulative. Build the actual
+  69             # cumulative local state explicitly.
+  70             if step == 1:
+  71                 cumulative_local = prefixes[0]
+  72             else:
+  73                 cumulative_local = prefixes[1] @ prefixes[0]
+  74             cumulative_global = embed_fiber_operator(cumulative_local, N, B, P) @ Q
+  75             c = float(np.linalg.cond(cumulative_global))
+  76             max_cond = max(max_cond, c)
+  77             rows.append({
+  78                 "level": level,
+  79                 "step": step,
+  80                 "condition": c,
+  81                 "local_cumulative_condition": float(np.linalg.cond(cumulative_local)),
+  82             })
+  83 
+  84         # Completed local block is unitary. Add an arbitrary unitary mixing to
+  85         # model permutations/twiddles/reindexing between macro levels.
+  86         Ublock = embed_fiber_operator(F, N, B, P)
+  87         mix = random_unitary(N, rng)
+  88         Q = mix @ Ublock @ Q
+  89         completed_cond = float(np.linalg.cond(Q))
+  90         rows.append({"level": level, "step": "completed+unitary_mix", "condition": completed_cond})
+  91         max_cond = max(max_cond, completed_cond)
+  92 
+  93     return {
+  94         "N": N,
+  95         "B": B,
+  96         "macro_levels": macro_levels,
+  97         "target_local_condition": K,
+  98         "local_gate_conditions": local_conds,
+  99         "max_global_condition": max_cond,
+ 100         "final_condition": float(np.linalg.cond(Q)),
+ 101         "rows": rows,
+ 102     }
+ 103 
+ 104 
+ 105 def main():
+ 106     out = []
+ 107     for N, levels in [(16, 12), (64, 10)]:
+ 108         for K in [1e2, 1e4, 1e6]:
+ 109             out.append(run_case(N=N, B=4, macro_levels=levels, K=K, seed=1234))
+ 110     path = Path(__file__).with_name("condition_reset_results.json")
+ 111     path.write_text(json.dumps(out, indent=2))
+ 112     print(f"wrote {path}")
+ 113     for r in out:
+ 114         ratio = r['max_global_condition']/r['target_local_condition']
+ 115         print(f"N={r['N']:>3} levels={r['macro_levels']:>2} K={r['target_local_condition']:.0e} "
+ 116               f"max_global={r['max_global_condition']:.6g} final={r['final_condition']:.6g} "
+ 117               f"max/K={ratio:.6g}")
+ 118 
+ 119 if __name__ == "__main__":
+ 120     main()

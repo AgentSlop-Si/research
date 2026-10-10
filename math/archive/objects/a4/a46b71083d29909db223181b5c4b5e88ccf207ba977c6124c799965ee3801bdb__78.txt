@@ -1,0 +1,117 @@
+1: import cmath
+2: import itertools
+3: import math
+4: import random
+5: import sys
+6: import unittest
+7: from fractions import Fraction
+8: from pathlib import Path
+9: sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+10: from global_bottleneck import (
+11:     P, packed_dft, chirp_phases, direct_dft, ntt_reference,
+12:     block_digits, block_encode_exact, grid_count, packing_possible
+13: )
+14: 
+15: 
+16: class PackedExactDFT(unittest.TestCase):
+17:     def test_full_basis(self):
+18:         for n in [2,4,8,16,32,64]:
+19:             for j in range(n):
+20:                 x=[0]*n;x[j]=1
+21:                 got,_=packed_dft(x)
+22:                 self.assertEqual(got,direct_dft(x))
+23: 
+24:     def test_random_signed_mod_field(self):
+25:         r=random.Random(20261009)
+26:         for n in [2,4,8,16,32,64,128,256,512,1024,2048]:
+27:             for _ in range(4):
+28:                 x=[r.randrange(-2*P,2*P) for j in range(n)]
+29:                 got,cost=packed_dft(x)
+30:                 self.assertEqual(got,ntt_reference(x),f'length {n}')
+31:                 self.assertEqual(cost.operand_bits,n*cost.cell_bits)
+32:                 self.assertGreater(cost.operand_bits,n*math.ceil(math.log2(P)))
+33: 
+34:     def test_direct_random(self):
+35:         r=random.Random(13)
+36:         for n in [2,4,8,16,32,64]:
+37:             for _ in range(3):
+38:                 x=[r.randrange(P) for j in range(n)]
+39:                 self.assertEqual(packed_dft(x)[0],direct_dft(x))
+40: 
+41:     def test_chirp_inverse_and_periodicity(self):
+42:         for n in [2,4,8,16,32,64]:
+43:             d,h,zeta=chirp_phases(n)
+44:             self.assertEqual(pow(zeta,n,P),P-1)
+45:             for j in range(n):
+46:                 self.assertEqual(d[j]*h[j]%P,1)
+47:                 self.assertEqual(d[j],pow(zeta,j*j,P))
+48:                 self.assertEqual(h[j],pow(zeta,(-j*j)%(2*n),P))
+49: 
+50:     def test_invalid(self):
+51:         for values in ([],[1,2,3]):
+52:             with self.assertRaises(ValueError): packed_dft(values)
+53: 
+54:     def test_other_valid_prime_fields(self):
+55:         rng=random.Random(212)
+56:         for p in (167772161,469762049,1224736769):
+57:             for n in (4,16,64):
+58:                 values=[rng.randrange(p) for _ in range(n)]
+59:                 got,_=packed_dft(values,p=p)
+60:                 self.assertEqual(got,direct_dft(values,p=p))
+61: 
+62:     def test_zero_and_constant(self):
+63:         for n in [2,8,64,256]:
+64:             for x in [[0]*n,[1]*n,[P-1]*n]:
+65:                 self.assertEqual(packed_dft(x)[0],ntt_reference(x))
+66: 
+67: 
+68: class PackingBottleneck(unittest.TestCase):
+69:     def test_grid_exact_small(self):
+70:         self.assertEqual(grid_count(1,1),5)
+71:         self.assertEqual(grid_count(1,2),9)
+72:         self.assertEqual(grid_count(1,1,Fraction(1,4)),9)
+73: 
+74:     def test_capacity_examples(self):
+75:         self.assertFalse(packing_possible(n=128,w=2,M=1,L=10))
+76:         self.assertTrue(packing_possible(n=128,w=128,M=1,L=10))
+77:         self.assertFalse(packing_possible(n=64,w=4,M=1,L=10,complex_coordinates=False))
+78: 
+79:     def test_monotonicity(self):
+80:         for n in (8,32,128,512):
+81:             for w in (1,2,4):
+82:                 vals=[packing_possible(n,w,1,L) for L in (1,2,4,16,256,65536)]
+83:                 self.assertEqual(vals,sorted(vals))
+84: 
+85:     def test_all_short_block_encodings_unique(self):
+86:         for n,b in ((4,2),(6,3),(8,2),(8,4),(12,3)):
+87:             codes={}
+88:             for v in range(1<<n):
+89:                 bits=[(v>>(n-j-1)) & 1 for j in range(n)]
+90:                 code=block_digits(bits,b)
+91:                 self.assertNotIn(code,codes)
+92:                 codes[code]=v
+93:             self.assertEqual(len(codes),1<<n)
+94: 
+95:     def test_block_boundary_lipschitz_witness(self):
+96:         for n,b in [(4,2),(8,4),(16,8),(32,16)]:
+97:             a=[0]*n
+98:             c=a.copy();c[b-1]=1
+99:             encoder_diff=max(abs(u-v) for u,v in zip(block_encode_exact(a,b),block_encode_exact(c,b)))
+100:             self.assertEqual(encoder_diff,Fraction(1,2**b))
+101:             # For delta of one standard basis vector, all N Fourier values have modulus one.
+102:             omega=cmath.exp(2j*math.pi/n)
+103:             for k in range(n):
+104:                 self.assertAlmostEqual(abs(omega**(k*(b-1))),1.0,places=12)
+105:             self.assertEqual(Fraction(1,1)/encoder_diff,2**b)
+106: 
+107:     def test_information_output_digits(self):
+108:         # A channel of w registers, each with <= 2**b states, cannot be
+109:         # injective on all 2**N Boolean inputs unless w*b >= N.
+110:         for n in [16,64,256]:
+111:             for b in [1,2,4,8]:
+112:                 w=(n+b-1)//b
+113:                 self.assertGreaterEqual(w*b,n)
+114:                 if w>=2:
+115:                     self.assertLess((w-1)*b,n+b)
+116: 
+117: if __name__=='__main__': unittest.main()

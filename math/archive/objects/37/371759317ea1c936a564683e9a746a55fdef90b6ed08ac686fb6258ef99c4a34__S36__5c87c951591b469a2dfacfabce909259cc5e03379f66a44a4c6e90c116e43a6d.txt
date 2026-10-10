@@ -1,0 +1,106 @@
+   1 #!/usr/bin/env python3
+   2 """Exact rank obstruction for one-shot bit-partition separable Fourier operators.
+   3 
+   4 For N=A^2, A a power of two, index input x=aA+b and output y=cA+d.
+   5 Let R[(a,c),(b,d)]=F_N[y,x] with exponent negative.
+   6 Then after swapping column index (b,d)->(d,b),
+   7  R = (F_A tensor F_A) * diag(omega_N^(-bd)).
+   8 Thus rank(R)=A^2=N over any exact field containing a primitive Nth
+   9 root with char not dividing N. The operator-Schmidt rank of F_N across
+  10 this balanced register split is N, maximal.
+  11 
+  12 No expression F_N=sum_{j=1}^s A_j tensor B_j can have s<N.
+  13 This is NOT a lower bound on unrestricted arithmetic circuits: products
+  14 of sparse or dense factors are not constrained by this one-shot sum rank.
+  15 """
+  16 import json
+  17 import time
+  18 from phase10_rational import P,root_table,root_of_unity
+  19 
+  20 
+  21 def realignment_matrix(n):
+  22     a=int(n**.5)
+  23     if a*a!=n or a&(a-1):raise ValueError('N=A^2, A power of two')
+  24     roots=root_table(n)
+  25     rows=[]
+  26     for left_input in range(a):
+  27         for left_output in range(a):
+  28             row=[]
+  29             for right_input in range(a):
+  30                 for right_output in range(a):
+  31                     x=left_input*a+right_input
+  32                     y=left_output*a+right_output
+  33                     row.append(roots[(-x*y)%n])
+  34             rows.append(row)
+  35     return rows
+  36 
+  37 
+  38 def rank_mod(rows):
+  39     a=[row[:] for row in rows]
+  40     if not a:return 0
+  41     h=len(a);w=len(a[0]);rank=0
+  42     for col in range(w):
+  43         i=next((i for i in range(rank,h) if a[i][col]),None)
+  44         if i is None:continue
+  45         if i!=rank:a[rank],a[i]=a[i],a[rank]
+  46         pivot=a[rank]
+  47         inv=pow(pivot[col],P-2,P)
+  48         # Pivot row need not be normalized to prove rank; eliminate with
+  49         # factor v * pivot^-1, reduces multiplicative work.
+  50         for j in range(rank+1,h):
+  51             v=a[j][col]
+  52             if not v:continue
+  53             scale=v*inv%P
+  54             row=a[j]
+  55             for t in range(col+1,w):row[t]=(row[t]-scale*pivot[t])%P
+  56             row[col]=0
+  57         rank+=1
+  58         if rank==h:break
+  59     return rank
+  60 
+  61 
+  62 def check(n):
+  63     a=int(n**.5)
+  64     omega=root_of_unity(n)
+  65     table=root_table(n)
+  66     omega_a=pow(omega,a,P)
+  67     r=realignment_matrix(n)
+  68     checked=0
+  69     for aa in range(a):
+  70         for cc in range(a):
+  71             for b in range(a):
+  72                 for d in range(a):
+  73                     row=aa*a+cc;col=b*a+d
+  74                     predicted=(pow(omega_a,-aa*d-cc*b,P)*
+  75                                table[(-b*d)%n])%P
+  76                     assert r[row][col]==predicted
+  77                     checked+=1
+  78     t=time.perf_counter()
+  79     rank=rank_mod(r)
+  80     dt=time.perf_counter()-t
+  81     assert rank==n
+  82     return {'n':n,'a':a,'exact_fourier_realignment_rank':rank,
+  83             'max_possible_rank':n,'rank_upper_bound_of_s_terms':
+  84             's; hence any F_N=sum_i A_i tensor B_i needs at least N terms',
+  85             'matrix_entries_verified':checked,
+  86             'runtime_sec':round(dt,4)}
+  87 
+  88 
+  89 def main():
+  90     records=[]
+  91     for n in (4,16,64,256):
+  92         a=check(n)
+  93         records.append(a)
+  94         print('N=%d operator-Schmidt rank=%d/%d exact entries checked=%d runtime=%.3fs' %
+  95              (n,a['exact_fourier_realignment_rank'],n,a['matrix_entries_verified'],
+  96               a['runtime_sec']))
+  97     result={
+  98       'result':'FULL operator-Schmidt rank N for balanced bit partition N=A^2',
+  99       'rigorous_identity':'R[(a,c),(b,d)]=omega_A^(-a*d-c*b)*omega_N^(-b*d)',
+ 100       'consequence':'N separable terms required in a one-shot sum of bit-partitioned operator products',
+ 101       'not_consequence':'Does not exclude O(N) unrestricted FFT circuits or products of many factors',
+ 102       'records':records}
+ 103     with open('SCHMIDT_AUDIT.json','w') as f:json.dump(result,f,indent=2)
+ 104 
+ 105 
+ 106 if __name__=='__main__':main()

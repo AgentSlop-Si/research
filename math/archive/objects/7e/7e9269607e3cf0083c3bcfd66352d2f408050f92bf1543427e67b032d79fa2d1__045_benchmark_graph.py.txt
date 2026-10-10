@@ -1,0 +1,256 @@
+"""Matched dense-output benchmarks, including cold planning and calibration.
+
+Run with OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python benchmark_graph.py.
+Results include every output bin of every version, not selected checksums.
+"""
+from __future__ import annotations
+import argparse
+from dataclasses import asdict
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import platform
+import random
+from statistics import median
+import sys
+from time import perf_counter_ns
+
+import numpy as np
+import scipy
+from scipy import fft
+
+from graph_reuse import (RelationBatch, calibrate, run_graph, build_edges,
+    minimum_spanning_plan, execute_plan, verify_minimum_spanning_plan)
+from support_graph import CosetSpectrum, direct_update, quotient_update, support_profile
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE / 'baseline_phase5'))
+from cost_aware_fft import RelationFFT
+sys.path.insert(0, str(HERE / 'baseline_phase4'))
+from lazy_fft import LazyRealFFT
+
+
+def make_case(kind, n, variants=64):
+    rng = np.random.default_rng(260_009 + n + variants)
+    base = rng.normal(size=n)
+    patches = [{}]
+    hints = []
+    lineage = [-1]
+    if kind == 'chain':
+        positions = rng.choice(n, variants, replace=False)
+        for i, p in enumerate(positions):
+            patch = dict(patches[-1]); patch[int(p)] = float(rng.normal())
+            patches.append(patch)
+            hints.append((i,i+1)); lineage.append(i)
+    elif kind == 'interleaved_clusters':
+        # Two shared 31-coordinate cores; consecutive requests alternate cores.
+        core_positions = rng.choice(n, 62+variants, replace=False)
+        cores = [{int(p):float(v) for p,v in zip(core_positions[c*31:(c+1)*31],rng.normal(size=31))} for c in range(2)]
+        last = [0,0]
+        for i in range(variants):
+            cluster = i % 2
+            patch = dict(cores[cluster]); patch[int(core_positions[62+i])] = float(rng.normal())
+            patches.append(patch)
+            hints.append((last[cluster],i+1)); last[cluster] = i+1
+            lineage.append(i)  # chronological predecessor; intentionally distant
+    elif kind == 'coset64':
+        stride = n // 64
+        positions = 3 + stride * np.arange(64)
+        for i in range(variants):
+            patches.append({int(p):float(v) for p,v in zip(positions,rng.normal(size=64))})
+            hints.append((0,i+1)); lineage.append(0)
+    elif kind == 'independent_patches':
+        for i in range(variants):
+            ps = rng.choice(n,64,replace=False)
+            patches.append({int(p):float(v) for p,v in zip(ps,rng.normal(size=64))})
+            hints.append((i,i+1)); lineage.append(i)
+    elif kind == 'unrelated_dense':
+        # Deliberately unfavorable interface: O(MN) supplied delta metadata.
+        for i in range(variants):
+            delta = rng.normal(size=n) - base
+            patches.append(dict(enumerate(delta)))
+            hints.append((i,i+1)); lineage.append(i)
+    else:
+        raise ValueError(kind)
+    # Offer the original reference as a candidate as well.
+    hints = sorted(set(hints + [(0,v) for v in range(1,len(patches))]))
+    return base, patches, hints, lineage
+
+
+def fresh(base, patches):
+    # Give the native competitor its simplest route: no graph metadata objects.
+    out = np.empty((len(patches),len(base)//2+1),np.complex128)
+    for v,patch in enumerate(patches):
+        signal = base.copy()
+        for p,d in patch.items(): signal[p] += d
+        out[v] = fft.rfft(signal)
+    return out, {'fresh_transforms':len(patches)}
+
+
+def phase4(base, patches, direct=False):
+    root = LazyRealFFT(base)
+    out = np.empty((len(patches),len(base)//2+1),np.complex128)
+    for v,patch in enumerate(patches):
+        s = root.fork()
+        for p,d in patch.items(): s.edit(p,d)
+        out[v] = s.materialize_direct() if direct else s.materialize()
+    return out, {}
+
+
+def phase5(base, patches):
+    engine = RelationFFT()
+    root = engine.register(base)
+    out = np.empty((len(patches),len(base)//2+1),np.complex128)
+    for v,patch in enumerate(patches):
+        s = root.fork()
+        for p,d in patch.items(): s.edit(p,d)
+        out[v] = s.spectrum()
+    return out, {'strategies':dict(engine.stats), 'memory':engine.memory_report()}
+
+
+def lineage_updates(base, patches, parents, costs):
+    # Strong ablation: same kernels and weights, no global graph optimization.
+    batch = RelationBatch(base,patches)
+    out = np.empty((len(batch),batch.n//2+1),np.complex128)
+    fresh_count = 0
+    for v,p in enumerate(parents):
+        if p < 0:
+            out[v] = fft.rfft(batch.signal(v)); fresh_count += 1
+            continue
+        delta = batch.difference(p,v)
+        weight,kernel = costs.estimate(batch.n,delta)
+        if weight >= costs.fresh_ns:
+            out[v] = fft.rfft(batch.signal(v)); fresh_count += 1
+        else:
+            fn = direct_update if kernel == 'direct' else quotient_update
+            fn(out[p],batch.n,delta,out=out[v])
+    return out, {'fresh_transforms':fresh_count}
+
+
+def time_suite(methods, reference, repeats, seed=811):
+    runs = {key:[] for key in methods}
+    errors = {key:0.0 for key in methods}
+    order_rng = random.Random(seed)
+    for _ in range(repeats):
+        order = list(methods); order_rng.shuffle(order)
+        for key in order:
+            t = perf_counter_ns()
+            result = methods[key]()
+            elapsed = (perf_counter_ns()-t)/1e6
+            output,stats = result[0],result[-1]
+            error = float(np.max(np.abs(output-reference)))
+            np.testing.assert_allclose(output,reference,atol=2e-8,rtol=2e-10)
+            errors[key] = max(errors[key],error)
+            runs[key].append((elapsed,stats))
+            del result,output
+    summary = {}
+    for key, values in runs.items():
+        ms = median(t for t,_ in values)
+        representative = min(values,key=lambda item:abs(item[0]-ms))[1]
+        summary[key] = {'median_ms':ms,'min_ms':min(t for t,_ in values),
+            'max_ms':max(t for t,_ in values),'runs_ms':[t for t,_ in values],
+            'max_absolute_error':errors[key],'representative_stats':representative}
+    return summary
+
+
+def benchmark_case(kind,n,variants,repeats):
+    base,patches,hints,parents = make_case(kind,n,variants)
+    fft.rfft(base)  # backend warmup is common, not retained as a cached result
+    reference = fresh(base,patches)[0]
+    t = perf_counter_ns(); costs = calibrate(base); profile_ms = (perf_counter_ns()-t)/1e6
+    graph_cold = lambda: run_graph(base,patches,hints)
+    methods = {
+        'scipy_fresh':lambda:fresh(base,patches),
+        'phase4_default':lambda:phase4(base,patches),
+        'phase5_auto':lambda:phase5(base,patches),
+        'same_kernels_star_profiled':lambda:lineage_updates(base,patches,[-1]+[0]*(len(patches)-1),costs),
+        'same_kernels_lineage_profiled':lambda:lineage_updates(base,patches,parents,costs),
+        'graph_sparse_cold':graph_cold,
+        'graph_sparse_profiled':lambda:run_graph(base,patches,hints,costs=costs),
+        'graph_complete_profiled':lambda:run_graph(base,patches,None,costs=costs),
+    }
+    if kind == 'chain' and n <= 65536:
+        methods['phase4_direct'] = lambda:phase4(base,patches,True)
+    summary = time_suite(methods,reference,repeats)
+    cold = summary['graph_sparse_cold']['median_ms']
+    better_original = min(summary['scipy_fresh']['median_ms'],summary['phase5_auto']['median_ms'])
+    result = {'case':kind,'n':n,'versions':len(patches),
+        'input_patch_entries':sum(map(len,patches)), 'supplied_candidate_pairs':len(hints),
+        'explicit_output_bytes':reference.nbytes,'profile_setup_ms':profile_ms,
+        'cost_profile':asdict(costs),'methods':summary,
+        'cold_speedup_vs_scipy':summary['scipy_fresh']['median_ms']/cold,
+        'cold_speedup_vs_phase5':summary['phase5_auto']['median_ms']/cold,
+        'cold_speedup_vs_faster_of_scipy_phase5':better_original/cold}
+    # Independently certify the selected MST outside timing.
+    batch=RelationBatch(base,patches)
+    for candidates in [hints,None]:
+        edges=build_edges(batch,costs,candidates)
+        plan=minimum_spanning_plan(len(batch),edges)
+        assert verify_minimum_spanning_plan(len(batch),edges,plan)
+    print(json.dumps({'case':kind,'n':n,'cold_speedup':result['cold_speedup_vs_faster_of_scipy_phase5'],
+                      'ms':{key:round(value['median_ms'],3) for key,value in summary.items()} }),flush=True)
+    return result
+
+
+def benchmark_geometry(n=262144,repeats=5):
+    rng=np.random.default_rng(880)
+    rows=[]
+    for kind in ['contiguous','comb','random']:
+        k=64
+        positions = (np.arange(k)+3 if kind=='contiguous' else
+                     3+np.arange(k)*(n//k) if kind=='comb' else rng.choice(n,k,replace=False))
+        changes={int(p):float(v) for p,v in zip(positions,rng.normal(size=k))}
+        base=rng.normal(size=n); spectrum=fft.rfft(base)
+        changed=base.copy()
+        for p,d in changes.items(): changed[p]+=d
+        reference=fft.rfft(changed)
+        def native():
+            x=base.copy()
+            for p,d in changes.items(): x[p]+=d
+            return fft.rfft(x),{}
+        methods={'scipy_fresh':native,
+            'direct_no_phase_cache':lambda:(direct_update(spectrum,n,changes),{}),
+            'quotient':lambda:(quotient_update(spectrum,n,changes),{})}
+        times=time_suite(methods,reference,repeats)
+        view=CosetSpectrum.from_changes(n,changes)
+        rows.append({'support':kind,'n':n,'k':k,'profile':asdict(support_profile(n,positions)),
+            'coset_stride':view.stride,'reduced_length':view.reduced_length,
+            'compressed_numeric_bytes':view.numeric_bytes,'dense_rfft_bytes':spectrum.nbytes,
+            'methods':times,'seed_spectrum_preexists':True})
+        print(json.dumps({'geometry':kind,'reduced_length':view.reduced_length,
+                          'ms':{k:round(v['median_ms'],3) for k,v in times.items()}}),flush=True)
+    return rows
+
+
+def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--quick',action='store_true')
+    parser.add_argument('--repeats',type=int,default=5)
+    args=parser.parse_args()
+    cases=[('chain',4096,64),('chain',65536,64),('chain',262144,64),
+           ('interleaved_clusters',65536,64),('interleaved_clusters',262144,64),
+           ('coset64',65536,32),('coset64',262144,32),
+           ('independent_patches',65536,32),('unrelated_dense',512,8)]
+    if args.quick: cases=[('chain',4096,16),('coset64',4096,8)]
+    result={'recorded_utc':datetime.now(timezone.utc).isoformat(),
+        'python':sys.version,'numpy':np.__version__,'scipy':scipy.__version__,
+        'platform':platform.platform(),'repeats':args.repeats,
+        'notes':['Every method returns and retains the same M dense rFFT outputs.',
+                 'Graph cold includes input validation, calibration, edge differences, MST, seed FFT(s), all output writes.',
+                 'Profiled methods exclude the separately reported reusable cost-profile setup only.',
+                 'Inputs include trusted sparse patch maps and, for sparse-graph runs, version-pair hints.',
+                 'The same-kernel lineage baseline tests whether an MST is worth its overhead.',
+                 'Correctness checks cover every bin of every output; checks run outside timing.',
+                 'This is a 1-D SciPy comparison, not a head-to-head eFFT benchmark.'],
+        'cases':[]}
+    target=HERE/'results'/'benchmark_graph.json'
+    for kind,n,m in cases:
+        result['cases'].append(benchmark_case(kind,n,m,args.repeats))
+        target.write_text(json.dumps(result,indent=2))
+    result['geometry']=benchmark_geometry(65536 if args.quick else 262144,args.repeats)
+    target.write_text(json.dumps(result,indent=2))
+
+
+if __name__=='__main__':
+    with fft.set_workers(1):
+        main()

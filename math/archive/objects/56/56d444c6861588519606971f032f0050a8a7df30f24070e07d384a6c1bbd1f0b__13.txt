@@ -1,0 +1,219 @@
+   1 #!/usr/bin/env python3
+   2 """Independent, standard-library exact checks for the spliced MGG bank.
+   3 
+   4 This file is authored for the review. It does not import or execute any
+   5 constructor or uploaded code. The external MGG spectral theorem is a stated
+   6 premise; the checker verifies finite structural controls and exact thresholds.
+   7 """
+   8 import argparse
+   9 from fractions import Fraction
+  10 import hashlib
+  11 import itertools
+  12 import json
+  13 from pathlib import Path
+  14 
+  15 
+  16 LABELS = [(axis, offset, sign) for axis in ('H', 'V')
+  17           for offset in (0, 1) for sign in (1, -1)]
+  18 
+  19 
+  20 def permutation(a, b, label):
+  21     axis, offset, sign = label
+  22     p = []
+  23     for y in range(b):
+  24         for x in range(a):
+  25             if axis == 'H':
+  26                 p.append(y * a + (x + sign * (2*y + offset)) % a)
+  27             else:
+  28                 p.append(((y + sign * (2*x + offset)) % b) * a + x)
+  29     return p
+  30 
+  31 
+  32 def cycles(p):
+  33     seen = bytearray(len(p))
+  34     reps = []
+  35     for v in range(len(p)):
+  36         if seen[v]:
+  37             continue
+  38         reps.append(v)
+  39         w = v
+  40         while not seen[w]:
+  41             seen[w] = 1
+  42             w = p[w]
+  43         assert w == v
+  44     return reps
+  45 
+  46 
+  47 def splice(p, reps):
+  48     q = p.copy()
+  49     if len(reps) > 1:
+  50         for j, v in enumerate(reps):
+  51             q[v] = p[reps[(j+1) % len(reps)]]
+  52     return q
+  53 
+  54 
+  55 def predicted_counts(r, rectangular):
+  56     m = 1 << r
+  57     if rectangular:
+  58         base = {('H', 0): m*(r+2), ('H', 1): m,
+  59                 ('V', 0): 2*m*(r+1), ('V', 1): 2*m}
+  60     else:
+  61         base = {('H', 0): m*(r+1), ('H', 1): m,
+  62                 ('V', 0): m*(r+1), ('V', 1): m}
+  63     return [base[(axis, offset)] for axis, offset, _ in LABELS]
+  64 
+  65 
+  66 def incoming(p, selected):
+  67     return sum((v not in selected and p[v] in selected)
+  68                for v in range(len(p)))
+  69 
+  70 
+  71 def exact_threshold(k):
+  72     r = k // 2
+  73     m = 1 << r
+  74     n = 1 << k
+  75     rectangular = bool(k % 2)
+  76     loss = m*(3*r+7) if rectangular else 2*m*(r+2)
+  77     # 3*((8-5*sqrt(2))*n/4-loss) > n/2.
+  78     left = 22*n - 12*loss
+  79     strict = left > 0 and left*left > 450*n*n
+  80     rational_margin = Fraction(3*n, 16) - 3*loss
+  81     return {'k': k, 'N': n, 'm': m, 'shape': 'rectangle' if rectangular else 'square',
+  82             'total_cycle_count': 2*loss, 'splice_loss_bound': loss,
+  83             'strict_capacity_bound': strict,
+  84             'rational_margin_3N_over_16_minus_3loss': str(rational_margin),
+  85             'exact_squared_comparison_margin': left*left - 450*n*n}
+  86 
+  87 
+  88 def check_enumeration(max_k):
+  89     rows = []
+  90     for k in range(2, max_k+1):
+  91         r = k//2
+  92         m = 1 << r
+  93         a, b = (2*m, m) if k % 2 else (m, m)
+  94         expected = predicted_counts(r, bool(k % 2))
+  95         counts, changed, digests = [], [], []
+  96         for label, count in zip(LABELS, expected):
+  97             p = permutation(a, b, label)
+  98             assert sorted(p) == list(range(a*b))
+  99             reps = cycles(p)
+ 100             assert len(reps) == count, (k, label, len(reps), count)
+ 101             q = splice(p, reps)
+ 102             assert sorted(q) == list(range(a*b))
+ 103             assert len(cycles(q)) == 1
+ 104             ch = sum(x != y for x, y in zip(p, q))
+ 105             assert ch == (count if count > 1 else 0)
+ 106             counts.append(count)
+ 107             changed.append(ch)
+ 108             digests.append(hashlib.sha256(','.join(map(str, q)).encode()).hexdigest())
+ 109         if k >= 6:
+ 110             assert len(set(digests)) == 8
+ 111         rows.append({'k': k, 'N': a*b, 'counts_by_label': counts,
+ 112                      'changed_edges_by_label': changed,
+ 113                      'spliced_permutation_sha256': digests})
+ 114     return rows
+ 115 
+ 116 
+ 117 def check_quotient():
+ 118     rows = []
+ 119     for r in range(1, 7):
+ 120         m = 1 << r
+ 121         big_a = 2*m
+ 122         checked = 0
+ 123         for label in LABELS:
+ 124             big = permutation(big_a, big_a, label)
+ 125             small = permutation(big_a, m, label)
+ 126             def project(v):
+ 127                 return (v//big_a % m)*big_a + v%big_a
+ 128             for v, pv in enumerate(big):
+ 129                 assert project(pv) == small[project(v)]
+ 130                 checked += 1
+ 131             axis, offset, sign = label
+ 132             inverse = permutation(big_a, m, (axis, offset, -sign))
+ 133             assert all(inverse[small[v]] == v for v in range(len(small)))
+ 134         rows.append({'m': m, 'checked_labeled_vertices': checked})
+ 135     return rows
+ 136 
+ 137 
+ 138 def check_all_small_half_cuts():
+ 139     rows = []
+ 140     for a, b in [(2, 1), (2, 2), (4, 2), (4, 4)]:
+ 141         n = a*b
+ 142         ps = [permutation(a, b, label) for label in LABELS]
+ 143         cs = [cycles(p) for p in ps]
+ 144         qs = [splice(p, c) for p, c in zip(ps, cs)]
+ 145         losses = [(len(c)//2 if len(c)>1 else 0) for c in cs]
+ 146         min_pre = 8*n
+ 147         min_post = 8*n
+ 148         max_losses = [-8*n]*8
+ 149         tested = 0
+ 150         for subset in itertools.combinations(range(n), n//2):
+ 151             selected = set(subset)
+ 152             old = [incoming(p, selected) for p in ps]
+ 153             new = [incoming(q, selected) for q in qs]
+ 154             assert all(x-y <= bound for x, y, bound in zip(old, new, losses))
+ 155             min_pre = min(min_pre, sum(old))
+ 156             min_post = min(min_post, sum(new))
+ 157             max_losses = [max(z, x-y) for z, x, y in zip(max_losses, old, new)]
+ 158             # Exact finite control for e >= (8-5*sqrt(2))*N/4.
+ 159             # If 8N-4e <= 0 it is automatic; otherwise square positive sides.
+ 160             lhs = 8*n - 4*sum(old)
+ 161             assert lhs <= 0 or lhs*lhs <= 50*n*n
+ 162             tested += 1
+ 163         rows.append({'a': a, 'b': b, 'half_cuts_tested': tested,
+ 164                      'min_original_incoming': min_pre, 'min_spliced_incoming': min_post,
+ 165                      'max_observed_incoming_loss_by_label': max_losses,
+ 166                      'permutation_splice_loss_bounds': losses})
+ 167     return rows
+ 168 
+ 169 
+ 170 def check_abstract_splice_loss():
+ 171     # Every pair of size-a source and size-b target subsets has overlap
+ 172     # in [max(0,a+b-c), min(a,b)]. This is exhaustive integer verification
+ 173     # of the extremal expression, supplemental to the report's proof.
+ 174     checked = 0
+ 175     for c in range(1, 257):
+ 176         for a in range(c+1):
+ 177             for b in range(c+1):
+ 178                 spread = min(a, b) - max(0, a+b-c)
+ 179                 assert spread == min(a, b, c-a, c-b)
+ 180                 assert spread <= c//2
+ 181                 checked += 1
+ 182     return checked
+ 183 
+ 184 
+ 185 def main():
+ 186     parser = argparse.ArgumentParser()
+ 187     parser.add_argument('--max-k', type=int, default=18)
+ 188     parser.add_argument('--output', default='VERIFIED_RESULTS.json')
+ 189     args = parser.parse_args()
+ 190     assert args.max_k >= 4
+ 191     thresholds = [exact_threshold(k) for k in range(2, 129)]
+ 192     assert [row['k'] for row in thresholds if row['strict_capacity_bound']][0] == 17
+ 193     assert all(row['strict_capacity_bound'] == (row['k'] >= 17) for row in thresholds)
+ 194     assert Fraction(17, 12)**2 > 2
+ 195     assert Fraction(31, 512) < Fraction(1, 16)
+ 196     assert Fraction(22, 512) < Fraction(1, 16)
+ 197     result = {
+ 198         'status': 'PASS',
+ 199         'external_premise': 'MGG unnormalized mean-zero numerical radius <= 5*sqrt(2), cited in report; Isabelle not executed.',
+ 200         'labels': LABELS,
+ 201         'enumeration': check_enumeration(args.max_k),
+ 202         'quotient': check_quotient(),
+ 203         'exhaustive_small_half_cuts': check_all_small_half_cuts(),
+ 204         'abstract_splice_integer_cases': check_abstract_splice_loss(),
+ 205         'thresholds': thresholds,
+ 206         'all_k_ge_17_proof': 'rational bound sqrt(2)<17/12 and monotonic loss/N, in report',
+ 207         'scope': 'All balanced-cut aggregate incoming-edge capacities; not attained ranks or Fourier coefficients.'
+ 208     }
+ 209     path = Path(args.output)
+ 210     path.write_text(json.dumps(result, indent=2, sort_keys=True)+'\n')
+ 211     print(json.dumps({'status': 'PASS', 'output': str(path),
+ 212                       'enumeration_max_k': args.max_k,
+ 213                       'threshold_first_k': 17,
+ 214                       'small_half_cuts': sum(row['half_cuts_tested'] for row in result['exhaustive_small_half_cuts']),
+ 215                       'abstract_splice_integer_cases': result['abstract_splice_integer_cases']}, sort_keys=True))
+ 216 
+ 217 
+ 218 if __name__ == '__main__':
+ 219     main()

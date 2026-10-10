@@ -1,0 +1,144 @@
+1: """Exact rank-at-most-r q-Weyl polynomial tails by shared block FFTs.
+2: 
+3: Computes C**(N-r) p(C) x, deg(p)<r, in O(N log(r+1)) total field work.
+4: This does not apply all of H_q(C) sub-N-log-N, and is not a novelty claim.
+5: """
+6: import sys
+7: from pathlib import Path
+8: from collections import Counter
+9: from dataclasses import dataclass
+10: 
+11: ROOT=Path(__file__).resolve().parent.parent
+12: sys.path.insert(0,str(ROOT/'fft_qbasis_research'))
+13: from orbit_kernel import FFTPlan,fft
+14: sys.path.insert(0,str(ROOT/'fft_qweyl_boundary_research'))
+15: from fixed_kernel import Counted,prepare
+16: 
+17: 
+18: @dataclass
+19: class TailPlan:
+20:     n: int
+21:     r: int
+22:     q: object
+23:     polynomial: list
+24:     kernel: object
+25:     fft: FFTPlan
+26:     projection_spectra: list
+27:     decoding_spectra: list
+28:     middle_spectrum: list
+29:     g_tail: list
+30:     inverse_g_head: list
+31:     preparation: dict
+32: 
+33: 
+34: def _window(field,kernel,center,r):
+35:     """2r cyclic embedding of the r-by-r Toeplitz window kernel[center+i-j]."""
+36:     out=[field.zero]*(2*r)
+37:     for offset in range(r):
+38:         index=center+offset
+39:         if 0<=index<len(kernel):
+40:             out[offset]=kernel[index]
+41:     for distance in range(1,r):
+42:         index=center-distance
+43:         if 0<=index<len(kernel):
+44:             out[2*r-distance]=kernel[index]
+45:     return out
+46: 
+47: 
+48: def prepare_tail(field,n,r,q,polynomial=None):
+49:     if n<2 or n&(n-1) or r<1 or r&(r-1) or 2*r>n:
+50:         raise ValueError('N and r powers of two, 1<=r<=N/2 required')
+51:     kernel=prepare(field,n,q)
+52:     if polynomial is None:
+53:         polynomial=list(kernel.kernel[n-r:])
+54:     else:
+55:         if not polynomial or len(polynomial)>r:
+56:             raise ValueError('polynomial must have 1..r coefficients')
+57:         polynomial=list(polynomial)+[field.zero]*(r-len(polynomial))
+58:     c=Counted(field)
+59:     roots=[field.one]
+60:     for _ in range(1,n):
+61:         roots.append(c.mul(roots[-1],q))
+62:     # g_j=product_(a=0)^(j-1)(q-q^(-a)); 1/g_j is kernel.middle[j].
+63:     g=[field.one]
+64:     for j in range(n-1):
+65:         g.append(c.mul(g[-1],c.sub(q,roots[(-j)%n])))
+66:     m=2*r
+67:     powers=[roots[j*(n//m)] for j in range(m)]
+68:     permutation=[0]
+69:     while len(permutation)<m:
+70:         doubled=[2*j for j in permutation]
+71:         permutation=doubled+[j+1 for j in doubled]
+72:     # 1/(2r) = (N/(2r))*(1/N), without a second field inversion.
+73:     multiplier=field.one
+74:     for _ in range((n//m).bit_length()-1):
+75:         multiplier=c.add(multiplier,multiplier)
+76:     inverse_length=c.mul(multiplier,kernel.kernel[-1])
+77:     plan=FFTPlan(r,powers,permutation,inverse_length,inverse_length)
+78:     blocks=n//r
+79:     projection=[]
+80:     decoding=[]
+81:     for b in range(blocks):
+82:         projection.append(fft(c,plan,_window(field,kernel.middle,(blocks-1-b)*r,r)))
+83:         decoding.append(fft(c,plan,_window(field,kernel.kernel,b*r,r)))
+84:     upper=[field.zero]*m
+85:     upper[0]=polynomial[0]
+86:     for j in range(1,r):
+87:         upper[m-j]=polynomial[j]
+88:     middle=fft(c,plan,upper)
+89:     count=Counter(kernel.preparation)
+90:     count.update(c.count)
+91:     return TailPlan(n,r,q,polynomial,kernel,plan,projection,decoding,middle,
+92:                     g[n-r:],kernel.middle[:r],dict(count))
+93: 
+94: 
+95: def apply_tail(field,plan,x):
+96:     if len(x)!=plan.n:
+97:         raise ValueError('wrong input length')
+98:     n,r=plan.n,plan.r
+99:     m=2*r
+100:     blocks=n//r
+101:     c=Counted(field)
+102:     aggregate=None
+103:     # Every block contributes to the same r projected outputs, allowing a
+104:     # frequency-domain sum and only ONE inverse FFT for the whole projection.
+105:     for b in range(blocks):
+106:         transformed=fft(c,plan.fft,list(x[b*r:(b+1)*r])+[field.zero]*r)
+107:         product=[c.mul(a,v) for a,v in zip(plan.projection_spectra[b],transformed)]
+108:         if aggregate is None:
+109:             aggregate=product
+110:         else:
+111:             aggregate=[c.add(a,v) for a,v in zip(aggregate,product)]
+112:     projected=fft(c,plan.fft,aggregate,inverse=True)[:r]
+113:     middle_input=[c.mul(a,v) for a,v in zip(plan.g_tail,projected)]
+114:     middle_input=fft(c,plan.fft,middle_input+[field.zero]*r)
+115:     middle_product=[c.mul(a,v) for a,v in zip(plan.middle_spectrum,middle_input)]
+116:     middle_output=fft(c,plan.fft,middle_product,inverse=True)[:r]
+117:     small_state=[c.mul(a,v) for a,v in zip(plan.inverse_g_head,middle_output)]
+118:     # One forward FFT of the r-state serves every one of the N/r output blocks.
+119:     small_spectrum=fft(c,plan.fft,small_state+[field.zero]*r)
+120:     out=[]
+121:     for b in range(blocks):
+122:         product=[c.mul(a,v) for a,v in zip(plan.decoding_spectra[b],small_spectrum)]
+123:         out.extend(fft(c,plan.fft,product,inverse=True)[:r])
+124:     return out,dict(field_operations=dict(c.count),
+125:         forward_ffts=blocks+2,inverse_ffts=blocks+2,fft_length=m,
+126:         source_input_reads=n,returned_output_count=n,full_output_writes=n,
+127:         projection_state_length=r,decoding_state_length=r,
+128:         logical_fft_input_value_volume=(2*blocks+4)*m,
+129:         logical_fft_butterflies=(2*n+4*r)*(m.bit_length()-1),
+130:         model='Exact field arithmetic with supplied primitive N-th root; logical arrays and word indexing')
+131: 
+132: 
+133: def expected_online(n,r):
+134:     s=(2*r).bit_length()-1
+135:     fft_term=(2*n+4*r)*s
+136:     return dict(mul=fft_term+6*n+8*r,add=fft_term+2*n-2*r,sub=fft_term)
+137: 
+138: 
+139: def expected_preparation(n,r):
+140:     l=n.bit_length()-1
+141:     s=(2*r).bit_length()-1
+142:     butterflies=(2*n+r)*s
+143:     return dict(mul=8*n+l-5+butterflies,sub=2*n-2+butterflies,
+144:                 add=(l-s)+butterflies,neg=n-1,constant_inverse=1)

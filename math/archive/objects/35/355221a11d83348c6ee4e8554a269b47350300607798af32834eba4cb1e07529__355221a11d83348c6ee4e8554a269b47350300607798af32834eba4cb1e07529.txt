@@ -1,0 +1,35 @@
+"""Exact integer-only K=1,M=3,R=3 witness against diagonal median covariance."""
+from fractions import Fraction
+from itertools import product
+from pathlib import Path
+import json
+
+roots=((1,0),(0,1),(-1,0),(0,-1))
+def mul(a,b):return (a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0])
+def conj(a):return (a[0],-a[1])
+def plus(a,b):return (a[0]+b[0],a[1]+b[1])
+def scale(a,b):return (a[0]*b,a[1]*b)
+def median3(a,b,c):return sorted((a,b,c))[1]
+
+A=(1,2,3);states=[]
+for tail in product(roots,repeat=2):
+    xi=((1,0),)+tail;row=[]
+    for t in range(3):
+        e=(0,0)
+        for u in range(3):
+            if u!=t:e=plus(e,scale(mul(xi[t],conj(xi[u])),A[u]))
+        row.append(e)
+    states.append(row)
+sums=[(0,0)]*3;products=[[(0,0)]*3 for _ in range(3)];n=0
+for rows in product(states,repeat=3):
+    med=[(median3(*(row[t][0] for row in rows)),median3(*(row[t][1] for row in rows))) for t in range(3)]
+    for t in range(3):
+        sums[t]=plus(sums[t],med[t])
+        for u in range(3):products[t][u]=plus(products[t][u],mul(med[t],conj(med[u])))
+    n+=1
+assert n==4096 and all(z==(0,0) for z in sums)
+assert Fraction(products[0][1][0],n)==Fraction(45,512)
+assert all(z[1]==0 for row in products for z in row)
+result={'K':1,'M':3,'R':3,'A':A,'phase_states_per_row':len(states),'triples':n,'integer_mean_numerators':sums,'integer_covariance_numerators':products,'real_covariance_fractions':[[str(Fraction(z[0],n)) for z in row] for row in products]}
+Path(__file__).with_name('exact_covariance_results.json').write_text(json.dumps(result,indent=2))
+print(json.dumps(result,indent=2))

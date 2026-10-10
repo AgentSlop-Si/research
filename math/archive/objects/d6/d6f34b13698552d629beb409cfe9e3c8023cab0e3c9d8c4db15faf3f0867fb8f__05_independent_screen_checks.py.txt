@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Independently reproduce the uploaded N=8 negative-screen counts.
+
+Imports only this audit's own checker and standard-library modules. These
+counts are exact for the stated finite-field screens, not factorization tests.
+"""
+from collections import Counter
+from itertools import permutations
+from pathlib import Path
+import json
+from independent_checks import fourier, subrank
+
+
+def run():
+    n, prime, full = 8, 12289, 255
+    matrix = fourier(n, prime)
+    sets = [[j for j in range(n) if mask & (1 << j)] for mask in range(256)]
+    transitions = [sum(((mask >> j) ^ (mask >> (j - 1))) & 1 for j in range(1, n))
+                   for mask in range(256)]
+    rank_cache = {}
+    def needed_rank(missing_rows, columns):
+        key = missing_rows, columns
+        if key not in rank_cache:
+            rank_cache[key] = subrank(matrix, sets[full ^ missing_rows], sets[columns], prime)
+        return rank_cache[key]
+
+    windows = [(u, v, sum(1 << k for k in range(u, v + 1)))
+               for u in range(n) for v in range(u, n)]
+    screen_tables = {'window': {}, 'subset': {}, 'support': {}, 'uncertainty': {}}
+    for missing_rows in range(1, full):
+        for columns in range(1, full):
+            if len(sets[missing_rows]) == len(sets[columns]):
+                screen_tables['subset'][missing_rows, columns] = (
+                    needed_rank(missing_rows, columns) <= transitions[missing_rows] + transitions[columns])
+    for u, v, missing_rows in windows:
+        size = v - u + 1
+        bcost = (u > 0) + (v < n - 1)
+        for columns in range(1, full + 1):
+            chosen = sets[columns]
+            if len(chosen) != size:
+                continue
+            a, b = chosen[0], chosen[-1]
+            window_pass = (min(size, a) <= bcost + (a > 0) and
+                           min(size, n - 1 - b) <= bcost + (b < n - 1) and
+                           min(size, n - 1 - b + a) <= bcost + (a > 0) + (b < n - 1))
+            screen_tables['window'][missing_rows, columns] = window_pass
+            screen_tables['uncertainty'][missing_rows, columns] = (
+                size - ((b - a + 1) * size // n) <= bcost + (a > 0) + (b < n - 1))
+            outside = full ^ columns
+            extra = outside
+            support_pass = True
+            while True:
+                support = columns | extra
+                # Maximal excluded runs, charged at each side on which J exists.
+                ccost = 0
+                j = 0
+                while j < n:
+                    if support & (1 << j):
+                        j += 1
+                        continue
+                    left = j
+                    while j < n and not support & (1 << j):
+                        j += 1
+                    ccost += (a < left) + (b >= j)
+                required = size - len(sets[support]) + needed_rank(missing_rows, support)
+                if required > bcost + ccost:
+                    support_pass = False
+                    break
+                if not extra:
+                    break
+                extra = (extra - 1) & outside
+            screen_tables['support'][missing_rows, columns] = support_pass
+
+    accepted = Counter()
+    joint = {kind: Counter() for kind in ('subset', 'support', 'uncertainty')}
+    for order in permutations(range(n)):
+        mapped = [0] * 256
+        for mask in range(1, 256):
+            low = mask & -mask
+            mapped[mask] = mapped[mask ^ low] | (1 << order[low.bit_length() - 1])
+        passed = {}
+        passed['subset'] = all(screen_tables['subset'][mask, mapped[mask]] for mask in range(1, full))
+        for kind in ('window', 'support', 'uncertainty'):
+            passed[kind] = all(screen_tables[kind][mask, mapped[mask]] for u, v, mask in windows)
+        for kind, good in passed.items():
+            accepted[kind] += good
+        for kind in joint:
+            joint[kind][f'window={passed["window"]},candidate={passed[kind]}'] += 1
+    assert accepted['window'] == 15728
+    assert accepted['subset'] == 31384
+    assert accepted['support'] == 15728
+    assert all(joint[kind].get('window=True,candidate=False', 0) == 0 for kind in joint)
+    assert accepted['uncertainty'] > accepted['window']
+    return {'status': 'all independent screen checks passed', 'n': n, 'prime': prime,
+            'permutations': 40320, 'survivors': dict(accepted),
+            'comparisons': {k: dict(v) for k, v in joint.items()},
+            'distinct_submatrix_ranks_computed': len(rank_cache),
+            'scope': 'Finite-field necessary candidate screens; no factorization existence inference.',
+            'source_programs_executed_or_imported': False}
+
+
+if __name__ == '__main__':
+    result = run()
+    Path(__file__).with_name('SCREEN_CHECK_RESULTS.json').write_text(json.dumps(result, indent=2) + '\n')
+    print(json.dumps(result, indent=2))

@@ -1,0 +1,184 @@
+   1 #!/usr/bin/env python3
+   2 """Independent audit controls, standard library only; no constructor imports."""
+   3 import json,random
+   4 from pathlib import Path
+   5 
+   6 def matzero(n,m=None):return [[0]*(n if m is None else m) for _ in range(n)]
+   7 def mm(A,B,p):
+   8     C=matzero(len(A),len(B[0]))
+   9     for i,row in enumerate(A):
+  10         for k,x in enumerate(row):
+  11             if x:
+  12                 for j,y in enumerate(B[k]):
+  13                     if y:C[i][j]=(C[i][j]+x*y)%p
+  14     return C
+  15 def mv(A,x,p):return [sum(a*b for a,b in zip(row,x))%p for row in A]
+  16 def rank(A,p):
+  17     A=[row[:] for row in A];r=0
+  18     for j in range(len(A[0])):
+  19         k=next((k for k in range(r,len(A)) if A[k][j]),None)
+  20         if k is None:continue
+  21         A[k],A[r]=A[r],A[k];z=pow(A[r][j],-1,p);A[r]=[x*z%p for x in A[r]]
+  22         for k in range(r+1,len(A)):
+  23             z=A[k][j];A[k]=[(x-z*y)%p for x,y in zip(A[k],A[r])]
+  24         r+=1
+  25         if r==len(A):break
+  26     return r
+  27 def plus(x,y,p,k=1):return [(a+k*b)%p for a,b in zip(x,y)]
+  28 def qmatrix(N,w,p):
+  29     Q=matzero(N)
+  30     for j in range(N):Q[2*j%N][j]=(Q[2*j%N][j]+1)%p;Q[(2*j+1)%N][j]=(Q[(2*j+1)%N][j]+pow(w,j,p))%p
+  31     return Q
+  32 def oracle_feedback(N,b,w,p,H):
+  33     r=N>>b;Q=qmatrix(N,w,p);inds=list(range(0,N,1<<b));E=[[int(i==s) for s in inds] for i in range(N)];state=mm(Q,E,p)
+  34     A=[state[s][:] for s in inds]
+  35     for s in inds:state[s]=[0]*r
+  36     out=[matzero(r) for _ in range(H+1)]
+  37     for L in range(2,H+1):
+  38         state=mm(Q,state,p);out[L]=[state[s][:] for s in inds]
+  39         for s in inds:state[s]=[0]*r
+  40     return Q,A,out
+  41 
+  42 class Plan:
+  43     def __init__(self,N,b,w,p):
+  44         self.N=N;self.n=N.bit_length()-1;self.b=b;self.r=N>>b;self.d=self.n-b;self.p=p
+  45         eta=w;self.setup_mul=0
+  46         for _ in range(b):eta=eta*eta%p;self.setup_mul+=1
+  47         zeta=w*pow(eta,-1,p)%p;self.setup_mul+=1;self.setup_inv=1
+  48         self.ph=[1]*self.r;zp=[1]*self.r
+  49         for k in range(1,self.r):self.ph[k]=self.ph[k-1]*eta%p;zp[k]=zp[k-1]*zeta%p;self.setup_mul+=2
+  50         self.fix=[1]*self.r;tail=[0]*self.r;run=[0]*self.r;self.valid=[False]*self.r
+  51         for k in range(1,self.r):
+  52             a=k>>1;self.fix[k]=self.fix[a]
+  53             if k&1:self.fix[k]=self.fix[k]*zp[a]%p;self.setup_mul+=1
+  54             else:tail[k]=tail[a]+1
+  55             run[k]=max(run[a],tail[k]);self.valid[k]=bool(k&1) and run[k]<b
+  56         assert self.setup_mul==b+1+2*(self.r-1)+self.r//2
+  57         self.count={'state_visits':0,'route_checks':0,'route_updates':0,'mul':0,'add':0,'tree_updates':0,'output_scalars':0}
+  58     def step(self,v):
+  59         out=[0]*self.r;p=self.p
+  60         for j,x in enumerate(v):out[2*j%self.r]=(out[2*j%self.r]+x)%p;out[(2*j+1)%self.r]=(out[(2*j+1)%self.r]+self.ph[j]*x)%p
+  61         self.count['state_visits']+=self.r;self.count['mul']+=self.r;self.count['add']+=2*self.r
+  62         return out
+  63     def route(self,v,t,target):
+  64         for a,x in enumerate(v):
+  65             k=a% (1<<t);self.count['route_checks']+=1
+  66             if k>=1<<(t-1) and self.valid[k]:
+  67                 y=((a-k)*(1<<self.b)+k)%self.r;target[y]=(target[y]+self.fix[k]*x)%self.p
+  68                 self.count['route_updates']+=1;self.count['mul']+=1;self.count['add']+=1
+  69     def const_feedback(self,v,H):
+  70         res=[[0]*self.r for _ in range(H+1)];cur=v[:]
+  71         for t in range(1,max(H-self.b,0)+1):cur=self.step(cur);self.route(cur,t,res[self.b+t])
+  72         return res
+  73     def solve(self,f,H):
+  74         assert H<=self.n and len(f)==H+1 and all(len(x)==self.r for x in f)
+  75         rho=[x[:] for x in f];sol=[]
+  76         for j in range(H+1):
+  77             v=rho[j][:];sol.append(v);self.count['output_scalars']+=self.r
+  78             if j<H:
+  79                 for a,x in enumerate(v):k=2*a%self.r;rho[j+1][k]=(rho[j+1][k]+x)%self.p
+  80                 self.count['tree_updates']+=self.r;self.count['add']+=self.r
+  81             cur=v
+  82             for t in range(1,max(H-j-self.b,0)+1):cur=self.step(cur);self.route(cur,t,rho[j+self.b+t])
+  83         return sol
+  84 
+  85 def source_jet(x,N,b,Q,p,H):
+  86     inds=list(range(0,N,1<<b));state=x[:]
+  87     for i in inds:state[i]=0
+  88     out=[[x[i] for i in inds]]
+  89     for L in range(1,H+1):
+  90         state=mv(Q,state,p);out.append([state[i] for i in inds])
+  91         for i in inds:state[i]=0
+  92     return out
+  93 
+  94 def apply_oracle(v,A,K,p,H):
+  95     out=[x[:] for x in v]
+  96     for j in range(H+1):
+  97         if j<H:out[j+1]=plus(out[j+1],mv(A,v[j],p),p,-1)
+  98         for L in range(2,H-j+1):out[j+L]=plus(out[j+L],mv(K[L],v[j],p),p,-1)
+  99     return out
+ 100 
+ 101 def main():
+ 102     rng=random.Random(13101026);out={'policy':'Only independent auditor code executed','cases':[],'source_rank_controls':[],'support_counts':[],'phase_controls':[],'large_cost_counts':[]}
+ 103     for p,base in [(65537,3),(257,3)]:
+ 104       for n in range(1,9):
+ 105         N=1<<n;w=pow(base,(p-1)//N,p);assert pow(w,N,p)==1 and pow(w,N//2,p)==p-1
+ 106         for b in range(1,n+1):
+ 107             r=N>>b;d=n-b;Q,A,K=oracle_feedback(N,b,w,p,n);plan=Plan(N,b,w,p)
+ 108             # Every retained basis coefficient, using full-space matrix multiplication as oracle.
+ 109             for j in range(r):
+ 110                 v=[int(k==j) for k in range(r)];got=plan.const_feedback(v,n)
+ 111                 for L in range(n+1):assert got[L]==[K[L][i][j] for i in range(r)]
+ 112             for t in range(1,d+1):
+ 113                 words=[k for k in range(1<<(t-1),1<<t) if k&1 and '0'*b not in format(k,'b')]
+ 114                 support=[i for i in range(r) if any(K[b+t][i])]
+ 115                 assert len(support)==len(words)*max(r//(1<<(b+t)),1)
+ 116                 out['support_counts'].append({'N':N,'field':p,'b':b,'t':t,'words':len(words),'rows':len(support)})
+ 117             # Word phase checked from actual edge traversal, with initial states near wrap.
+ 118             for t in range(1,min(d,5)+1):
+ 119                 for k in range(1<<t):
+ 120                     s=0;gexp=0
+ 121                     for bit in format(k,'0%db'%t):
+ 122                         if bit=='1':gexp+=s
+ 123                         s=2*s+int(bit)
+ 124                     rev=int(format(k,'0%db'%t)[::-1],2)
+ 125                     for j in sorted(set([0,r//2,r-1])):
+ 126                         st=(1<<b)*j;weight=1
+ 127                         for bit in format(k,'0%db'%t)+'0'*b:
+ 128                             if bit=='1':weight=weight*pow(w,st,p)%p
+ 129                             st=(2*st+int(bit))%N
+ 130                         assert st//(1<<b)==((1<<(b+t))*j+k)%r
+ 131                         assert weight==pow(w,((1<<b)*j*rev+gexp),p)
+ 132                     assert plan.fix[k]==pow(w*(pow(pow(w,1<<b,p),-1,p))%p,gexp,p)
+ 133                 out['phase_controls'].append({'N':N,'field':p,'b':b,'t':t,'all_words':1<<t})
+ 134             f=[[rng.randrange(p) for _ in range(r)] for j in range(n+1)];fresh=Plan(N,b,w,p);v=fresh.solve(f,n);assert apply_oracle(v,A,K,p,n)==f
+ 135             expected=r*d*(d+1)//2;assert fresh.count['state_visits']==fresh.count['route_checks']==expected and fresh.count['tree_updates']==n*r and fresh.count['output_scalars']==(n+1)*r
+ 136             # Independent coefficient recurrence using dense feedback matrices.
+ 137             ref=[]
+ 138             for j in range(n+1):
+ 139                 z=f[j][:]
+ 140                 if j:z=plus(z,mv(A,ref[j-1],p),p)
+ 141                 for L in range(2,j+1):z=plus(z,mv(K[L],ref[j-L],p),p)
+ 142                 ref.append(z)
+ 143             assert v==ref
+ 144             h=[[rng.randrange(p) for _ in range(r)] for j in range(n+1)]
+ 145             marked=sum(h[j][k]*v[n-j][k] for j in range(n+1) for k in range(r))%p
+ 146             assert marked==sum(h[j][k]*ref[n-j][k] for j in range(n+1) for k in range(r))%p
+ 147             # Global source and complete eliminated recovery remain explicitly full-space work.
+ 148             x=[rng.randrange(p) for _ in range(N)];src=source_jet(x,N,b,Q,p,n);ret=Plan(N,b,w,p).solve(src,n);cur=x[:];prev=None
+ 149             for j in range(n+1):
+ 150                 rec=x[:] if j==0 else mv(Q,prev,p)
+ 151                 for k in range(r):rec[k<<b]=ret[j][k]
+ 152                 assert rec==cur;prev=rec;cur=mv(Q,cur,p)
+ 153             # All early source rows, including r=1, tested as a stacked linear map.
+ 154             if N<=64:
+ 155                 cols=[]
+ 156                 for s in range(N):
+ 157                     if not s%(1<<b):continue
+ 158                     xx=[int(j==s) for j in range(N)];sj=source_jet(xx,N,b,Q,p,b);cols.append([a for row in sj[1:] for a in row])
+ 159                     val=(s&-s).bit_length()-1;L=b-val;y=(s>>(b-L))%r
+ 160                     for q in range(1,b+1):assert sj[q]==[int(q==L and j==y) for j in range(r)]
+ 161                 mat=[list(row) for row in zip(*cols)];rk=rank(mat,p);assert rk==(b*r//2 if r>=2 else b)
+ 162                 out['source_rank_controls'].append({'N':N,'field':p,'b':b,'r':r,'early_rank':rk,'single_r_summary_excluded':rk>r})
+ 163             out['cases'].append({'N':N,'field':p,'b':b,'retained_basis_inputs':r,'arbitrary_polynomial_rhs':True,'global_coefficients_checked':N*(n+1),'marker':marked,'state_visits':expected,'setup_mul':fresh.setup_mul,'setup_inv':fresh.setup_inv,'online_counts':fresh.count})
+ 164     # Explicit horizon and wrong-fold/trajectory negative controls.
+ 165     N=16;b=2;p=65537;w=64;r=4;v=[1,2,3,4];Q,A,K=oracle_feedback(N,b,w,p,5);bad=Plan(N,b,w,p).const_feedback(v,5);right=mv(K[5],v,p)
+ 166     assert bad[5]==[0]*r and right==[0,57313,0,510]
+ 167     out['beyond_horizon']={'N':N,'b':b,'field':p,'omega':w,'degree':5,'naive':bad[5],'exact':right}
+ 168     # For (N,b)=(32,1), feedback t=1 cannot omit the fold or use t+b trajectory.
+ 169     N=32;b=1;p=65537;w=pow(3,(p-1)//N,p);r=N>>b;Q,A,K=oracle_feedback(N,b,w,p,5);v=list(range(1,r+1));pl=Plan(N,b,w,p);u=pl.step(v);correct=[0]*r;pl.route(u,1,correct)
+ 170     nofold=[0]*r
+ 171     for a,x in enumerate(u):
+ 172         k=a%2
+ 173         if k==1:nofold[a]=(nofold[a]+pl.fix[k]*x)%p
+ 174     extra=pl.step(u);wronglen=[0]*r;pl.route(extra,1,wronglen)
+ 175     assert correct==mv(K[2],v,p) and correct!=nofold and correct!=wronglen
+ 176     out['wrong_fold_and_length_controls']={'N':N,'b':b,'both_rejected':True}
+ 177     # Symbolic integer counts only; no enormous vector allocation.
+ 178     for n in [8,16,32,64,128,256,512,1024]:
+ 179         b=min(n,2*((n-1).bit_length()));r=(1<<n)>>b;d=n-b;visits=r*d*(d+1)//2;io=r*(n+1)
+ 180         assert visits<=1<<n and io<=1<<n
+ 181         out['large_cost_counts'].append({'n':n,'b':b,'state_visits_over_N':[visits,1<<n],'input_output_coefficients_over_N':[io,1<<n]})
+ 182     out['result']='PASS';Path(__file__).with_name('INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+ 183     print(json.dumps({'result':'PASS','parameters':len(out['cases']),'basis_inputs':sum(x['retained_basis_inputs'] for x in out['cases']),'support_cases':len(out['support_counts']),'source_rank_cases':len(out['source_rank_controls']),'phase_cases':len(out['phase_controls'])}))
+ 184 if __name__=='__main__':main()

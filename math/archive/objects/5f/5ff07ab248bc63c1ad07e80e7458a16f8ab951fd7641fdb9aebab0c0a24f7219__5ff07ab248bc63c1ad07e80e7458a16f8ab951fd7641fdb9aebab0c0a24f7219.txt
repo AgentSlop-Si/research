@@ -1,0 +1,104 @@
+"""Exact independent certificate for a Fourier/scan-network rank contradiction.
+
+Certifies a particular 64-point endpoint/shuffle triple with two rank-one
+quasiseparable stages impossible. The older interval inequality cannot rule out
+this exact R,C rectangle, but the full signal min-cut can.
+"""
+import json
+from pathlib import Path
+from scan_flow import make_graph, mincut_bound
+from fast_mincut import ScanFlowOracle
+from two_stage_ct import root, P
+from cut_rank_gate import bitrev, rank_np
+from rank_certificate import pivots_and_minor, determinant_mod, Q2, ROOT2
+
+HERE=Path(__file__).resolve().parent
+
+
+def generated_certificate():
+    n=64
+    triple=next(x for x in json.loads((HERE/'rank_profiles_results.json').read_text())
+                if x['n']==n and x['endpoints']=='bitrev_both')
+    shuffle=triple['optimized_shuffle']
+    witness=json.loads((HERE/'new_gate_witness_n64_r1.json').read_text())
+    R=witness['R']; C=witness['C']
+    order=bitrev(n)
+    G, big=make_graph(n,[1,1],[shuffle])
+    fast=ScanFlowOracle(n,[1,1],[shuffle])
+    flow, (source_side, sink_side)=mincut_bound(G,big,n,2,R,C)
+    assert fast.bound(R,C)==flow
+    assert flow==16
+    crossing=[]
+    for u,v,data in G.edges(data=True):
+        if u in source_side and v in sink_side:
+            crossing.append({'tail':list(u),'head':list(v),'capacity':data['capacity']})
+    # Include connections from artificial source/sink; these have big capacity,
+    # and never cross in a true small (< big) cut.
+    assert sum(e['capacity'] for e in crossing)==flow
+    assert ('SRC',) in source_side and ('SINK',) in sink_side
+    assert len(source_side.intersection(sink_side))==0
+    assert set(source_side).union(sink_side)==set(G.nodes).union({('SRC',),('SINK',)})
+    assert all((0,'x',c,'i') in source_side for c in C)
+    assert all((1,'y',r,'o') in sink_side for r in R)
+
+    setR,setC=set(R),set(C)
+    bR=sum((j in setR)!=(j+1 in setR) for j in range(n-1))
+    bC=sum((j in setC)!=(j+1 in setC) for j in range(n-1))
+    free=len(set(shuffle[j] for j in R)&setC)
+    old=min(len(R),len(C),free+bR+bC)
+    assert (bR,bC,free,old)==(4,4,9,17)
+
+    physical_rows=[order[j] for j in R]
+    physical_cols=[order[j] for j in C]
+    fields=[]
+    shared_rows=shared_cols=None
+    for p,primitive in [(P,3),(Q2,ROOT2)]:
+        z=pow(primitive,(p-1)//n,p)
+        assert pow(z,n,p)==1 and pow(z,n//2,p)!=1
+        tw=[pow(z,i,p) for i in range(n)]
+        mat=[[tw[(a*b)%n] for b in physical_cols] for a in physical_rows]
+        rank,rr,cc=pivots_and_minor(mat,p)
+        assert rank>=17
+        if shared_rows is None:
+            shared_rows=[physical_rows[i] for i in rr[:17]]
+            shared_cols=[physical_cols[i] for i in cc[:17]]
+        square=[[tw[(a*b)%n] for b in shared_cols] for a in shared_rows]
+        det=determinant_mod(square,p)
+        assert det!=0, (p,det)
+        fields.append({'p':p,'generator':primitive,'root':z,'rank':rank,'shared_minor_det':det})
+
+    output={'n':n,'stage_ranks':[1,1], 'endpoint_order':'bit_reverse_input_and_output',
+            'shuffle_stage_2_to_1':shuffle,
+            'R_stage2':R,'C_stage1':C,
+            'Fourier_submatrix_size':[len(R),len(C)],
+            'old_interval_upper_bound':old,
+            'middle_free_intersection':free,'interval_boundary_counts':[bR,bC],
+            'new_network_maximum_rank':flow,
+            'network_mincut_crossing_edges':crossing,
+            'network_source_partition':[list(u) for u in sorted(source_side, key=repr)],
+            'complex_rank_at_least':17,'nonzero_17_minor_physical_rows':shared_rows,
+            'nonzero_17_minor_physical_cols':shared_cols, 'finite_fields':fields,
+            'proof':('The 17x17 determinant is an integer polynomial in a 64th root. '
+                    'Its nonzero value modulo a prime at a primitive 64th root proves '
+                    'nonvanishing over complex primitive 64th roots by cyclotomic '
+                    'irreducibility. The integer cut capacity 16 bounds every '
+                    'transfer-matrix rank of the two-rank-one scan graph, '
+                    'contradicting rank>=17. The old interval bound is 17.'),
+            'scope':'Only this particular endpoint/shuffle triple and rank-(1,1) stages.'}
+    assert output['old_interval_upper_bound']==output['complex_rank_at_least']
+    assert output['new_network_maximum_rank']<output['complex_rank_at_least']
+    (HERE/'new_network_certificate_N64.json').write_text(json.dumps(output,indent=2)+'\n')
+    print('CERTIFIED',json.dumps({'FFT_submatrix_rank_at_least':17,
+                                 'old_interval_bound':old,'new_flow_bound':flow,
+                                 'cut_edges':len(crossing),'two_prime_determinants':[x['shared_minor_det'] for x in fields]}))
+    return output
+
+
+def check_stored():
+    obj=json.loads((HERE/'new_network_certificate_N64.json').read_text())
+    fresh=generated_certificate()
+    assert obj==fresh
+    print('INDEPENDENT REGEN PASS')
+
+if __name__=='__main__':
+    generated_certificate()

@@ -1,0 +1,179 @@
+"""Triplet-upper-column linear-algebra obstruction for F8=B P C^-1.
+
+Given C with diag 1, C[i,j]=U[i]W[j] for i<j and L[i]V[j] for i>j,
+B=F C P^-1, P=[7,0,6,3,4,1,2,5]. If B's upper columns
+5,6,7 are all nonzero on rows 0..4 and rank one, then three
+projected 3D subspaces must intersect nontrivially. The test eliminates
+all six column-specific scalar generators and depends only on U,L.
+
+This is a NECESSARY gate on the nonzero column chart, not sufficient.
+"""
+import sys, itertools, collections, time
+import _bootstrap
+from adjacent_tail import equations
+from dual_support import primitive_root
+from inverse_quartic import poly_eval
+
+def modrank(mat,p):
+    v=[[int(x)%p for x in row] for row in mat]
+    m=len(v);n=len(v[0]); r=0
+    for j in range(n):
+        pivot=next((i for i in range(r,m) if v[i][j]),None)
+        if pivot is None: continue
+        v[r],v[pivot]=v[pivot],v[r]
+        iv=pow(v[r][j],-1,p);v[r]=[(x*iv)%p for x in v[r]]
+        for i in range(r+1,m):
+            if v[i][j]:
+                a=v[i][j];v[i]=[(x-a*y)%p for x,y in zip(v[i],v[r])]
+        r+=1
+        if r==m:break
+    return r
+
+def build_UL(p,z,h,t,beta):
+    h0,h1,h2,hl=h
+    if not h0 or not t:raise ZeroDivisionError
+    xi=pow(z,-1,p)
+    r1=(1+xi+xi*xi)%p;r2=(xi+xi*xi+pow(xi,3,p))%p;r3=pow(xi,3,p)
+    hs=[h0,h1,h2]
+    for k in range(3):hs.append((r1*hs[k+2]-r2*hs[k+1]+r3*hs[k])%p)
+    H=hs+[hl]
+    b=(t-1+beta*(h0-1))*pow(z-1,-1,p)%p
+    a=(1-beta*h0-b)%p
+    L=[0]+[(a+b*pow(xi,k,p)+beta*H[k])*pow(t,-1,p)%p for k in range(1,7)]+[1]
+    U=[1]+[H[k]*pow(h0,-1,p)%p for k in range(1,7)]+[0]
+    return U,L
+
+def build_gate(p,z,U,L):
+    # Columns upper 5,6,7 of B=F C P^-1 are j1=1,j2=2,j3=5 of C
+    # Each projected vector belongs to 3D space: span(F e_j, F U_<j, F L_>j)
+    F=[[pow(z,i*k,p) for k in range(8)] for i in range(5)]
+    choices=[]
+    for j in (1,2,5):
+        ea=[0]*8;ea[j]=1
+        up=[U[k] if k<j else 0 for k in range(8)]
+        lo=[L[k] if k>j else 0 for k in range(8)]
+        basis=[ea,up,lo]
+        Y=[[sum(F[i][k]*basis[b][k] for k in range(8))%p for b in range(3)] for i in range(5)]
+        choices.append(Y)
+    A,B,C=choices
+    # For common vector A*x=B*y=C*z, row block matrix
+    gate=[]
+    for i in range(5):gate.append([*A[i],*[-x%p for x in B[i]],0,0,0])
+    for i in range(5):gate.append([*A[i],0,0,0,*[-x%p for x in C[i]]])
+    # rank<9 necessary for nonzero shared direction provided each projected column !=0
+    return gate,choices
+
+def run(p=17):
+    z=primitive_root(p,8)
+    eq,W,E3,E4,Q=equations()
+    counts=collections.Counter(); sample=[];t0=time.monotonic()
+    for h in itertools.product(range(p),repeat=4):
+        if h[0]==0:continue
+        vec=[0]+list(h)+[0]
+        a,b,c=[poly_eval(P,vec,p,z) for P in E3]
+        d,e,f=[poly_eval(P,vec,p,z) for P in E4]
+        determinant=(a*e-b*d)%p
+        if not determinant:continue
+        t=(-c*e+b*f)*pow(determinant,-1,p)%p
+        beta=(-a*f+c*d)*pow(determinant,-1,p)%p
+        if not t:continue
+        if poly_eval(eq[2],[t]+list(h)+[beta],p,z):continue
+        counts['lower_tail_Q_candidates']+=1
+        U,L=build_UL(p,z,h,t,beta)
+        G,subspaces=build_gate(p,z,U,L)
+        ranks=tuple(modrank(X,p) for X in subspaces)
+        grank=modrank(G,p)
+        counts['gate_rank_'+str(grank)]+=1
+        if grank<9:
+            counts['nontrivial_intersection']+=1
+            if len(sample)<10:sample.append((h,t,beta,grank,ranks))
+    print('p',p,'z',z,'elapsed',time.monotonic()-t0,'counts',counts,'examples',sample,flush=True)
+    return dict(prime=p,root=z,stats=dict(counts),examples=sample)
+if __name__=='__main__':run()
+
+def nullspace(mat,p):
+    A=[[int(x)%p for x in row] for row in mat]
+    m=len(A);n=len(A[0]);r=0;piv=[]
+    for j in range(n):
+        k=next((i for i in range(r,m) if A[i][j]),None)
+        if k is None:continue
+        A[r],A[k]=A[k],A[r];inv=pow(A[r][j],-1,p)
+        A[r]=[v*inv%p for v in A[r]]
+        for i in range(m):
+            if i!=r and A[i][j]:
+                s=A[i][j];A[i]=[(v-s*w)%p for v,w in zip(A[i],A[r])]
+        piv.append(j);r+=1
+        if r==m:break
+    ans=[]
+    for j in range(n):
+        if j in piv:continue
+        v=[0]*n;v[j]=1
+        for i,k in enumerate(piv):v[k]=(-A[i][j])%p
+        ans.append(v)
+    return ans
+
+def triplet_diagnostics(p=17):
+ z=primitive_root(p,8);eq,W,E3,E4,Q=equations();cnt=collections.Counter();examples=[]
+ for h in itertools.product(range(p),repeat=4):
+    if h[0]==0:continue
+    vec=[0]+list(h)+[0]
+    a,b,c=[poly_eval(P,vec,p,z) for P in E3]
+    d,e,f=[poly_eval(P,vec,p,z) for P in E4]
+    D=(a*e-b*d)%p
+    if D==0:continue
+    t=(-c*e+b*f)*pow(D,-1,p)%p
+    beta=(-a*f+c*d)*pow(D,-1,p)%p
+    if t==0 or poly_eval(eq[2],[t]+list(h)+[beta],p,z):continue
+    U,L=build_UL(p,z,h,t,beta)
+    G,Y=build_gate(p,z,U,L)
+    ns=nullspace(G,p)
+    good=all(any(v[j] for v in ns) for j in (0,3,6))
+    cnt['all']+=1;cnt['good' if good else 'bad']+=1
+    key='mask'+''.join(str(int(any(v[j] for v in ns))) for j in (0,3,6))
+    cnt[key]+=1
+    if not good and len(examples)<10:examples.append((h,t,beta,key,ns))
+ print('Diagnostics',cnt,examples[:2],flush=True)
+ return cnt
+
+def next_column_gate(p,z,U,L,Y,ns):
+    # Given q from common projection of C columns (input 1,2,5),
+    # test if output column4 (input4) can lie on same upper direction
+    # in Fourier rows 0,1,2,3, independent of W4,V4.
+    q=[sum(Y[0][i][j]*ns[j] for j in range(3))%p for i in range(4)]
+    j=4
+    ea=[0]*8;ea[j]=1
+    up=[U[k] if k<j else 0 for k in range(8)]
+    lo=[L[k] if k>j else 0 for k in range(8)]
+    tt=[]
+    for i in range(4):tt.append([q[i]] + [sum(pow(z,i*k,p)*X[k] for k in range(8))%p for X in (ea,up,lo)])
+    return modrank(tt,p),tt
+
+def upper_extend_diagnostics(p=17):
+ z=primitive_root(p,8);eq,W,E3,E4,Q=equations();cnt=collections.Counter();examples=[]
+ for h in itertools.product(range(p),repeat=4):
+    if h[0]==0:continue
+    vec=[0]+list(h)+[0]
+    a,b,c=[poly_eval(P,vec,p,z) for P in E3]
+    d,e,f=[poly_eval(P,vec,p,z) for P in E4]
+    D=(a*e-b*d)%p
+    if D==0:continue
+    t=(-c*e+b*f)*pow(D,-1,p)%p
+    beta=(-a*f+c*d)*pow(D,-1,p)%p
+    if t==0 or poly_eval(eq[2],[t]+list(h)+[beta],p,z):continue
+    cnt['tail_Q']+=1
+    U,L=build_UL(p,z,h,t,beta)
+    G,Y=build_gate(p,z,U,L)
+    NS=nullspace(G,p)
+    if not all(any(v[j] for v in NS) for j in (0,3,6)):
+        cnt['bad_diag_intersection']+=1;continue
+    if len(NS)!=1:
+        cnt['singular_dim_ge2']+=1;continue
+    cnt['generic_triplet']+=1
+    rank,mat=next_column_gate(p,z,U,L,Y,NS[0])
+    if rank==4:
+        cnt['fourth_column_rejected']+=1
+    else:
+        cnt['fourth_column_allowed']+=1
+        if len(examples)<12: examples.append((h,t,beta,rank))
+ print('Upper-extension',cnt,'survivors examples',examples,flush=True)
+ return cnt

@@ -1,0 +1,119 @@
+"""Exception-complete quadratic encoding of F8 = B P A, separated r=1.
+
+No nonzero-anchor assumptions and no matrix inverse. Use the 128 A/B
+entry variables plus 56 off-diagonal generator variables; all 176
+constraints have degree <=2 in 184 variables over Z[z]/(z^4+1).
+This is a standard auxiliary-variable/quadratization construction, not
+an impossibility result or reduced computational workload.
+"""
+import json,hashlib
+from pathlib import Path
+import numpy as np
+from inverse_quartic import (ONE,cpowroot,padd,pmul,pscale,poly_constant,
+    poly_var,poly_eval,root8,fftmod,SHUFFLE,N)
+
+# Flat variable coordinates
+Astart=0;Bstart=64
+# Each stage generators: L[1..7],V[0..6],U[0..6],W[1..7]
+Ag=128;Bg=156
+
+def ab_coord(tag,i,j):return (0 if tag=='A' else 64)+i*8+j
+
+def gen_coord(tag,which,index):
+    first=Ag if tag=='A' else Bg
+    base={'L':0,'V':7,'U':14,'W':21}[which]
+    pos=(index-1) if which in ('L','W') else index
+    return first+base+pos
+
+def all_equations(target=None):
+    # target given as exact cyclotomic coefficient tuples, or None for F8.
+    qs=[]
+    for tag in ('A','B'):
+        for i in range(N):
+            for j in range(N):
+                if i==j:continue
+                ij=poly_var(ab_coord(tag,i,j))
+                if i>j:
+                    rhs=pmul(poly_var(gen_coord(tag,'L',i)),poly_var(gen_coord(tag,'V',j)))
+                else:
+                    rhs=pmul(poly_var(gen_coord(tag,'U',i)),poly_var(gen_coord(tag,'W',j)))
+                qs.append((f'{tag}_offdiag_{i}_{j}',padd(ij,rhs,-1)))
+    for i in range(N):
+        for j in range(N):
+            x={}
+            for k in range(N):
+                term=pmul(poly_var(ab_coord('B',i,k)),poly_var(ab_coord('A',SHUFFLE[k],j)))
+                x=padd(x,term)
+            coefficient=cpowroot(i*j) if target is None else target[i][j]
+            x=padd(x,poly_constant(coefficient),-1)
+            qs.append((f'fft_entry_{i}_{j}',x))
+    assert len(qs)==176
+    assert max(len(mon) for _,eq in qs for mon in eq)==2
+    return qs
+
+def random_assignment(rng,p,zero_A=False):
+    values=np.zeros(184,dtype=np.int64)
+    for tag in ('A','B'):
+        for i in range(N):
+            values[ab_coord(tag,i,i)]=int(rng.integers(1,p))
+        for which,inds in (('L',range(1,N)),('V',range(N-1)),('U',range(N-1)),('W',range(1,N))):
+            for i in inds:
+                values[gen_coord(tag,which,i)]=0 if (zero_A and tag=='A') else int(rng.integers(1,p))
+        for i in range(N):
+            for j in range(N):
+                if i==j:continue
+                if i>j:l=gen_coord(tag,'L',i);r=gen_coord(tag,'V',j)
+                else:l=gen_coord(tag,'U',i);r=gen_coord(tag,'W',j)
+                values[ab_coord(tag,i,j)]=values[l]*values[r]%p
+    A=values[:64].reshape(8,8)
+    B=values[64:128].reshape(8,8)
+    return values,(B@A[np.array(SHUFFLE),:])%p
+
+def modular_test(num=8):
+    constraints=all_equations()
+    rng=np.random.default_rng(22851)
+    result=[]
+    for p in (12289,65537):
+        for variant in (False,True):
+            w=root8(p,variant); F=fftmod(p,w)
+            positives=0;negatives=0;degenerate=0
+            # Synthetic exact factorization is tested with same quadratic
+            # constraints with only target constants replaced by M entries.
+            for sample in range(num):
+                zero_A=(sample%4==0)
+                values,M=random_assignment(rng,p,zero_A=zero_A)
+                for name,eq in constraints:
+                    if name.startswith('fft_entry_'):
+                        parts=name.split('_');i=int(parts[2]);j=int(parts[3])
+                        # Raw eq currently -F[i,j], replace by -M[i,j].
+                        target_const=(poly_eval(eq,values,p,w)+int(F[i,j]))%p
+                        assert target_const==int(M[i,j])%p
+                    else:
+                        assert poly_eval(eq,values,p,w)==0
+                positives+=1;degenerate+=zero_A
+                if not np.array_equal(M,F):negatives+=1
+            result.append({'prime':p,'root':w,'synthetic_positive':positives,
+              'valid_zero_anchor_examples':degenerate,
+              'random_target_not_Fourier':negatives})
+    return result
+
+def export(path):
+    equations=all_equations()
+    obj={'ring':'Z[z]/(z^4+1)','primitive_root':'z','shuffle':SHUFFLE,
+       'variable_count':184,'equation_count':176,'maximum_total_degree':2,
+       'A_entries':'a_ij variables 0..63 row-major',
+       'B_entries':'b_ij variables 64..127 row-major',
+       'A_generators':'L1..7,V0..6,U0..6,W1..7 in 128..155',
+       'B_generators':'L1..7,V0..6,U0..6,W1..7 in 156..183',
+       'equations':[{'name':s,'terms':[[list(m),list(c)] for m,c in sorted(eq.items())]} for s,eq in equations]}
+    raw=json.dumps(obj,separators=(',',':'),sort_keys=True).encode()+b'\n'
+    Path(path).write_bytes(raw)
+    return {'terms':sum(len(p) for _,p in equations),'sha256':hashlib.sha256(raw).hexdigest(),
+      'equations':len(equations),'variables':184}
+
+if __name__=='__main__':
+    here=Path(__file__).resolve().parent
+    summary=export(here/'complete_quadratic_equations.json')
+    summary['modular_tests']=modular_test()
+    (here/'complete_quadratic_results.json').write_text(json.dumps(summary,indent=2)+'\n')
+    print(json.dumps(summary,indent=2))

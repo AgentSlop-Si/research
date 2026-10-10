@@ -1,0 +1,147 @@
+1: """Exact dyadic detail decomposition, independent of FFT implementation.
+2: 
+3: This is an offline quadratic oracle and identity verifier, not a fast FFT.
+4: Only Python standard-library arithmetic is used.
+5: """
+6: from __future__ import annotations
+7: 
+8: import json
+9: from pathlib import Path
+10: 
+11: 
+12: def root(n, p):
+13:     if n < 1 or n & (n - 1) or (p - 1) % n:
+14:         raise ValueError("unsupported length")
+15:     q = pow(3, (p - 1) // n, p)
+16:     assert pow(q, n, p) == 1
+17:     assert n == 1 or pow(q, n // 2, p) != 1
+18:     return q
+19: 
+20: 
+21: def dft(x, q, p):
+22:     return [sum(v * pow(q, k*j, p) for j, v in enumerate(x)) % p
+23:             for k in range(len(x))]
+24: 
+25: 
+26: def details(x, p):
+27:     """Invertible O(N) split into dc and detail vectors of sizes 1,2,...,N/2."""
+28:     x = list(x)
+29:     blocks = {}
+30:     while len(x) > 1:
+31:         m = len(x) // 2
+32:         blocks[m] = [(x[j] - x[j+m]) % p for j in range(m)]
+33:         x = [(x[j] + x[j+m]) % p for j in range(m)]
+34:     return x[0], blocks
+35: 
+36: 
+37: def undo_details(dc, blocks, p):
+38:     inv2 = pow(2, -1, p)
+39:     x = [dc]
+40:     for m in sorted(blocks):
+41:         d = blocks[m]
+42:         assert len(x) == len(d) == m
+43:         x = ([(x[j]+d[j])*inv2 % p for j in range(m)] +
+44:              [(x[j]-d[j])*inv2 % p for j in range(m)])
+45:     return x
+46: 
+47: 
+48: def from_details(dc, blocks, n, p):
+49:     out = [0] * n
+50:     out[0] = dc
+51:     for m, d in blocks.items():
+52:         phase = root(2*m, p)
+53:         twisted = [v * pow(phase, j, p) % p for j, v in enumerate(d)]
+54:         transformed = dft(twisted, phase*phase % p, p)
+55:         stride = n // (2*m)
+56:         for k, value in enumerate(transformed):
+57:             out[stride*(2*k+1)] = value
+58:     return out
+59: 
+60: 
+61: def reverse_bits(j, length):
+62:     answer = 0
+63:     for _ in range(length):
+64:         answer = 2*answer + (j & 1)
+65:         j >>= 1
+66:     return answer
+67: 
+68: 
+69: def c_entry(k, j, n):
+70:     return -1 if (k & reverse_bits(j, n.bit_length()-1)).bit_count() % 2 else 1
+71: 
+72: 
+73: def valuation(j):
+74:     return (j & -j).bit_length()-1 if j else -1
+75: 
+76: 
+77: def verify_blocks(n, p):
+78:     """Compare every entry of FC/N against the claimed diagonal blocks."""
+79:     q = root(n, p)
+80:     invn = pow(n, -1, p)
+81:     entries = 0
+82:     for k in range(n):
+83:         for j in range(n):
+84:             actual = sum(pow(q, k*t, p)*c_entry(t, j, n)
+85:                          for t in range(n))*invn % p
+86:             if k == 0 or j == 0:
+87:                 expected = int(k == j == 0)
+88:             elif valuation(k) != valuation(j):
+89:                 expected = 0
+90:             else:
+91:                 s = valuation(k)
+92:                 m = n >> (s+1)
+93:                 a, b = (k >> s)//2, (j >> s)//2
+94:                 phase = pow(q, 1 << s, p)
+95:                 expected = sum(pow(phase, (2*a+1)*t, p)*c_entry(t, b, m)
+96:                                for t in range(m))*pow(m, -1, p) % p
+97:             assert actual == expected, (n, p, k, j)
+98:             entries += 1
+99:     return entries
+100: 
+101: 
+102: def cost(n):
+103:     """Count additions for this decomposition with standard radix-two sub-FFTs.
+104: 
+105:     This is a mathematical schedule count, not Python execution cost.
+106:     Twiddle multiplication counts deliberately shown separately from additions.
+107:     """
+108:     L = n.bit_length()-1
+109:     haar_additions = 2*(n-1)
+110:     block_additions = sum((1 << t)*t for t in range(L))
+111:     detail_phase_slots = n-1
+112:     nonunit_detail_phases = n-1-L
+113:     assert haar_additions + block_additions == n*L
+114:     return {"n": n, "haar_additions": haar_additions,
+115:             "block_fft_additions": block_additions,
+116:             "total_additions": haar_additions+block_additions,
+117:             "ordinary_radix_two_additions": n*L,
+118:             "detail_phase_slots": detail_phase_slots,
+119:             "nonunit_detail_phases": nonunit_detail_phases,
+120:             "additional_block_fft_twiddles": "required; not included in additions",
+121:             "storage_words": "O(N), including all detail vectors and output",
+122:             "preprocessing": "O(N) scalar powers across the disjoint blocks"}
+123: 
+124: 
+125: def run():
+126:     cases = []
+127:     for p in (65537, 998244353):
+128:         for n in (2, 4, 8, 16, 32, 64):
+129:             for col in range(n):
+130:                 x = [int(j == col) for j in range(n)]
+131:                 dc, blocks = details(x, p)
+132:                 assert undo_details(dc, blocks, p) == x
+133:                 assert from_details(dc, blocks, n, p) == dft(x, root(n,p), p)
+134:             cases.append({"n":n, "p":p, "basis_vectors":n,
+135:                           "block_entries":verify_blocks(n,p), "passed":True})
+136:     report = {"claim":"Exact identity verified; no asymptotic speedup.",
+137:               "cases":cases,
+138:               "basis_vectors_total":sum(c["basis_vectors"] for c in cases),
+139:               "block_entries_total":sum(c["block_entries"] for c in cases),
+140:               "costs":[cost(1 << L) for L in (4,8,12,16,20)],
+141:               "proof_scope":"All-N derivation in README; finite checks are regression evidence."}
+142:     Path(__file__).with_name("results.json").write_text(json.dumps(report,indent=2)+"\n")
+143:     print(json.dumps({k:report[k] for k in ("claim","basis_vectors_total","block_entries_total")}))
+144: 
+145: 
+146: if __name__ == "__main__":
+147:     run()

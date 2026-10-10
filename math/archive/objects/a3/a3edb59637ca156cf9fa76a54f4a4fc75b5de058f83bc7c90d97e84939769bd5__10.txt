@@ -1,0 +1,98 @@
+1: import unittest
+2: import numpy as np
+3: 
+4: from relation_view import DynamicFourierState
+5: 
+6: 
+7: class TestRelationView(unittest.TestCase):
+8:     def setUp(self):
+9:         self.rng = np.random.default_rng(9217)
+10: 
+11:     def test_dynamic_coefficients_and_points(self):
+12:         n, r = 128, 5
+13:         basis_time = self.rng.standard_normal((r,n)) + 1j*self.rng.standard_normal((r,n))
+14:         basis_spec = np.fft.fft(basis_time, axis=1)
+15:         coeff = self.rng.standard_normal(r) + 1j*self.rng.standard_normal(r)
+16:         state = DynamicFourierState(basis_spec, coeff)
+17:         bins = [0,3,17,64,127]
+18:         view = state.view(bins, prepared_positions=[7,55])
+19: 
+20:         time = coeff @ basis_time
+21:         for _ in range(30):
+22:             if self.rng.random() < .55:
+23:                 i = int(self.rng.integers(r))
+24:                 d = complex(self.rng.standard_normal(), self.rng.standard_normal())
+25:                 state.add_coefficient(i,d)
+26:                 coeff[i] += d
+27:                 time += d*basis_time[i]
+28:             else:
+29:                 j = int(self.rng.choice([7,55]))
+30:                 d = complex(self.rng.standard_normal(), self.rng.standard_normal())
+31:                 state.add_point(j,d)
+32:                 time[j] += d
+33:             if self.rng.random() < .4:
+34:                 got = view.query()
+35:                 expected = np.fft.fft(time)[bins]
+36:                 self.assertTrue(np.allclose(got,expected,rtol=2e-11,atol=2e-9))
+37:         got=view.query()
+38:         self.assertTrue(np.allclose(got,np.fft.fft(time)[bins],rtol=2e-11,atol=2e-9))
+39: 
+40:     def test_repeated_updates_coalesce(self):
+41:         n=64
+42:         basis_time=np.eye(3,n,dtype=np.complex128)
+43:         state=DynamicFourierState(np.fft.fft(basis_time,axis=1),[1,2,3])
+44:         view=state.view([1,5,9])
+45:         for _ in range(10):
+46:             state.add_coefficient(1, .25)
+47:             state.add_point(4, 1)
+48:         state.add_point(4,-10)
+49:         got=view.query(strategy='replay')
+50:         # Point edits cancel. Coefficient 1 gained 2.5.
+51:         coeff=np.array([1,4.5,3],dtype=np.complex128)
+52:         expected=(coeff@basis_time)
+53:         self.assertTrue(np.allclose(got,np.fft.fft(expected)[[1,5,9]]))
+54:         self.assertEqual(view.last_stats.coalesced_coefficients,1)
+55:         self.assertEqual(view.last_stats.coalesced_points,0)
+56: 
+57:     def test_auto_rebuild_long_backlog(self):
+58:         n,r=128,4
+59:         basis_time=self.rng.standard_normal((r,n))
+60:         state=DynamicFourierState(np.fft.fft(basis_time,axis=1),np.ones(r))
+61:         view=state.view(np.arange(16))
+62:         for _ in range(100):
+63:             state.add_coefficient(0,1e-3)
+64:         got=view.query(strategy='auto')
+65:         self.assertEqual(view.last_stats.strategy,'rebuild')
+66:         expected=state.coefficients@state.basis_spectra[:,np.arange(16)]
+67:         self.assertTrue(np.allclose(got,expected))
+68: 
+69:     def test_event_log_compaction_and_stale_view(self):
+70:         n=32
+71:         basis=np.fft.fft(np.eye(2,n),axis=1)
+72:         state=DynamicFourierState(basis,[1,1])
+73:         a=state.view([1,2,3],pin_event_log=True)
+74:         b=state.view([4,5],pin_event_log=True)
+75:         state.add_point(7,2)
+76:         a.query()
+77:         self.assertEqual(state.compact_event_log(),0)  # b has not consumed it
+78:         b.query()
+79:         self.assertEqual(state.compact_event_log(),1)
+80:         state.add_coefficient(0,3)
+81:         # Explicitly rebuild one view, then compact after both have advanced.
+82:         a.query()
+83:         b.query()
+84:         self.assertEqual(state.compact_event_log(),1)
+85: 
+86:     def test_dense_matches_relation(self):
+87:         n,r=64,6
+88:         bt=self.rng.standard_normal((r,n))+1j*self.rng.standard_normal((r,n))
+89:         bs=np.fft.fft(bt,axis=1)
+90:         c=self.rng.standard_normal(r)+1j*self.rng.standard_normal(r)
+91:         state=DynamicFourierState(bs,c,[(3,2+1j),(17,-.5j)])
+92:         x=c@bt
+93:         x[3]+=2+1j; x[17]+=-.5j
+94:         self.assertTrue(np.allclose(state.dense(),np.fft.fft(x),rtol=2e-11,atol=2e-9))
+95: 
+96: 
+97: if __name__ == '__main__':
+98:     unittest.main()

@@ -1,0 +1,46 @@
+0001 #!/usr/bin/env python3
+0002 from pathlib import Path
+0003 import random,json
+0004 import sympy as sp
+0005 HERE=Path(__file__).resolve().parent;rng=random.Random(102214)
+0006 def monomial(n):
+0007     p=list(range(n));rng.shuffle(p);a=sp.zeros(n)
+0008     for i,j in enumerate(p):a[i,j]=rng.choice([-3,-2,-1,1,2,3])
+0009     return a
+0010 
+0011 def grid_denominator(m):
+0012     n=m*m;u=sp.eye(n)
+0013     for i in range(n):
+0014         if i//m:u[i,i-m]=-rng.randrange(4)
+0015         if i%m:u[i,i-1]=-rng.randrange(4)
+0016     return u
+0017 
+0018 def count(a):
+0019     return {'max_row':max(sum(v!=0 for v in a.row(i)) for i in range(a.rows)),
+0020             'max_column':max(sum(v!=0 for v in a.col(i)) for i in range(a.cols))}
+0021 cases=[]
+0022 for m in [2,3]:
+0023     n=m*m
+0024     for mode in ['noncommuting','left_pure','right_pure','singular_zero_sum']:
+0025         U1,U2,V1,V2=[monomial(n)*grid_denominator(m)*monomial(n) for _ in range(4)]
+0026         C=monomial(n)
+0027         alpha1,beta1,alpha2,beta2=2,3,-1,4
+0028         if mode=='left_pure':alpha2,beta2=0,1
+0029         if mode=='right_pure':alpha1,beta1=1,0
+0030         if mode=='singular_zero_sum':V1=U1;alpha1,beta1=1,-1
+0031         H1=alpha1*U1.inv()+beta1*V1.inv();H2=alpha2*U2.inv()+beta2*V2.inv()
+0032         W1=alpha1*V1+beta1*U1;W2=alpha2*V2+beta2*U2
+0033         K=U1*C.inv()*V2;F=H2*C*H1
+0034         assert H1==U1.inv()*W1*V1.inv()
+0035         assert H2==U2.inv()*W2*V2.inv()
+0036         assert U2*F*V1==W2*K.inv()*W1
+0037         block=K.row_join(W1).col_join(W2.row_join(U2*F*V1))
+0038         assert block.rank()==n
+0039         counts={label:count(A) for label,A in [('K',K),('W1',W1),('W2',W2)]}
+0040         assert counts['K']['max_row']<=9 and counts['K']['max_column']<=9
+0041         for label in ['W1','W2']:
+0042             assert counts[label]['max_row']<=6 and counts[label]['max_column']<=6
+0043         cases.append({'M':m,'mode':mode,'fraction_identity':True,'block_rank':n,'sparse_counts':counts,
+0044                       'right_sum_singular':H1.det()==0,'left_sum_singular':H2.det()==0})
+0045 (HERE/'FRACTION_CONTROLS.json').write_text(json.dumps(cases,indent=2)+'\n')
+0046 print(json.dumps(cases,indent=2))

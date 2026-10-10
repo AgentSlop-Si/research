@@ -1,0 +1,58 @@
+   1 #!/usr/bin/env python3
+   2 """Additional exact screen using all contiguous intervals in both orders.
+   3 The rank allowance is q + boundary(A)+boundary(B), with a prefix/suffix
+   4 having one boundary and a strict interior interval two. NumPy int64 only.
+   5 """
+   6 import json
+   7 from pathlib import Path
+   8 from fractions import Fraction
+   9 import numpy as np
+  10 from discrepancy_screen import structured, screen
+  11 
+  12 def interval_screen(p):
+  13     n=len(p)
+  14     p=np.array(p,dtype=np.int64)
+  15     starts=[];ends=[];costs=[]
+  16     for c in range(n):
+  17         for d in range(c+1,n+1):
+  18             starts.append(c);ends.append(d)
+  19             costs.append(2-int(c==0)-int(d==n))
+  20     starts=np.array(starts);ends=np.array(ends);costs=np.array(costs)
+  21     best=(-10*n,None)
+  22     for a in range(n):
+  23         for b in range(a+1,n+1):
+  24             costA=2-int(a==0)-int(b==n)
+  25             z=np.concatenate(([0],np.cumsum(n*((p>=a)&(p<b)).astype(np.int64)-(b-a))))
+  26             signed=z[ends]-z[starts]
+  27             totalcost=costA+costs
+  28             excess=np.abs(signed)-n*totalcost
+  29             # Ignore the full/full, zero-allowance equality.
+  30             excess=np.where(totalcost>0,excess,-10*n)
+  31             ix=int(np.argmax(excess))
+  32             if int(excess[ix])>best[0]:
+  33                 c=int(starts[ix]);d=int(ends[ix]);
+  34                 q=sum(a<=int(x)<b for x in p[c:d])
+  35                 assert int(signed[ix])==n*q-(b-a)*(d-c)
+  36                 best=(int(excess[ix]),dict(A=[a,b],B=[c,d],q=q,
+  37                       discrepancy=str(Fraction(abs(int(signed[ix])),n)),
+  38                       boundary_allowance=int(totalcost[ix])))
+  39     return dict(passes=best[0]<=0,maximum_scaled_excess=best[0],witness=best[1])
+  40 
+  41 out=[]
+  42 for n in (32,64):
+  43     seen=set();rows=[]
+  44     for family,parameters,p in structured(n):
+  45         if not screen(p)['passes'] or tuple(p) in seen:
+  46             continue
+  47         seen.add(tuple(p))
+  48         rows.append(dict(family=family,parameters=parameters,**interval_screen(p)))
+  49     if n==32:
+  50         for sigma in [(3,4,2,1,0),(4,2,3,1,0),(4,3,1,2,0),(4,3,2,0,1),(4,3,2,1,0)]:
+  51             p=[sum(((j>>sigma[t])&1)<<t for t in range(5)) for j in range(n)]
+  52             if tuple(p) not in seen:
+  53                 seen.add(tuple(p));rows.append(dict(family='coordinate_bits',parameters={'sigma':sigma},**interval_screen(p)))
+  54     print('N',n,'unique corner-screen survivors',len(rows),'interval-screen failures',sum(not r['passes'] for r in rows),flush=True)
+  55     for r in rows:
+  56         if not r['passes']:print(r,flush=True)
+  57     out.append(dict(n=n,candidates=rows))
+  58 Path(__file__).with_name('discrepancy_interval_results.json').write_text(json.dumps(out,indent=2)+'\n')

@@ -1,0 +1,71 @@
+   1 """Independent exact recheck via the finite geometric series, and Leibniz determinant.
+   2 
+   3 No imports from verify.py. GF(65537), no floating point.
+   4 """
+   5 import itertools, json
+   6 from pathlib import Path
+   7 P=65537
+   8 SRC=Path(__file__).with_name('RESULTS.json')
+   9 
+  10 def mul(A,B):
+  11     C=[[0]*len(B[0]) for _ in A]
+  12     for i in range(len(A)):
+  13         for t in range(len(B)):
+  14             for j in range(len(B[0])):
+  15                 C[i][j]=(C[i][j]+A[i][t]*B[t][j])%P
+  16     return C
+  17 
+  18 def identity(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+  19 
+  20 def inverse_green_by_series(par):
+  21     n=len(par['sigma']);T=[[0]*n for _ in range(n)]
+  22     for i in range(n): T[i][par['sigma'][i]]=par['weights'][i]
+  23     q=1
+  24     for w in par['weights']: q=q*w%P
+  25     assert q!=1
+  26     cur=identity(n);total=[[0]*n for _ in range(n)]
+  27     for _ in range(n):
+  28         for i in range(n):
+  29             for j in range(n):total[i][j]=(total[i][j]+cur[i][j])%P
+  30         cur=mul(cur,T)
+  31     assert cur==[[int(i==j)*q for j in range(n)] for i in range(n)]
+  32     den=pow((1-q)%P,P-2,P)
+  33     total=[[(x*den)%P for x in row] for row in total]
+  34     return [[par['row_scale'][i]*total[par['row_perm'][i]][par['col_perm'][j]]*par['col_scale'][j]%P for j in range(n)] for i in range(n)]
+  35 
+  36 def det_leibniz(A):
+  37     n=len(A);s=0
+  38     for order in itertools.permutations(range(n)):
+  39         v=1
+  40         for i,j in enumerate(order):v=v*A[i][j]%P
+  41         inv=0
+  42         for i in range(n):
+  43             for j in range(i+1,n):
+  44                 if order[i]>order[j]:inv+=1
+  45         s=(s-v if inv%2 else s+v)%P
+  46     return s
+  47 
+  48 def main():
+  49     inp=json.load(open(SRC))
+  50     fw=inp['four_green_witness']; n=inp['N']; w=inp['primitive_8th_root']
+  51     assert n==8 and pow(w,8,P)==1 and pow(w,4,P)==P-1
+  52     pars=fw['green_parameters'];assert len(pars)==2 and all(len(s)==2 for s in pars)
+  53     a1,a2=[inverse_green_by_series(p) for p in pars[0]]
+  54     b1,b2=[inverse_green_by_series(p) for p in pars[1]]
+  55     A=[[(a1[i][j]+a2[i][j])%P for j in range(n)] for i in range(n)]
+  56     B=[[(b1[i][j]+b2[i][j])%P for j in range(n)] for i in range(n)]
+  57     assert A==fw['A'] and B==fw['B'], 'four Green branches do not reconstruct saved A/B'
+  58     K=[[A[k][i]*(B[i][1]-pow(w,k,P)*B[i][0])%P for i in range(n)] for k in range(n)]
+  59     val=det_leibniz(K)
+  60     assert val!=0
+  61     # Directly check no Fourier first-pair relation with any diagonal: det(K) nonzero.
+  62     # Read saved test diagonal and verify it fails a Fourier phase relation.
+  63     d=fw['d'];M=mul(mul(A,[[int(i==j)*d[i] for j in range(n)] for i in range(n)]),B)
+  64     assert any(M[k][1]!=(pow(w,k,P)*M[k][0])%P for k in range(n))
+  65     cert={'prime':P,'N':n,'omega':w,'four_green_reconstructed':True,
+  66           'two_column_pencil_det_GF65537':val,
+  67           'pencil_matrix':K,
+  68           'certificate':'det K != 0 over GF(65537) proves no nonzero interface diagonal, for these stage parameters, can satisfy even the first two Fourier columns. The given Green parameter lifts also give a valid algebraic nonzero certificate in Q(zeta_8), by reduction modulo a prime lying above 65537.'}
+  69     target=Path(__file__).with_name('CERTIFICATE.json');target.write_text(json.dumps(cert,indent=2))
+  70     print(json.dumps({'four_green_reconstructed':True,'N':n,'two_column_pencil_determinant':val, 'valid_root':pow(w,4,P)==P-1}, indent=2))
+  71 if __name__=='__main__':main()

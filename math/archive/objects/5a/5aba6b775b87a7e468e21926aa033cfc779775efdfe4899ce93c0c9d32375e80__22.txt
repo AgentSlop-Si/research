@@ -1,0 +1,22 @@
+0001 """Deterministic power-of-two gauge-pencil stress tests over GF(65537)."""
+0002 import json,random
+0003 from pathlib import Path
+0004 import verify as V
+0005 
+0006 def run():
+0007     V.rng=random.Random(2026101002)
+0008     output=[]
+0009     for n in (4,8,16,32):
+0010         root=V.omega_root(n); assert V.is_primitive(root,n)
+0011         success=0;zero=0;bad=[]
+0012         for t in range(10):
+0013             A=V.two_green_stage(n)
+0014             B=V.two_green_stage(n)
+0015             K=[[A[k][i]*(B[i][1]-pow(root,k,V.P)*B[i][0])%V.P for i in range(n)] for k in range(n)]
+0016             r=V.rank(K)
+0017             if r==n:success+=1
+0018             else:zero+=1;bad.append((t,r))
+0019         output.append({'N':n,'field':V.P,'trials':10,'full_rank_two_column_pencil':success,'rank_deficient':zero,'details':bad})
+0020     Path(__file__).with_name('STRESS_RESULTS.json').write_text(json.dumps(output,indent=2))
+0021     print(json.dumps(output,indent=2))
+0022 if __name__=='__main__':run()

@@ -1,0 +1,75 @@
+"""Exact radix-2 DFT written as log2(N) local-rank-one quasiseparable stages.
+
+This is a CONTROL showing the signal-flow model accepts a real FFT. It is the
+classical iterative decimation-in-time algorithm, not an asymptotic improvement.
+"""
+from two_stage_ct import P, root, full_dft
+from cut_rank_gate import bitrev
+import random
+
+class Radix2Control:
+    def __init__(self, n):
+        assert n>=2 and (n & (n-1))==0
+        self.n=n
+        self.depth=n.bit_length()-1
+        self.root=root(n)
+        self.orders=[]
+        for s in range(self.depth):
+            h=1<<s
+            order=[]
+            for block in range(0,n,2*h):
+                for j in range(h):
+                    order.extend((block+j,block+j+h))
+            assert sorted(order)==list(range(n))
+            self.orders.append(order)
+        self.input_order=[bitrev(n)[q] for q in self.orders[0]]
+        self.output_order=self.orders[-1]
+        self.shuffles=[]
+        for s in range(self.depth-1):
+            previous={q:j for j,q in enumerate(self.orders[s])}
+            self.shuffles.append([previous[q] for q in self.orders[s+1]])
+        self.ranks=[1]*self.depth
+
+    def apply(self, x):
+        n=self.n
+        assert len(x)==n
+        values=[x[q] for q in self.input_order]
+        for s in range(self.depth):
+            h=1<<s
+            stride=pow(self.root,n//(2*h),P)
+            powers=[pow(stride,j,P) for j in range(h)]
+            out=[0]*n
+            for block in range(n//(2*h)):
+                for j in range(h):
+                    k=2*(block*h+j)
+                    a=values[k]
+                    b=values[k+1]*powers[j]%P
+                    out[k]=(a+b)%P
+                    out[k+1]=(a-b)%P
+            if s+1<self.depth:
+                values=[out[q] for q in self.shuffles[s]]
+            else:
+                values=out
+        result=[0]*n
+        for j,physical in enumerate(self.output_order):
+            result[physical]=values[j]
+        return result
+
+    def operation_count(self):
+        # Conventional unoptimized butterfly arithmetic, including multiply by 1.
+        return 3*(self.n//2)*self.depth
+
+
+def verify():
+    for n in (4,8,16,32,64):
+        obj=Radix2Control(n)
+        for j in range(n):
+            x=[int(j==k) for k in range(n)]
+            assert obj.apply(x)==full_dft(x),(n,j)
+        rng=random.Random(n*719)
+        for _ in range(8):
+            x=[rng.randrange(P) for _ in range(n)]
+            assert obj.apply(x)==full_dft(x)
+        print('PASS exact radix2 graph control',n,'rank1 stages',obj.depth,'raw_arithmetic',obj.operation_count())
+
+if __name__=='__main__':verify()

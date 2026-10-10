@@ -1,0 +1,157 @@
+   1 #!/usr/bin/env python3
+   2 """Review-authored exact controls for all-scalar folding and exact edit lifts."""
+   3 import json
+   4 from pathlib import Path
+   5 from exact_utils import Field,root
+   6 
+   7 P=998244353
+   8 F=Field(P)
+   9 LABELS=[(axis,c,sign) for axis in ('H','V') for c in (0,1) for sign in (-1,1)]
+  10 
+  11 
+  12 def fourier(n,z):
+  13     return [[pow(z,i*j,P) for j in range(n)] for i in range(n)]
+  14 
+  15 
+  16 def valuation(t,b):
+  17     y=t%b
+  18     return b.bit_length()-1 if y==0 else (y&-y).bit_length()-1
+  19 
+  20 
+  21 def folding():
+  22     out=[]
+  23     for b in (1,2,4,8):
+  24         for a in (b,2*b):
+  25             n=a*b;r=b.bit_length()-1
+  26             pi=[((v//(2*b))%a)*b+(v%(2*b))%b for v in range(4*n)]
+  27             selected=[2*b*x+(y if y else b) for x in range(a) for y in range(b)]
+  28             assert [pi[j] for j in selected]==list(range(n)) and len(set(selected))==n
+  29             for orientation in (1,-1):
+  30                 w=pow(root(4*n,P,3),orientation,P)
+  31                 z=pow(w,4,P)
+  32                 fn=fourier(n,z)
+  33                 fl=fourier(4*n,w)
+  34                 qfl=[[0]*(4*n) for _ in range(n)]
+  35                 for v,row in enumerate(fl):
+  36                     qfl[pi[v]]=[(x+y)%P for x,y in zip(qfl[pi[v]],row)]
+  37                 chosen=[[row[j] for j in selected] for row in qfl]
+  38                 finv=[[pow(z,-i*j,P)*F.inv(n)%P for j in range(n)] for i in range(n)]
+  39                 assert F.mul(finv,fn)==F.eye(n)
+  40                 k=F.mul(finv,chosen)
+  41                 nonzero=0
+  42                 for s in range(n):
+  43                     for t,j in enumerate(selected):
+  44                         if k[s][t]:
+  45                             assert j%2==0 and (s-j//2)%a==0
+  46                             assert valuation(s,b)==valuation(t,b)-1
+  47                             nonzero+=1
+  48                 power=F.eye(n)
+  49                 for _ in range(r+1):power=F.mul(power,k)
+  50                 assert not any(x for row in power for x in row)
+  51                 detf=F.det(fn);assert detf
+  52                 determinants=[]
+  53                 for gamma in (1,2,7,P-1):
+  54                     delta=[[(x-gamma*y)%P for x,y in zip(ar,fr)] for ar,fr in zip(chosen,fn)]
+  55                     det=F.det(delta)
+  56                     assert det==detf*pow(-gamma,n,P)%P and det
+  57                     determinants.append({'gamma':gamma,'selected_determinant':det})
+  58                 assert F.rank(qfl)==n
+  59                 out.append({'a':a,'b':b,'N':n,'orientation':orientation,'selected_columns':selected,
+  60                             'K_nonzero_entries':nonzero,'nilpotent_power':r+1,
+  61                             'fourier_determinant':detf,'determinant_controls':determinants,
+  62                             'gamma_zero_full_row_rank':n})
+  63     return out
+  64 
+  65 
+  66 def cover(a,b,label):
+  67     axis,c,sign=label;out=[]
+  68     for x in range(a):
+  69         for y in range(b):
+  70             out.append(((x+sign*(2*y+c))%a)*b+y if axis=='H' else x*b+(y+sign*(2*x+c))%b)
+  71     return out
+  72 
+  73 
+  74 def cycle_lists(p):
+  75     seen=set();out=[]
+  76     for v in range(len(p)):
+  77         if v in seen:continue
+  78         c=[];w=v
+  79         while w not in seen:seen.add(w);c.append(w);w=p[w]
+  80         assert w==v;out.append(c)
+  81     return out
+  82 
+  83 
+  84 def splice_at(p,tails):
+  85     q=p[:]
+  86     if len(tails)>1:
+  87         for j,v in enumerate(tails):q[v]=p[tails[(j+1)%len(tails)]]
+  88     return q
+  89 
+  90 
+  91 def exact_edit_chains():
+  92     out=[]
+  93     for rectangular in (False,True):
+  94         for label in LABELS:
+  95             a,b=((4,2) if rectangular else (2,2))
+  96             base=cover(a,b,label)
+  97             current=splice_at(base,[min(c) for c in cycle_lists(base)])
+  98             assert current[0]!=base[0]
+  99             for level in range(1,5):
+ 100                 n=a*b;small=cover(a,b,label);large=cover(2*a,2*b,label)
+ 101                 eta=[0]*n
+ 102                 for v in range(n):eta[small[v]]=current[v]
+ 103                 pi=[((v//(2*b))%a)*b+(v%(2*b))%b for v in range(4*n)]
+ 104                 pre=[]
+ 105                 for v in large:
+ 106                     x,y=divmod(v,2*b)
+ 107                     bx,by=divmod(eta[(x%a)*b+y%b],b)
+ 108                     pre.append((bx+a*(x//a))*2*b+by+b*(y//b))
+ 109                 orbits=cycle_lists(pre);assert len(orbits)<=4
+ 110                 tails=sorted(min(v for v in c if pi[v]==0) for c in orbits)
+ 111                 lifted=splice_at(pre,tails)
+ 112                 assert len(cycle_lists(lifted))==1
+ 113                 assert all(pi[lifted[v]]==current[pi[v]] for v in range(4*n))
+ 114                 assert all(pre[v]!=large[v] and lifted[v]!=large[v] for v in range(4*n) if pi[v]==0)
+ 115                 hs=sum(x!=y for x,y in zip(current,small));hl=sum(x!=y for x,y in zip(lifted,large))
+ 116                 assert hl==4*hs and lifted[0]!=large[0]
+ 117                 out.append({'shape':'rectangle' if rectangular else 'square','label':label,'level':level,
+ 118                             'small_N':n,'small_edits':hs,'large_edits':hl,'zero_tail_changed':True})
+ 119                 current=lifted;a,b=2*a,2*b
+ 120     margins=[]
+ 121     for n0,d0,margin0 in [(1<<17,7936,768),(1<<18,11264,15360)]:
+ 122         for level in range(65):
+ 123             margin=3*(n0*4**level)//16-3*d0*4**level
+ 124             assert margin==margin0*4**level>0
+ 125         margins.append({'seed_N':n0,'seed_loss':d0,'exact_rational_margin':f'{margin0}*4^level','levels_checked':65})
+ 126     return {'instances':out,'margin_controls':margins}
+ 127 
+ 128 
+ 129 def mask_defects():
+ 130     rows=[]
+ 131     for a,b in [(2,2),(4,2),(4,4),(8,4)]:
+ 132         n=a*b
+ 133         pi=[((v//(2*b))%a)*b+(v%(2*b))%b for v in range(4*n)]
+ 134         small=[i+2 for i in range(n)]
+ 135         large=[((-1)**((v%(2*b))//b))*small[pi[v]]%P for v in range(4*n)]
+ 136         assert all(large)
+ 137         for gamma in (0,1,2,P-1,7):
+ 138             e=[[0]*(4*n) for _ in range(n)]
+ 139             for v in range(4*n):e[pi[v]][v]=(large[v]-gamma*small[pi[v]])%P
+ 140             affected=sum(any(x for x in row) for row in e)
+ 141             assert F.rank(e)==affected==n
+ 142             rows.append({'N':n,'gamma':gamma,'affected_fibers':affected,'defect_rank':n})
+ 143     return rows
+ 144 
+ 145 
+ 146 def main():
+ 147     result={'status':'PASS','field':P,'folding':folding(),'hierarchy':exact_edit_chains(),
+ 148             'nonconstant_fiber_mask_controls':mask_defects(),
+ 149             'scope':'Separate all-scalar rank theorem and exact-edit addendum; no Fourier coefficients or general four-fiber law.'}
+ 150     Path('VERIFIED_RESULTS.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 151     print(json.dumps({'status':'PASS','fold_layouts_and_orientations':len(result['folding']),
+ 152                       'nonzero_gamma_determinants':4*len(result['folding']),
+ 153                       'full_rank_fiber_mask_cases':len(result['nonconstant_fiber_mask_controls']),
+ 154                       'exact_edit_lifts':len(result['hierarchy']['instances'])},sort_keys=True))
+ 155 
+ 156 
+ 157 if __name__=='__main__':main()

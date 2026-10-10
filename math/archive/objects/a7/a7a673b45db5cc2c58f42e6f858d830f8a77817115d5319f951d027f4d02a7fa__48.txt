@@ -1,0 +1,86 @@
+1: """Sparse grading and exact related-query transport for the finite q-kernel.
+2: 
+3: This is not a fresh fast transform. The first H_q(C) action is external and paid.
+4: """
+5: from pathlib import Path
+6: import sys
+7: sys.path.insert(0, str(Path(__file__).resolve().parent.parent/'fft_qweyl_boundary_research'))
+8: from fixed_kernel import Counted
+9: from operators import prepare_sparse
+10: 
+11: 
+12: def prepare_grading(field, n, q):
+13:     sparse = prepare_sparse(field, n, q)
+14:     c = Counted(field)
+15:     powers = [field.one]
+16:     for _ in range(1, n):
+17:         powers.append(c.mul(powers[-1], q))
+18:     w = sparse.upper + [sparse.corner]
+19:     r = [c.mul(powers[i], w[i]) for i in range(n)]
+20:     d1 = [c.mul(r[i], c.sub(field.one, sparse.diagonal[(i+1)%n])) for i in range(n)]
+21:     d2 = [c.neg(c.mul(r[i], w[(i+1)%n])) for i in range(n)]
+22:     # Product r_i=1 is a proved precondition for a valid primitive root.
+23:     prefix = [field.one]
+24:     for value in r:
+25:         prefix.append(c.mul(prefix[-1], value))
+26:     inverse_r = [field.zero]*n
+27:     suffix = field.one
+28:     for i in range(n-1, -1, -1):
+29:         inverse_r[i] = c.mul(prefix[i], suffix)
+30:         suffix = c.mul(suffix, r[i])
+31:     m = n//2
+32:     h0 = field.one
+33:     for value in r[:m]:
+34:         h0 = c.mul(h0, value)
+35:     h = [h0]
+36:     for i in range(n-1):
+37:         h.append(c.mul(c.mul(h[-1], inverse_r[i]), r[(i+m)%n]))
+38:     half = c.inv(field.integer(2))
+39:     total = dict(sparse.preparation)
+40:     for key, value in c.count.items():
+41:         total[key] = total.get(key, 0)+value
+42:     return dict(n=n, q=q, r=r, inverse_r=inverse_r, d1=d1, d2=d2,
+43:                 h=h, half=half, preparation=total)
+44: 
+45: 
+46: def apply_r(field, plan, x, inverse=False):
+47:     n = plan['n']
+48:     if len(x) != n:
+49:         raise ValueError('wrong vector length')
+50:     if inverse:
+51:         return [field.mul(plan['inverse_r'][(i-1)%n], x[(i-1)%n]) for i in range(n)]
+52:     return [field.mul(plan['r'][i], x[(i+1)%n]) for i in range(n)]
+53: 
+54: 
+55: def apply_d(field, plan, x):
+56:     n = plan['n']
+57:     if len(x) != n:
+58:         raise ValueError('wrong vector length')
+59:     out = []
+60:     for i in range(n):
+61:         value = field.mul(plan['d2'][i], x[(i+2)%n])
+62:         if i != n-1:
+63:             value = field.add(value, field.mul(plan['d1'][i], x[(i+1)%n]))
+64:         out.append(value)
+65:     return out
+66: 
+67: 
+68: def split_pairs(field, plan, x):
+69:     """Coordinates in the +1/-1 eigenspaces of R^(N/2)."""
+70:     n = plan['n']; m = n//2
+71:     if len(x) != n:
+72:         raise ValueError('wrong vector length')
+73:     plus, minus = [], []
+74:     for i in range(m):
+75:         value = field.mul(plan['h'][i], x[i+m])
+76:         plus.append(field.mul(plan['half'], field.add(x[i], value)))
+77:         minus.append(field.mul(plan['half'], field.sub(x[i], value)))
+78:     return plus+minus
+79: 
+80: 
+81: def join_pairs(field, plan, x):
+82:     n = plan['n']; m = n//2
+83:     if len(x) != n:
+84:         raise ValueError('wrong vector length')
+85:     return ([field.add(x[i], x[i+m]) for i in range(m)] +
+86:         [field.mul(plan['h'][i+m], field.sub(x[i], x[i+m])) for i in range(m)])

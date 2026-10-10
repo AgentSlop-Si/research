@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Independent F8 contraction audit; derivatives by exact finite differences.
+Only inert constructor JSON is consumed. No floating value controls an assertion.
+"""
+from pathlib import Path
+from fractions import Fraction as F
+from math import isqrt
+import json,hashlib
+root=Path(__file__).resolve().parent;path=root/'CANDIDATE_DATA.json';D=json.loads(path.read_text())
+assert D['N']==8 and D['stages']==3 and D['permutation']==[0,4,2,6,1,5,3,7]
+n=8;Q=2**D['center_bits'];R=2**D['inverse_bits'];center=[tuple(x) for x in D['center']];sel=D['selected_columns'];B=[[tuple(x) for x in row] for row in D['approximate_inverse']]
+assert len(center)==120 and len(sel)==64 and len(set(sel))==64 and all(0<=x<120 for x in sel)
+assert len(B)==64 and all(len(row)==64 for row in B)
+assert all(type(t)==int for v in center for t in v) and all(type(t)==int for row in B for v in row for t in v)
+def times(a,b):return a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0]
+def mm(A,B):
+ out=[]
+ for a in A:
+  row=[]
+  for b in zip(*B):
+   re=im=0
+   for x,y in zip(a,b):u,v=times(x,y);re+=u;im+=v
+   row.append((re,im))
+  out.append(row)
+ return out
+def norm(z):return abs(z[0])+abs(z[1])
+def stage(z,s):
+ a,b,c,e,d=[z[40*s+8*j:40*s+8*(j+1)] for j in range(5)];out=[]
+ for i in range(n):out.append([tuple(Q*x for x in d[i]) if i==j else times(a[i],b[j]) if i>j else times(c[i],e[j]) for j in range(n)])
+ return out
+def evaluate(z):
+ A0,A1,A2=[stage(z,s) for s in range(3)];p=D['permutation']
+ P=[[(int(i==p[j]),0) for j in range(n)] for i in range(n)]
+ return mm(mm(mm(mm(A2,P),A1),P),A0)
+base=evaluate(center);denF=Q**6;J=[[None]*64 for _ in range(64)]
+# A parameter occurs at most once in each path monomial, so a unit finite
+# difference equals its exact derivative with all other parameters frozen.
+for c,k in enumerate(sel):
+ pert=center[:];pert[k]=(pert[k][0]+Q,pert[k][1]);value=evaluate(pert)
+ for i in range(n):
+  for j in range(n):J[i*n+j][c]=(value[i][j][0]-base[i][j][0],value[i][j][1]-base[i][j][1])
+BJ=mm(B,J);den=R*denF
+eta=F(max(sum(norm((int(i==j)*den-BJ[i][j][0],-BJ[i][j][1])) for j in range(64)) for i in range(64)),den)
+Bnorm=F(max(sum(map(norm,row)) for row in B),R)
+# Independent tighter rational enclosure of sqrt2, then exact F8/sqrt8.
+T=1<<120;s=isqrt(2*T*T);assert s*s<=2*T*T<(s+1)*(s+1)
+unit=[((0,1),(0,0)),((1,0),(1,0)),((0,0),(0,1)),((-1,0),(1,0)),((0,-1),(0,0)),((-1,0),(-1,0)),((0,0),(0,-1)),((1,0),(-1,0))]
+error=[]
+for i in range(n):
+ for j in range(n):
+  total=0
+  for got,(a,b) in zip(base[i][j],unit[(i*j)%8]):
+   lo=4*T*got-(a*T+b*s)*denF;hi=4*T*got-(a*T+b*(s+1))*denF;total+=max(abs(lo),abs(hi))
+  error.append(total)
+f=F(max(error),4*T*denF);beta=Bnorm*f
+M=(max(map(norm,center))+Q-1)//Q+1;H=30*n*n*M**4;L=Bnorm*H;radius=F(1,1<<30)
+contraction=eta+L*radius;selfmap=beta+eta*radius+L*radius*radius/2
+assert eta<1 and radius<=1 and contraction<1 and selfmap<radius
+out={'independent_exact_verification':True,'derivative_method':'Exact unit finite differences of multilinear path polynomial, separate from constructor analytic Jacobian','data_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'selected_complex_variables':64,'frozen_complex_variables':56,'sqrt2_enclosure_bits':120,'M':M,'Hessian_bound':H,'bounds':{}}
+for name,x in [('residual',f),('B_norm',Bnorm),('eta',eta),('beta',beta),('L',L),('radius',radius),('contraction',contraction),('selfmap',selfmap)]:out['bounds'][name]={'numerator':x.numerator,'denominator':x.denominator,'display_only':float(x)}
+(root/'INDEPENDENT_CERTIFICATE_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+print(json.dumps({k:v['display_only'] for k,v in out['bounds'].items()},indent=2))

@@ -1,0 +1,84 @@
+0001 import unittest
+0002 from spectral_boolean import *
+0003 from graded_certificate import *
+0004 from audit import cubic_paired_single_missing_exact_characteristic_zero
+0005 
+0006 class TestSpectralBool(unittest.TestCase):
+0007     def test_primitive_root(self):
+0008         for n in (2,4,8,16,32,64):
+0009             w=primitive_root(n,998244353)
+0010             self.assertEqual(pow(w,n,998244353),1)
+0011             self.assertNotEqual(pow(w,n//2,998244353),1)
+0012 
+0013     def test_idempotence_all_binary_n8(self):
+0014         n,p=8,97
+0015         for x in all_binary(n):
+0016             X=dft(x,p)
+0017             self.assertEqual(spectrum_self_convolution(X,p),tuple((n*v)%p for v in X))
+0018 
+0019     def test_missing_one_formula_all_binary(self):
+0020         p=97;balanced=0;success=0
+0021         for x in all_binary(8):
+0022             X=dft(x,p)
+0023             got=recover_one_from_others(X,1,p)
+0024             if sum(x)==4:self.assertIsNone(got);balanced+=1
+0025             else:self.assertEqual(got,X[1]);success+=1
+0026         self.assertEqual(balanced,70)
+0027         self.assertEqual(success,186)
+0028 
+0029     def test_even_mode_ambiguous(self):
+0030         for n in (8,16):
+0031             p=998244353
+0032             ss={tuple(dft(x,p)[::2]) for x in half_complement_family(n)}
+0033             self.assertEqual(len(ss),1)
+0034             self.assertEqual(next(iter(ss)),(n//2,)+tuple(0 for _ in range(n//2-1)))
+0035 
+0036     def test_noninjective_even_spectrum(self):
+0037         collision=signature_collision(8,(0,2,4,6),1,97)
+0038         self.assertIsNotNone(collision)
+0039         self.assertNotEqual(collision['x_missing'],collision['y_missing'])
+0040 
+0041     def test_degree2_rigidity(self):
+0042         for target in (1,3,7):
+0043             known=tuple(i for i in range(8) if i!=target)
+0044             r=exact_poly_completion(8,97,known,target,2)
+0045             self.assertFalse(r['found'])
+0046             self.assertTrue(quadratic_rigidity_theorem(8,known,target)['no_degree_le_2_completion'])
+0047 
+0048     def test_degree3_single_bin_exists(self):
+0049         r=exact_poly_completion(8,97,tuple(range(7)),7,3)
+0050         self.assertTrue(r['found'])
+0051         self.assertEqual(len(r['witness']),10)
+0052         self.assertTrue(all(evaluate_witness(dft(x,97),r['witness'],97)==dft(x,97)[7] for x in all_binary(8)))
+0053 
+0054     def test_exact_characteristic_zero_cubic_identity(self):
+0055         self.assertTrue(cubic_paired_single_missing_exact_characteristic_zero())
+0056 
+0057     def test_graded_character_necessity(self):
+0058         self.assertEqual(sumset_access(16,(0,2,4,6,8,10,12,14),100),set(range(0,16,2)))
+0059         self.assertNotIn(1,sumset_access(16,(0,2,4,6),9))
+0060 
+0061     def test_no_cubic_pair_8(self):
+0062         n=8
+0063         r=rank_certificate(n,998244353,1,3,tuple(k for k in range(n) if k not in (1,n-1)))
+0064         self.assertTrue(verify_certificate(r))
+0065         self.assertEqual(r['num_columns'],8)
+0066 
+0067     def test_no_cubic_pair_16(self):
+0068         n=16
+0069         r=rank_certificate(n,998244353,1,3,tuple(k for k in range(n) if k not in (1,n-1)))
+0070         self.assertTrue(verify_certificate(r))
+0071         self.assertEqual(r['num_columns'],40)
+0072 
+0073     def test_no_cubic_pair_32(self):
+0074         n=32
+0075         r=rank_certificate(n,998244353,1,3,tuple(k for k in range(n) if k not in (1,n-1)))
+0076         self.assertTrue(verify_certificate(r))
+0077         self.assertEqual(r['num_columns'],168)
+0078 
+0079     def test_empty_bad(self):
+0080         with self.assertRaises(ValueError):primitive_root(3,97)
+0081         with self.assertRaises(ValueError):recover_one_from_others((1,2,3,4),0,97)
+0082         with self.assertRaises(ValueError):quadratic_rigidity_theorem(8,(1,2),1)
+0083 
+0084 if __name__=='__main__':unittest.main()

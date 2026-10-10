@@ -1,0 +1,101 @@
+0001 #!/usr/bin/env python3
+0002 from pathlib import Path
+0003 from itertools import permutations,product
+0004 import json,hashlib
+0005 import sympy as s
+0006 HERE=Path(__file__).resolve().parent
+0007 SRC=HERE.parent.parent/'joint_orbit/iteration_6_phase_grid/SMALL_BLOCK_RESULTS.json'
+0008 I=s.I
+0009 
+0010 def grid_inverse(b,a,c,d):
+0011     U=s.eye(4);U[1,0]=-b;U[2,0]=-a;U[3,1]=-c;U[3,2]=-d
+0012     return U.inv()
+0013 
+0014 def permuted(A,rp,cp):
+0015     out=s.zeros(4)
+0016     for i in range(4):
+0017         for j in range(4):out[rp[i],cp[j]]=A[i,j]
+0018     return out
+0019 A=s.diag(s.Rational(1,2),-I,1,-I/2)*grid_inverse(I,1,-2,-2*I)
+0020 B=permuted(s.diag(-I/2,-2,-2,s.Rational(1,2))*grid_inverse(s.Rational(1,2),-I/2,2,2),[3,2,1,0],[3,1,2,0])
+0021 C=s.diag((1+I)/2,1,1,3)*s.Matrix([[int(j==3-i) for j in range(4)] for i in range(4)])
+0022 F=s.Matrix([[(-I)**(r*c) for c in range(4)] for r in range(4)])
+0023 assert (A+B+C-F).applyfunc(s.simplify)==s.zeros(4)
+0024 source=json.loads(SRC.read_text())
+0025 for name,X in [('A',A),('B',B),('C',C)]:
+0026     # Stringified exact data comparison, with no evaluation of source expressions.
+0027     assert [[str(v) for v in X.row(r)] for r in range(4)]==source[name]
+0028 assert all(s.simplify(X.det())!=0 for X in [A,B,C])
+0029 
+0030 # Independent support cover enumeration, deriving support from the product order.
+0031 S={(i,j) for i,j in product(range(4),repeat=2) if i//2>=j//2 and i%2>=j%2}
+0032 allcoords=set(product(range(4),repeat=2));covers=[]
+0033 for rp in permutations(range(4)):
+0034     for cp in permutations(range(4)):
+0035         T={(rp[i],cp[j]) for i,j in S}
+0036         if S|T==allcoords:
+0037             overlap=S&T;assert overlap=={(0,0),(3,3)}
+0038             covers.append({'row_route':list(rp),'column_route':list(cp),'overlap':[list(x) for x in sorted(overlap)]})
+0039 assert covers==source['all_two_term_structural_covers'] and len(covers)==2
+0040 
+0041 # Verify the exact endpoint-diagonal invariant symbolically.
+0042 a,b,c,d=s.symbols('a b c d');L=s.symbols('L0:4',nonzero=True);R=s.symbols('R0:4',nonzero=True)
+0043 X=s.diag(*L)*grid_inverse(b,a,c,d)*s.diag(*R)
+0044 assert s.cancel(X[3,0]-X[3,1]*X[1,0]/X[1,1]-X[3,2]*X[2,0]/X[2,2])==0
+0045 unique=[(3,0),(3,1),(1,0),(1,1),(3,2),(2,0),(2,2)]
+0046 assert all(pos in S and pos not in {(0,0),(3,3)} for pos in unique)
+0047 permuted_target_controls=0;ratios=set()
+0048 for rp in permutations(range(4)):
+0049     for cp in permutations(range(4)):
+0050         T=F.extract(rp,cp)
+0051         u=s.simplify(T[3,1]*T[1,0]/(T[1,1]*T[3,0]))
+0052         v=s.simplify(T[3,2]*T[2,0]/(T[2,2]*T[3,0]))
+0053         assert s.simplify(1-u-v)!=0
+0054         ratios.add((str(u),str(v)));permuted_target_controls+=1
+0055 roots=[1,I,-1,-I]
+0056 assert all(s.simplify(1-u-v)!=0 for u,v in product(roots,repeat=2))
+0057 
+0058 # Full standard-FFT embedding control, independently form bit-wise butterflies.
+0059 B0=s.zeros(4);B1=s.zeros(4)
+0060 for i in range(4):
+0061     B0[i,i]=(-1)**(i&1);B0[i,i^1]=1
+0062     B1[i,i]=(-1)**((i>>1)&1);B1[i,i^2]=1
+0063 P=s.zeros(4)
+0064 for i in range(4):P[i,((i&1)<<1)|(i>>1)]=1
+0065 assert B1*s.diag(1,1,1,-I)*B0*P==F
+0066 
+0067 # The all-size quadrant theorem uses a symbolic determinant and exact geometry.
+0068 z,Q=s.symbols('z Q')
+0069 D=s.Matrix([[1,1,1],[1,Q,z],[1,1,Q]]).det()
+0070 assert s.factor(D)==(Q-1)**2
+0071 geometric_controls=[]
+0072 for m in range(4,65):
+0073     n=m*m;rows=[3*m+3,2*m+3,3*m+2];cols=[0,1,m]
+0074     def admits(row,col,st,su):
+0075         t,u=divmod(row,m);tt,uu=divmod(col,m)
+0076         return st*(t-tt)>=0 and su*(u-uu)>=0
+0077     for row in rows:
+0078         for col in cols:
+0079             assert admits(row,col,1,1)
+0080             assert all(not admits(row,col,st,su) for st,su in [(-1,1),(1,-1),(-1,-1)])
+0081     # Primitive m^2 root has omega^m of exact order m.
+0082     assert m>1 and m<n
+0083     geometric_controls.append({'m':m,'N':n,'isolated_3_by_3_rectangle':True})
+0084 # Exact cyclotomic determinant nonzero for representative dyadic/nondyadic sizes.
+0085 cyclotomic_controls=[]
+0086 for m in [4,5,6,7,8,9,10,12,16]:
+0087     phi=s.Poly(s.cyclotomic_poly(m*m,z),z)
+0088     residue=s.Poly((z**m-1)**2,z).rem(phi)
+0089     assert not residue.is_zero
+0090     cyclotomic_controls.append({'m':m,'N':m*m,'cyclotomic_degree':phi.degree(),'determinant_remainder_nonzero':True})
+0091 result={'source':str(SRC.relative_to(HERE.parent.parent)),'source_sha256':hashlib.sha256(SRC.read_bytes()).hexdigest(),
+0092         'F4_three_green_sum_exact':True,'component_determinants':[str(s.simplify(X.det())) for X in [A,B,C]],
+0093         'all_relative_support_covers':covers,'two_term_invariant_symbolically_verified':True,
+0094         'permuted_F4_targets_tested':permuted_target_controls,'observed_root_ratio_pairs':[list(x) for x in sorted(ratios)],
+0095         'standard_two_stage_F4_embedding_verified':True,
+0096         'quadrant_coefficient_determinant':'(Q-1)^2, Q=omega^m',
+0097         'quadrant_exact_geometric_controls':geometric_controls,
+0098         'quadrant_cyclotomic_controls':cyclotomic_controls,
+0099         'scope':'Four-point additive minimum three; four native quadrant-oriented terms fail for every integer m>=4. No product-of-sums or arbitrary-route exclusion.'}
+0100 (HERE/'INDEPENDENT_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+0101 print(json.dumps({k:v for k,v in result.items() if k not in ['quadrant_exact_geometric_controls','observed_root_ratio_pairs']},indent=2))

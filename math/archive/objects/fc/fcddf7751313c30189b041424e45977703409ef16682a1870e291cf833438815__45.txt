@@ -1,0 +1,58 @@
+1: from pathlib import Path
+2: import json
+3: from correction_graph import run, as_integer, fresh_weight
+4: 
+5: 
+6: def digits(value,n,base):
+7:     out=[]
+8:     for _ in range(n):
+9:         value,d=divmod(value,base); out.append(d)
+10:     assert value==0
+11:     return out
+12: 
+13: 
+14: def compact(result):
+15:     return {k:result[k] for k in ['total_arithmetic','preparation_arithmetic',
+16:         'discovery_arithmetic','product_arithmetic','counts','schedule']}
+17: 
+18: 
+19: def main():
+20:     cases=[]; checked=0
+21:     for n in [32,64,128]:
+22:         base=16
+23:         b=[1+j%14 for j in range(n)]
+24:         offsets=[3,-2,5,0,1,-1,4,2]
+25:         a0=base**(n-1)
+26:         queries=[digits(a0+v,n,base) for v in offsets]
+27:         chain=[(i-1,i) for i in range(1,len(queries))]
+28:         baseline=run(queries,b,base,graph=False,numeric_patches=True)
+29:         coordinate=run(queries,b,base,candidate_edges=chain)
+30:         numeric=run(queries,b,base,numeric_patches=True,candidate_edges=chain)
+31:         state=(baseline['context'],0,list(queries[0]),baseline['outputs'][0])
+32:         warm=run(queries,b,base,numeric_patches=True,candidate_edges=chain,
+33:                  warm_index=0,warm_state=state)
+34:         for result in [baseline,coordinate,numeric,warm]:
+35:             for i,q in enumerate(queries):
+36:                 assert as_integer(result['outputs'][i],base)==as_integer(q,base)*as_integer(b,base)
+37:                 assert len(result['outputs'][i])==2*n
+38:                 checked+=1
+39:         assert numeric['counts']['fresh_products']==1
+40:         assert numeric['counts']['numeric_patches_selected']>=1
+41:         assert numeric['total_arithmetic']<baseline['total_arithmetic']
+42:         # A canonical warm cache includes normalization of its anchor product.
+43:         seed=numeric['preparation_arithmetic']+fresh_weight(n,numeric['context'].m)+4*n
+44:         assert numeric['total_arithmetic']==warm['total_arithmetic']+seed-4*n
+45:         cases.append({'n':n,'offsets':offsets,'candidate_edges':chain,
+46:             'cold_baseline':compact(baseline),'coordinate_chain':compact(coordinate),
+47:             'numeric_chain':compact(numeric),'warm_numeric_chain':compact(warm),
+48:             'previously_paid_canonical_warm_seed_arithmetic':seed,
+49:             'note':'Warm batch rematerializes the anchor output, so seed+warm includes that output normalization twice.'})
+50:     result={'status':'PASS','exact_integer_products_checked':checked,
+51:         'cases':cases,'scope':'Verified signed-block differences across long carry chains; supplied chain edges, every difference checked; no fresh arbitrary-input asymptotic improvement.'}
+52:     Path(__file__).with_name('numeric_shift_audit.json').write_text(json.dumps(result,indent=2)+'\n')
+53:     print(json.dumps({'status':'PASS','exact_integer_products_checked':checked}))
+54:     for x in cases:
+55:         print(x['n'],{k:x[k]['total_arithmetic'] for k in ['cold_baseline','coordinate_chain','numeric_chain','warm_numeric_chain']})
+56: 
+57: 
+58: if __name__=='__main__': main()

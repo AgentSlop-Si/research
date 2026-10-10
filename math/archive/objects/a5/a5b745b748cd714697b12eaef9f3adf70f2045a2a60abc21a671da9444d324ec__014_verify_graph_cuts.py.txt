@@ -1,0 +1,38 @@
+"""Optional independent full-network flow cross-check (requires scipy/networkx).
+
+This is *not* needed by the all-length mathematical theorem.
+"""
+from pathlib import Path
+import sys,random
+root=Path('fft_three_stage_bitrev_gate_2026-10-10')
+sys.path[:0]=[str(root),str(root/'fft_scan_network_gate_2026-10-09')]
+from fast_mincut import ScanFlowOracle
+from research_gate import bitrev
+from central_partition import partition
+
+def shuffle_partition(n,A,B,swap,seed):
+    rng=random.Random(seed)
+    A=list(A);B=list(B)
+    aa=A[:];bb=B[:];rng.shuffle(aa);rng.shuffle(bb)
+    p=[None]*n
+    for i,j in enumerate(A):p[j]=bb[i] if swap else aa[i]
+    for i,j in enumerate(B):p[j]=aa[i] if swap else bb[i]
+    assert set(p)==set(range(n))
+    return p
+
+def run():
+ for n in (32,64,128,256,512):
+    A,B,cap,_=partition(n);P=bitrev(n)
+    tests=[('repeated bit reversal',[P,P,P],False)]
+    if n<=256:
+        mixed=[shuffle_partition(n,A,B,h%2,1234+h) for h in range(3)]
+        tests.append(('mixed preserving / swapping shuffles',mixed,True)) # exactly one swap, odd
+    for label,pp,swap in tests:
+        R=B if swap else A
+        oracle=ScanFlowOracle(n,[1]*4,pp)
+        bound=oracle.bound(R,B)
+        assert bound<=4*cap,(n,label,bound,cap)
+        print('n',n,label,'fourier block rank',n//2,'network cut',bound,'analytic upper',4*cap,flush=True)
+        if n>=128:assert bound <n//2
+
+if __name__=='__main__':run()

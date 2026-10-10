@@ -1,0 +1,57 @@
+   1 """Toy exact cyclotomic coefficient-bound demonstration.
+   2 
+   3 For a fixed root of unity zeta_D, #130-style prepared coefficients live in a
+   4 cyclotomic field.  This script demonstrates an effective crude bound:
+   5 reduce a rational function to a polynomial representative modulo Phi_D and
+   6 bound its chosen complex embedding by the l1 norm of rational coefficients.
+   7 
+   8 This is an effectivity demo, not extraction of the full #130 coefficient list.
+   9 """
+  10 from fractions import Fraction
+  11 import json
+  12 from pathlib import Path
+  13 import sympy as sp
+  14 
+  15 z=sp.symbols('z')
+  16 
+  17 
+  18 def rational_l1_bound(poly_expr):
+  19     p=sp.Poly(sp.expand(poly_expr),z,domain=sp.QQ)
+  20     return sum(abs(sp.Rational(c)) for c in p.all_coeffs())
+  21 
+  22 
+  23 def reduce_fraction_mod_cyclotomic(num,den,D):
+  24     phi=sp.Poly(sp.cyclotomic_poly(D,z),z,domain=sp.QQ)
+  25     n=sp.Poly(num,z,domain=sp.QQ).rem(phi)
+  26     d=sp.Poly(den,z,domain=sp.QQ).rem(phi)
+  27     inv=sp.invert(d,phi)
+  28     rep=(n*inv).rem(phi)
+  29     return phi,rep
+  30 
+  31 
+  32 def main():
+  33     cases=[
+  34         (8, 1+z, 1-z),
+  35         (16, 1+2*z+z**3, 1-z**2),
+  36         (32, 3-z+2*z**5, 2+z+z**2),
+  37     ]
+  38     rows=[]
+  39     for D,num,den in cases:
+  40         phi,rep=reduce_fraction_mod_cyclotomic(num,den,D)
+  41         bound=rational_l1_bound(rep.as_expr())
+  42         zv=sp.exp(2*sp.pi*sp.I/D)
+  43         exact=complex(sp.N(rep.as_expr().subs(z,zv),60))
+  44         rows.append({
+  45             'D':D,
+  46             'phi':str(phi.as_expr()),
+  47             'representative':str(rep.as_expr()),
+  48             'l1_bound':str(bound),
+  49             'numeric_abs':abs(exact),
+  50             'bound_valid':abs(exact) <= float(bound)+1e-12,
+  51         })
+  52     p=Path(__file__).with_name('cyclotomic_bound_demo.json')
+  53     p.write_text(json.dumps(rows,indent=2))
+  54     for r in rows: print(r)
+  55     print('wrote',p)
+  56 
+  57 if __name__=='__main__': main()

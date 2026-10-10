@@ -1,0 +1,311 @@
+"""Cache-aware distributive rewrites inside the supplied convolution DAG.
+
+SA*B -> cached(U*B) + (SA-U)*B, with exact structural witnesses.
+This is a bounded local optimizer, not equality saturation or a new FFT.
+The ring is real length-n circular convolution; execution uses complex128 rFFT.
+"""
+from __future__ import annotations
+from collections import Counter,OrderedDict
+from dataclasses import dataclass,asdict
+import time
+import numpy as np
+
+from baseline_compiler.algebra_fft import AlgebraFFT, _fft
+
+
+class _PlanningBudget(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class Witness:
+    target: int
+    left: int
+    right: int
+    base: int
+    correction: int
+    cached_product: int
+    replacement: int
+    original_vector_work: int
+    replacement_vector_work: int
+    correction_signature: tuple
+    cache_source: str
+
+
+class CacheRewriteFFT(AlgebraFFT):
+    """Preserve seed FFTs and the base DAG; add cache cuts and bounded rewriting.
+
+    cache_bytes limits persisted result arrays only. Seed arrays/spectra, graph
+    metadata, per-evaluation memo and returned copies are accounted separately.
+    Supported witness coefficients are bounded exact integers. Real-valued
+    seed arrays may be arbitrary. Noninteger symbolic coefficients fall back.
+    Ring identities do not ensure floating-point stability; see the recorded
+    cancellation counterexample before using this research engine numerically.
+    """
+    def __init__(self,n,*,cache_bytes=64*1024**2,rewrite=True,max_probes=8,
+                 max_signature=64,max_new_nodes=256,max_index_arity=32,
+                 max_total_probes=128,max_scan_nodes=10000):
+        super().__init__(n,max_spectrum_cache_bytes=cache_bytes)
+        for v in (max_probes,max_signature,max_new_nodes,max_index_arity,
+                  max_total_probes,max_scan_nodes):
+            if type(v) is not int or v<0: raise ValueError('nonnegative integer bounds')
+        self.rewrite_enabled=rewrite
+        self.max_probes=max_probes;self.max_signature=max_signature
+        self.max_new_nodes=max_new_nodes;self.max_index_arity=max_index_arity
+        self.max_total_probes=max_total_probes;self.max_scan_nodes=max_scan_nodes
+        self._planning_node_limit=None
+        self.factor_index={}
+        self._index_reverse={}
+        self.last_witnesses=[]
+        self.last_stats={}
+
+    def _new(self,key,*args,**kwargs):
+        limit=getattr(self,'_planning_node_limit',None)
+        if limit is not None and key not in self._intern and len(self.nodes)>=limit:
+            raise _PlanningBudget
+        return super()._new(key,*args,**kwargs)
+
+    def _charge_scan(self,stats,key):
+        if stats['cost_nodes']+stats['signature_nodes']+stats['pin_nodes']>=self.max_scan_nodes:
+            raise _PlanningBudget
+        stats[key]+=1
+
+    def clear_cache(self):
+        self._spectrum_cache.clear();self._spectrum_cache_bytes=0
+        self.factor_index.clear();self._index_reverse.clear()
+
+    def _remove_index(self,uid):
+        for key in self._index_reverse.pop(uid,()):
+            group=self.factor_index[key];group.pop(uid,None)
+            if not group: del self.factor_index[key]
+
+    def _remember(self,uid,value,stats):
+        if value.nbytes>self.max_spectrum_cache_bytes:return
+        old=self._spectrum_cache.pop(uid,None)
+        if old is not None:self._spectrum_cache_bytes-=old.nbytes
+        self._remove_index(uid)
+        self._spectrum_cache[uid]=value
+        self._spectrum_cache_bytes+=value.nbytes
+        node=self.nodes[uid]
+        if node.op=='product' and node.scalar==1 and len(node.args)<=self.max_index_arity:
+            keys=[]
+            for factor in set(node.args):
+                self.factor_index.setdefault(factor,OrderedDict())[uid]=None;keys.append(factor)
+            self._index_reverse[uid]=tuple(keys)
+        while self._spectrum_cache_bytes>self.max_spectrum_cache_bytes:
+            old_uid,old=self._spectrum_cache.popitem(last=False)
+            self._spectrum_cache_bytes-=old.nbytes;self._remove_index(old_uid)
+            stats['cache_evictions']+=1
+        stats['peak_cache_bytes']=max(stats['peak_cache_bytes'],self._spectrum_cache_bytes)
+
+    def _signature(self,uid,memo,stats):
+        """Linear combination of opaque nonlinear atoms and certified impulses."""
+        if uid in memo:return memo[uid]
+        self._charge_scan(stats,'signature_nodes')
+        node=self.nodes[uid]
+        result={}
+        def integer(x):
+            if not np.isfinite(x) or x!=int(x) or abs(x)>(1<<40):raise ValueError
+            return int(x)
+        def add(key,value):
+            value=result.get(key,0)+value
+            if abs(value)>(1<<40):raise ValueError
+            if value:result[key]=value
+            else:result.pop(key,None)
+            if len(result)>self.max_signature:raise ValueError
+        try:
+            if node.op in ('const','impulse'):
+                add(('impulse',node.index if node.op=='impulse' else 0),integer(node.scalar))
+            elif node.op=='scale':
+                child=self._signature(node.args[0],memo,stats)
+                if child is None:raise ValueError
+                weight=integer(node.scalar)
+                for key,val in child.items():add(key,weight*val)
+            elif node.op=='sum':
+                for child,weight in zip(node.args,node.weights):
+                    sig=self._signature(child,memo,stats)
+                    if sig is None:raise ValueError
+                    weight=integer(weight)
+                    for key,val in sig.items():add(key,weight*val)
+            else:add(('atom',uid),1)
+        except (ValueError,OverflowError):result=None
+        memo[uid]=result
+        return result
+
+    def _from_signature(self,signature):
+        terms=[]
+        for (kind,idx),value in sorted(signature.items()):
+            atom=self.impulse(idx) if kind=='impulse' else idx
+            terms.append(self.scale(atom,value))
+        return self.add(*terms)
+
+    def _local_work(self,node):
+        if node.op=='seed':return 0 # registration FFT is separately charged
+        if node.op=='const':return 1 # allocated fill vector
+        if node.op=='impulse':return 12 # phasor generation proxy, not 1 arithmetic gate
+        if node.op=='scale':return 1
+        if node.op=='sum':
+            return (max(0,len(node.args)-1)+(node.weights[0]!=1)
+                    +sum(w not in (1,-1) for w in node.weights[1:]))
+        if node.op=='product':return max(0,len(node.args)-1)+(node.scalar!=1)
+        raise ValueError(node.op)
+
+    def _work(self,root,available,stats,forbid=None):
+        stack=[root];seen=set();cost=0
+        while stack:
+            uid=stack.pop()
+            if uid in available or uid in seen:continue
+            if uid==forbid:return float('inf')
+            seen.add(uid);self._charge_scan(stats,'cost_nodes')
+            node=self.nodes[uid];cost+=self._local_work(node);stack.extend(node.args)
+        return cost
+
+    def _try_rewrite(self,uid,memo,signatures,stats,initial_nodes,initial_cache):
+        node=self.nodes[uid]
+        if (node.op!='product' or node.scalar!=1 or len(node.args)>self.max_index_arity
+            or len(self.nodes)-initial_nodes>=self.max_new_nodes
+            or self.max_probes==0
+            or stats['candidate_probes']>=self.max_total_probes):return None
+        available=None
+        best=None;best_cost=None;before=None;probes=0
+        for right in dict.fromkeys(node.args):
+            group=self.factor_index.get(right)
+            if not group:continue
+            other=list(node.args);other.remove(right);left=self.mul(*other)
+            target_sig=self._signature(left,signatures,stats)
+            if target_sig is None:continue
+            for pid in reversed(group):
+                if (probes>=self.max_probes or len(self.nodes)-initial_nodes>=self.max_new_nodes
+                    or stats['candidate_probes']>=self.max_total_probes):break
+                if pid not in self._spectrum_cache or pid==uid:continue
+                probes+=1;stats['candidate_probes']+=1
+                p=self.nodes[pid]
+                factors=list(p.args);factors.remove(right);base=self.mul(*factors)
+                base_sig=self._signature(base,signatures,stats)
+                if base_sig is None:continue
+                delta=dict(target_sig)
+                for key,val in base_sig.items():
+                    delta[key]=delta.get(key,0)-val
+                    if not delta[key]:del delta[key]
+                if len(delta)>self.max_signature or any(abs(v)>(1<<40) for v in delta.values()):continue
+                correction=self._from_signature(delta)
+                # Verify the constructors did not change the exact intended witness.
+                if self._signature(correction,signatures,stats)!=delta:continue
+                if self.mul(base,right)!=pid:continue
+                alt=self.add(pid,self.mul(correction,right))
+                # Build this O(cache + live DAG) set only for a valid proposal.
+                # Building it at every product would add avoidable quadratic
+                # bookkeeping on large unrelated graphs.
+                if available is None:
+                    available=set(memo)|set(self._spectrum_cache)
+                    stats['availability_entries']+=len(available)
+                if before is None:before=self._work(uid,available,stats)
+                after=self._work(alt,available,stats,forbid=uid)
+                if after<before and (best_cost is None or after<best_cost):
+                    best_cost=after
+                    best=Witness(uid,left,right,base,correction,pid,alt,before,after,
+                                 tuple(sorted(delta.items())),
+                                 'prior_query' if pid in initial_cache else 'same_query')
+            if probes>=self.max_probes:break
+        if best is not None:
+            # Pin the cached frontier of the chosen replacement, including any
+            # cached correction, before descendants can cause LRU eviction.
+            # This stabilizes the availability assumption in its cost estimate.
+            stack=[best.replacement];seen=set()
+            while stack:
+                item=stack.pop()
+                if item in seen or item in memo:continue
+                seen.add(item);self._charge_scan(stats,'pin_nodes')
+                if item in self._spectrum_cache:
+                    memo[item]=self._spectrum_cache[item]
+                    self._spectrum_cache.move_to_end(item)
+                    stats['pinned_cache_entries']+=1
+                else:stack.extend(self.nodes[item].args)
+            stats['accepted_rewrites']+=1
+        return best
+
+    def _compute(self,uid,memo,stats):
+        nd=self.nodes[uid]
+        if nd.op=='seed':return self._seed_fft[uid]
+        if nd.op=='const':
+            out=np.full(self.nfreq,nd.scalar,dtype=np.complex128);stats['fills']+=1
+        elif nd.op=='impulse':
+            k=np.arange(self.nfreq,dtype=np.float64)
+            out=nd.scalar*np.exp((-2j*np.pi/self.n)*((k*nd.index)%self.n))
+            stats['phasor_vectors']+=1
+        elif nd.op=='scale':
+            out=nd.scalar*memo[nd.args[0]];stats['vector_scales']+=1
+        elif nd.op=='sum':
+            out=memo[nd.args[0]].copy()
+            w=nd.weights[0]
+            if w!=1:out*=w;stats['vector_scales']+=1
+            for child,w in zip(nd.args[1:],nd.weights[1:]):
+                if w==1:out+=memo[child]
+                elif w==-1:out-=memo[child]
+                else:out+=w*memo[child];stats['vector_scales']+=1
+                stats['vector_adds']+=1
+        elif nd.op=='product':
+            out=memo[nd.args[0]].copy()
+            if nd.scalar!=1:out*=nd.scalar;stats['vector_scales']+=1
+            for child in nd.args[1:]:out*=memo[child];stats['vector_multiplies']+=1
+        else:raise ValueError(nd.op)
+        out.flags.writeable=False
+        stats['computed_nodes']+=1;stats['produced_payload_bytes']+=out.nbytes
+        return out
+
+    def evaluate_spectrum(self,root):
+        self._get(root);start=time.perf_counter_ns()
+        memo={};signatures={};stats=Counter();witnesses=[]
+        initial_nodes=len(self.nodes);initial_cache=set(self._spectrum_cache)
+        stats['starting_cache_bytes']=self._spectrum_cache_bytes
+        stats['peak_cache_bytes']=self._spectrum_cache_bytes
+        stack=[('enter',root,None)];active=set()
+        while stack:
+            event,uid,extra=stack.pop()
+            if event=='enter':
+                stats['demand_nodes']+=1
+                if uid in memo:stats['memo_hits']+=1;continue
+                if uid in self._spectrum_cache:
+                    memo[uid]=self._spectrum_cache[uid]
+                    self._spectrum_cache.move_to_end(uid);stats['cache_hits']+=1
+                    continue # essential: do not enter descendants of a cached node
+                if uid in active:raise RuntimeError('rewrite cycle rejected')
+                active.add(uid)
+                witness=None
+                if self.rewrite_enabled and not stats['planning_budget_exhausted']:
+                    t=time.perf_counter_ns()
+                    self._planning_node_limit=initial_nodes+self.max_new_nodes
+                    try:
+                        witness=self._try_rewrite(uid,memo,signatures,stats,initial_nodes,initial_cache)
+                    except _PlanningBudget:
+                        stats['planning_budget_exhausted']+=1
+                    finally:
+                        self._planning_node_limit=None
+                        stats['planning_ns']+=time.perf_counter_ns()-t
+                if witness is not None:
+                    witnesses.append(witness)
+                    stack.append(('alias',uid,witness.replacement))
+                    stack.append(('enter',witness.replacement,None))
+                else:
+                    stack.append(('compute',uid,None))
+                    stack.extend(('enter',ch,None) for ch in reversed(self.nodes[uid].args))
+            elif event=='alias':
+                memo[uid]=memo[extra];self._remember(uid,memo[uid],stats);active.remove(uid)
+            else:
+                out=self._compute(uid,memo,stats);memo[uid]=out
+                if self.nodes[uid].op!='seed':self._remember(uid,out,stats)
+                active.remove(uid)
+        # Shared references count once in the payload statistic. This excludes
+        # Python objects and temporary NumPy ufunc operands, so is not total RSS.
+        payload={id(v):v for v in list(memo.values())+list(self._spectrum_cache.values())}
+        stats['retained_evaluation_payload_bytes']=sum(v.nbytes for v in payload.values())
+        stats['seed_payload_bytes']=sum(x.nbytes for x in self._seeds.values())+sum(x.nbytes for x in self._seed_fft.values())
+        stats['new_graph_nodes']=len(self.nodes)-initial_nodes
+        stats['index_references']=sum(len(v) for v in self.factor_index.values())
+        stats['output_copy_bytes']=memo[root].nbytes
+        stats['elapsed_ns']=time.perf_counter_ns()-start
+        self.last_stats=dict(stats);self.last_witnesses=witnesses
+        self.stats.update(stats)
+        return memo[root].copy()
+
+    def proof_records(self):return [asdict(w) for w in self.last_witnesses]

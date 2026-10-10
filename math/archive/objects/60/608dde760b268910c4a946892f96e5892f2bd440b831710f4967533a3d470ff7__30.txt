@@ -1,0 +1,88 @@
+   1 """Exact cyclic rational sampling identities, including resonant poles.
+   2 Standard-library tests, not a faster-FFT benchmark.
+   3 """
+   4 import random,json
+   5 from pathlib import Path
+   6 P=97
+   7 
+   8 def root(n):
+   9     factors=[q for q in range(2,n+1) if n%q==0 and all(q%d for d in range(2,int(q**.5)+1))]
+  10     return next(z for z in range(1,P) if pow(z,n,P)==1 and all(pow(z,n//q,P)!=1 for q in factors))
+  11 
+  12 def recover(samples,lam,omega):
+  13     S=len(samples); invS=pow(S,-1,P)
+  14     return [(sum(y*pow(omega,(-j*r)%S,P) for j,y in enumerate(samples))*invS*pow(lam,-r,P))%P for r in range(S)]
+  15 
+  16 def mul(a,b):
+  17     out=[0]*(len(a)+len(b)-1)
+  18     for i,x in enumerate(a):
+  19         for j,y in enumerate(b): out[i+j]=(out[i+j]+x*y)%P
+  20     return out
+  21 
+  22 def mod(a,q):
+  23     a=a[:]; k=len(q)-1; iq=pow(q[-1],-1,P)
+  24     for i in range(len(a)-1,k-1,-1):
+  25         c=a[i]*iq%P
+  26         for j,v in enumerate(q): a[i-k+j]=(a[i-k+j]-c*v)%P
+  27     return (a+[0]*k)[:k]
+  28 
+  29 def modpow(a,n,q):
+  30     out=[1]
+  31     while n:
+  32         if n&1: out=mod(mul(out,a),q)
+  33         a=mod(mul(a,a),q); n//=2
+  34     return mod(out,q)
+  35 
+  36 def numerator(zs,weights):
+  37     out=[0]*len(zs)
+  38     for i,b in enumerate(weights):
+  39         prod=[1]
+  40         for j,z in enumerate(zs):
+  41             if i!=j: prod=mul(prod,[1,-z%P])
+  42         out=[(x+b*y)%P for x,y in zip(out,prod)]
+  43     return out
+  44 
+  45 def main():
+  46     rng=random.Random(2026100909); counts=dict(cases=0,pole_free_cases=0,resonant_cases=0,resonant_grid_values=0,uncorrected_differs_from_target=0)
+  47     for N in [3,4,6,8,12,16,24,32]:
+  48         zeta=root(N)
+  49         for S in [1,2,4,8,16,32]:
+  50             omega=root(S)
+  51             for _ in range(20):
+  52                 k=rng.randint(1,min(N,8)); js=rng.sample(range(N),k)
+  53                 zs=[pow(zeta,j,P) for j in js]; start=rng.randrange(2*N)
+  54                 bs=[rng.randrange(1,P)*pow(z,start,P)%P for z in zs]
+  55                 lam=rng.randrange(1,P); c=pow(lam,S,P)
+  56                 q=[1]
+  57                 for z in zs:q=mul(q,[1,-z%P])
+  58                 num=numerator(zs,bs)
+  59                 t_inverse=[-x%P for x in q[1:]]
+  60                 rS=modpow(t_inverse,S,q)
+  61                 factor=[-c*x%P for x in rS]; factor[0]=(factor[0]+1)%P
+  62                 corrected=mod(mul(factor,num),q)
+  63                 assert corrected==numerator(zs,[b*(1-c*pow(z,S,P))%P for b,z in zip(bs,zs)])
+  64                 target=[sum(b*pow(z,r,P) for b,z in zip(bs,zs))%P for r in range(S)]
+  65                 samples=[]; resonant=False
+  66                 for j in range(S):
+  67                     t=lam*pow(omega,j,P)%P; y=0
+  68                     for b,z in zip(bs,zs):
+  69                         den=(1-z*t)%P; num=(1-c*pow(z,S,P))%P
+  70                         if den==0:
+  71                             assert num==0
+  72                             y+=b*S; resonant=True; counts['resonant_grid_values']+=1
+  73                         else: y+=b*num*pow(den,-1,P)
+  74                     samples.append(y%P)
+  75                 assert recover(samples,lam,omega)==target
+  76                 if resonant: counts['resonant_cases']+=1
+  77                 else:
+  78                     counts['pole_free_cases']+=1
+  79                     raw=[sum(b*pow((1-z*lam*pow(omega,j,P))%P,-1,P) for b,z in zip(bs,zs))%P for j in range(S)]
+  80                     aliased=[sum(b*pow(z,r,P)*pow((1-c*pow(z,S,P))%P,-1,P) for b,z in zip(bs,zs))%P for r in range(S)]
+  81                     got=recover(raw,lam,omega); assert got==aliased
+  82                     counts['uncorrected_differs_from_target']+=got!=target
+  83                 counts['cases']+=1
+  84     result=dict(status='passed',field_prime=P,counts=counts,numerator_correction_checks=counts['cases'],
+  85       limitation='Identities tested with direct quadratic-size summations; not a fast implementation or complexity proof.')
+  86     Path(__file__).with_name('cyclic_rational_checks.json').write_text(json.dumps(result,indent=2)+'\n')
+  87     print(json.dumps(result,indent=2))
+  88 if __name__=='__main__':main()

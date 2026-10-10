@@ -1,0 +1,67 @@
+0001 #!/usr/bin/env python3
+0002 """Compile the pair-assembly graph with PR #57's joint frame compiler.
+0003 
+0004 PR #57's compiler (scripts/experiments/binary_frame_compiler.py, by eumemic
+0005 with OpenAI Codex assistance) is used unchanged; only the graph it compiles is
+0006 swapped, exactly as its own skip_frame_compiler.py swaps in PR #53's graph.
+0007 The graph source is hash-pinned below. Every word is checked by the compiler on
+0008 the complete input and dirty basis in both orientations, and frame_verify.py
+0009 replays it independently. Adapted with assistance from Claude (Anthropic).
+0010 Usage: python frame_compile.py   (writes words and frame-compiler.json here)
+0011 """
+0012 import sys
+0013 sys.dont_write_bytecode = True
+0014 import gzip
+0015 from hashlib import sha256
+0016 import importlib.util
+0017 import json
+0018 from pathlib import Path
+0019 from multiprocessing import Process
+0020 
+0021 HERE = Path(__file__).resolve().parent
+0022 ROOT = HERE.parents[2]
+0023 sys.path.insert(0, str(ROOT/'scripts/experiments'))
+0024 GRAPH = HERE.parent/'pair_graph.py'
+0025 GRAPH_SHA256 = '3d47e89d2649c90800a276bdd0480131def50e0bdf92c122a19494b55bf17420'
+0026 
+0027 
+0028 def load_graph():
+0029     assert sha256(GRAPH.read_bytes()).hexdigest() == GRAPH_SHA256, 'pair_graph.py changed'
+0030     spec = importlib.util.spec_from_file_location('pinned_pair_graph', GRAPH)
+0031     module = importlib.util.module_from_spec(spec)
+0032     spec.loader.exec_module(module)
+0033     return module.graph
+0034 
+0035 
+0036 def compile_axis(h):
+0037     import binary_frame_compiler as compiler
+0038     compiler.graph = load_graph()
+0039     result, word = compiler.compile_(h, matching=True, reclaim=True, dirty=True)
+0040     raw = (json.dumps(word, separators=(',', ':'))+'\n').encode()
+0041     path = HERE/f'frame-word-{h}.json.gz'
+0042     with path.open('wb') as stream:
+0043         with gzip.GzipFile(fileobj=stream, mode='wb', mtime=0) as archive:
+0044             archive.write(raw)
+0045     from binary_frame_replay import replay
+0046     receipt = replay(path)
+0047     (HERE/f'frame-compiled-{h}.json').write_text(json.dumps(dict(
+0048         compiled=result, replay=receipt, gzip_sha256=sha256(path.read_bytes()).hexdigest(),
+0049         word_sha256=sha256(raw).hexdigest()), indent=2)+'\n')
+0050     print(f"h={h} roles={result['roles']} replay roles={receipt['roles']}", flush=True)
+0051 
+0052 
+0053 if __name__ == '__main__':
+0054     jobs = [Process(target=compile_axis, args=(h,)) for h in (23, 25)]
+0055     for job in jobs:
+0056         job.start()
+0057     for job in jobs:
+0058         job.join()
+0059         assert job.exitcode == 0
+0060     axes = {str(h): json.loads((HERE/f'frame-compiled-{h}.json').read_text()) for h in (23, 25)}
+0061     record = dict(status='Joint frame compilation of the pair-assembly graph; complete dirty basis both orientations',
+0062                   axes=axes, source=dict(graph='research/pair-assembly/pair_graph.py', graph_sha256=GRAPH_SHA256,
+0063                                          compiler='scripts/experiments/binary_frame_compiler.py (PR #57, unchanged)'))
+0064     (HERE/'frame-compiler.json').write_text(json.dumps(record, indent=2)+'\n')
+0065     for h in (23, 25):
+0066         (HERE/f'frame-compiled-{h}.json').unlink()
+0067     print('PASS compiled and independently replayed both axes', flush=True)

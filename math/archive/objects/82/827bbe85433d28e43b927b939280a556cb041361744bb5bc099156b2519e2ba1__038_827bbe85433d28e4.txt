@@ -1,0 +1,227 @@
+Independent condition reset and Bluestein tests
+9 October 2026
+
+Summary
+
+Twelve tests pass. The exact tests establish the serial determinant-anchored
+reset mechanism for small elementary-shear schedules, including a complete
+normalized four-point DFT. Additional bounded numerical tests check the proposed
+all-length Bluestein factorization, transparent addition with dirty workspace,
+and Gauss-sum normalization.
+
+This is a verification artifact and a small independent construction. It does
+not implement OpenAI #130, establish a new running-time bound, prove the proposed
+all-length logarithmic bound, identify Ailon's model, or establish numerical
+stability. None of the uploaded research code was executed or imported.
+
+Reproduction
+
+  python3 test_condition_reset_independent.py --output results.json
+
+Requires Python 3, SymPy and NumPy. Tested with SymPy 1.14.0 and NumPy 2.3.5.
+These packages were already installed in the execution environment. The script
+uses no network or installation commands. Its only optional file write is the
+JSON path supplied by --output. Typical runtime was approximately 4 seconds.
+
+Files
+
+  test_condition_reset_independent.py   Standalone independent test implementation
+  results.json                         Machine-readable captured results
+  test_run.log                         Captured successful run and results
+  README.txt                           This explanation
+  SHA256SUMS                           Reproduction file checksums
+
+Source inspected
+
+The supplied conditioned_macro_fft_research.zip was inspected before writing
+these tests, specifically CONDITION_RESET_THEOREM.md,
+TRANSPARENT_MACRO_COROLLARY.md, LATEST_CHECKPOINT.md,
+condition_reset_experiment.py, transparent_swap_check.py and their tests.
+The supplied reset experiment checks synchronous tensor-product stages.
+Its swap test checks three dense additions. The present tests add serial
+scalar-shear prefixes, arbitrary scratch contents, exact identities and exact
+rational condition certificates. They do not replace or modify the source ZIP.
+
+1  Correct reset statement
+
+For a nonsingular local prefix S, an idle complementary block, and a unitary
+previous boundary Q, write
+
+  M = permutation* (S direct-sum I) permutation Q.
+
+Unitary factors do not change singular values, so exactly
+
+  kappa_2(M) = max(1, sigma_max(S)) / min(1, sigma_min(S)).
+
+Local kappa alone is insufficient without an anchor. For S=8I, kappa(S)=1 but
+kappa(S direct-sum I)=8. S=(1/8)I gives the same global condition 8.
+
+If |det S|=1, the product of its singular values is 1. Consequently
+sigma_min(S)<=1<=sigma_max(S), and kappa(M)=kappa(S). Every prefix of a word of
+scalar shears has determinant 1. Unit-modulus diagonal factors and permutations
+also preserve the determinant-modulus anchor. Arbitrary scaling monomials need
+separate accounting.
+
+Serial execution is important. Completed local exchanges are unitary, untouched
+coordinates are idle, and only one local word is unfinished at a time. Its
+restored scratch can therefore be reused. At every next local boundary Q is
+unitary again. There is no product of local condition bounds across completed
+fibers or macro levels.
+
+Two simultaneously active, differently scaled blocks do not generally inherit
+the maximum of their individual conditions, even if both determinants are 1:
+
+  P=diag(4,1/2,1/2), Q=diag(2,2,1/4).
+  det(P)=det(Q)=1; kappa(P)=kappa(Q)=8; kappa(P direct-sum Q)=16.
+
+For multiple active blocks the exact bound instead uses the largest singular
+value across every block and the smallest singular value across every block,
+including 1 whenever an idle complement is present. Synchronous copies of the
+same prefix remain a special case where local and global conditions agree.
+
+2  Independent elementary construction
+
+For distinct source x, target y and scratch z, the four scalar shears
+
+  z += c*x
+  y += z
+  z -= c*x
+  y -= z
+
+implement y += c*x and restore z for every initial z. Applying this entry by
+entry gives a dense ADD_U. Three additions,
+
+  y += U*x
+  x -= U* y
+  y += U*x
+
+where U* denotes conjugate transpose, implement
+
+  (x,y,z) -> (-U* y, U x, z).
+
+The completed full-state map is unitary if U is unitary. This dense toy
+construction costs O(B^2); it is deliberately not the fast replay compiler or
+the #130 algorithm.
+
+For U=H2=[[1,1],[1,-1]]/sqrt(2), each exchange uses 48 scalar shears and one
+scratch coordinate. For U=the normalized four-point DFT, each exchange uses
+192 scalar shears. Exact arithmetic is in Q(i,sqrt(2)); the U4 word uses only
+Gaussian rationals. Every prefix determinant and inverse identity is checked.
+
+The actual DFT4 schedule uses nine coordinates: two four-coordinate banks and
+one borrowed scratch coordinate. It performs bit reversal, two H2 fibers,
+the -i twiddle, then two crossed H2 fibers with the bank roles reversed.
+Every scalar prefix is checked exactly against its embedded local prefix times
+the preceding full-state unitary boundary. The final restricted map on the
+original four inputs is exactly the normalized negative-sign DFT4, all four
+outputs return to the first bank, and scratch is restored for arbitrary
+contents. This is an exact all-input matrix identity, not a random-input check.
+
+Ten additional macro levels use 960 scalar shears, alternating fibers and banks,
+with explicit unitary twiddles and permutations. All 20 completed fiber
+boundaries are checked exactly for full-state unitarity.
+
+3  Condition certificates
+
+For each exact prefix P the script explicitly forms P inverse and computes
+
+  C(P) = ||P||_F^2 ||P inverse||_F^2.
+
+The spectral condition satisfies kappa_2(P)^2 <= C(P). The exact maxima are
+
+  H2 exchange: 171/2, hence kappa <= sqrt(171/2) < 9.247.
+  U4 exchange: 1769/8, hence kappa <= sqrt(1769/8) < 14.871.
+
+These rational bounds certify every prefix, independently of numerical SVD.
+Determinant anchoring transfers the H2 certificate to the serial global
+schedules without a factor depending on the global dimension or stage count.
+For illustration only, the observed local and global SVD maxima are both
+approximately 5.1034266624, including after ten macro levels.
+
+4  Workspace counterexamples
+
+Zero-clean workspace alone does not imply a full-state unitary reset.
+T=diag(1,2) maps (x,0) to (x,0), but after eight repetitions the full-state
+condition is 256. A guarantee restricted to initially zero workspace cannot be
+substituted for a full-state transparency guarantee.
+
+Retained garbage also changes the state being conditioned. Repeating
+z += x_0 eight times while leaving two input coordinates unchanged produces a
+restricted input-to-full-state Gram matrix diag(65,1), so its condition is
+sqrt(65). The full square-state condition is 33+8sqrt(17). Neither has reset
+to 1 even though the two designated output coordinates still equal the input.
+
+5  All length Bluestein numerical checks
+
+These checks use the positive Fourier convention
+
+  F_L[j,k]=exp(+2*pi*i*j*k/L), U_L=F_L/sqrt(L).
+
+For N in {1,2,3,5,6,7,9,10,15,17}, let M be the least power of two >=2N-1.
+Let E embed x_j*exp(+pi*i*j^2/N) into M coordinates. Let P crop the first N
+coordinates and multiply by the same positive chirp. The padded convolution
+kernel is
+
+  b[u mod M]=exp(-pi*i*u^2/N),  -(N-1)<=u<=N-1,
+
+and zero elsewhere. Both endpoints +/-N are omitted; when M=2N, this is the
+single missing point of the corresponding 2N-periodic chirp. Set
+
+  D=diag(F_M b / sqrt(N)), V=U_M.
+
+The script checks the complete small matrix identity
+
+  U_N = P V* D V E.
+
+NumPy's ifft with norm='ortho' implements positive V; fft with norm='ortho'
+implements V*. This sign convention differs explicitly from the negative-sign
+DFT4 exact test. Neither test silently mixes conventions.
+
+The transparent addition uses two passes. First execute
+
+  z += E x; z <- V z; w += D z; w <- V* w; y += P w;
+  w <- V w; w -= D z; z <- V* z; z -= E x.
+
+Then repeat with the source additions omitted and y -= P w in the middle.
+Both passes restore arbitrary dirty z and w; their target increments cancel
+the scratch-dependent part, leaving y += U_N x. The tests use nonzero,
+source-correlated dirty scratch. D is never inverted, including at its zeros.
+
+Worst observed errors across these small lengths:
+
+  Matrix identity, maximum entry error             5.19e-15
+  Transparent target addition, maximum error       1.44e-14
+  Dirty scratch restoration, maximum error          3.27e-15
+
+The complete length-2N chirp spectrum has N zero magnitudes and N magnitudes
+2sqrt(N), within 7.10e-14 in these numerical tests. The tested |D| values are
+below the proposed bound 9+4 ln(2N); their maximum is approximately 2.4473.
+These finite tests do not prove that bound.
+
+For the canonical positive quadratic Gauss sum
+
+  G(4N)=sum(j=0,...,4N-1) exp(2*pi*i*j^2/(4N)),
+
+G(4N)/(2(1+i)) agrees with the positive sqrt(N) within 7.07e-14. This separately
+checks the sign and the normalization proposed for the construction.
+
+6  Arithmetic roundoff is a separate obligation
+
+An exact unitary endpoint does not undo earlier rounding errors. In binary64,
+y=1; y+=2^53*x; y-=2^53*x with x=1 returns y=0, although the exact two-shear
+macro is the identity. The first addition loses the low bit permanently.
+
+A second illustration iterates the exact rational orthogonal matrix
+[[3/5,-4/5],[4/5,3/5]] in binary32. Its computed output norm drifts from 1 to
+approximately 1.00025437 after 10,000 macros. The exact norm remains 1.
+This is an illustration of accumulated roundoff, not a worst-case error theorem.
+Coefficient representation, local arithmetic error, propagation, exponent range
+and total work must still be accounted for in any finite-precision claim.
+
+Claim boundary
+
+The exact toy schedules and exact rational certificates support the corrected
+serial reset lemma. The all-length identities and Gauss normalizations receive
+small-instance numerical checks. This artifact does not certify a printed #130
+program, its cost, an all-length condition theorem, effective staircase
+thresholds, bit complexity, or a particular external lower-bound model.

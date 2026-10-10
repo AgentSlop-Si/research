@@ -1,0 +1,821 @@
+   1 """Phase 8: canonical real-valued circular convolution DAG + exact polynomial update identities.
+   2 
+   3 This is a numerical research prototype: FFTs use scipy.fft/float64.
+   4 Algebraic update identities are exact over commutative rings; finite precision
+   5 may affect numeric results. It is NOT a faster worst-case arbitrary DFT algorithm.
+   6 
+   7 Representation: operations are addition and circular convolution. DFT maps
+   8 addition to addition and convolution to pointwise multiplication.
+   9 
+  10 Given a root F(x) polynomial in one *signal variable* x, polynomial jets
+  11 compute C_h (as time-domain sequences) such that, for ANY perturbation u,
+  12   F(x + u) = sum_h C_h * u^{(*h)}.
+  13 For u = delta * unit_impulse(t),
+  14   F(x + delta e_t) = sum_h delta**h roll(C_h, h*t).
+  15 This works even if x occurs multiple times in a DAG; the expansion's degree
+  16 is the algebraic degree of x in F. Max_degree limits preparation resources.
+  17 """
+  18 from __future__ import annotations
+  19 
+  20 import itertools
+  21 from collections import Counter, OrderedDict
+  22 from dataclasses import dataclass
+  23 from typing import Mapping, Sequence
+  24 
+  25 import numpy as np
+  26 try:
+  27     from scipy import fft as _fft
+  28 except ImportError:
+  29     from numpy import fft as _fft
+  30 
+  31 
+  32 @dataclass(frozen=True)
+  33 class Node:
+  34     uid: int
+  35     op: str
+  36     args: tuple[int, ...] = ()
+  37     weights: tuple[float, ...] = ()  # for sum
+  38     scalar: float = 1.0  # for scalar, impulse, scale, product
+  39     index: int = 0  # for impulse
+  40 
+  41 
+  42 class DegreeExceeded(ValueError):
+  43     pass
+  44 
+  45 
+  46 class AlgebraFFT:
+  47     """Canonical sum/convolution DAG for real, length-n circular signals.
+  48 
+  49     Canonical modulo scalar combination, associativity and commutativity of
+  50     additions and convolutions (not full distributivity). Not an e-graph.
+  51     Node IDs are engine-local and immutable. Original seed signals are copied.
+  52     """
+  53     def __init__(self, n: int, *, max_spectrum_cache_bytes: int = 64 * 1024 * 1024):
+  54         if int(n) != n or n < 2:
+  55             raise ValueError('length must be an integer >= 2')
+  56         self.n = int(n)
+  57         self.nfreq = self.n // 2 + 1
+  58         self.nodes: dict[int, Node] = {}
+  59         self._intern: dict[tuple, int] = {}
+  60         self._seeds: dict[int, np.ndarray] = {}
+  61         self._seed_fft: dict[int, np.ndarray] = {}
+  62         self._names: dict[str, int] = {}
+  63         self._external_seed_map: dict[int, tuple[object,int]] = {}
+  64         self._spectrum_cache: OrderedDict[int, np.ndarray] = OrderedDict()
+  65         self._spectrum_cache_bytes = 0
+  66         self.max_spectrum_cache_bytes = int(max_spectrum_cache_bytes)
+  67         if self.max_spectrum_cache_bytes < 0:
+  68             raise ValueError('negative cache size')
+  69         self.stats = Counter()
+  70         self.zero = self.const(0.0)
+  71         self.one = self.const(1.0)  # one is delta_0 (convolution identity)
+  72 
+  73     def _get(self, uid: int) -> Node:
+  74         if type(uid) is not int or uid not in self.nodes:
+  75             raise ValueError(f'unknown engine-local node {uid!r}')
+  76         return self.nodes[uid]
+  77 
+  78     def _new(self, key: tuple, op: str, args: tuple[int, ...] = (),
+  79              weights: tuple[float, ...] = (), scalar: float = 1., index: int = 0) -> int:
+  80         prior = self._intern.get(key)
+  81         if prior is not None:
+  82             return prior
+  83         uid = len(self.nodes)
+  84         self.nodes[uid] = Node(uid, op, args, weights, float(scalar), index)
+  85         self._intern[key] = uid
+  86         return uid
+  87 
+  88     @staticmethod
+  89     def _scalar(value) -> float:
+  90         x = float(value)
+  91         if not np.isfinite(x):
+  92             raise ValueError('only finite real constants are supported')
+  93         return 0.0 if x == 0 else x
+  94 
+  95     def const(self, c: float) -> int:
+  96         c = self._scalar(c)
+  97         return self._new(('const', c), 'const', scalar=c)
+  98 
+  99     def impulse(self, position: int, amplitude: float = 1.) -> int:
+ 100         t = int(position)
+ 101         if t != position or not 0 <= t < self.n:
+ 102             raise IndexError('invalid impulse index')
+ 103         amp = self._scalar(amplitude)
+ 104         if amp == 0.:
+ 105             return self.zero
+ 106         if t == 0:
+ 107             return self.const(amp)
+ 108         return self._new(('impulse',t,amp),'impulse',scalar=amp,index=t)
+ 109 
+ 110     def signal(self, values: Sequence[float], name: str | None = None) -> int:
+ 111         a = np.asarray(values, dtype=np.float64)
+ 112         if a.shape != (self.n,) or not np.all(np.isfinite(a)):
+ 113             raise ValueError(f'expect exactly {self.n} finite real values')
+ 114         if name is not None and name in self._names:
+ 115             raise ValueError('duplicate signal name')
+ 116         uid = self._new(('unique-seed',len(self._seeds)), 'seed')
+ 117         x = a.copy()
+ 118         x.flags.writeable = False
+ 119         self._seeds[uid] = x
+ 120         spectrum = np.asarray(_fft.rfft(x), dtype=np.complex128)
+ 121         spectrum.flags.writeable = False
+ 122         self._seed_fft[uid] = spectrum
+ 123         self.stats['input_ffts'] += 1
+ 124         if name is not None:
+ 125             self._names[name] = uid
+ 126         return uid
+ 127 
+ 128     def signal_with_spectrum(self, values: Sequence[float], half_spectrum,
+ 129                              name: str | None = None) -> int:
+ 130         """Import an already-computed trusted real FFT without recomputing it.
+ 131 
+ 132         The caller must guarantee half_spectrum=rfft(values); this is a
+ 133         provenance-checked/trusted-metadata API, not a numerical equality
+ 134         certification. Both arrays are defensively copied into immutable data.
+ 135         """
+ 136         a = np.asarray(values,dtype=np.float64)
+ 137         spec = np.asarray(half_spectrum,dtype=np.complex128)
+ 138         if a.shape != (self.n,) or spec.shape != (self.nfreq,):
+ 139             raise ValueError('import shape mismatch')
+ 140         if not np.all(np.isfinite(a)) or not np.all(np.isfinite(spec)):
+ 141             raise ValueError('nonfinite imported data')
+ 142         if name is not None and name in self._names:
+ 143             raise ValueError('duplicate signal name')
+ 144         uid=self._new(('unique-seed',len(self._seeds)),'seed')
+ 145         a=a.copy(); spec=spec.copy()
+ 146         a.flags.writeable=False;spec.flags.writeable=False
+ 147         self._seeds[uid]=a;self._seed_fft[uid]=spec
+ 148         self.stats['imported_spectra']+=1
+ 149         if name is not None:
+ 150             self._names[name]=uid
+ 151         return uid
+ 152 
+ 153     def import_phase7(self, version) -> int:
+ 154         """Import a Phase-7 ChainVersion into this canonical sum-product DAG.
+ 155 
+ 156         The source engine's immutable seed spectra are reused by copying them,
+ 157         avoiding another FFT. This API assumes trusted Phase-7 objects and
+ 158         imports their sparse edits/shifts symbolically, not as dense arrays.
+ 159         """
+ 160         if getattr(version,'n',None) != self.n or not hasattr(version,'root'):
+ 161             raise ValueError('expected a length-matched Phase-7 ChainVersion')
+ 162         seen={}
+ 163         def build(nd):
+ 164             ident=id(nd)
+ 165             if ident in seen:
+ 166                 return seen[ident]
+ 167             f=nd.factor
+ 168             if f is not None:
+ 169                 ref=id(f.seed)
+ 170                 previous=self._external_seed_map.get(ref)
+ 171                 if previous is None or previous[0] is not f.seed:
+ 172                     seed_uid=self.signal_with_spectrum(f.seed.signal,f.seed.half_spectrum)
+ 173                     self._external_seed_map[ref]=(f.seed,seed_uid)
+ 174                 else:
+ 175                     seed_uid=previous[1]
+ 176                 base=self.mul(seed_uid,self.impulse(int(f.shift),1))
+ 177                 base=self.scale(base,float(f.gain))
+ 178                 val=self.add(base,*(self.impulse(p,delta) for p,delta in f.edits))
+ 179             else:
+ 180                 val=self.mul(build(nd.left),build(nd.right))
+ 181             seen[ident]=val
+ 182             return val
+ 183         return build(version.root)
+ 184 
+ 185     def scale(self, x: int, value: float) -> int:
+ 186         v = self._scalar(value)
+ 187         node = self._get(x)
+ 188         if v == 0 or (node.op == 'const' and node.scalar == 0):
+ 189             return self.zero
+ 190         if v == 1:
+ 191             return x
+ 192         if node.op == 'const':
+ 193             return self.const(v * node.scalar)
+ 194         if node.op == 'impulse':
+ 195             return self.impulse(node.index, v * node.scalar)
+ 196         if node.op == 'scale':
+ 197             return self.scale(node.args[0], v * node.scalar)
+ 198         return self._new(('scale', x, v), 'scale', args=(x,), scalar=v)
+ 199 
+ 200     def add(self, *items: int) -> int:
+ 201         if not items:
+ 202             return self.zero
+ 203         coefficients: dict[int, float] = {}
+ 204         constants = 0.0
+ 205         def ingest(u: int, weight: float) -> None:
+ 206             nonlocal constants
+ 207             nd = self._get(u)
+ 208             if nd.op == 'sum':
+ 209                 for child, a in zip(nd.args, nd.weights):
+ 210                     ingest(child, weight * a)
+ 211             elif nd.op == 'scale':
+ 212                 ingest(nd.args[0], weight * nd.scalar)
+ 213             elif nd.op == 'const':
+ 214                 constants += weight * nd.scalar
+ 215             else:
+ 216                 coefficients[u] = self._scalar(coefficients.get(u, 0.) + weight)
+ 217         for x in items:
+ 218             ingest(x, 1.)
+ 219         if constants != 0.:
+ 220             u = self.const(constants)
+ 221             coefficients[u] = self._scalar(coefficients.get(u, 0.) + 1.)
+ 222         pairs = [(u,c) for u,c in coefficients.items() if c != 0.]
+ 223         pairs.sort(key=lambda uc:uc[0])
+ 224         if not pairs:
+ 225             return self.zero
+ 226         if len(pairs)==1:
+ 227             return self.scale(pairs[0][0], pairs[0][1])
+ 228         args = tuple(u for u,_ in pairs)
+ 229         weights = tuple(c for _,c in pairs)
+ 230         return self._new(('sum',args,weights),'sum',args,weights)
+ 231 
+ 232     def mul(self, *items: int) -> int:
+ 233         if not items:
+ 234             return self.one
+ 235         factors = []
+ 236         constant = 1.
+ 237         def ingest(u: int) -> None:
+ 238             nonlocal constant
+ 239             nd = self._get(u)
+ 240             if nd.op == 'const':
+ 241                 constant *= nd.scalar
+ 242             elif nd.op == 'scale':
+ 243                 constant *= nd.scalar
+ 244                 ingest(nd.args[0])
+ 245             elif nd.op == 'product':
+ 246                 constant *= nd.scalar
+ 247                 for child in nd.args:
+ 248                     ingest(child)
+ 249             else:
+ 250                 factors.append(u)
+ 251         for x in items:
+ 252             ingest(x)
+ 253         constant = self._scalar(constant)
+ 254         if not constant:
+ 255             return self.zero
+ 256         if not factors:
+ 257             return self.const(constant)
+ 258         factors.sort()
+ 259         if len(factors)==1:
+ 260             return self.scale(factors[0],constant)
+ 261         args = tuple(factors)
+ 262         return self._new(('product',args,constant),'product',args,scalar=constant)
+ 263 
+ 264     def _topological(self, root: int) -> list[int]:
+ 265         self._get(root)
+ 266         visited = set()
+ 267         order = []
+ 268         def visit(u: int):
+ 269             if u in visited:
+ 270                 return
+ 271             visited.add(u)
+ 272             for c in self.nodes[u].args:
+ 273                 visit(c)
+ 274             order.append(u)
+ 275         visit(root)
+ 276         return order
+ 277 
+ 278     def reachable_count(self, root: int) -> int:
+ 279         return len(self._topological(root))
+ 280 
+ 281     def spectral_operation_estimate(self, root:int) -> dict[str,int]:
+ 282         """Approximate per-frequency pointwise ops excluding seed FFTs/phasors.
+ 283 
+ 284         Diagnostic, not a machine runtime or complexity lower bound.
+ 285         Each reachable DAG node is counted once.
+ 286         """
+ 287         additions=multiplications=0
+ 288         for uid in self._topological(root):
+ 289             nd=self.nodes[uid]
+ 290             if nd.op=='sum':
+ 291                 additions+=max(0,len(nd.args)-1)
+ 292                 multiplications+=sum(w!=1. for w in nd.weights)
+ 293             elif nd.op=='product':
+ 294                 multiplications+=max(0,len(nd.args)-1)+int(nd.scalar!=1.)
+ 295             elif nd.op=='scale':
+ 296                 multiplications+=1
+ 297         return {'additions':additions,'multiplications':multiplications,
+ 298                 'reachable_nodes':self.reachable_count(root)}
+ 299 
+ 300     def factor_common(self, root:int) -> int:
+ 301         """One-pass local factoring of common convolution factors across sums.
+ 302 
+ 303         E.g. A*B + A*C becomes A*(B+C). Canonicalizes associativity and
+ 304         commutativity but intentionally does not attempt general polynomial
+ 305         factorization/equality saturation, which could cause exponential work.
+ 306         """
+ 307         rewritten={}
+ 308         for uid in self._topological(root):
+ 309             nd=self.nodes[uid]
+ 310             args=tuple(rewritten.get(ch,ch) for ch in nd.args)
+ 311             if nd.op=='scale':
+ 312                 rewritten[uid]=self.scale(args[0],nd.scalar)
+ 313                 continue
+ 314             if nd.op=='product':
+ 315                 rewritten[uid]=self.scale(self.mul(*args),nd.scalar)
+ 316                 continue
+ 317             if nd.op!='sum':
+ 318                 rewritten[uid]=uid
+ 319                 continue
+ 320             # Factor from all additive terms only; leave other shapes alone.
+ 321             terms=[]
+ 322             for ch,w in zip(args,nd.weights):
+ 323                 cn=self.nodes[ch]
+ 324                 scalar=w
+ 325                 if cn.op=='scale':
+ 326                     scalar*=cn.scalar
+ 327                     cn=self.nodes[cn.args[0]]
+ 328                 if cn.op=='product':
+ 329                     scalar*=cn.scalar
+ 330                     fac=list(cn.args)
+ 331                 elif cn.op=='const':
+ 332                     scalar*=cn.scalar
+ 333                     fac=[]
+ 334                 else:
+ 335                     fac=[cn.uid]
+ 336                 terms.append((fac,scalar))
+ 337             if len(terms)<2 or any(not fac for fac,_ in terms):
+ 338                 rewritten[uid]=self.add(*(self.scale(ch,w) for ch,w in zip(args,nd.weights)))
+ 339                 continue
+ 340             common=set(terms[0][0])
+ 341             for fac,_ in terms[1:]:
+ 342                 common.intersection_update(fac)
+ 343             if not common:
+ 344                 rewritten[uid]=self.add(*(self.scale(ch,w) for ch,w in zip(args,nd.weights)))
+ 345                 continue
+ 346             chosen=min(common)  # deterministic and idempotent in chosen grammar
+ 347             remainder=[]
+ 348             for fac,scalar in terms:
+ 349                 fac.remove(chosen)
+ 350                 remainder.append(self.scale(self.mul(*fac),scalar))
+ 351             rewritten[uid]=self.mul(chosen,self.add(*remainder))
+ 352         return rewritten[root]
+ 353 
+ 354     def evaluate_spectrum(self, root: int) -> np.ndarray:
+ 355         """Return full rFFT spectrum, with bounded LRU caching of node spectra."""
+ 356         memo = {}
+ 357         for uid in self._topological(root):
+ 358             if uid in self._spectrum_cache:
+ 359                 memo[uid] = self._spectrum_cache[uid]
+ 360                 self._spectrum_cache.move_to_end(uid)
+ 361                 self.stats['spectrum_cache_hit'] += 1
+ 362                 continue
+ 363             node = self.nodes[uid]
+ 364             if node.op == 'seed':
+ 365                 out = self._seed_fft[uid]
+ 366             elif node.op == 'const':
+ 367                 out = np.full(self.nfreq,node.scalar,dtype=np.complex128)
+ 368             elif node.op == 'impulse':
+ 369                 k = np.arange(self.nfreq,dtype=np.float64)
+ 370                 out = node.scalar*np.exp(-2j*np.pi*k*node.index/self.n)
+ 371             elif node.op == 'scale':
+ 372                 out = node.scalar*memo[node.args[0]]
+ 373             elif node.op == 'sum':
+ 374                 out = np.zeros(self.nfreq,dtype=np.complex128)
+ 375                 for child,w in zip(node.args,node.weights):
+ 376                     out += w*memo[child]
+ 377             elif node.op == 'product':
+ 378                 out = np.full(self.nfreq,node.scalar,dtype=np.complex128)
+ 379                 for child in node.args:
+ 380                     out *= memo[child]
+ 381             else:
+ 382                 raise AssertionError(node.op)
+ 383             memo[uid] = out
+ 384             self.stats['evaluated_spectra'] += 1
+ 385             if node.op not in ('seed',) and self.max_spectrum_cache_bytes >= out.nbytes:
+ 386                 out = out.copy()  # no mutation of arrays cached by descendants
+ 387                 out.flags.writeable = False
+ 388                 self._spectrum_cache[uid] = out
+ 389                 memo[uid] = out
+ 390                 self._spectrum_cache_bytes += out.nbytes
+ 391                 while self._spectrum_cache_bytes > self.max_spectrum_cache_bytes:
+ 392                     _old, val = self._spectrum_cache.popitem(last=False)
+ 393                     self._spectrum_cache_bytes -= val.nbytes
+ 394         return memo[root].copy()
+ 395 
+ 396     def evaluate_time(self, root:int) -> np.ndarray:
+ 397         return np.asarray(_fft.irfft(self.evaluate_spectrum(root),n=self.n),dtype=np.float64)
+ 398 
+ 399     def frequency(self, root: int, index: int) -> complex:
+ 400         """Query one complex frequency in O(number of distinct reachable DAG nodes)."""
+ 401         k = int(index)
+ 402         if k != index or not 0 <= k < self.n:
+ 403             raise IndexError('invalid frequency')
+ 404         half_index = k if k <= self.n//2 else self.n-k
+ 405         memo = {}
+ 406         for uid in self._topological(root):
+ 407             nd = self.nodes[uid]
+ 408             if nd.op == 'seed':
+ 409                 v = self._seed_fft[uid][half_index]
+ 410                 if k > self.n//2:
+ 411                     v = np.conj(v)
+ 412             elif nd.op == 'const':
+ 413                 v = complex(nd.scalar)
+ 414             elif nd.op == 'impulse':
+ 415                 v = nd.scalar*np.exp((-2j*np.pi/self.n)*((k*nd.index)%self.n))
+ 416             elif nd.op == 'scale':
+ 417                 v = nd.scalar*memo[nd.args[0]]
+ 418             elif nd.op == 'sum':
+ 419                 v = sum(w*memo[ch] for ch,w in zip(nd.args,nd.weights))
+ 420             else:
+ 421                 v = complex(nd.scalar)
+ 422                 for ch in nd.args:
+ 423                     v *= memo[ch]
+ 424             memo[uid] = v
+ 425         return complex(memo[root])
+ 426 
+ 427     def replace(self, root:int, target:int, replacement:int) -> int:
+ 428         """Persistent replacement: shared unchanged branches retain their IDs."""
+ 429         self._get(target)
+ 430         self._get(replacement)
+ 431         replacements = {target:replacement}
+ 432         for uid in self._topological(root):
+ 433             if uid in replacements:
+ 434                 continue
+ 435             nd = self.nodes[uid]
+ 436             args = tuple(replacements.get(ch,ch) for ch in nd.args)
+ 437             if args == nd.args:
+ 438                 replacements[uid] = uid
+ 439             elif nd.op == 'scale':
+ 440                 replacements[uid] = self.scale(args[0],nd.scalar)
+ 441             elif nd.op == 'sum':
+ 442                 replacements[uid] = self.add(*(self.scale(ch,w) for ch,w in zip(args,nd.weights)))
+ 443             elif nd.op == 'product':
+ 444                 replacements[uid] = self.scale(self.mul(*args),nd.scalar)
+ 445             else:
+ 446                 replacements[uid] = uid
+ 447         return replacements[root]
+ 448 
+ 449     def edit_version(self, root: int, leaf: int, changes:Mapping[int,float]) -> int:
+ 450         self._get(leaf)
+ 451         if self.nodes[leaf].op!='seed':
+ 452             raise ValueError('only registered input leaves can be edited')
+ 453         impulses=[self.impulse(pos,delta) for pos,delta in changes.items() if float(delta)!=0]
+ 454         return self.replace(root,leaf,self.add(leaf,*impulses)) if impulses else root
+ 455 
+ 456     def degree_in(self, root:int, leaf:int) -> int:
+ 457         if self._get(leaf).op!='seed':
+ 458             raise ValueError('target must be an input leaf')
+ 459         deg={}
+ 460         for uid in self._topological(root):
+ 461             nd=self.nodes[uid]
+ 462             if uid == leaf:
+ 463                 deg[uid]=1
+ 464             elif nd.op in ('seed','const','impulse'):
+ 465                 deg[uid]=0
+ 466             elif nd.op == 'scale':
+ 467                 deg[uid]=deg[nd.args[0]]
+ 468             elif nd.op == 'sum':
+ 469                 deg[uid]=max(deg[u] for u in nd.args)
+ 470             else:
+ 471                 deg[uid]=sum(deg[u] for u in nd.args)
+ 472         return deg[root]
+ 473 
+ 474     def symbolic_jets(self, root:int, leaf:int, *, max_degree:int=4) -> tuple[int,...]:
+ 475         """Symbolic coefficients C_h of F(leaf + U) in the convolution ring.
+ 476 
+ 477         This is exact *symbolic* sharing, not numerical thresholding. It does
+ 478         not expand sums of products into monomials globally, only polynomial
+ 479         coefficients in the one variable U, capped at max_degree.
+ 480         """
+ 481         d=self.degree_in(root,leaf)
+ 482         if d>max_degree:
+ 483             raise DegreeExceeded(f'algebraic degree {d} exceeds max_degree={max_degree}')
+ 484         memo={}
+ 485         for uid in self._topological(root):
+ 486             nd=self.nodes[uid]
+ 487             if uid==leaf:
+ 488                 memo[uid]=[uid,self.one]
+ 489             elif nd.op in ('seed','const','impulse'):
+ 490                 memo[uid]=[uid]
+ 491             elif nd.op=='scale':
+ 492                 memo[uid]=[self.scale(u,nd.scalar) for u in memo[nd.args[0]]]
+ 493             elif nd.op=='sum':
+ 494                 depth=max(len(memo[u]) for u in nd.args)
+ 495                 result=[self.zero]*depth
+ 496                 for ch,w in zip(nd.args,nd.weights):
+ 497                     for j,v in enumerate(memo[ch]):
+ 498                         result[j]=self.add(result[j],self.scale(v,w))
+ 499                 memo[uid]=result
+ 500             elif nd.op=='product':
+ 501                 vals=[self.const(nd.scalar)]
+ 502                 for child in nd.args:
+ 503                     rhs=memo[child]
+ 504                     result=[self.zero]*(len(vals)+len(rhs)-1)
+ 505                     for i,a in enumerate(vals):
+ 506                         for j,b in enumerate(rhs):
+ 507                             result[i+j]=self.add(result[i+j],self.mul(a,b))
+ 508                     vals=result
+ 509                 memo[uid]=vals
+ 510             else:
+ 511                 raise AssertionError(nd.op)
+ 512         return tuple(memo[root])
+ 513 
+ 514     def _known_impulses(self, uid:int, *, limit:int=12) -> dict[int,float] | None:
+ 515         """Recognize exactly represented sparse impulses, without using tolerance.
+ 516 
+ 517         Returns None if the expression contains a general signal or its
+ 518         symbolic impulse support would exceed the specified limit.
+ 519         """
+ 520         memo={}
+ 521         for u in self._topological(uid):
+ 522             nd=self.nodes[u]
+ 523             if nd.op=='seed':
+ 524                 out=None
+ 525             elif nd.op=='const':
+ 526                 out={0:nd.scalar} if nd.scalar else {}
+ 527             elif nd.op=='impulse':
+ 528                 out={nd.index:nd.scalar}
+ 529             elif nd.op=='scale':
+ 530                 c=memo[nd.args[0]]
+ 531                 out=None if c is None else {i:nd.scalar*v for i,v in c.items() if nd.scalar*v}
+ 532             elif nd.op=='sum':
+ 533                 out={}
+ 534                 for ch,w in zip(nd.args,nd.weights):
+ 535                     c=memo[ch]
+ 536                     if c is None:
+ 537                         out=None
+ 538                         break
+ 539                     for t,v in c.items():
+ 540                         out[t]=out.get(t,0.)+w*v
+ 541                 if out is not None:
+ 542                     out={t:v for t,v in out.items() if v}
+ 543             else:
+ 544                 out={0:nd.scalar}
+ 545                 for ch in nd.args:
+ 546                     c=memo[ch]
+ 547                     if c is None or len(c)*len(out)>4*limit:
+ 548                         out=None
+ 549                         break
+ 550                     nxt={}
+ 551                     for t,v in out.items():
+ 552                         for t2,v2 in c.items():
+ 553                             index=(t+t2)%self.n
+ 554                             nxt[index]=nxt.get(index,0.)+v*v2
+ 555                     out={t:v for t,v in nxt.items() if v}
+ 556             if out is not None and len(out)>limit:
+ 557                 out=None
+ 558             memo[u]=out
+ 559         return memo[uid]
+ 560 
+ 561     def prepare(self, root:int, leaf:int, *, max_degree:int=4) -> 'PreparedEdit':
+ 562         """Build Taylor coefficients in frequency domain, inverse them once.
+ 563 
+ 564         Preparation for fixed small degree d takes O(d^2 E N + (d+1)NlogN)
+ 565         arithmetic for E DAG nodes, plus previously charged seed FFTs. Sparse
+ 566         single-sample versions then take O(dN) per full output / O(dQ)
+ 567         for Q time coefficients. Total precomputation and output are counted.
+ 568         """
+ 569         d=self.degree_in(root,leaf)
+ 570         if d>max_degree:
+ 571             raise DegreeExceeded(f'algebraic degree {d} exceeds max_degree={max_degree}')
+ 572         memo={}
+ 573         z = np.zeros(self.nfreq,dtype=np.complex128)
+ 574         o = np.ones(self.nfreq,dtype=np.complex128)
+ 575         # Real rFFTs are Hermitian; kernels obtained below are real sequences.
+ 576         for uid in self._topological(root):
+ 577             nd = self.nodes[uid]
+ 578             if nd.op == 'seed':
+ 579                 data = self._seed_fft[uid]
+ 580                 if uid == leaf:
+ 581                     memo[uid] = [data, o]
+ 582                 else:
+ 583                     memo[uid] = [data]
+ 584             elif nd.op == 'const':
+ 585                 memo[uid]=[np.full(self.nfreq,nd.scalar,dtype=np.complex128)]
+ 586             elif nd.op == 'impulse':
+ 587                 k=np.arange(self.nfreq,dtype=np.float64)
+ 588                 memo[uid]=[nd.scalar * np.exp(-2j*np.pi*k*nd.index/self.n)]
+ 589             elif nd.op == 'scale':
+ 590                 memo[uid]=[nd.scalar*t for t in memo[nd.args[0]]]
+ 591             elif nd.op == 'sum':
+ 592                 dim=max(map(lambda ch:len(memo[ch]),nd.args))
+ 593                 arr=[np.zeros(self.nfreq,dtype=np.complex128) for _ in range(dim)]
+ 594                 for ch,weight in zip(nd.args,nd.weights):
+ 595                     for i,v in enumerate(memo[ch]):
+ 596                         arr[i]+=weight*v
+ 597                 memo[uid]=arr
+ 598             elif nd.op == 'product':
+ 599                 a=[np.full(self.nfreq,nd.scalar,dtype=np.complex128)]
+ 600                 for ch in nd.args:
+ 601                     b=memo[ch]
+ 602                     c=[np.zeros(self.nfreq,dtype=np.complex128) for _ in range(min(d,len(a)+len(b)-2)+1)]
+ 603                     for i,v in enumerate(a):
+ 604                         for j,w in enumerate(b):
+ 605                             if i+j<len(c):
+ 606                                 c[i+j] += v*w
+ 607                     a=c
+ 608                 memo[uid]=a
+ 609             else:
+ 610                 raise AssertionError(nd.op)
+ 611         freq_coeffs=memo[root]
+ 612         symbolic_coeffs=self.symbolic_jets(root,leaf,max_degree=max_degree)
+ 613         sparse_coeffs=tuple(self._known_impulses(x) for x in symbolic_coeffs)
+ 614         # Sparse coefficients are mathematically known impulse combinations;
+ 615         # no inverse FFT or full time-domain kernel is required for them.
+ 616         coefficients=[(np.asarray(_fft.irfft(c,n=self.n),dtype=np.float64)
+ 617                        if h==0 or sparse_coeffs[h] is None else None)
+ 618                       for h,c in enumerate(freq_coeffs)]
+ 619         for c in coefficients:
+ 620             if c is not None:
+ 621                 c.flags.writeable=False
+ 622         self.stats['prepared_jets']+=1
+ 623         self.stats['prepared_jet_coefficients']+=len(coefficients)
+ 624         return PreparedEdit(self,root,leaf,tuple(coefficients),tuple(freq_coeffs),sparse_coeffs)
+ 625 
+ 626     def plan_updates(self, root:int, leaf:int, *, expected_versions:int,
+ 627                      max_degree:int=4, minimum_amortization:int=8,
+ 628                      max_prepared_bytes:int=128*1024**2) -> 'UpdatePlan':
+ 629         """Conservative, deterministic dispatcher with explicit memory limits.
+ 630 
+ 631         This is a simple analytic policy, not claimed to be optimal and not a
+ 632         substitute for machine-specific calibration. Both paths are correct.
+ 633         """
+ 634         nversions=int(expected_versions)
+ 635         if nversions!=expected_versions or nversions<1:
+ 636             raise ValueError('expected_versions must be positive integer')
+ 637         d=self.degree_in(root,leaf)
+ 638         # Conservative allocation ESTIMATE, not an allocator-level hard cap.
+ 639         # Accounts for topological DAG intermediates and temporary complex
+ 640         # accumulators, plus prepared time-domain and frequency kernels.
+ 641         E=len(self._topological(root))
+ 642         memory_estimate=(4*E*(d+1)*self.nfreq*16
+ 643                          +(d+1)*self.n*8
+ 644                          +(d+1)*self.nfreq*16)
+ 645         if d>max_degree:
+ 646             return UpdatePlan(self,root,leaf,None,'fallback: degree above threshold')
+ 647         if memory_estimate>max_prepared_bytes:
+ 648             return UpdatePlan(self,root,leaf,None,'fallback: jet memory budget')
+ 649         if nversions<minimum_amortization:
+ 650             return UpdatePlan(self,root,leaf,None,'fallback: not enough expected reuse')
+ 651         return UpdatePlan(self,root,leaf,self.prepare(root,leaf,max_degree=max_degree),
+ 652                           'prepared: expected repeated single-variable updates')
+ 653 
+ 654 
+ 655 @dataclass(frozen=True)
+ 656 class PreparedEdit:
+ 657     """Exact algebraic single-variable expansion; numerical arrays are float64."""
+ 658     engine: AlgebraFFT
+ 659     root: int
+ 660     leaf: int
+ 661     kernels: tuple[np.ndarray | None, ...]
+ 662     frequency_coefficients: tuple[np.ndarray, ...]
+ 663     sparse_coefficients: tuple[dict[int,float] | None, ...] = ()
+ 664 
+ 665     @property
+ 666     def degree(self) -> int:
+ 667         return len(self.kernels)-1
+ 668 
+ 669     @property
+ 670     def n(self) -> int:
+ 671         return self.engine.n
+ 672 
+ 673     def single(self, position:int, delta:float, indices:Sequence[int] | None=None):
+ 674         t=int(position)
+ 675         if t != position or not 0<=t<self.n:
+ 676             raise IndexError('invalid edit position')
+ 677         delta=float(delta)
+ 678         if not np.isfinite(delta):
+ 679             raise ValueError('nonfinite edit')
+ 680         if indices is None:
+ 681             result=self.kernels[0].copy()
+ 682             for h in range(1,self.degree+1):
+ 683                 sparse=self.sparse_coefficients[h] if self.sparse_coefficients else None
+ 684                 if sparse is not None:
+ 685                     for pos,value in sparse.items():
+ 686                         result[(pos+h*t)%self.n] += (delta**h)*value
+ 687                 else:
+ 688                     result += (delta**h)*np.roll(self.kernels[h], (h*t)%self.n)
+ 689             return result
+ 690         q=np.asarray(indices,dtype=np.int64)
+ 691         if np.any(q<0) or np.any(q>=self.n):
+ 692             raise IndexError('invalid output coefficient index')
+ 693         out=self.kernels[0][q].copy()
+ 694         for h in range(1,self.degree+1):
+ 695             sparse=self.sparse_coefficients[h] if self.sparse_coefficients else None
+ 696             if sparse is not None:
+ 697                 for pos,value in sparse.items():
+ 698                     out += (delta**h)*value*(q==((pos+h*t)%self.n))
+ 699             else:
+ 700                 out += (delta**h)*self.kernels[h][(q-h*t)%self.n]
+ 701         return out
+ 702 
+ 703     def _normalized_edits(self,changes:Mapping[int,float]):
+ 704         e={}
+ 705         for p,amplitude in changes.items():
+ 706             t=int(p)
+ 707             if t!=p or not 0<=t<self.n:
+ 708                 raise IndexError('invalid edit position')
+ 709             v=float(amplitude)
+ 710             if not np.isfinite(v):
+ 711                 raise ValueError('nonfinite edit')
+ 712             e[t]=e.get(t,0.0)+v
+ 713         return [(t,v) for t,v in sorted(e.items()) if v!=0.0]
+ 714 
+ 715     def many(self, changes:Mapping[int,float], indices:Sequence[int] | None=None,
+ 716              *, max_shift_terms:int=96, method:str='auto'):
+ 717         """Exact polynomial update in sparse correction; no truncation.
+ 718 
+ 719         For small k,d use sum over at most sum(k^h) impulse products.
+ 720         Otherwise form sparse delta spectrum and perform one inverse FFT.
+ 721         """
+ 722         edits=self._normalized_edits(changes)
+ 723         if not edits or self.degree==0:
+ 724             if indices is None:
+ 725                 return self.kernels[0].copy()
+ 726             q=np.asarray(indices,dtype=np.int64)
+ 727             if np.any(q<0) or np.any(q>=self.n):
+ 728                 raise IndexError('invalid output coefficient index')
+ 729             return self.kernels[0][q].copy()
+ 730         nterms=sum(len(edits)**h for h in range(1,self.degree+1))
+ 731         if method not in ('auto','shifts','spectral'):
+ 732             raise ValueError('method must be auto, shifts or spectral')
+ 733         use_shifts = (method=='shifts' or (method=='auto' and nterms<=max_shift_terms))
+ 734         if self.degree==1:
+ 735             use_shifts=True
+ 736         if indices is None:
+ 737             if use_shifts:
+ 738                 out=self.kernels[0].copy()
+ 739                 for h in range(1,self.degree+1):
+ 740                     kernel=self.kernels[h]
+ 741                     # Aggregate identical phase-shift offsets before writing N outputs.
+ 742                     aggregated={}
+ 743                     for combo in itertools.product(edits, repeat=h):
+ 744                         t=sum(item[0] for item in combo)%self.n
+ 745                         coeff=float(np.prod([item[1] for item in combo]))
+ 746                         aggregated[t]=aggregated.get(t,0.)+coeff
+ 747                     for t,amp in aggregated.items():
+ 748                         if amp:
+ 749                             sparse=self.sparse_coefficients[h] if self.sparse_coefficients else None
+ 750                             if sparse is not None:
+ 751                                 for pos,value in sparse.items():
+ 752                                     out[(pos+t)%self.n] += amp*value
+ 753                             else:
+ 754                                 out += amp*np.roll(kernel,t)
+ 755                 return out
+ 756             k=np.arange(self.engine.nfreq,dtype=np.float64)
+ 757             correction=np.zeros(self.engine.nfreq,dtype=np.complex128)
+ 758             for t,amp in edits:
+ 759                 correction += amp*np.exp(-2j*np.pi*k*t/self.n)
+ 760             poly=self.frequency_coefficients[-1].copy()
+ 761             for h in range(self.degree-1,-1,-1):
+ 762                 poly=poly*correction + self.frequency_coefficients[h]
+ 763             return np.asarray(_fft.irfft(poly,n=self.n),dtype=np.float64)
+ 764         q=np.asarray(indices,dtype=np.int64)
+ 765         if np.any(q<0) or np.any(q>=self.n):
+ 766             raise IndexError('invalid output coefficient index')
+ 767         if not use_shifts:
+ 768             return self.many(dict(edits),indices=None,method='spectral')[q]
+ 769         out=self.kernels[0][q].copy()
+ 770         for h in range(1,self.degree+1):
+ 771             aggregated={}
+ 772             for combo in itertools.product(edits,repeat=h):
+ 773                 t=sum(item[0] for item in combo)%self.n
+ 774                 coeff=float(np.prod([item[1] for item in combo]))
+ 775                 aggregated[t]=aggregated.get(t,0.)+coeff
+ 776             for t,amp in aggregated.items():
+ 777                 if amp:
+ 778                     sparse=self.sparse_coefficients[h] if self.sparse_coefficients else None
+ 779                     if sparse is not None:
+ 780                         for pos,value in sparse.items():
+ 781                             out += amp*value*(q==((pos+t)%self.n))
+ 782                     else:
+ 783                         out += amp*self.kernels[h][(q-t)%self.n]
+ 784         return out
+ 785 
+ 786     def single_frequency(self,position:int,delta:float,k:int) -> complex:
+ 787         t=int(position)
+ 788         k=int(k)
+ 789         delta=float(delta)
+ 790         if not np.isfinite(delta):
+ 791             raise ValueError('nonfinite edit')
+ 792         if not 0<=t<self.n or not 0<=k<self.n:
+ 793             raise IndexError('invalid position or frequency')
+ 794         index=k if k<=self.n//2 else self.n-k
+ 795         out=0j
+ 796         phase=np.exp((-2j*np.pi/self.n)*((t*k)%self.n))
+ 797         for h,coef in reversed(list(enumerate(self.frequency_coefficients))):
+ 798             v=coef[index] if k<=self.n//2 else np.conj(coef[index])
+ 799             out=out*phase*float(delta)+v
+ 800         return complex(out)
+ 801 
+ 802 
+ 803 @dataclass(frozen=True)
+ 804 class UpdatePlan:
+ 805     engine: AlgebraFFT
+ 806     root: int
+ 807     leaf: int
+ 808     compiled: PreparedEdit | None
+ 809     reason: str
+ 810 
+ 811     @property
+ 812     def mode(self) -> str:
+ 813         return 'jets' if self.compiled is not None else 'fallback'
+ 814 
+ 815     def single(self, position:int, delta:float,
+ 816                indices:Sequence[int] | None=None):
+ 817         if self.compiled is not None:
+ 818             return self.compiled.single(position,delta,indices=indices)
+ 819         newer=self.engine.edit_version(self.root,self.leaf,{position:delta})
+ 820         out=self.engine.evaluate_time(newer)
+ 821         return out if indices is None else out[indices]

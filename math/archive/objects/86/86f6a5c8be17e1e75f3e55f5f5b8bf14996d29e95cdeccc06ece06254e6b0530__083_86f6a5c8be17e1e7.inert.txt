@@ -1,0 +1,99 @@
+# A permutation-robust O(N)-work Green stage from two grid paths
+
+**Status:** All-N exact linear-algebra and numerical-singular-value theorem, not a Fourier factorization. Works for even `L>=4`, `N=L^2`; all matrices here are real.
+
+## Construction and cost
+
+Place vertices on an LxL square grid in row-major order. Let `T=tridiag(-1,3,-1)` and let `Q` be the matrix-transpose permutation: `Q(rL+c)=cL+r` (here `Q=Q^T`). Set
+
+```
+G1=T^-1, G2=Q T^-1 Q^T,
+M=G1+epsilon G2, epsilon=1/100.
+```
+
+The precision `T` connects successive vertices in row-major order, containing every horizontal grid edge; `Q T Q^T` connects successive vertices in column-major order, containing every vertical grid edge. The union includes the entire LxL grid, although the path graphs also contain row/column-wrap edges.
+
+Apply M in O(N) field operations by two tridiagonal solves, one matrix-transpose scatter/gather, an epsilon scaling and vector sum. Coefficients and the permutation are generated in O(N). No large lookup table, floating-point optimization, or free preprocessing is assumed.
+
+Both G1 and G2 are SPD with spectra in [1/5,1]. Their sum has eigenvalues between `(1+epsilon)/5` and `1+epsilon`, so
+
+```
+kappa2(M)<=5.
+```
+
+## Lemma 1. Green off-cut singular values from crossing path edges
+
+Let `D` be either path precision `T` or a permutation thereof, let `G=D^-1`, and partition its vertex set into `I` and its complement `J`. Let e be the number of path edges with one endpoint on each side.
+
+Color successive path edges by position modulo 3. One class contains at least `e/3` crossing edges. Edges in the same residue class are separated by at least two intervening edges, so their chosen endpoints induce an **exactly diagonal** `k x k` submatrix of `D[I,J]` with diagonal entries -1, for `k>=e/3` (up to integer rounding). Row/column coordinate projections are contractions; hence the first k singular values of `D[I,J]` are each at least 1.
+
+Writing D in partitioned blocks,
+
+```
+D=[[U,B],[B^T,V]],  S=V-B^T U^-1 B,
+G[I,J] = -U^-1 B S^-1.
+```
+
+As `I<=D<=5I` spectrally, both `||U||_2` and `||S||_2` are <=5 (`0<S<=V<=5I`). Thus the smallest singular values of U^-1 and S^-1 are each >=1/5, yielding
+
+```
+# {singular values of G[I,J] >=1/25} >= floor(e/3).
+rank(G[I,J])=rank(D[I,J])<=e.
+```
+
+These claims hold for any partition, not just consecutive prefixes.
+
+## Lemma 2. A robust cut-rank inequality for the SUM of two Green operators
+
+Let e1,e2 be the cut edge counts in the two paths, and E=e1+e2. Put `epsilon=1/100`.
+
+- If `e1>=E/5`, the first `floor(E/15)` singular values of G1[I,J] are >=1/25 by Lemma 1. The perturbation `epsilon G2[I,J]` has norm <=epsilon=1/100, so Weyl's inequality leaves those singular values of M[I,J] at least `1/25-1/100=3/100`, greater than `1/2500`.
+- If `e1<E/5`, G2[I,J] has at least `floor(e2/3)` singular values >=1/25, and G1[I,J] has rank <=e1. A perturbation of rank r can destroy at most r singular values above a fixed threshold (by singular-value minmax). Since `e2>=E-e1`, at least `floor(E/15)` singular values of M[I,J] remain >=`epsilon/25=1/2500`.
+
+Consequently, **for every cut (I,J)**,
+
+```
+#{sigma_k(M[I,J]) >=1/2500} >= floor((e1+e2)/15).
+```
+
+The singular-value lower bound is robust: it does not rely on minuscule coefficients, exact cancellation avoidance, or large condition numbers.
+
+## Lemma 3. Every balanced grid partition cuts at least L grid edges
+
+Let S contain exactly half the L^2 grid vertices and let `a_r` be the number of its vertices in grid row r. Define p as the number of partial rows (`0<a_r<L`). Every partial row contributes >=1 horizontal boundary edge. Across successive grid rows, at least `|a_r-a_{r+1}|` vertical edges cross. Hence
+
+```
+|boundary(S)| >= p + sum_r |a_r-a_{r+1}|.
+```
+
+If p=L, this is >=L. If there are both a full row (a=L) and an empty row (a=0), the total variation term alone is >=L. Otherwise, assume without loss of generality that there is no full row; then there must be an empty row and all L^2/2 selected vertices lie in p partial rows. Thus `max(a_r)>=L^2/(2p)` and the total variation is at least `max(a_r)`. By AM-GM,
+
+```
+|boundary(S)| >= p + L^2/(2p) >= sqrt(2)*L > L.
+```
+
+The case of no empty row is symmetric by taking the complement of S. Therefore every balanced grid partition has >=L crossing grid edges.
+
+## Theorem. Robust growing cut rank in EVERY ordering
+
+All grid edges appear in one of the two path graphs, so for every set S of exactly N/2 vertices:
+
+```
+e1(S)+e2(S) >= L = sqrt(N).
+```
+
+Lemmas 1-2 imply
+
+```
+# {sigma_k(M[S,S^c]) >=1/2500} >= floor(L/15).
+```
+
+Every coordinate order has a balanced prefix S; therefore **no permutation of the coordinates can make all the balanced-cross singular values uniformly bounded-rank as N grows**. This escapes the easy hidden-order gauge that defeated the parity stage, while retaining O(N) execution and `kappa_2<=5`.
+
+## Important limitation and two-stage obstruction
+
+The rank guarantee is `Omega(sqrt(N))`, not `Omega(N)`. In the original row-major order, any prefix cut crosses <=1 first-path edge, and <= L vertical edges plus <=L-1 wrap edges of the column-major path. Hence the upper quasiseparable cut rank of M in this order is <=`2L` (and lower likewise). By the prior all-permutation two-stage half-cut theorem, two such stages separated by any monomial cannot implement `F_N` once `N/4>4L`, i.e. for square powers-of-two with L>=32 (N>=1024). This is an architecture-specific obstruction, not a universal Fourier lower bound. Inserting arbitrary shuffles between 3+ stages is not covered.
+
+## Reproduction
+
+`grid_stage.py` implements the exact O(N) executor and grid cut witnesses. `exact_audit.py` validates full vectors modulo 998244353 for L=4,6,8, and exhaustively checks all `C(16,8)=12870` balanced cuts for L=4. `numerical_audit.py` tests explicit singular values for L=4,8,16 with epsilon=1/100 and verifies the stated threshold on sampled cuts. The universal theorem is algebraic and does NOT rely on these finite checks.

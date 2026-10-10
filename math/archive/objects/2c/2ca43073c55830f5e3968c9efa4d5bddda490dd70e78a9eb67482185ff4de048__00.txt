@@ -1,0 +1,194 @@
+   1	#!/usr/bin/env python3
+   2	"""Independent checks of COMMUTING_PHASE_GATE.md; no uploaded executable imports."""
+   3	from collections import Counter
+   4	from itertools import combinations_with_replacement
+   5	import json
+   6	from pathlib import Path
+   7	import numpy as np
+   8	import sympy as sp
+   9	from apply_fused_halfcycle import FusedHalfCycle, power_of_two_by_squaring
+  10	
+  11	BASE = Path(__file__).resolve().parent
+  12	
+  13	
+  14	def exact_zero(matrix):
+  15	    return all(sp.expand(x) == 0 for x in matrix)
+  16	
+  17	
+  18	def signed_cycle(n, exact=False):
+  19	    matrix = sp.zeros(n) if exact else np.zeros((n, n), dtype=complex)
+  20	    matrix[0, n-1] = -1
+  21	    for j in range(1, n):
+  22	        matrix[j, j-1] = 1
+  23	    return matrix
+  24	
+  25	
+  26	def k_matrix(matrix):
+  27	    identity = np.eye(len(matrix), dtype=complex)
+  28	    return (2*identity-matrix) @ np.linalg.inv(identity-matrix)
+  29	
+  30	
+  31	# Symbolic checks hold for arbitrary nonzero circle-location parameter a.
+  32	z, a = sp.symbols('z a', nonzero=True)
+  33	A = (2*a-z)/(a-z)
+  34	B = (2*z-a)/(z-a)
+  35	V = (z-2*a)/(2*z-a)
+  36	assert sp.cancel(A/B-V) == 0
+  37	assert sp.cancel(B/A-1/V) == 0
+  38	assert sp.cancel(A.subs({a: 1/a, z: 1/z}, simultaneous=True)-B) == 0
+  39	assert sp.cancel(V*V.subs({a: 1/a, z: 1/z}, simultaneous=True)-1) == 0
+  40	symbolic = {'exact_rational_pairing': True, 'inverse_phase_index': True,
+  41	            'reciprocal_conjugate_allpass_identity': True}
+  42	
+  43	# Exact Gaussian-rational matrix examples, so these tests need no rounding.
+  44	exact = []
+  45	for n in (4, 8, 12):
+  46	    S = signed_cycle(n, exact=True)
+  47	    I = sp.eye(n)
+  48	    for phase in (sp.Integer(1), sp.Integer(-1), sp.I, -sp.I):
+  49	        X = phase*S
+  50	        K = (2*I-X)*(I-X).inv()
+  51	        Kstar = (2*I-X.H)*(I-X.H).inv()
+  52	        Vmat = K*Kstar.inv()
+  53	        c = sp.Rational(2**(n+1)-1, 2**n+1)
+  54	        assert exact_zero(X**n+I)
+  55	        assert exact_zero(Vmat.H*Vmat-I)
+  56	        assert exact_zero(Vmat-(X-2*I)*(2*X-I).inv())
+  57	        assert max(sum(sp.Abs(Vmat[i,j]) for i in range(n)) for j in range(n)) == c
+  58	        assert sp.expand(K.det()-sp.Rational(2**n+1, 2)) == 0
+  59	        exact.append({'N': n, 'phase': str(phase), 'exact': True})
+  60	
+  61	# Numerically exhaust commuting multisets. Order does not matter in this family.
+  62	# Each stage is (phase exponent j, orientation +1/-1, forward/inverse sign).
+  63	enumeration = []
+  64	for n in range(3, 11):
+  65	    eig = np.exp(1j*np.pi*(2*np.arange(n)+1)/n)
+  66	    stages = [(j, orientation, sign)
+  67	              for j in range(n) for orientation in (1,-1) for sign in (1,-1)]
+  68	    log_moduli = []
+  69	    circle_indices = []
+  70	    for j, orientation, sign in stages:
+  71	        phase = np.exp(2j*np.pi*j/n)
+  72	        value = phase*eig**orientation
+  73	        log_moduli.append(sign*np.log(np.abs((2-value)/(1-value))))
+  74	        circle_indices.append((-j if orientation == 1 else j) % n)
+  75	    log_moduli = np.asarray(log_moduli)
+  76	    rows = []
+  77	    max_length = min(4, (n-1)//2)
+  78	    for length in range(max_length+1):
+  79	        total = 0
+  80	        unitary = 0
+  81	        minimum_nonconstant_spread = None
+  82	        for word in combinations_with_replacement(range(4*n), length):
+  83	            total += 1
+  84	            if word:
+  85	                logs = log_moduli[list(word)].sum(axis=0)
+  86	            else:
+  87	                logs = np.zeros(n)
+  88	            spread = float(np.max(logs)-np.min(logs))
+  89	            scalar_unitary = spread < 1e-10
+  90	            balances = Counter()
+  91	            for index in word:
+  92	                balances[circle_indices[index]] += stages[index][2]
+  93	            balanced = all(count == 0 for count in balances.values())
+  94	            assert scalar_unitary == balanced, (n, word, spread, balances)
+  95	            if balanced:
+  96	                unitary += 1
+  97	                assert length % 2 == 0
+  98	                assert float(np.max(np.abs(logs))) < 1e-10
+  99	            else:
+ 100	                minimum_nonconstant_spread = (spread if minimum_nonconstant_spread is None
+ 101	                                              else min(minimum_nonconstant_spread, spread))
+ 102	        rows.append({'length': length, 'multisets': total,
+ 103	                     'scalar_unitary_and_circle_balanced': unitary,
+ 104	                     'minimum_unbalanced_log_modulus_spread': minimum_nonconstant_spread})
+ 105	    enumeration.append({'N': n, 'maximum_short_length_checked': max_length,
+ 106	                        'numerical_tolerance': 1e-10, 'rows': rows})
+ 107	
+ 108	# All phase indices, genuine non-real cycle weights, monomial dressings, and norms.
+ 109	rng = np.random.default_rng(20261009)
+ 110	phase_matrices = []
+ 111	for n in range(3, 13):
+ 112	    S = signed_cycle(n)
+ 113	    gauge = np.exp(1j*rng.uniform(-np.pi, np.pi, n))
+ 114	    M = gauge[:,None]*S*np.conjugate(gauge)[None,:]
+ 115	    I = np.eye(n)
+ 116	    cn = 2-3/(2**n+1)
+ 117	    largest_residual = 0.0
+ 118	    for j in range(n):
+ 119	        phase = np.exp(2j*np.pi*j/n)
+ 120	        X = phase*M
+ 121	        K = k_matrix(X)
+ 122	        reverse = k_matrix(np.conjugate(phase)*M.conj().T)
+ 123	        pair = K @ np.linalg.inv(reverse)
+ 124	        direct = (X-2*I) @ np.linalg.inv(2*X-I)
+ 125	        residuals = [np.max(np.abs(pair-direct)),
+ 126	                     np.max(np.abs(pair.conj().T@pair-I)),
+ 127	                     abs(np.linalg.norm(pair, 1)-cn),
+ 128	                     abs(np.linalg.norm(np.linalg.inv(pair), 1)-cn)]
+ 129	        largest_residual = max(largest_residual, *(float(x) for x in residuals))
+ 130	        assert largest_residual < 1e-10
+ 131	    phase_matrices.append({'N': n, 'phases_checked': n,
+ 132	                           'largest_residual': largest_residual})
+ 133	
+ 134	# Sharp boundary t=N/2: all-forward scalar-unitary words, not circle-balanced.
+ 135	boundary = []
+ 136	for n in (2, 4, 6, 8, 10, 12, 16):
+ 137	    m = n//2
+ 138	    S = signed_cycle(n)
+ 139	    I = np.eye(n)
+ 140	    product = I.astype(complex)
+ 141	    for j in range(m):
+ 142	        phase = np.exp(2j*np.pi*j/m)
+ 143	        product = product @ k_matrix(phase*S)
+ 144	    formula = ((2**m+1)*I+(2**m-1)*np.linalg.matrix_power(S,m))/2
+ 145	    scale2 = (4**m+1)/2
+ 146	    formula_error = float(np.max(np.abs(product-formula))/max(1,np.max(np.abs(formula))))
+ 147	    unitary_error = float(np.max(np.abs(product.conj().T@product/scale2-I)))
+ 148	    assert formula_error < 1e-10 and unitary_error < 1e-10
+ 149	    # Exact matrix identity for the closed form independently confirms the scale.
+ 150	    SX = signed_cycle(n, exact=True)**m
+ 151	    EI = sp.eye(n)
+ 152	    ER = ((2**m+1)*EI+(2**m-1)*SX)/2
+ 153	    assert exact_zero(ER.H*ER-sp.Rational(4**m+1,2)*EI)
+ 154	    polyP = 2**m-z**m
+ 155	    polyQ = 1-z**m
+ 156	    H = sp.expand(polyP*(2**m*z**m-1)-sp.Rational(4**m+1,2)*polyQ*(z**m-1))
+ 157	    assert sp.expand(H-sp.Rational((2**m-1)**2,2)*(z**n+1)) == 0
+ 158	    boundary.append({'N': n, 't': m, 'exact_squared_modulus': str(sp.Rational(4**m+1,2)),
+ 159	                     'exact_closed_form_identity': True,
+ 160	                     'product_relative_error': formula_error,
+ 161	                     'normalized_gram_residual': unitary_error})
+ 162	
+ 163	# Exact weighted-cycle tests for the reusable fused evaluator.
+ 164	fused = []
+ 165	for n in (2, 4, 6, 8, 12, 16):
+ 166	    order = list(range(n))
+ 167	    rng.shuffle(order)
+ 168	    weights = [sp.Integer(1)] + [sp.I**int(rng.integers(0, 4)) for _ in range(n-1)]
+ 169	    weights[0] = -1/sp.prod(weights[1:])
+ 170	    M = sp.zeros(n)
+ 171	    for j in range(n):
+ 172	        M[order[j], order[j-1]] = weights[j]
+ 173	    m = n//2
+ 174	    formula = ((2**m+1)*sp.eye(n)+(2**m-1)*M**m)/2
+ 175	    evaluator = FusedHalfCycle(n, order, weights)
+ 176	    x = [sp.Rational(j-3,j+1)+sp.I*sp.Rational(2-j,j+2) for j in range(n)]
+ 177	    assert exact_zero(sp.Matrix(evaluator.apply(x))-formula*sp.Matrix(x))
+ 178	    assert power_of_two_by_squaring(m) == 2**m
+ 179	    fused.append({'N': n, 'exact_weighted_evaluation': True})
+ 180	
+ 181	results = {
+ 182	    'status': 'PASS',
+ 183	    'scope': 'Finite checks corroborate; COMMUTING_PHASE_GATE.md proves the all-N claims.',
+ 184	    'symbolic_checks': symbolic,
+ 185	    'exact_phase_matrix_checks': exact,
+ 186	    'exhaustive_short_multisets_numerical': enumeration,
+ 187	    'total_multisets_checked': sum(row['multisets'] for item in enumeration for row in item['rows']),
+ 188	    'phase_rotated_matrix_checks_numerical': phase_matrices,
+ 189	    'strict_cutoff_examples': boundary,
+ 190	    'fused_halfcycle_evaluator_checks': fused,
+ 191	    'provenance': 'Independently authored; imports no uploaded executable source.'
+ 192	}
+ 193	(BASE/'commuting_phase_results.json').write_text(json.dumps(results, indent=2)+'\n')
+ 194	print(json.dumps(results, indent=2))

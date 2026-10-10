@@ -1,0 +1,42 @@
+"""Exact N16 rank-2 Jacobian and diagonal curvature scan.
+Compare random shuffle with the structured lifted N8 shuffle. This is a
+pointwise test only and has no FFT lower-bound interpretation.
+"""
+import json,random,sys
+from pathlib import Path
+import numpy as np
+OLD=(Path(__file__).resolve().parent/'prior_checkpoint' if (Path(__file__).resolve().parent/'prior_checkpoint').exists() else Path(__file__).resolve().parents[1]/'fft_nonlinear_compatibility_2026-10-09')
+sys.path.insert(0,str(OLD))
+import jacobian_gate as j
+N=16;R=2;P=12289
+P8=[7,0,6,3,4,1,2,5]
+
+def result(shuffle,seed=1011,prime=P):
+    j.MOD=prime
+    M,J,a,b=j.basis(N,R,shuffle,seed)
+    rank=j.rank_mod(J,prime)
+    cols=N*(4*R+1)
+    E=np.zeros(N*N,dtype=np.int64)
+    ranks={}
+    pairings=[]
+    for bi in range(N):
+        ai=shuffle[bi]
+        E[:]=0;E[bi*N+ai]=1
+        # Test if this concrete single-output perturbation is transverse to J.
+        # Sequential direct ranks are slower but independent of conormal routine.
+        rk=j.rank_mod(np.column_stack((J,E)),prime)
+        ranks[bi]=rk
+        pairings.append({'b':bi,'a':ai,'augmented_rank':rk})
+    return {'n':N,'r':R,'prime':prime,'seed':seed,'perm':shuffle,'jacobian_rank':rank,
+        'theoretical_generic_chart_dim_upper':N+4*R*(2*N-2*R-1),
+        'ambient':N*N,'number_coefficients':J.shape[1],
+        'quadratic_diagonal_directions_tested':N,
+        'directions_transverse':sum(1 for x in ranks.values() if x>rank),
+        'all_augmented_ranks':pairings}
+
+def run():
+    sh=list(range(N));random.Random(919+N).shuffle(sh)
+    lift=[2*j+k for j in P8 for k in range(2)]
+    rows=[result(sh),result(lift)]
+    return rows
+if __name__=='__main__':print(json.dumps(run(),indent=2))

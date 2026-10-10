@@ -1,0 +1,68 @@
+   1 """Adversarial toy demo for bounded-printer conditioned radix selection.
+   2 
+   3 This is NOT a proof of the Fourier theorem. It checks the selector logic under
+   4 deliberately terrible print times and local condition bounds, using k=log2(N)
+   5 so astronomical N is represented only by the integer k.
+   6 """
+   7 from dataclasses import dataclass
+   8 import json
+   9 from pathlib import Path
+  10 
+  11 @dataclass(frozen=True)
+  12 class Record:
+  13     idx:int; b:int; print_steps:int; khat:int; rho:float
+  14 
+  15 
+  16 def make_records(count=6):
+  17     out=[]
+  18     for t in range(1,count+1):
+  19         out.append(Record(
+  20             idx=t,
+  21             b=t+1,
+  22             print_steps=2**(t*t+2),
+  23             khat=2**(2**t),
+  24             rho=1/(t+1),
+  25         ))
+  26     return out
+  27 
+  28 
+  29 def budget_R_from_k(k:int)->int:
+  30     # R(N)=floor(log2 log2 N) when k=log2 N.
+  31     return max(2,k.bit_length()-1)
+  32 
+  33 
+  34 def select(records,k:int):
+  35     R=budget_R_from_k(k)
+  36     eligible=[]
+  37     for r in records:
+  38         m=1<<r.b
+  39         if r.print_steps>k: continue
+  40         if m*m>k: continue
+  41         if r.khat>R: continue
+  42         eligible.append(r)
+  43     return (eligible[-1] if eligible else None),R
+  44 
+  45 
+  46 def main():
+  47     records=make_records()
+  48     # k = 2^p, hence R ~= p.  The last probe is big enough to admit record 4
+  49     # despite Khat_4 = 2^16 = 65536.
+  50     p_values=[20,80,300,700,3000,70000]
+  51     rows=[]
+  52     for p in p_values:
+  53         k=1<<p
+  54         rec,R=select(records,k)
+  55         rows.append({
+  56             'p_log2_k':p,
+  57             'k_bit_length':k.bit_length(),
+  58             'condition_budget_R':R,
+  59             'selected_record':None if rec is None else rec.idx,
+  60             'selected_b':None if rec is None else rec.b,
+  61             'selected_rho':None if rec is None else rec.rho,
+  62         })
+  63     path=Path(__file__).with_name('bounded_printer_selector_demo.json')
+  64     path.write_text(json.dumps(rows,indent=2))
+  65     for row in rows: print(row)
+  66     print('wrote',path)
+  67 
+  68 if __name__=='__main__': main()

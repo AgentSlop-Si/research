@@ -1,0 +1,67 @@
+   1	#!/usr/bin/env python3
+   2	"""Exact nonsingularity guards for both frozen N64 inner pullbacks."""
+   3	import os
+   4	os.environ['OPENBLAS_NUM_THREADS']='1'
+   5	from pathlib import Path
+   6	from fractions import Fraction as F
+   7	from math import lcm
+   8	import json,sys
+   9	import numpy as np
+  10	import scipy.linalg as la
+  11	HERE=Path(__file__).resolve().parent;ROOT=HERE.parent
+  12	sys.path.insert(0,str(ROOT/'seed_compatibility_gate'))
+  13	from check_n16_outer_gate import LABELS
+  14	from check_lift_defects import cover_and_splice,project
+  15	from check_hierarchical_lift import lift
+  16	def cm(a,b):
+  17	 ar,ai=a;br,bi=b
+  18	 return ar@br-ai@bi,ar@bi+ai@br
+  19	def norm(a,d):return F(max(int(sum(abs(r)+abs(i) for r,i in zip(rr,ii))) for rr,ii in zip(*a)),d)
+  20	def show(x):return {'numerator':str(x.numerator),'denominator':str(x.denominator),'decimal':float(x)}
+  21	def source(name):
+  22	 p=HERE/name
+  23	 return p if p.exists() else ROOT/'n16_existence_milestone'/name
+  24	def main():
+  25	 data=json.loads(source('DYADIC_AFFINE_CHART.json').read_text())
+  26	 a=tuple(np.asarray(data['center_'+part],dtype=object) for part in ('real','imag'))
+  27	 v=tuple(np.asarray(data['directions_'+part],dtype=object) for part in ('real','imag'))
+  28	 scale=1<<data['dyadic_exponent'];denoms=[(j+2)**64-1 for j in range(8)];L=lcm(*denoms);D=scale*L
+  29	 gs=np.zeros((8,64,64),dtype=object)
+  30	 for j,label in enumerate(LABELS):
+  31	  t,p,_=cover_and_splice(4,4,label);_,pl,_=lift(t,p,4,4,label);d=j+2
+  32	  for col in range(64):
+  33	   row=col
+  34	   for power in range(64):gs[j,row,col]=d**(64-power)*(L//denoms[j]);row=pl[row]
+  35	 rho=F(2,10**12);p=80;RS=1<<p;results=[];inputs=[]
+  36	 seedcert=json.loads(source('EXACT_CONTRACTION_CERTIFICATE.json').read_text())
+  37	 def readfrac(x):return F(int(x['numerator']),int(x['denominator']))
+  38	 assert readfrac(seedcert['residual_upper_bound'])/(1-readfrac(seedcert['contraction_factor_bound']))<rho
+  39	 saved=None if '--propose' in sys.argv else json.loads((HERE/'FIXED_INNER_PRECONDITIONERS.json').read_text())
+  40	 for ell in range(2):
+  41	  h=tuple(np.empty((64,64),dtype=object) for _ in range(2));largest=0
+  42	  for row in range(64):
+  43	   small=project(row,4,4)
+  44	   for part in range(2):h[part][row]=a[part][ell,small]@gs[:,row,:]
+  45	   dv=tuple(gs[:,row,:].T@v[part][ell,small] for part in range(2))
+  46	   largest=max(largest,int(sum(abs(r)+abs(i) for r,i in zip(dv[0].ravel(),dv[1].ravel()))))
+  47	  derivative=F(largest,D)
+  48	  if saved is None:
+  49	   floating=np.asarray([[complex(float(F(int(r),D)),float(F(int(i),D))) for r,i in zip(rr,ii)] for rr,ii in zip(*h)])
+  50	   approx=la.inv(floating)
+  51	   R=tuple(np.asarray([[int(round(float(x)*RS)) for x in row] for row in part],dtype=object) for part in (approx.real,approx.imag))
+  52	  else:
+  53	   assert saved[ell]['layer']==ell and saved[ell]['denominator_exponent']==p
+  54	   R=tuple(np.asarray(saved[ell][part],dtype=object) for part in ('real','imag'))
+  55	  product=cm(R,h)
+  56	  for i in range(64):product[0][i,i]-=RS*D
+  57	  defect=norm(product,RS*D);inverse_bound=norm(R,RS)
+  58	  total=defect+inverse_bound*derivative*rho
+  59	  assert total<1
+  60	  inputs.append({'layer':ell,'denominator_exponent':p,'real':R[0].tolist(),'imag':R[1].tolist()})
+  61	  results.append({'layer':ell,'center_inverse_defect':show(defect),'preconditioner_norm':show(inverse_bound),
+  62	                  'seed_direction_bound':show(derivative),'root_radius':show(rho),'total_nonsingularity_bound':show(total)})
+  63	 (HERE/'FIXED_INNER_PRECONDITIONERS.json').write_text(json.dumps(inputs,separators=(',',':'))+'\n')
+  64	 (HERE/'FIXED_INNER_GUARDS.json').write_text(json.dumps({'status':'PASS','results':results,
+  65	      'scope':'Both literal N64 inner pullbacks are nonsingular at the accepted N16 root; no one-inner coefficient solution is asserted.'},indent=2)+'\n')
+  66	 print(json.dumps({'status':'PASS','bounds':[r['total_nonsingularity_bound']['decimal'] for r in results]}))
+  67	if __name__=='__main__':main()

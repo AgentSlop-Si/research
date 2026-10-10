@@ -1,0 +1,49 @@
+1: """Stratify approximate timing results by actual information retained."""
+2: import json
+3: from pathlib import Path
+4: 
+5: 
+6: def group_summary(rows):
+7:     if not rows:return {'cases':0}
+8:     return {'cases':len(rows),
+9:             'native_median_wins':sum(x['ratio_to_faster_native_baseline']<1 for x in rows),
+10:             'numpy_median_wins':sum(x['ratio_to_numpy']<1 for x in rows),
+11:             'native_nonoverlapping_middle_half_wins':sum(x['native_iqr_separated_win'] for x in rows),
+12:             'numpy_nonoverlapping_middle_half_wins':sum(x['numpy_iqr_separated_win'] for x in rows),
+13:             'native_ratio_range':[min(x['ratio_to_faster_native_baseline'] for x in rows),
+14:                                   max(x['ratio_to_faster_native_baseline'] for x in rows)],
+15:             'numpy_ratio_range':[min(x['ratio_to_numpy'] for x in rows),
+16:                                  max(x['ratio_to_numpy'] for x in rows)],
+17:             'relative_l2_error_range':[min(x['relative_l2_error'] for x in rows),
+18:                                        max(x['relative_l2_error'] for x in rows)]}
+19: 
+20: 
+21: def main():
+22:     root=Path(__file__).resolve().parent
+23:     report=json.loads((root/'results.json').read_text())
+24:     rows=report['results']
+25:     for row in rows:
+26:         same=[x for x in rows if x['n']==row['n'] and x['family']==row['family']]
+27:         native=min((x for x in same if x['method'] in ('native_dit','native_dif')),
+28:                    key=lambda x:x['median_seconds'])
+29:         numpy=next(x for x in same if x['method']=='numpy')
+30:         row['native_iqr_separated_win']=row['q75_seconds']<native['q25_seconds']
+31:         row['numpy_iqr_separated_win']=row['q75_seconds']<numpy['q25_seconds']
+32:     approx=[r for r in rows if r['method'].startswith('epsilon_')]
+33:     retained=[r for r in approx if not r['all_zero_output']]
+34:     accurate=[r for r in retained if r['relative_l2_error']<=1e-10]
+35:     zero=[r for r in approx if r['all_zero_output']]
+36:     zero_only=[r for r in rows if r['method']=='zero_pruned']
+37:     result={'all_approximate':group_summary(approx),
+38:             'nonzero_outputs':group_summary(retained),
+39:             'nonzero_and_relative_l2_error_at_most_1e_minus_10':group_summary(accurate),
+40:             'all_zero_outputs':group_summary(zero),
+41:             'zero_only_mode':group_summary(zero_only),
+42:             'coherent_high_fidelity_cases':accurate,
+43:             'notes':['Wins count median timings, not confidence statements.',
+44:                      'All-zero responses can satisfy the global maximum-error condition while losing all energy.']}
+45:     (root/'summary.json').write_text(json.dumps(result,indent=2)+'\n')
+46:     print(json.dumps({k:v for k,v in result.items() if k!='coherent_high_fidelity_cases'},indent=2))
+47: 
+48: 
+49: if __name__=='__main__':main()

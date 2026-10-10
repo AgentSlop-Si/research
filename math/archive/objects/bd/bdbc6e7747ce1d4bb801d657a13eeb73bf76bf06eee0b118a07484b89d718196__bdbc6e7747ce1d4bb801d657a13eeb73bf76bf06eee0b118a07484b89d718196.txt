@@ -1,0 +1,101 @@
+"""Fresh independent Phase 16 regression tests."""
+import math
+import unittest
+import numpy as np
+from entropy_gate_audit import Audit, entropy_rows
+from component_entropy import audit as component_audit, make_fold_R
+from green_givens_compiler import validate as validate_green, path_cayley_matrix, lower_rank_one_audit
+from haar_green_givens import validate as validate_stage, haar_compiled, haar_gate_schedule, HaarEscapeMixer
+from haar_entropy import audit as validate_haar_entropy
+
+
+class EntropyBudgetTests(unittest.TestCase):
+    def test_full_FFT_gate_by_gate_saturation(self):
+        for n,b in ((16,8),(32,8),(64,8),(128,16),(256,16),(256,32)):
+            with self.subTest(n=n,b=b):
+                a=Audit(n,b,track_gates=True)
+                report=a.run()
+                self.assertEqual(report['all_gates'],n*(n.bit_length()-1)//2)
+                self.assertTrue(all(abs(v-2)<1e-8 for v in a.gains))
+
+    def test_component_entropy_optimal(self):
+        for n,b in ((16,8),(32,8),(64,8),(128,16),(256,16),(256,32)):
+            with self.subTest(n=n,b=b):
+                report=component_audit(n,b)
+                self.assertAlmostEqual(report['sum_factor_entropies'],n*math.log2(n))
+                self.assertEqual(report['normalized_R_pairwise_gate_optimum'],(n-b)//2)
+
+    def test_fold_R_flat_row_support_and_unitarity(self):
+        for n,b in ((16,8),(64,8),(128,16)):
+            with self.subTest(n=n,b=b):
+                R,support=make_fold_R(n,b)
+                self.assertLess(np.max(np.abs(R@R.conj().T-np.eye(n))),1e-10)
+                for row,g in zip(R,support):
+                    nonzero=np.abs(row)[np.abs(row)>1e-12]
+                    self.assertEqual(len(nonzero),g)
+                    self.assertLess(np.max(abs(nonzero-1/math.sqrt(g))),1e-10)
+
+    def test_pair_gate_entropy_increase_at_most_two(self):
+        rng=np.random.default_rng(515)
+        for n in (8,16,32):
+            X=np.eye(n,dtype=complex)
+            for _ in range(2*n):
+                i,j=rng.choice(n,size=2,replace=False)
+                theta=float(rng.uniform(-math.pi,math.pi))
+                ang=float(rng.uniform(-math.pi,math.pi))
+                G=np.array([[math.cos(theta),math.sin(theta)*np.exp(1j*ang)],
+                            [-math.sin(theta)*np.exp(-1j*ang),math.cos(theta)]])
+                before=entropy_rows(X[[i,j]])
+                X[[i,j]]=G@X[[i,j]]
+                delta=entropy_rows(X[[i,j]])-before
+                self.assertLessEqual(delta,2+1e-10)
+
+
+class GreenCompilationTests(unittest.TestCase):
+    def test_path_green_strict_lower_semiseparable(self):
+        for n in (8,16,32,64):
+            with self.subTest(n=n):
+                C=path_cayley_matrix(n,1/2)
+                self.assertLess(lower_rank_one_audit(C),1e-10)
+
+    def test_path_Givens_two_n_minus_three(self):
+        for coupling in (1/32,1/2,2):
+            for n in (4,8,16,32,64):
+                with self.subTest(n=n,coupling=coupling):
+                    record=validate_green(n,coupling)
+                    self.assertEqual(record['givens'],2*n-3)
+                    self.assertLess(record['reconstruction_error'],1e-10)
+
+    def test_Haar_synthesis_Givens(self):
+        rng=np.random.default_rng(525)
+        for m in (2,4,8,16,32,64,128):
+            with self.subTest(m=m):
+                gates,_=haar_gate_schedule(m)
+                self.assertEqual(len(gates),m-1)
+                x=rng.normal(size=m)+1j*rng.normal(size=m)
+                self.assertLess(np.max(abs(haar_compiled(haar_compiled(x),True)-x)),1e-12)
+
+    def test_full_phase13_Haar_Green_compiler(self):
+        for n in (16,32,64,128):
+            with self.subTest(n=n):
+                record=validate_stage(n)
+                self.assertEqual(record['pair_unitary_gates_entire_Haar_Green_stage'],11*n//2-8)
+                self.assertLess(record['whole_stage_error'],1e-10)
+
+    def test_Haar_entropy_closed_form(self):
+        for n in (16,32,64,128,256):
+            with self.subTest(n=n):
+                record=validate_haar_entropy(n,include_stage=False)
+                self.assertAlmostEqual(record['haar_entropy_bits'],n-2)
+                self.assertAlmostEqual(record['V_entropy_bits'],record['V_entropy_predicted'])
+
+    def test_entropic_stage_lower_bound_arbitrary_strength(self):
+        for n in (16,32,64,128,2**20,2**40):
+            gate_cap=11*n//2-8
+            lower=n*math.log2(n)/(2*gate_cap)
+            self.assertAlmostEqual(lower,n*math.log2(n)/(11*n-16))
+            self.assertGreaterEqual(lower,math.log2(n)/11)
+
+
+if __name__=='__main__':
+    unittest.main()

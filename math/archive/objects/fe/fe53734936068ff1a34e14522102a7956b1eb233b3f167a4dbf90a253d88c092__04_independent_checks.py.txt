@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Independent standard-library checks. No uploaded modules are imported.
+
+Finite-field checks are regression evidence. The universal endpoint lower
+bound is proved over C in ENDPOINT_AUDIT.md, not inferred from these tests.
+"""
+import hashlib
+import json
+import random
+from fractions import Fraction
+from itertools import combinations
+from pathlib import Path
+
+
+def rank(rows, prime):
+    """Insert rows into an echelon basis; exact arithmetic, no array package."""
+    pivots = {}
+    for original in rows:
+        row = [entry % prime for entry in original]
+        for index in range(len(row)):
+            value = row[index]
+            if not value:
+                continue
+            if index in pivots:
+                basis = pivots[index]
+                row = [(x - value * y) % prime for x, y in zip(row, basis)]
+            else:
+                inverse = pow(value, -1, prime)
+                pivots[index] = [(x * inverse) % prime for x in row]
+                break
+    return len(pivots)
+
+
+def root_of_unity(n, prime):
+    assert (prime - 1) % n == 0
+    for candidate in range(2, prime):
+        w = pow(candidate, (prime - 1) // n, prime)
+        if pow(w, n, prime) == 1 and (n == 1 or pow(w, n // 2, prime) != 1):
+            return w
+    raise AssertionError('primitive root missing')
+
+
+def fourier(n, prime):
+    w = root_of_unity(n, prime)
+    powers = [pow(w, j, prime) for j in range(n)]
+    return [[powers[(j * k) % n] for j in range(n)] for k in range(n)]
+
+
+def subrank(matrix, rows, columns, prime):
+    return rank([[matrix[i][j] for j in columns] for i in rows], prime)
+
+
+def bitreverse_order(n):
+    order = [0]
+    while len(order) < n:
+        order = [2 * x for x in order] + [2 * x + 1 for x in order]
+    return order
+
+
+def predicted_rank(n, k):
+    """Evaluate the proved recurrence iteratively."""
+    result = 0
+    while k and k < n:
+        if k > n // 2:
+            k = n - k
+        if n == 2:
+            return result + 1
+        result += (k + 1) // 2
+        n, k = n // 4, k // 2
+    return result
+
+
+def ceiling(numerator, denominator):
+    return (numerator + denominator - 1) // denominator
+
+
+def universal_complex_cut_bound(n, k):
+    product = k * (n - k)
+    if k % 2:
+        return ceiling(product * (n + 1), n * n)
+    return ceiling(product, n)
+
+
+def sum_formula(n):
+    m = n.bit_length() - 1
+    return (4 * n * n + 3 * n * m + (n if m % 2 else -4 * n)) // 24
+
+
+def run():
+    rng = random.Random(184820261009)
+    primes = (257, 12289, 65537)
+    counts = dict(direct_cut_ranks=0, exhaustive_n8_critical_minors=0,
+                  random_critical_minors=0, coset_decompositions=0,
+                  consecutive_coset_ranks=0, moment_algebra_cases=0)
+    field_minima = {}
+    for prime in primes:
+        for n in (4, 8, 16, 32, 64, 128):
+            matrix = fourier(n, prime)
+            order = bitreverse_order(n)
+            selected = range(1, n) if n <= 64 else sorted(set(
+                [1, 2, 3, 5, 7, 15, 16, 31, 32, 47, 61, 62, 63, 64,
+                 65, 66, 67, 81, 95, 96, 111, 112, 121, 125, 126, 127]))
+            for k in selected:
+                actual = subrank(matrix, order[:k], order[k:], prime)
+                assert actual == predicted_rank(n, k), (prime, n, k, actual)
+                # Symmetry makes the lower-left block its exact transpose.
+                assert actual >= universal_complex_cut_bound(n, k)
+                counts['direct_cut_ranks'] += 1
+            if n in (16, 32, 64, 128):
+                critical = n // 2 - 1
+                minimum = n
+                for _ in range(24):
+                    rows = rng.sample(range(n), critical)
+                    columns = rng.sample(range(n), n - critical)
+                    actual = subrank(matrix, rows, columns, prime)
+                    minimum = min(minimum, actual)
+                    assert actual >= n // 4 + 1
+                    counts['random_critical_minors'] += 1
+                field_minima[f'{prime}:{n}'] = minimum
+            if n <= 64:
+                for q in (2, 4, 8):
+                    if q > n:
+                        continue
+                    length = n // q
+                    smaller = fourier(q, prime)
+                    for _ in range(8):
+                        bases = sorted(rng.sample(range(q), rng.randrange(q + 1)))
+                        rows = sorted(rng.sample(range(n), rng.randrange(n + 1)))
+                        columns = [b + q * j for b in bases for j in range(length)]
+                        actual = subrank(matrix, rows, columns, prime)
+                        expected = sum(subrank(smaller,
+                            [(k - residue) // length for k in rows if k % length == residue],
+                            bases, prime) for residue in range(length))
+                        assert actual == expected
+                        counts['coset_decompositions'] += 1
+                        base = rng.randrange(q)
+                        count = rng.randrange(length + 1)
+                        actual = subrank(matrix, rows, [base + q * j for j in range(count)], prime)
+                        expected = min(count, len({k % length for k in rows}))
+                        assert actual == expected
+                        counts['consecutive_coset_ranks'] += 1
+        matrix = fourier(8, prime)
+        distribution = {}
+        for rows in combinations(range(8), 3):
+            for columns in combinations(range(8), 5):
+                actual = subrank(matrix, rows, columns, prime)
+                assert actual == 3
+                distribution[str(actual)] = distribution.get(str(actual), 0) + 1
+                counts['exhaustive_n8_critical_minors'] += 1
+        field_minima[f'{prime}:8_exhaustive'] = distribution
+
+    profiles = {}
+    for m in range(1, 16):
+        n = 1 << m
+        profile = [predicted_rank(n, k) for k in range(1, n)]
+        lower = [universal_complex_cut_bound(n, k) for k in range(1, n)]
+        assert all(a >= b for a, b in zip(profile, lower))
+        assert max(profile) == (1 if n < 8 else n // 4 + 1)
+        assert sum(profile) == sum_formula(n)
+        assert 6 * sum(profile) >= n * n - 1
+        if n >= 4:
+            assert sum(profile) == n * n // 8 + n // 4 + 4 * sum_formula(n // 4)
+        if n in (4, 8, 16):
+            assert profile == lower
+        profiles[str(n)] = {'bitrev_max': max(profile), 'central': predicted_rank(n, n // 2),
+                            'bitrev_sum': sum(profile), 'integer_moment_sum_lower_bound': sum(lower)}
+        if n <= 256:
+            profiles[str(n)]['bitrev_profile'] = profile
+            profiles[str(n)]['universal_complex_profile_lower_bound'] = lower
+        if n >= 8:
+            quarter = n // 4
+            upper = Fraction(quarter) + Fraction(3, 4) + Fraction(1, 4 * quarter) + Fraction(1, 16 * quarter * quarter)
+            assert upper < quarter + 1
+        for k in range(1, n, 2):
+            h = n - k
+            trace_square_upper = Fraction((h - 1) * n * h + h * h, n * n)
+            bound = Fraction(h) - trace_square_upper
+            assert bound == Fraction(k * (n - k) * (n + 1), n * n)
+            counts['moment_algebra_cases'] += 1
+
+    # Independent negative control against the forbidden full-Vandermonde substitution.
+    endpoint_order = [0, 8, 4, 12, 1, 9, 5, 13, 2, 10, 6, 14, 3, 11, 7, 15]
+    for prime in primes:
+        assert subrank(fourier(16, prime), endpoint_order[3:], endpoint_order[:9], prime) == 8
+
+    return {'status': 'all independent checks passed', 'primes': primes, 'counts': counts,
+            'critical_minor_observations': field_minima, 'profiles': profiles,
+            'source_programs_executed_or_imported': False,
+            'scope': 'Complex-field theorems proved analytically; finite fields are controls only.',
+            'dependencies': 'Python 3.10+ standard library only'}
+
+
+if __name__ == '__main__':
+    result = run()
+    target = Path(__file__).with_name('CHECK_RESULTS.json')
+    target.write_text(json.dumps(result, indent=2) + '\n')
+    print(json.dumps({'status': result['status'], 'counts': result['counts'],
+                      'profiles': {n: {k: v for k, v in row.items() if 'profile' not in k}
+                                   for n, row in result['profiles'].items()},
+                      'output': target.name}, indent=2))

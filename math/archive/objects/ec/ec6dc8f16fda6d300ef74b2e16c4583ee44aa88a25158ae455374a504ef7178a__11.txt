@@ -1,0 +1,130 @@
+   1 #!/usr/bin/env python3
+   2 """Independent reconstruction of the stated Phase33 formulas and instances."""
+   3 import json
+   4 from pathlib import Path
+   5 from random import Random
+   6 from exact_utils import Field,root,prime_by_trial_division
+   7 
+   8 
+   9 def specified_cycles(n,q,seed):
+  10     # Reconstruct the documented seeded input instance, not uploaded code.
+  11     rng=Random(seed+17*n);orders=[];successors=[]
+  12     while len(orders)<q:
+  13         order=list(range(n));rng.shuffle(order)
+  14         successor=[0]*n
+  15         for i,v in enumerate(order):successor[v]=order[(i+1)%n]
+  16         slope=(successor[1]-successor[0])%n
+  17         affine=all(successor[x]==(slope*x+successor[0])%n for x in range(n))
+  18         if affine or successor in successors:continue
+  19         if any(all(successor[t[x]]==t[successor[x]] for x in range(n)) for t in successors):continue
+  20         orders.append(order);successors.append(successor)
+  21     return orders
+  22 
+  23 
+  24 def entries(order,alpha,columns,p):
+  25     n=len(order);pos=[0]*n
+  26     for i,v in enumerate(order):pos[v]=i
+  27     assert alpha%p and (1-pow(alpha,n,p))%p
+  28     den=pow((1-pow(alpha,n,p))%p,-1,p)
+  29     powers=[pow(alpha,i,p)*den%p for i in range(n)]
+  30     return [[powers[(pos[i]-pos[j])%n] for j in columns] for i in range(n)]
+  31 
+  32 
+  33 def two_term():
+  34     expected={998244353:[719251419,637742998,945626350,12457656,573672172,619466537,201128490,631340830],
+  35               2013265921:[1918301059,179591294,334935703,508324165,280352103,1724252133,812437798,1572229769]}
+  36     out=[]
+  37     for nindex,n in enumerate([8,16,32,64,128,256,512,1024]):
+  38         cycles=specified_cycles(n,2,330033)
+  39         for p,g in [(998244353,3),(2013265921,31)]:
+  40             assert prime_by_trial_division(p)
+  41             field=Field(p);w=root(n,p,g)
+  42             a,b=[entries(c,alpha,[0,1,2],p) for c,alpha in zip(cycles,[3,5])]
+  43             k=[]
+  44             for i,((A,C,E),(B,D,H)) in enumerate(zip(a,b)):
+  45                 f1,f2=pow(w,-i,p),pow(w,-2*i,p)
+  46                 k.append([C*H%p,-D*E%p,-f2*B*C%p,f2*A*D%p,f1*B*E%p,-f1*A*H%p])
+  47                 # Direct 3x3 expansion control with unrelated nonzero gauges.
+  48                 aa,bb,cc,dd=2,7,11,13
+  49                 direct=field.det([[A,B,1],[aa*C%p,bb*D%p,f1],[cc*E%p,dd*H%p,f2]])
+  50                 compound=[aa*dd,bb*cc,aa,bb,cc,dd]
+  51                 assert direct==sum(x*y for x,y in zip(k[-1],compound))%p
+  52             det=field.det(k[:6]);assert det==expected[p][nindex]!=0
+  53             out.append({'N':n,'prime':p,'rows':list(range(6)),'minor':k[:6],'determinant':det})
+  54     return out
+  55 
+  56 
+  57 def five_term(n):
+  58     p=998244353;field=Field(p);w=root(n,p,3)
+  59     cycles=specified_cycles(n,5,320031)
+  60     e=[entries(c,7+2*s,list(range(6)),p) for s,c in enumerate(cycles)]
+  61     left=[];jacobian=[];residual=[];last=[]
+  62     for i in range(n):
+  63         b=[[e[s][i][j] for s in range(5)] for j in range(5)]
+  64         bi=field.inverse(b)
+  65         rhs=[pow(w,-i*j,p) for j in range(5)]
+  66         l=[sum(bi[s][j]*rhs[j] for j in range(5))%p for s in range(5)]
+  67         assert all(l)
+  68         assert all(sum(b[j][s]*l[s] for s in range(5))%p==rhs[j] for j in range(5))
+  69         h=[e[s][i][5] for s in range(5)]
+  70         z=[sum(h[s]*bi[s][ell] for s in range(5))%p for ell in range(5)]
+  71         row=[-z[ell]*b[ell][s]*l[s]%p for ell in range(1,5) for s in range(5)]
+  72         row += [h[s]*l[s]%p for s in range(5)]
+  73         jacobian.append(row);left.append(l);last.append([h[s]*l[s]%p for s in range(5)])
+  74         residual.append((pow(w,-5*i,p)-sum(h[s]*l[s] for s in range(5)))%p)
+  75     right=field.solve(last[:5],[pow(w,-5*i,p) for i in range(5)])
+  76     assert all(right)
+  77     mismatch=[i for i in range(n) if (sum(x*y for x,y in zip(last[i],right))-pow(w,-5*i,p))%p]
+  78     assert mismatch==list(range(5,n))
+  79     result={'N':n,'whole_matched_columns':5,'extra_exact_rows':list(range(5)),
+  80             'extra_mismatches':len(mismatch),'right_extra_gauges':right,'all_left_gauges_nonzero':True}
+  81     if n>=32:
+  82         rank=field.rank(jacobian);aug=field.rank([r+[v] for r,v in zip(jacobian,residual)])
+  83         assert rank==25 and aug==26
+  84         result.update({'jacobian_rank':rank,'augmented_rank':aug,'base_extra_column_mismatches':sum(bool(v) for v in residual)})
+  85     return result
+  86 
+  87 
+  88 def separated_groups(orders):
+  89     n=len(orders[0]);m=n//2
+  90     left=set(orders[0][:m]);right=set(orders[0][-m:])
+  91     for order in orders[1:]:
+  92         union=[v for v in order if v in left or v in right]
+  93         lower=set(union[:m]);upper=set(union[m:])
+  94         candidates=[(left&lower,right&upper),(left&upper,right&lower)]
+  95         a,b=max(candidates,key=lambda pair:min(len(pair[0]),len(pair[1])))
+  96         m//=2;left=set(sorted(a)[:m]);right=set(sorted(b)[:m])
+  97     return sorted(left),sorted(right)
+  98 
+  99 
+ 100 def separated_controls():
+ 101     p=998244353;out=[]
+ 102     for q,n in [(2,64),(3,256),(4,2048),(5,8192)]:
+ 103         orders=specified_cycles(n,q,4512)
+ 104         a,b=separated_groups(orders);m=n//(1<<q)
+ 105         assert len(a)==len(b)==m and not set(a)&set(b)
+ 106         for s,order in enumerate(orders):
+ 107             pos={v:i for i,v in enumerate(order)}
+ 108             assert max(pos[x] for x in a)<min(pos[x] for x in b) or max(pos[x] for x in b)<min(pos[x] for x in a)
+ 109             block=entries(order,3+2*s,b,p)
+ 110             pivot=block[a[0]][0];assert pivot
+ 111             for i in a:
+ 112                 assert all(block[i][j]*pivot%p==block[i][0]*block[a[0]][j]%p for j in range(m))
+ 113         assert m*m>q*n
+ 114         out.append({'N':n,'q':q,'group_size':m,'rank_one_checked_entries_per_term':m*m,
+ 115                     'spectral_error_floor_squared_numerator':m*m-q*n,
+ 116                     'spectral_error_floor_squared_denominator':n*(m-q)})
+ 117     return out
+ 118 
+ 119 
+ 120 def main():
+ 121     data={'status':'PASS','two_term_certificates':two_term(),
+ 122           'five_term_controls':[five_term(n) for n in [8,16,32,64,128,256,512,1024,4096]],
+ 123           'separated_controls':separated_controls(),
+ 124           'scope':'Finite fixed-pair exclusion; nonsingular-chart dimension; local Jacobian; partial interpolation; additive-only all-N gate.'}
+ 125     Path('PHASE33_RESULTS.json').write_text(json.dumps(data,indent=2,sort_keys=True)+'\n')
+ 126     print(json.dumps({'status':'PASS','two_term_certificates':len(data['two_term_certificates']),
+ 127                       'five_term_sizes':len(data['five_term_controls']),'largest_five_term_N':4096,'separated_cases':4},sort_keys=True))
+ 128 
+ 129 
+ 130 if __name__=='__main__':main()

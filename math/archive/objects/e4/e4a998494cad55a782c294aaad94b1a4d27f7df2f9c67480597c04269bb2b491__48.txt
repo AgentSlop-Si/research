@@ -1,0 +1,43 @@
+1: """Exact structural rank-cut certificates for temporal pair-call networks."""
+2: from itertools import combinations
+3: from pathlib import Path
+4: import json,time
+5: D=Path(__file__).resolve().parent
+6: 
+7: def schedule(n):
+8:  return [(i,i^(1<<s)) for s in range(n.bit_length()-1) for i in range(n) if i&(1<<s)==0]
+9: def materialize(n,w):
+10:  ss=schedule(n);del ss[w['delete']]
+11:  for p,a,b in w['replace']:ss[p]=(a,b)
+12:  return ss
+13: 
+14: def support(n,seq,cut=None):
+15:  a=[(1<<i) if i!=cut else 0 for i in range(n)]
+16:  for g,(i,j) in enumerate(seq):
+17:   z=a[i]|a[j]
+18:   a[i]=0 if n+2*g==cut else z
+19:   a[j]=0 if n+2*g+1==cut else z
+20:  return a
+21: 
+22: def single_cut(n,seq):
+23:  allbits=(1<<n)-1
+24:  for node in range(n+2*len(seq)):
+25:   remaining=support(n,seq,node)
+26:   for i,j in combinations(range(n),2):
+27:    lost=allbits&~(remaining[i]|remaining[j])
+28:    if lost.bit_count()>n//2:
+29:     return {'cut_nodes':[node],'outputs':[i,j],'inputs':[k for k in range(n) if lost>>k&1],
+30:      'network_rank_upper_bound':1,'target_rank_lower_bound':2,'permutation_invariant':True}
+31:  return None
+32: 
+33: def run():
+34:  start=time.monotonic();ws=[json.loads(x) for x in (D/'results/topology_witnesses_16_2.jsonl').read_text().splitlines()]
+35:  rejected=[];remaining=[]
+36:  for w in ws:
+37:   ss=materialize(16,w);c=single_cut(16,ss)
+38:   (rejected if c else remaining).append({'topology':w,'certificate':c} if c else w)
+39:  (D/'results/single_rank_cut_certificates.json').write_text(json.dumps(rejected,indent=2))
+40:  (D/'results/after_single_rank_cuts.json').write_text(json.dumps(remaining,indent=2))
+41:  result={'candidates':len(ws),'rejected_single_bottleneck':len(rejected),'remaining':len(remaining),'elapsed_seconds':time.monotonic()-start}
+42:  (D/'results/rank_cut_summary.json').write_text(json.dumps(result,indent=2));print(json.dumps(result),flush=True)
+43: if __name__=='__main__':run()

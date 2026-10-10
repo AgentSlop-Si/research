@@ -1,0 +1,83 @@
+GALOIS JOINT-ORBIT STABILITY ASSESSMENT
+2026-10-09
+
+Verdict
+
+The central all-length packing theorem and its finite-precision corollary are valid. This is a useful restriction on one proposed reconstruction interface, not a new exact FFT algorithm, an arithmetic-circuit lower bound, or an improvement to sparse expansion. No false central theorem was found.
+
+The archive examines the dense binary family x(u)=(u,1-u), N=2m a power of two. Every signal has exactly m=N/2 nonzeros. Consequently its exponential-in-N bound does not directly apply to the project's k=Theta(log N) sparse-input regime. It also does not apply to our fused recurrence or the conditional thin-matrix expansion, both of which retain original input or additional intermediate state.
+
+Input and verification scope
+
+- Read all four prose documents, all five Python implementation/audit files, package.py, the test file, all three result JSON files, and all four output logs.
+- Independently checked the 18 manifest hashes and byte identity of the two Galois upload directories: all match. These are one submission, not independent corroborations.
+- Independently recalculated all 24 reported integer quantization thresholds and the five polynomial-condition representative thresholds using new arithmetic-only checking code. All match the supplied records.
+- Did not execute, import, or install any uploaded code. The supplied test log reports 13 passing tests; this audit does not claim to have rerun those tests.
+
+1. Valid mathematical content
+
+The even-bin formula follows directly from zeta^m=-1:
+  X_u[0]=m and X_u[2j]=0 for j=1,...,m-1.
+For odd k,
+  X_u[k]=sum_{j=0}^{m-1}(2u_j-1) zeta^(kj).
+Since Phi_N(z)=z^m+1, the first m powers are a rational basis, so X_u[1] identifies u exactly. In fact every odd k is an automorphic image, so every individual odd bin is injective on this family. The archive's collision contingency is unnecessary here, although harmless.
+
+For fixed selected odd indices k_1,...,k_r, all measurement vectors lie in [-m,m]^(2r). With a=floor(m/(2r)) and M=2^a-1, M^(2r)<2^m when M>=1. Two inputs therefore have max-complex measurement distance at most 2 sqrt(2) m/M. Their input difference has l2 norm at least sqrt(2), and unnormalized Parseval yields a full-spectrum max difference at least sqrt(2). Any exact measurement-only decoder has
+  L >= M/(2m) = [2^floor(N/(4r))-1]/N.
+No continuity assumption outside this finite family, computational restriction, or degree restriction is needed.
+
+Thus L<=N^C for fixed C requires r=Omega(N/log N). For the usual one-bin-per-conductor set {0,1,2,4,...,N/2}, every varying datum except X[1] disappears on this family, giving L>=(2^(N/4)-1)/N. This is the genuinely useful increment over a scalar-polynomial-degree obstruction: nonlinear, branching, or high-degree joint recovery cannot make this bottleneck polynomially conditioned.
+
+Both measurement and output normalization by the same factor preserve L. This is an absolute Lipschitz amplification bound in the specified norms, not a claim about every conventional relative condition number.
+
+Minor available strengthening, not an error: the spectrum difference has only N/2 potentially nonzero entries, so its maximum is at least 2, improving the packing constant to sqrt(2)M/N. Also L>=1 because the full output includes the measured coordinates. Neither changes the asymptotics or research conclusion.
+
+2. Valid quantization corollary, with limits
+
+For grid spacing 2^-b in each real/imaginary coordinate, each coordinate has at most N*2^b+2 possible codes. Distinguishing the family requires
+  (N*2^b+2)^(2r) >= 2^(N/2),
+and hence b >= N/(4r)-log2(N+2). These are necessary conditions only.
+
+The reported necessary integer thresholds for r=1 are correct: N=32,64,128,256,1024,4096 gives b=3,10,25,56,246,1012 respectively. In particular, 246 fractional bits at N=1024 is a capacity lower bound, not a sufficient precision specification for stable recovery.
+
+This is a bit-information obstruction for uniform quantized numerical measurements. It does not price an arithmetic operation on an exact complex/algebraic field element, prove that every exact algorithm uses that precision, or rule out an exact unit-cost circuit with large amplification. Symbolic coefficient vectors store the information differently and must have their own representation/output costs charged.
+
+Fixed frequency selection matters: the supplied theorem does not expressly model adaptive indices, uncharged branch transcripts, other input-dependent side information, or access to the original input. Such information must be included in a new capacity calculation rather than silently treated as free.
+
+3. Positive control and arithmetic relevance
+
+For this real complementary family, knowing odd bins 1,3,...,N/2-1 supplies one member of every conjugate pair. Conjugation supplies the other odd bins and the even bins are known constants. This decoder is exactly 1-Lipschitz, so r=N/4 is a valid measurement-count upper bound. Evaluating those r frequencies remains charged work; there is no algorithmic speedup here.
+
+The all-odd orbit is itself an ordinary modulated m-point DFT: writing k=2ell+1,
+  X_u[2ell+1] = sum_j [(2u_j-1) zeta^j] (zeta^2)^(ell*j).
+Thus an evaluator using the original coefficient array already bypasses the measurement-only bottleneck in the familiar way. The archive supplies no cheaper fully charged DAG for that evaluator.
+
+Its finite-field program verifies specializations of polynomial identities at roots in F_998244353. That is valid exact arithmetic checking, but it cannot prove the complex metric bound, numerical separation, or characteristic-zero injectivity. Raising a chosen root to odd powers in this split prime field should not be mistaken for a nontrivial field automorphism of F_998244353.
+
+4. Numerical and test audit
+
+- The stated small-N witnesses are supported by source/result consistency. N=32 masks 29439 and 35835 give the displayed nonzero power-basis difference, an approximately 0.005342059489 primitive gap, and an approximately 8.241035291 full-spectrum gap. Exact distinctness follows from the basis proof; approximate closeness comes from numerical evaluation.
+- KD-tree queries minimize Euclidean distance in the 2r real coordinates. For r>1 this is not the theorem's max-complex distance, nor does minimizing either measured gap necessarily maximize output/input sensitivity. The code nevertheless yields admissible pair witnesses, as the prose largely acknowledges.
+- Only the selected-bin gap is recomputed with mpmath. The full-spectrum numerator remains a float64 NumPy FFT result. Printing the resulting ratio to 25-30 digits does not make those digits accurate. Use rounded values such as 1542.67 and 198.73, not a purported certified high-precision condition number.
+- Neither floating-point nearest-neighbor search nor the mpmath recheck is an exact globally minimal-gap certificate. No interval enclosure is provided for a rigorously numerical lower bound. The symbolic packing theorem is independent of this issue.
+- Quantization counts use floor on float64 values. Points on or near grid boundaries make those counts especially sensitive to rounding. They remain illustrative; they do not certify exact collision counts or an exact no-collision precision threshold.
+- RESEARCH.md line 150 says the test suite checks growth with b. The supplied 13-test file never imports precision_audit and has no explicit quantization/bit-threshold test. That coverage statement is overstated; the integer thresholds were independently checked in this audit.
+- The unittest.main() guard precedes JointOrbitControls. The documented unittest discovery command includes all 13 tests, but executing tests/test_stability.py directly would miss the two later tests. This does not contradict the supplied discovery log.
+- The exact modular loop performs 112 test cases and 1680 odd-coordinate checks. At small N there are repeated masks, so these are not 112 distinct exhaustive inputs.
+
+5. Prior art and novelty boundary
+
+The manuscript appropriately makes no publication-priority claim for its elementary packing argument or Galois identities. Frobenius FFT speedups in extension finite fields are established prior work and do not transfer automatically to a unit-cost characteristic-zero complex model or to explicit bit-cost materialization.
+
+Primary-source check: Li, Chen, Kuo, Cheng, and Yang, Frobenius Additive Fast Fourier Transform (2018), https://arxiv.org/abs/1802.03932, explicitly summarizes the 2017 van der Hoeven-Larrieu Frobenius FFT result and extends it to additive FFTs. The archive's original 2017 DOI is https://doi.org/10.1145/3087604.3087633; the DOI endpoint was unavailable during this audit, so no claim of inspecting that original paper is made.
+
+The valid contribution to this project is a quantitative rejection test for compressed-measurement-only stable reconstruction, not a proof that a new exact dense FFT is impossible. It neither validates nor refutes the unverified uniform thin-matrix-construction premise in the other research branch.
+
+6. Bounded integration recommendation
+
+Integrate this as one proof-backed gate in the common research specification:
+  Record what varying information the decoder receives. If it receives only fixed selected Fourier scalars on the complementary family, require the stated representative/precision tradeoff. If it retains original coefficients, sparse support, or intermediate forms, apply a different analysis and fully charge that state.
+
+Keep the exact-arithmetic O(N log k) sparse baseline and the conditional thin-matrix route unchanged. Add three independent regression specifications before relying on the archive as a reusable verification component: (i) integer capacity thresholds with minimality at b-1, (ii) direct high-precision evaluation of both numerator and denominator for the explicit witnesses, and (iii) conjugate reconstruction on the dense positive-control family. No new exhaustive search or optimizer is justified by this archive alone.
+
+GLOBAL_ASSESSMENT.txt contains the general k-hot/binomial-capacity extension. It is a separate elementary derivation, not a claim from this dense-family upload or an arithmetic lower bound.

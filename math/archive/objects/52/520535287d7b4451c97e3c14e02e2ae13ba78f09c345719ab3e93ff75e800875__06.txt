@@ -1,0 +1,77 @@
+0001 /* Adaptive binary FFT API. Build this source alone; it includes the common FFT
+0002  * implementation so calibration and selected execution use identical kernels. */
+0003 #include "leaf_fft.c"
+0004 
+0005 typedef void (*fft_kernel)(const plan *,const uint8_t *,cx *,const cx *);
+0006 typedef struct {
+0007     plan *base;
+0008     cx *table4, *table8;
+0009     fft_kernel kernel;
+0010     const cx *selected_table;
+0011     int method;
+0012 } adaptive_plan;
+0013 
+0014 static void run_radix2(const plan *p,const uint8_t *x,cx *y,const cx *t) {(void)t;fft_radix2(p,x,y);}
+0015 static void run_codelet4(const plan *p,const uint8_t *x,cx *y,const cx *t) {(void)t;fft_codelet4(p,x,y);}
+0016 static void run_codelet8(const plan *p,const uint8_t *x,cx *y,const cx *t) {(void)t;fft_codelet8(p,x,y);}
+0017 static void run_codelet16(const plan *p,const uint8_t *x,cx *y,const cx *t) {(void)t;fft_codelet16(p,x,y);}
+0018 static fft_kernel candidates[6]={run_radix2,run_codelet4,run_codelet8,run_codelet16,fft_lookup4,fft_lookup8};
+0019 
+0020 /* OR reduction is vectorizable. Reject invalid input before touching output or
+0021  * computing a lookup address. No casts that could turn arbitrary data into bits. */
+0022 static int binary_valid(const uint8_t *x,size_t n) {
+0023     unsigned invalid=0;
+0024     for(size_t j=0;j<n;++j) invalid|=x[j];
+0025     return (invalid & ~1u)==0;
+0026 }
+0027 
+0028 adaptive_plan *fft_adaptive_create(size_t n) {
+0029     adaptive_plan *a=calloc(1,sizeof(*a));
+0030     if(!a)return NULL;
+0031     a->base=fft_plan_create(n);a->table4=fft_table_create(4);a->table8=fft_table_create(8);
+0032     if(!a->base||!a->table4||!a->table8) {
+0033         fft_plan_destroy(a->base);fft_table_destroy(a->table4);fft_table_destroy(a->table8);free(a);return NULL;
+0034     }
+0035     a->method=0;a->kernel=candidates[0];return a;
+0036 }
+0037 void fft_adaptive_destroy(adaptive_plan *a) {
+0038     if(a) {fft_plan_destroy(a->base);fft_table_destroy(a->table4);fft_table_destroy(a->table8);free(a);}
+0039 }
+0040 int fft_adaptive_select(adaptive_plan *a,int method) {
+0041     if(!a || method<0 || method>=6)return -1;
+0042     a->method=method;a->kernel=candidates[method];
+0043     a->selected_table=method==4?a->table4:(method==5?a->table8:NULL);
+0044     return 0;
+0045 }
+0046 int fft_adaptive_execute(const adaptive_plan *a,const uint8_t *x,cx *y) {
+0047     if(!a || !x || !y)return -1;
+0048     if(!binary_valid(x,a->base->n))return -2;
+0049     /* A single function-pointer dispatch, no per-node map or retuning. */
+0050     a->kernel(a->base,x,y,a->selected_table);return 0;
+0051 }
+0052 int fft_adaptive_execute_candidate(const adaptive_plan *a,int method,const uint8_t *x,cx *y) {
+0053     if(!a || !x || !y || method<0 || method>=6)return -1;
+0054     if(!binary_valid(x,a->base->n))return -2;
+0055     const cx *t=method==4?a->table4:(method==5?a->table8:NULL);
+0056     candidates[method](a->base,x,y,t);return 0;
+0057 }
+0058 double fft_adaptive_bench_candidate(const adaptive_plan *a,int method,const uint8_t *pool,unsigned pool_count,cx *y,unsigned repeats) {
+0059     if(!a || !pool_count || !repeats || method<0 || method>=6)return -1;
+0060     fft_kernel kernel=candidates[method];
+0061     const cx *t=method==4?a->table4:(method==5?a->table8:NULL);
+0062     double start=seconds();
+0063     for(unsigned r=0;r<repeats;++r) {
+0064         const uint8_t *x=pool+(size_t)(r%pool_count)*a->base->n;
+0065         if(!binary_valid(x,a->base->n))return -2;
+0066         kernel(a->base,x,y,t);
+0067     }
+0068     return (seconds()-start)/(double)repeats;
+0069 }
+0070 double fft_adaptive_bench_selected(const adaptive_plan *a,const uint8_t *pool,unsigned pool_count,cx *y,unsigned repeats) {
+0071     if(!a || !pool_count || !repeats)return -1;
+0072     double start=seconds();
+0073     for(unsigned r=0;r<repeats;++r) {
+0074         if(fft_adaptive_execute(a,pool+(size_t)(r%pool_count)*a->base->n,y))return -2;
+0075     }
+0076     return (seconds()-start)/(double)repeats;
+0077 }

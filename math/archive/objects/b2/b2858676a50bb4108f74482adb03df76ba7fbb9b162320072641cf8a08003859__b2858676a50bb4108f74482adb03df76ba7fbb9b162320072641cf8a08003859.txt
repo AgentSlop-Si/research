@@ -1,0 +1,78 @@
+"""Independent numerical/exact audits of phase-12 unitary mixer."""
+import json
+from math import log2,sqrt
+from random import Random
+from unitary_mixer import (UnitaryGreenMixer,TreeCayley,MOD,
+                           parent_complete_binary_forest,all_path_edges)
+
+
+def tree_exact_root_leaf(depth,alpha=2):
+    size=2**(depth+1)-1
+    pa,_=parent_complete_binary_forest(size)
+    stage=TreeCayley(pa,alpha)
+    e=[0]*size;e[0]=1
+    col=stage.apply(e)
+    last=col[2**depth-1:]
+    D=[1,1]
+    for k in range(depth):D.append(D[-1]+8*D[-2])
+    expected=2*(2**depth)/D[depth+1]
+    maximum_error=max(abs(abs(z)-expected) for z in last)
+    return dict(depth=depth,n=size,leaf_entry_abs=float(abs(last[0])),
+                expected_leaf_entry_abs=expected,
+                leaf_l1=float(sum(map(abs,last))),
+                entire_column_l1=float(sum(map(abs,col))),
+                exact_formula_error=float(maximum_error))
+
+
+def numerical(n, seed=None):
+    import numpy as np
+    seed=seed if seed is not None else 20261009+n
+    mix=UnitaryGreenMixer(n,seed=seed)
+    S=np.array(mix.dense(),dtype=np.complex128)
+    E=np.max(np.abs(S.conj().T@S-np.eye(n)))
+    CI=float(np.linalg.cond(S))
+    n1=float(np.linalg.norm(S,1));ni=float(np.linalg.norm(S.T,1))
+    # Path-only cross-bound; same permutations as new stage.
+    path1,path2=all_path_edges(mix.order)
+    rng=Random(1234+n)
+    cuts=[set(range(n//2)),set(rng.sample(range(n),n//2))]
+    cut_results=[]
+    for cut in cuts:
+        cut=sorted(cut);other=sorted(set(range(n))-set(cut))
+        edges=sum((a in cut)!=(b in cut) for a,b in path1+path2)
+        sub=S[np.ix_(cut,other)]
+        singular=np.linalg.svd(sub,compute_uv=False)
+        target=(edges+31)//32
+        num=int(np.count_nonzero(singular>=(1/64-1e-10)))
+        cut_results.append(dict(cross_edges=edges,required_rank=target,
+                                observed_singular_values_above_one_over_64=num,
+                                threshold_singular=float(singular[target-1]),
+                                passed=(num>=target)))
+    return dict(n=n,unitarity_max_abs_error=float(E),kappa2=CI,
+                norm1=n1,norminf=ni,tree_size=mix.tree_size,
+                cuts=cut_results)
+
+
+def exact_modular(n, trials=5):
+    mixer=UnitaryGreenMixer(n,seed=20261009+n,p=MOD)
+    rng=Random(111+n)
+    successes=0
+    for k in range(trials):
+        x=[rng.randrange(MOD) for _ in range(n)]
+        y=mixer.apply(x)
+        if mixer.apply(y,inverse=True)!=x:raise AssertionError(f'roundtrip n={n},t={k}')
+        if mixer.apply(mixer.apply(x,inverse=True))!=x:raise AssertionError('reverse roundtrip')
+        r=mixer.apply_R(x)
+        if mixer.apply_R(r)!=x:raise AssertionError('R^2=I failed')
+        successes+=1
+    return dict(n=n,roundtrip_vectors=successes,involution_vectors=successes,prime=MOD)
+
+
+def run():
+    root=[tree_exact_root_leaf(L) for L in range(2,9)]
+    exact=[exact_modular(n) for n in (16,32,64,128,256)]
+    numeric=[numerical(n) for n in (32,64,128)]
+    return dict(root_columns=root,finite_field=exact,numerical=numeric)
+
+if __name__=='__main__':
+    print(json.dumps(run(),indent=2))

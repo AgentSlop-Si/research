@@ -1,0 +1,221 @@
+0001 #!/usr/bin/env python3
+0002 """New exact controls for route, resolvent, mask, and bank folding identities."""
+0003 import json
+0004 import random
+0005 from pathlib import Path
+0006 from check_n16_outer_gate import LABELS, PRIME, determinant, pivots, multiply
+0007 
+0008 HERE = Path(__file__).resolve().parent
+0009 
+0010 
+0011 def cover_and_splice(a, b, label):
+0012     axis, c, sign = label
+0013     p = []
+0014     for v in range(a * b):
+0015         x, y = divmod(v, b)
+0016         if axis == "H":
+0017             x = (x + sign * (2 * y + c)) % a
+0018         else:
+0019             y = (y + sign * (2 * x + c)) % b
+0020         p.append(x * b + y)
+0021     seen, reps = bytearray(a * b), []
+0022     for v in range(a * b):
+0023         if not seen[v]:
+0024             reps.append(v)
+0025             w = v
+0026             while not seen[w]:
+0027                 seen[w] = 1
+0028                 w = p[w]
+0029             assert w == v
+0030     q = p.copy()
+0031     for j, v in enumerate(reps):
+0032         q[v] = p[reps[(j + 1) % len(reps)]]
+0033     return p, q, reps
+0034 
+0035 
+0036 def project(v, a, b):
+0037     x, y = divmod(v, 2 * b)
+0038     return (x % a) * b + y % b
+0039 
+0040 
+0041 def fiber(v, a, b):
+0042     x, y = divmod(v, b)
+0043     return [(x + dx * a) * (2 * b) + y + dy * b for dx in (0, 1) for dy in (0, 1)]
+0044 
+0045 
+0046 def fold(vector, a, b):
+0047     out = [0] * (a * b)
+0048     for v, value in enumerate(vector):
+0049         w = project(v, a, b)
+0050         out[w] = (out[w] + value) % PRIME
+0051     return out
+0052 
+0053 
+0054 def direct_defect(vector, small, large, a, b):
+0055     out = [0] * (a * b)
+0056     for v, value in enumerate(vector):
+0057         dst1 = project(large[v], a, b)
+0058         dst2 = small[project(v, a, b)]
+0059         out[dst1] = (out[dst1] + value) % PRIME
+0060         out[dst2] = (out[dst2] - value) % PRIME
+0061     return out
+0062 
+0063 
+0064 def sparse_defect(vector, ts, ps, rs, tl, pl, rl, a, b):
+0065     out = [0] * (a * b)
+0066     for v in rl:
+0067         dst1, dst2 = project(pl[v], a, b), project(tl[v], a, b)
+0068         out[dst1] = (out[dst1] + vector[v]) % PRIME
+0069         out[dst2] = (out[dst2] - vector[v]) % PRIME
+0070     for v in rs:
+0071         value = sum(vector[z] for z in fiber(v, a, b)) % PRIME
+0072         out[ps[v]] = (out[ps[v]] - value) % PRIME
+0073         out[ts[v]] = (out[ts[v]] + value) % PRIME
+0074     return out
+0075 
+0076 
+0077 def apply_green(p, weights, vector):
+0078     n = len(p)
+0079     order, v = [], 0
+0080     for _ in range(n):
+0081         order.append(v)
+0082         v = p[v]
+0083     assert v == 0 and len(set(order)) == n
+0084     carry, product = 0, 1
+0085     for v in order:
+0086         carry = (vector[v] + weights[v] * carry) % PRIME
+0087         product = product * weights[v] % PRIME
+0088     assert product != 1
+0089     last = carry * pow((1 - product) % PRIME, -1, PRIME) % PRIME
+0090     out = [0] * n
+0091     for v in order:
+0092         last = (vector[v] + weights[v] * last) % PRIME
+0093         out[v] = last
+0094     return out
+0095 
+0096 
+0097 def route_controls():
+0098     rng, records = random.Random(77419), []
+0099     for r in range(1, 7):
+0100         for rectangular in (False, True):
+0101             b = 1 << r
+0102             a = b * (2 if rectangular else 1)
+0103             n = a * b
+0104             for j, label in enumerate(LABELS):
+0105                 ts, ps, rs = cover_and_splice(a, b, label)
+0106                 tl, pl, rl = cover_and_splice(2 * a, 2 * b, label)
+0107                 assert all(project(tl[v], a, b) == ts[project(v, a, b)] for v in range(4 * n))
+0108                 bad = [v for v in range(4 * n) if project(pl[v], a, b) != ps[project(v, a, b)]]
+0109                 assert len(bad) <= len(rl) + 4 * len(rs)
+0110                 rank = None
+0111                 if n <= 128:
+0112                     mat = [[0] * len(bad) for _ in range(n)]
+0113                     for cc, v in enumerate(bad):
+0114                         mat[project(pl[v], a, b)][cc] += 1
+0115                         mat[ps[project(v, a, b)]][cc] -= 1
+0116                     rank = len(pivots(mat)) if bad else 0
+0117                     assert rank <= len(rl) + len(rs) - 2
+0118                 x = [rng.randrange(PRIME) for _ in range(4 * n)]
+0119                 direct = direct_defect(x, ps, pl, a, b)
+0120                 assert direct == sparse_defect(x, ts, ps, rs, tl, pl, rl, a, b)
+0121                 tau = pow(j + 2, -1, PRIME)
+0122                 glx = apply_green(pl, [tau] * (4 * n), x)
+0123                 lhs = [(v - w) % PRIME for v, w in zip(fold(glx, a, b),
+0124                        apply_green(ps, [tau] * n, fold(x, a, b)))]
+0125                 rhs = apply_green(ps, [tau] * n,
+0126                       sparse_defect(glx, ts, ps, rs, tl, pl, rl, a, b))
+0127                 assert lhs == [tau * v % PRIME for v in rhs]
+0128                 if n <= 128:
+0129                     ws = [2 + (v % 5) for v in range(n)]
+0130                     wl = [ws[project(v, a, b)] for v in range(4 * n)]
+0131                     gx = apply_green(pl, wl, x)
+0132                     lhsw = [(v - w) % PRIME for v, w in zip(fold(gx, a, b),
+0133                             apply_green(ps, ws, fold(x, a, b)))]
+0134                     dd = sparse_defect(gx, ts, ps, rs, tl, pl, rl, a, b)
+0135                     rhsw = apply_green(ps, ws, [w * v % PRIME for w, v in zip(ws, dd)])
+0136                     assert lhsw == rhsw
+0137                     mask = [11 + v % 7 for v in range(n)]
+0138                     left = fold([mask[project(v, a, b)] * x[v] % PRIME for v in range(4 * n)], a, b)
+0139                     assert left == [v * w % PRIME for v, w in zip(mask, fold(x, a, b))]
+0140                 records.append({"N": n, "rectangle": rectangular, "label": label,
+0141                                 "small_cycle_count": len(rs), "large_cycle_count": len(rl),
+0142                                 "defect_supported_columns": len(bad),
+0143                                 "support_bound": len(rl) + 4 * len(rs),
+0144                                 "rank_mod_prime_if_computed": rank,
+0145                                 "rank_bound": len(rl) + len(rs) - 2,
+0146                                 "first_disagreeing_column": None if not bad else {
+0147                                     "large_vertex": bad[0],
+0148                                     "projected_large_successor": project(pl[bad[0]], a, b),
+0149                                     "small_successor_of_projection": ps[project(bad[0], a, b)]}})
+0150             print("routes", n, rectangular, flush=True)
+0151     return records
+0152 
+0153 
+0154 def bank_controls():
+0155     records = []
+0156     for r in range(0, 9):
+0157         m = 1 << r
+0158         omega = pow(3, (PRIME - 1) // (2 * m), PRIME)
+0159         assert pow(omega, m, PRIME) == PRIME - 1
+0160         small = [[pow(omega, 2 * i * j, PRIME) for j in range(m)] for i in range(m)]
+0161         mismatch = [[0] * (2 * m) for _ in range(m)]
+0162         selector = [[0] * (2 * m) for _ in range(m)]
+0163         for i in range(m):
+0164             for j in range(2 * m):
+0165                 top = pow(omega, i * j, PRIME)
+0166                 bottom = pow(omega, (i + m) * j, PRIME)
+0167                 plus, minus = (top + bottom) % PRIME, (top - bottom) % PRIME
+0168                 wanted_plus = 2 * small[i][j // 2] % PRIME if j % 2 == 0 else 0
+0169                 wanted_minus = 2 * pow(omega, i, PRIME) * small[i][j // 2] % PRIME if j % 2 else 0
+0170                 assert plus == wanted_plus and minus == wanted_minus
+0171                 mismatch[i][j] = (plus - small[i][j % m]) % PRIME
+0172                 selector[i][j] = (2 * int(j == 2 * i) - int(j % m == i)) % PRIME
+0173         if m <= 64:
+0174             assert multiply(small, selector) == mismatch
+0175         even_minor = [[selector[i][2 * j] for j in range(m)] for i in range(m)]
+0176         value = determinant(even_minor)
+0177         assert value == pow(2, m - 1, PRIME)
+0178         records.append({"m": m, "exact_plus_entries": 2 * m * m,
+0179                         "exact_minus_entries": 2 * m * m,
+0180                         "selector_even_minor_determinant": value,
+0181                         "expected_determinant_2_power_m_minus_1": pow(2, m - 1, PRIME)})
+0182     global_records = []
+0183     for a, b in ((2, 2), (4, 2), (4, 4), (8, 4), (8, 8)):
+0184         n = a * b
+0185         active = set(range(a // 2))
+0186         active_large = active | {x + a for x in active}
+0187         omega = pow(3, (PRIME - 1) // (2 * b), PRIME)
+0188         difference = [[0] * (4 * n) for _ in range(n)]
+0189         for row in range(n):
+0190             x, y = divmod(row, b)
+0191             for col in range(4 * n):
+0192                 xx, yy = divmod(col, 2 * b)
+0193                 if xx % a != x:
+0194                     continue
+0195                 if xx in active_large:
+0196                     left = (pow(omega, y * yy, PRIME) + pow(omega, (y + b) * yy, PRIME)) % PRIME
+0197                 else:
+0198                     left = int(yy % b == y)
+0199                 right = pow(omega, 2 * y * (yy % b), PRIME) if x in active else int(yy % b == y)
+0200                 difference[row][col] = (left - right) % PRIME
+0201         rank = len(pivots(difference))
+0202         assert rank == b * len(active)
+0203         global_records.append({"N": n, "m": b, "active_small": sorted(active),
+0204                                "active_large": sorted(active_large),
+0205                                "entrywise_bank_defect_rank": rank,
+0206                                "active_mass": b * len(active)})
+0207     return {"block_identities": records, "global_folding": global_records}
+0208 
+0209 
+0210 def main():
+0211     result = {"status": "PASS", "prime": PRIME,
+0212               "scope": "Exact finite controls for proved identities; no coefficient lift or Fourier factorization supplied.",
+0213               "routes": route_controls(), "banks": bank_controls(),
+0214               "provenance": "Fresh checker plus the newly authored exact matrix helpers in check_n16_outer_gate.py; no uploaded research code executed."}
+0215     (HERE / "LIFT_DEFECT_CONTROLS.json").write_text(json.dumps(result, indent=2) + "\n")
+0216     print(json.dumps({"status": "PASS", "route_instances": len(result["routes"]),
+0217                       "block_bank_sizes": len(result["banks"]["block_identities"])}), flush=True)
+0218 
+0219 
+0220 if __name__ == "__main__":
+0221     main()

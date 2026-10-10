@@ -1,0 +1,334 @@
+   1 """Exact, fresh-input Boolean FFT polynomial-degree research gates.
+   2 
+   3 No caches, threads, approximate roots or uncharged oracle operations.
+   4 This is a falsification audit, not an improved all-input FFT.
+   5 
+   6 The key result: every total-degree<=2 polynomial P agreeing with a linear map
+   7 A x on {0,1}^n has Jac(P) at (1/2,...,1/2) equal A. In particular,
+   8     A h = (P(1/2+h)-P(1/2-h))/2.
+   9 
+  10 Over a field of odd characteristic, the identity is exact. Evaluating P twice
+  11 costs two calls to ANY circuit for P, plus O(n+outputs) linear work. This is a
+  12 uniform reduction without extracting input-dependent circuit coefficients.
+  13 
+  14 Degree 3: homogeneous cubic polynomials agreeing with A x on {0,1}^n have
+  15 only diagonal cubes plus antisymmetric pair gauges
+  16     x_i^2*x_j - x_i*x_j^2.
+  17 A universal fixed-weight gradient-average recovery must use >=n evaluation
+  18 points because its second-moment matrix is (I+J)/6, of full rank.
+  19 """
+  20 from __future__ import annotations
+  21 from dataclasses import dataclass
+  22 from itertools import product
+  23 from random import Random
+  24 from typing import Callable, Iterable, Sequence
+  25 
+  26 P = 998244353
+  27 G = 3
+  28 INV2 = (P+1)//2
+  29 INV3 = pow(3, -1, P)
+  30 INV4 = pow(4, -1, P)
+  31 INV6 = pow(6, -1, P)
+  32 
+  33 @dataclass
+  34 class Counter:
+  35     additions: int = 0
+  36     multiplications: int = 0
+  37     def a(self,x:int,y:int)->int:
+  38         self.additions+=1
+  39         return (x+y)%P
+  40     def s(self,x:int,y:int)->int:
+  41         self.additions+=1
+  42         return (x-y)%P
+  43     def m(self,x:int,y:int)->int:
+  44         self.multiplications+=1
+  45         return (x*y)%P
+  46     @property
+  47     def work(self)->int:
+  48         return self.additions+self.multiplications
+  49 
+  50 
+  51 def ntt(x:Sequence[int],meter:Counter|None=None)->list[int]:
+  52     """A conventional radix-two NTT for finite checks, with charged gates.
+  53 
+  54     Root/twiddle preparation is separated and called out in research costs.
+  55     """
+  56     n=len(x)
+  57     if not n or n & (n-1) or (P-1)%n:
+  58         raise ValueError('NTT needs supported nonzero power-of-two length')
+  59     c=meter if meter is not None else Counter()
+  60     out=[int(t)%P for t in x]
+  61     j=0
+  62     for i in range(1,n):
+  63         bit=n>>1
+  64         while j & bit:
+  65             j^=bit
+  66             bit>>=1
+  67         j^=bit
+  68         if i<j:out[i],out[j]=out[j],out[i]
+  69     stage=2
+  70     while stage<=n:
+  71         wlen=pow(G,(P-1)//stage,P)
+  72         for a in range(0,n,stage):
+  73             w=1
+  74             for b in range(a,a+stage//2):
+  75                 u=out[b]
+  76                 v=c.m(out[b+stage//2],w)
+  77                 out[b]=c.a(u,v)
+  78                 out[b+stage//2]=c.s(u,v)
+  79                 w=c.m(w,wlen)
+  80         stage*=2
+  81     return out
+  82 
+  83 
+  84 def direct_dft(x:Sequence[int])->list[int]:
+  85     n=len(x)
+  86     if not n or (P-1)%n:
+  87         raise ValueError('missing n-th root')
+  88     omega=pow(G,(P-1)//n,P)
+  89     return [sum(int(x[j])*pow(omega,k*j,P) for j in range(n))%P
+  90             for k in range(n)]
+  91 
+  92 
+  93 def quadratic_preprocess(x:Sequence[int], weights:Sequence[int],
+  94                          variant:str='plain', c:Counter|None=None)->list[int]:
+  95     """Degree-two polynomial lift, agreeing with x on Boolean inputs.
+  96 
+  97     variant='pair_overlap' builds squares from THREE overlapping products
+  98     (x_i+x_j)^2,(x_i-x_j)^2,(x_i+x_j)(x_i-x_j), and cancels the x_i*x_j terms.
+  99     No upstream FFT or input relation metadata is supplied.
+ 100     """
+ 101     if len(x)!=len(weights): raise ValueError('length mismatch')
+ 102     if variant not in ('plain','square','affine_square','pair_overlap'):
+ 103         raise ValueError('invalid variant')
+ 104     c=c or Counter(); n=len(x)
+ 105     if variant=='plain':return [v%P for v in x]
+ 106     squares=[]
+ 107     if variant=='pair_overlap':
+ 108         for i in range(0,n,2):
+ 109             if i+1==n:
+ 110                 squares.append(c.m(x[i],x[i]))
+ 111                 continue
+ 112             u=c.a(x[i],x[i+1]);v=c.s(x[i],x[i+1])
+ 113             a=c.m(u,u);b=c.m(v,v);d=c.m(u,v)
+ 114             t=c.a(a,b);two_d=c.m(2,d)
+ 115             squares.extend((c.m(INV4,c.a(t,two_d)), c.m(INV4,c.s(t,two_d))))
+ 116     else:
+ 117         squares=[c.m(v,v) for v in x]
+ 118     if variant in ('square','pair_overlap'):return squares
+ 119     return [c.a(c.m((1-w)%P,x0),c.m(w,z)) for x0,z,w in zip(x,squares,weights)]
+ 120 
+ 121 
+ 122 def quadratic_fft(x:Sequence[int],weights:Sequence[int],
+ 123                   variant:str='affine_square', c:Counter|None=None)->list[int]:
+ 124     c=c if c is not None else Counter()
+ 125     z=quadratic_preprocess([a%P for a in x],weights,variant,c)
+ 126     return ntt(z,c)
+ 127 
+ 128 
+ 129 def midpoint_recover(program:Callable[[Sequence[int]],Sequence[int]],
+ 130                      h:Sequence[int])->list[int]:
+ 131     """Full arbitrary-input transform using two Boolean-correct quadratic calls."""
+ 132     plus=[(INV2+x)%P for x in h]
+ 133     minus=[(INV2-x)%P for x in h]
+ 134     a=program(plus)
+ 135     b=program(minus)
+ 136     return [((u-v)*INV2)%P for u,v in zip(a,b)]
+ 137 
+ 138 
+ 139 def cubic_fft(x:Sequence[int], gauge:Sequence[Sequence[int]],
+ 140              c:Counter|None=None)->list[int]:
+ 141     """Homogeneous cubic gauge lift, correct for all Boolean x.
+ 142 
+ 143     gauge[k][pair-index] multiplies x_i^2*x_j - x_i*x_j^2.
+ 144     Coefficients are fixed input-independent constants.
+ 145     """
+ 146     n=len(x)
+ 147     if len(gauge)!=n or any(len(g)!=n*(n-1)//2 for g in gauge):
+ 148         raise ValueError('invalid gauge matrix')
+ 149     c = c if c is not None else Counter()
+ 150     cube=[c.m(c.m(v,v),v) for v in x]
+ 151     out=ntt(cube,c)
+ 152     sq=[c.m(v,v) for v in x]
+ 153     pairs=[]
+ 154     for i in range(n):
+ 155         for j in range(i+1,n):
+ 156             pairs.append(c.s(c.m(sq[i],x[j]),c.m(x[i],sq[j])))
+ 157     for k in range(n):
+ 158         for a,coef in zip(pairs,gauge[k]):
+ 159             if coef:out[k]=c.a(out[k],c.m(coef,a))
+ 160     return out
+ 161 
+ 162 
+ 163 def wedge_gauge(x:Sequence[int], a:Sequence[int], b:Sequence[int],
+ 164                 c:Counter|None=None)->int:
+ 165     """A genuinely global cubic Boolean-null polynomial with dense overlap.
+ 166 
+ 167     G=(a.x^2)(b.x) - (a.x)(b.x^2).
+ 168     For binary x, G=0. Off the Boolean cube it is usually nonzero. It has
+ 169     choose(n,2) *potential* antisymmetric pair coefficients, but evaluates in
+ 170     O(n) ordinary scalar operations without explicitly expanding them.
+ 171     The identity does NOT calculate Fourier outputs or accelerate a full FFT.
+ 172     """
+ 173     if len(x)!=len(a) or len(x)!=len(b):raise ValueError('length mismatch')
+ 174     c=c if c is not None else Counter()
+ 175     ax=bx=ax2=bx2=0
+ 176     for xi,ai,bi in zip(x,a,b):
+ 177         sq=c.m(xi,xi)
+ 178         ax=c.a(ax,c.m(ai,xi))
+ 179         bx=c.a(bx,c.m(bi,xi))
+ 180         ax2=c.a(ax2,c.m(ai,sq))
+ 181         bx2=c.a(bx2,c.m(bi,sq))
+ 182     return c.s(c.m(ax2,bx),c.m(ax,bx2))
+ 183 
+ 184 
+ 185 def wedge_coefficients(a:Sequence[int],b:Sequence[int])->list[int]:
+ 186     """Coefficients of x_i^2*x_j - x_i*x_j^2 for i<j."""
+ 187     if len(a)!=len(b):raise ValueError('length mismatch')
+ 188     return [(a[i]*b[j]-a[j]*b[i])%P
+ 189             for i in range(len(a)) for j in range(i+1,len(a))]
+ 190 
+ 191 
+ 192 def cubic_global_wedge_fft(x:Sequence[int],a:Sequence[int],b:Sequence[int],
+ 193                            output_weights:Sequence[int],c:Counter|None=None)->list[int]:
+ 194     """An inexpensive dense-overlap perturbation of the full FFT.
+ 195 
+ 196     P_k(x)=FFT(x^3)[k]+weights[k]*G(x). On Boolean inputs equals FFT(x).
+ 197     The expensive full FFT still remains in the expression.
+ 198     """
+ 199     if len(x)!=len(output_weights):raise ValueError('length mismatch')
+ 200     c=c if c is not None else Counter()
+ 201     base=ntt([c.m(c.m(t,t),t) for t in x],c)
+ 202     delta=wedge_gauge(x,a,b,c)
+ 203     return [c.a(z,c.m(w,delta)) for z,w in zip(base,output_weights)]
+ 204 
+ 205 
+ 206 def cubic_jacobian_vector(a:Sequence[int],h:Sequence[int],gauge:Sequence[Sequence[int]])->list[int]:
+ 207     """Exact differential of cubic_fft, not numerical finite differences."""
+ 208     n=len(a)
+ 209     diag=[3*a[i]*a[i]*h[i]%P for i in range(n)]
+ 210     out=ntt(diag)
+ 211     terms=[]
+ 212     for i in range(n):
+ 213         for j in range(i+1,n):
+ 214             # d(x_i^2*x_j-x_i*x_j^2)
+ 215             v=(2*a[i]*h[i]*a[j]+a[i]*a[i]*h[j]
+ 216                -h[i]*a[j]*a[j]-2*a[i]*a[j]*h[j])%P
+ 217             terms.append(v)
+ 218     for k in range(n):
+ 219         out[k]=(out[k]+sum(v*g for v,g in zip(terms,gauge[k])))%P
+ 220     return out
+ 221 
+ 222 
+ 223 def cubic_recovery_nplus1(h:Sequence[int],gauge:Sequence[Sequence[int]])->list[int]:
+ 224     """A universal N+1-gradient recovery, charged O(N) evaluations.
+ 225 
+ 226     Fh = [Jac_P(1)h + sum_i Jac_P(e_i)h]/6 for any homogeneous cubic
+ 227     polynomial P matching F on the Boolean cube.
+ 228     """
+ 229     n=len(h)
+ 230     x=cubic_jacobian_vector([1]*n,h,gauge)
+ 231     for i in range(n):
+ 232         e=[0]*n;e[i]=1
+ 233         v=cubic_jacobian_vector(e,h,gauge)
+ 234         x=[(u+w)%P for u,w in zip(x,v)]
+ 235     return [v*INV6%P for v in x]
+ 236 
+ 237 
+ 238 def second_moment_target(n:int)->list[list[int]]:
+ 239     """Necessary matrix for universal fixed-basepoint cubic-gradient extraction."""
+ 240     return [[(2 if i==j else 1)*INV6%P for j in range(n)] for i in range(n)]
+ 241 
+ 242 
+ 243 def matrix_rank_mod(matrix:Sequence[Sequence[int]],p:int=P)->int:
+ 244     a=[[int(v)%p for v in row] for row in matrix]
+ 245     if not a:return 0
+ 246     n=len(a);m=len(a[0]);k=0
+ 247     for j in range(m):
+ 248         ix=next((i for i in range(k,n) if a[i][j]),None)
+ 249         if ix is None:continue
+ 250         a[k],a[ix]=a[ix],a[k]
+ 251         t=pow(a[k][j],-1,p)
+ 252         for col in range(j,m):a[k][col]=a[k][col]*t%p
+ 253         for i in range(n):
+ 254             if i==k or not a[i][j]:continue
+ 255             coef=a[i][j]
+ 256             for col in range(j,m):a[i][col]=(a[i][col]-coef*a[k][col])%p
+ 257         k+=1
+ 258         if k==n:break
+ 259     return k
+ 260 
+ 261 
+ 262 def randomized_gauge(n:int,seed:int,nonzero=True)->list[list[int]]:
+ 263     rng=Random(seed)
+ 264     return [[rng.randrange(1,P) if nonzero else rng.randrange(P)
+ 265              for _ in range(n*(n-1)//2)] for __ in range(n)]
+ 266 
+ 267 
+ 268 def run_audit()->dict:
+ 269     import time
+ 270     rng=Random(20261009)
+ 271     results=[];basis_total=0;cube_cases=0;cubic_cases=0;wedge_cases=0
+ 272     for n in (2,4,8,16,32,64):
+ 273         weights=[rng.randrange(P) for _ in range(n)]
+ 274         variants=[]
+ 275         for variant in ('square','affine_square','pair_overlap'):
+ 276             meter=Counter()
+ 277             data=[rng.randrange(P) for _ in range(n)]
+ 278             y=quadratic_fft(data,weights,variant,meter)
+ 279             if variant=='affine_square':
+ 280                 pass
+ 281             # all Boolean checks of original circuit, plus arbitrary-input recovery
+ 282             for j in range(n):
+ 283                 e=[int(t==j) for t in range(n)]
+ 284                 assert quadratic_fft(e,weights,variant)==direct_dft(e)
+ 285                 basis_total+=1
+ 286             for _ in range(6):
+ 287                 z=[rng.randrange(P) for _ in range(n)]
+ 288                 assert midpoint_recover(lambda v:quadratic_fft(v,weights,variant),z)==direct_dft(z)
+ 289             variants.append({'variant':variant,'work_one_evaluation':meter.work,
+ 290                              'twiddle_generation_not_in_work':True})
+ 291         g=randomized_gauge(n,seed=20261009+n)
+ 292         for j in range(n):
+ 293             e=[int(t==j) for t in range(n)]
+ 294             assert cubic_fft(e,g)==direct_dft(e)
+ 295             cubic_cases+=1
+ 296         for _ in range(5):
+ 297             bx=[rng.randrange(2) for _ in range(n)]
+ 298             assert cubic_fft(bx,g)==direct_dft(bx)
+ 299             h=[rng.randrange(P) for _ in range(n)]
+ 300             assert cubic_recovery_nplus1(h,g)==direct_dft(h)
+ 301             cubic_cases+=1
+ 302         assert matrix_rank_mod(second_moment_target(n))==n
+ 303         a=[rng.randrange(1,P) for _ in range(n)]
+ 304         b=[rng.randrange(1,P) for _ in range(n)]
+ 305         coeff=wedge_coefficients(a,b)
+ 306         for _ in range(4):
+ 307             xx=[rng.randrange(P) for _ in range(n)]
+ 308             terms=[]
+ 309             for i in range(n):
+ 310                 for j in range(i+1,n):
+ 311                     terms.append((xx[i]*xx[i]*xx[j]-xx[i]*xx[j]*xx[j])%P)
+ 312             assert wedge_gauge(xx,a,b)==sum(c*t for c,t in zip(coeff,terms))%P
+ 313             yy=[rng.randrange(2) for _ in range(n)]
+ 314             assert wedge_gauge(yy,a,b)==0
+ 315             weights_k=[rng.randrange(P) for __ in range(n)]
+ 316             assert cubic_global_wedge_fft(yy,a,b,weights_k)==direct_dft(yy)
+ 317             wedge_cases+=1
+ 318         results.append({'n':n,'quadratic_variants':variants,
+ 319                         'cubic_gradient_min_calls':n,'explicit_recovery_calls':n+1,
+ 320                         'second_moment_rank':n,'wedge_pair_coefficients':len(coeff)})
+ 321     return {'modulus':P,'lengths':results,'quadratic_basis_columns_tested':basis_total,
+ 322             'cubic_boolean_and_recovery_cases':cubic_cases,
+ 323             'wedge_dense_overlap_tests':wedge_cases,
+ 324             'general_full_fft_O_N':'NOT_ESTABLISHED',
+ 325             'quadratic_uniform_reduction':'two_calls+O(N) arithmetic',
+ 326             'cubic_correction_lower_bound_scope':'fixed-weight linear combinations of Jacobian evaluations'}
+ 327 
+ 328 if __name__=='__main__':
+ 329     import json
+ 330     from pathlib import Path
+ 331     data=run_audit()
+ 332     fn=Path(__file__).with_name('audit_results.json')
+ 333     fn.write_text(json.dumps(data,indent=2)+'\n')
+ 334     print(json.dumps(data,indent=2))

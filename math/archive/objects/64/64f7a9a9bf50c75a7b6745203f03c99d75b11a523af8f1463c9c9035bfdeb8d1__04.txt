@@ -1,0 +1,149 @@
+   1 #!/usr/bin/env python3
+   2 from pathlib import Path
+   3 from itertools import product
+   4 import random,json
+   5 import numpy as np
+   6 HERE=Path(__file__).resolve().parent;p=65537;root=3;rng=random.Random(230915)
+   7 def wroot(n):
+   8     w=pow(root,(p-1)//n,p);assert pow(w,n,p)==1 and (n==1 or pow(w,n//2,p)!=1);return w
+   9 
+  10 def dft(x,w,sgn=-1):return [sum(v*pow(w,sgn*i*j,p) for j,v in enumerate(x))%p for i in range(len(x))]
+  11 def solve_linear(A,b,n):
+  12     if n==0:return [] if all(v%p==0 for v in b) else None
+  13     T=[[v%p for v in row]+[v%p] for row,v in zip(A,b)];r=0;piv=[]
+  14     for c in range(n):
+  15         i=next((i for i in range(r,len(T)) if T[i][c]),None)
+  16         if i is None:continue
+  17         T[i],T[r]=T[r],T[i];iv=pow(T[r][c],-1,p);T[r]=[v*iv%p for v in T[r]]
+  18         for i in range(len(T)):
+  19             if i!=r and T[i][c]:
+  20                 v=T[i][c];T[i]=[(a-v*b)%p for a,b in zip(T[i],T[r])]
+  21         piv.append(c);r+=1
+  22         if r==len(T):break
+  23     if any(not any(row[:n]) and row[-1] for row in T):return None
+  24     x=[0]*n
+  25     for i,c in enumerate(piv):x[c]=T[i][-1]
+  26     return x
+  27 
+  28 def fit(prefix,d):
+  29     for r in range(d+1):
+  30         A=[[prefix[t-i] for i in range(1,r+1)] for t in range(r,len(prefix))]
+  31         b=[-prefix[t]%p for t in range(r,len(prefix))]
+  32         q=solve_linear(A,b,r)
+  33         if q is not None:return q
+  34     return None
+  35 
+  36 def generate(seed,q,M):
+  37     r=len(q)
+  38     if not r:return [0]*M
+  39     f=seed[:]
+  40     while len(f)<M:f.append(-sum(q[i-1]*f[-i] for i in range(1,r+1))%p)
+  41     return f
+  42 
+  43 def eval_poly(co,z):
+  44     y=0
+  45     for c in co[::-1]:y=(y*z+c)%p
+  46     return y
+  47 
+  48 cases=[];output_entries=0;exceptional=0
+  49 for K,M,d in [(4,8,1),(8,8,2),(16,8,2),(16,16,3),(8,8,4)]:
+  50     n=K*M;w=wroot(n);wk=pow(w,M,p)
+  51     for trial in range(3):
+  52         streams=[];fitted=[];types=[]
+  53         for ell in range(K):
+  54             if ell==0:
+  55                 q=[-1%p];seed=[rng.randrange(1,p)];kind='forced_simple_pole'
+  56             elif ell==1 and d>=2:
+  57                 a=pow(w,ell,p);q=[-2*a%p,a*a%p];seed=[1,2*a%p];kind='forced_repeated_pole'
+  58             elif ell==2 and d>=2:
+  59                 a=rng.randrange(1,p);q=[-a%p,0];seed=[rng.randrange(p),rng.randrange(p)];kind='zero_characteristic_root'
+  60             else:
+  61                 r=rng.randrange(d+1);q=[rng.randrange(p) for _ in range(r)];seed=[rng.randrange(p) for _ in range(r)];kind='general_or_zero'
+  62             f=generate(seed,q,M);learned=fit(f[:2*d],d);assert learned is not None
+  63             reconstructed=generate(f[:len(learned)],learned,M);assert reconstructed==f
+  64             streams.append(f);fitted.append(learned);types.append(kind)
+  65         columns=[]
+  66         for t in range(M):
+  67             spectrum=[streams[ell][t] for ell in range(K)]
+  68             columns.append([v*pow(K,-1,p)%p for v in dft(spectrum,wk,1)])
+  69         x=[columns[t][b] for b in range(K) for t in range(M)]
+  70         direct=dft(x,w);got=[0]*n;ex=0
+  71         for ell,f in enumerate(streams):
+  72             q=fitted[ell];r=len(q);Q=[1]+q
+  73             P=[sum(Q[i]*f[j-i] for i in range(j+1))%p for j in range(r)]
+  74             B=[sum(Q[i]*f[M+j-i] for i in range(j+1,r+1))%p for j in range(r)]
+  75             # Independently check every coefficient in Q*S=P+z^M B.
+  76             convolution=[0]*(M+r)
+  77             for i,v in enumerate(Q):
+  78                 for t,a in enumerate(f):convolution[i+t]=(convolution[i+t]+v*a)%p
+  79             expected=P+[0]*(M-r)+B
+  80             assert convolution==expected
+  81             for j in range(M):
+  82                 index=ell+j*K;z=pow(w,-index,p);den=eval_poly(Q,z)
+  83                 assert pow(z,M,p)==pow(wk,-ell,p)
+  84                 if den:val=(eval_poly(P,z)+pow(wk,-ell,p)*eval_poly(B,z))*pow(den,-1,p)%p
+  85                 else:val=eval_poly(f,z);ex+=1
+  86                 assert val==direct[index];got[index]=val;output_entries+=1
+  87         assert got==direct;exceptional+=ex
+  88         cases.append({'K':K,'M':M,'d':d,'full_outputs':n,'singular_outputs':ex,
+  89                       'learned_orders':[len(q) for q in fitted],'forced_modes':types[:3]})
+  90 # Prefix-only false model: a late impulse is not a low-order recurrence.
+  91 delayed=[0]*7+[1];assert fit(delayed,4) is None
+  92 assert fit(delayed[:4],2)==[] and generate([],[],8)!=delayed
+  93 # Capacity count on a small field independently exhausts parameterized sequences.
+  94 def small_sequences(qfield,M,d):
+  95     out=set()
+  96     for co in product(range(qfield),repeat=d):
+  97         for initial in product(range(qfield),repeat=d):
+  98             f=list(initial)
+  99             while len(f)<M:f.append(-sum(co[i-1]*f[-i] for i in range(1,d+1))%qfield)
+ 100             out.add(tuple(f))
+ 101     return out
+ 102 capacity=[]
+ 103 for dd in [1,2]:
+ 104     st=small_sequences(3,6,dd);assert len(st)<=3**(2*dd)
+ 105     capacity.append({'q':3,'M':6,'d':dd,'distinct_sequences':len(st),'parameter_bound':3**(2*dd),'all_sequences':3**6})
+ 106 
+ 107 # Same-register Fourier realignment, exact field rank and Gram identity.
+ 108 def rank(A):
+ 109     a=[r[:] for r in A];r=0
+ 110     for c in range(len(a[0])):
+ 111         i=next((i for i in range(r,len(a)) if a[i][c]),None)
+ 112         if i is None:continue
+ 113         a[r],a[i]=a[i],a[r];iv=pow(a[r][c],-1,p);a[r]=[v*iv%p for v in a[r]]
+ 114         for i in range(r+1,len(a)):
+ 115             v=a[i][c]
+ 116             if v:a[i]=[(x-v*y)%p for x,y in zip(a[i],a[r])]
+ 117         r+=1
+ 118         if r==len(a):break
+ 119     return r
+ 120 schmidt=[]
+ 121 for A,B in [(2,2),(2,4),(2,8),(4,4),(4,8),(4,16),(8,8),(8,16),(16,16)]:
+ 122     n=A*B;w=wroot(n);wa=pow(w,B,p)
+ 123     R=[];Rdual=[]
+ 124     for a,c in product(range(A),repeat=2):
+ 125         row=[];dual=[]
+ 126         for b,d in product(range(B),repeat=2):
+ 127             val=pow(w,-(c*B+d)*(a*B+b),p)
+ 128             assert val==pow(wa,-a*d-c*b,p)*pow(w,-b*d,p)%p
+ 129             row.append(val);dual.append(pow(val,-1,p))
+ 130         R.append(row);Rdual.append(dual)
+ 131     assert rank(R)==A*A
+ 132     # Bilinear root-inverted Gram controls; not a finite-field complex conjugation claim.
+ 133     for i,row in enumerate(R):
+ 134         for j,col in enumerate(Rdual):assert sum(x*y for x,y in zip(row,col))%p==(B*B%p if i==j else 0)
+ 135     z=np.exp(-2j*np.pi/n)
+ 136     C=np.array([[z**((c*B+d)*(a*B+b))/np.sqrt(n) for b,d in product(range(B),repeat=2)] for a,c in product(range(A),repeat=2)])
+ 137     error=float(np.max(np.abs(C@C.conj().T-(B/A)*np.eye(A*A))))
+ 138     assert error<1e-10
+ 139     # The controlled-phase diagonal has coefficient rank A and applies pointwise.
+ 140     phase=[[pow(wa,a*b,p) for b in range(B)] for a in range(A)]
+ 141     assert rank(phase)==A
+ 142     schmidt.append({'A':A,'B':B,'N':n,'exact_rank':A*A,'complex_Gram_error':error,
+ 143                     'controlled_phase_rank':A,'flat_singular_value':float(np.sqrt(B/A))})
+ 144 result={'field':p,'learned_rational_cases':cases,'full_output_entries':output_entries,
+ 145         'singular_outputs':exceptional,'late_impulse_negative_control':True,'capacity_controls':capacity,
+ 146         'operator_schmidt_cases':schmidt,
+ 147         'scope':'Independent exact promised-family output/rational controls and fixed-register matrix gate; no uploaded code executed, no universal fast Fourier claim.'}
+ 148 (HERE/'INDEPENDENT_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+ 149 print(json.dumps({'rational_cases':len(cases),'outputs':output_entries,'singular_outputs':exceptional,'realignment_cases':len(schmidt)},indent=2))

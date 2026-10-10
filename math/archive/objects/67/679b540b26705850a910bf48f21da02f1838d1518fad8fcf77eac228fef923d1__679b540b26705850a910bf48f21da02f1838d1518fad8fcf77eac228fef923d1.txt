@@ -1,0 +1,65 @@
+"""Linear-work randomized Fourier intertwining certificate for a proposed fast operator.
+
+If T e0 == ones and T S == D T, then T == F_N (unnormalized).
+Over GF(q), each random uniform-vector test rejects every false candidate
+with probability at least 1-1/q, assuming the exact seed was verified.
+This is a verification gate, not an FFT algorithm.
+"""
+from __future__ import annotations
+import random
+from transverse_green import FIELD,root,modular_dft,graphs_polarized,run_network
+
+
+def shift(v):
+    # (S v)[k] = v[k-1], so S e_j=e_(j+1).
+    return v[-1:]+v[:-1]
+
+
+def backward_shift(v):
+    return v[1:]+v[:1]
+
+
+def modulation(v,w,q):
+    z=1;out=[]
+    for x in v:
+        out.append(z*x%q)
+        z=z*w%q
+    return out
+
+
+def subtract(a,b,q):
+    return [(x-y)%q for x,y in zip(a,b)]
+
+
+def weyl_certificate(apply,n,q=FIELD,rounds=3,seed=42):
+    w=root(n,q)
+    e0=[0]*n;e0[0]=1
+    first=apply(e0)
+    seed_ok=all((x-1)%q==0 for x in first)
+    rng=random.Random(seed)
+    first_failure=[];second_failure=[]
+    for i in range(rounds):
+        v=[rng.randrange(q) for _ in range(n)]
+        Tv=apply(v)
+        A=apply(shift(v))
+        B=modulation(Tv,w,q)
+        E=subtract(A,B,q)
+        first_failure.append(sum(x!=0 for x in E))
+        A2=apply(modulation(v,w,q))
+        B2=backward_shift(Tv)
+        E2=subtract(A2,B2,q)
+        second_failure.append(sum(x!=0 for x in E2))
+    return {'N':n,'q':q,'rounds':rounds,'seed_matches_F':seed_ok,
+            'shift_modulation_defect_nonzeros':first_failure,
+            'dual_defect_nonzeros':second_failure,
+            'passes':seed_ok and not any(first_failure) and not any(second_failure),
+            'one_sided_false_accept_upper_bound_if_seed_correct_and_T_not_F':q**(-rounds)}
+
+
+if __name__=='__main__':
+    import json
+    n=16
+    positive=weyl_certificate(lambda x:modular_dft(x),n)
+    candidate=graphs_polarized(2)
+    negative=weyl_certificate(lambda x:run_network(candidate,x),n)
+    print(json.dumps({'positive':positive,'polarized_expander':negative},indent=2))

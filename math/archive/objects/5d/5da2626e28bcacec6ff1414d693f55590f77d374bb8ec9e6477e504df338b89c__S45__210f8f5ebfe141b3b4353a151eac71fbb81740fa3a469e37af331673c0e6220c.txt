@@ -1,0 +1,256 @@
+   1 #!/usr/bin/env python3
+   2 """Independent exhaustive N5 certificate, rebuilt from target and all cycles.
+   3 No constructor or uploaded code is imported. Standard library only.
+   4 """
+   5 from pathlib import Path
+   6 import itertools,json,sys,random,hashlib
+   7 p=241
+   8 class E:
+   9  __slots__=('a','b')
+  10  def __init__(self,a=0,b=0):
+  11   if isinstance(a,E):self.a,self.b=a.a,a.b
+  12   else:self.a,self.b=a%p,b%p
+  13  def __add__(self,y):y=E(y);return E(self.a+y.a,self.b+y.b)
+  14  __radd__=__add__
+  15  def __neg__(self):return E(-self.a,-self.b)
+  16  def __sub__(self,y):return self+-E(y)
+  17  def __rsub__(self,y):return E(y)+-self
+  18  def __mul__(self,y):y=E(y);return E(self.a*y.a+7*self.b*y.b,self.a*y.b+self.b*y.a)
+  19  __rmul__=__mul__
+  20  def inverse(self):d=(self.a*self.a-7*self.b*self.b)%p;assert d;d=pow(d,-1,p);return E(self.a*d,-self.b*d)
+  21  def __truediv__(self,y):return self*E(y).inverse()
+  22  def __eq__(self,y):y=E(y);return self.a==y.a and self.b==y.b
+  23  def __bool__(self):return bool(self.a or self.b)
+  24  def __pow__(self,n):
+  25   out=E(1);a=self
+  26   while n:
+  27    if n&1:out=out*a
+  28    a=a*a;n//=2
+  29   return out
+  30  def enc(self):return [self.a,self.b]
+  31 def norm(v):
+  32  a,b=map(E,v);assert a or b
+  33  return (E(1),b/a) if a else (E(),E(1))
+  34 def vkey(v):return tuple((c.a,c.b) for c in norm(v))
+  35 def rowskey(vv):return tuple(vkey(v) for v in vv)
+  36 def ei(n):return [[E(i==j) for j in range(n)] for i in range(n)]
+  37 def em(a,b):return [[sum((x*y for x,y in zip(r,c)),E()) for c in zip(*b)] for r in a]
+  38 def erank(a,return_rows=False):
+  39  a=[list(map(E,r)) for r in a];ids=list(range(len(a)));used=[];k=0
+  40  for j in range(len(a[0])):
+  41   q=next((q for q in range(k,len(a)) if a[q][j]),None)
+  42   if q is None:continue
+  43   a[k],a[q]=a[q],a[k];ids[k],ids[q]=ids[q],ids[k];used.append(ids[k]);scale=a[k][j].inverse();a[k]=[v*scale for v in a[k]]
+  44   for q in range(k+1,len(a)):
+  45    scale=a[q][j]
+  46    if scale:a[q]=[v-scale*w for v,w in zip(a[q],a[k])]
+  47   k+=1
+  48   if k==len(a):break
+  49  return (k,used) if return_rows else k
+  50 
+  51 def edet(a):
+  52  a=[list(map(E,r)) for r in a];z=E(1)
+  53  for j in range(len(a)):
+  54   k=next((k for k in range(j,len(a)) if a[k][j]),None)
+  55   if k is None:return E()
+  56   if k!=j:a[k],a[j]=a[j],a[k];z=-z
+  57   pivot=a[j][j];z=z*pivot
+  58   for i in range(j+1,len(a)):
+  59    c=a[i][j]/pivot
+  60    if c:
+  61     for k in range(j,len(a)):a[i][k]=a[i][k]-c*a[j][k]
+  62  return z
+  63 
+  64 def einv(a):
+  65  n=len(a);a=[list(map(E,r))+ei(n)[i] for i,r in enumerate(a)]
+  66  for j in range(n):
+  67   k=next(k for k in range(j,n) if a[k][j]);a[k],a[j]=a[j],a[k];q=a[j][j].inverse();a[j]=[v*q for v in a[j]]
+  68   for k in range(n):
+  69    if k!=j:
+  70     q=a[k][j]
+  71     if q:a[k]=[v-q*w for v,w in zip(a[k],a[j])]
+  72  return [r[n:] for r in a]
+  73 # Base-field 2x2 operations for projective forests.
+  74 def det(a):return (a[0][0]*a[1][1]-a[0][1]*a[1][0])%p
+  75 def mul(a,b):return [[sum(x*y for x,y in zip(r,c))%p for c in zip(*b)] for r in a]
+  76 def tr(a):return list(map(list,zip(*a)))
+  77 def invert(a):q=pow(det(a),-1,p);return [[a[1][1]*q%p,-a[0][1]*q%p],[-a[1][0]*q%p,a[0][0]*q%p]]
+  78 def transform(a,v):return norm([sum((x*y for x,y in zip(r,v)),E()) for r in a])
+  79 def trim(a):
+  80  a=[x%p for x in a]
+  81  while a and not a[-1]:a.pop()
+  82  return a
+  83 
+  84 def rem(a,b):
+  85  a=trim(a);b=trim(b)
+  86  while len(a)>=len(b):
+  87   c=a[-1]*pow(b[-1],-1,p)%p;k=len(a)-len(b)
+  88   for j,x in enumerate(b):a[k+j]=(a[k+j]-c*x)%p
+  89   a=trim(a)
+  90  return a
+  91 
+  92 def gcd(a,b):
+  93  a=trim(a);b=trim(b)
+  94  while b:a,b=b,rem(a,b)
+  95  return [x*pow(a[-1],-1,p)%p for x in a] if a else []
+  96 squares={x*x%p:x for x in range(p)}
+  97 def sqrt_base(d):
+  98  d%=p
+  99  if d in squares:return E(squares[d])
+ 100  assert d*pow(7,-1,p)%p in squares;return E(0,squares[d*pow(7,-1,p)%p])
+ 101 def peval(q,v):return q[0]*v[0]*v[0]+q[1]*v[0]*v[1]+q[2]*v[1]*v[1]
+ 102 def domain(qs):
+ 103  nonzero=[q for q in qs if any(q)];assert nonzero,'unrestricted component'
+ 104  g=[]
+ 105  for q in nonzero:g=gcd(g,q)
+ 106  roots=[]
+ 107  if len(g)==2:roots=[(E(1),E(-g[0]*pow(g[1],-1,p)))]
+ 108  if len(g)==3:
+ 109   a,b,c=g[2],g[1],g[0];d=(b*b-4*a*c)%p;root=sqrt_base(d);roots=[(E(1),(-b+root)/E(2*a))]
+ 110   if d:roots.append((E(1),(-b-root)/E(2*a)))
+ 111  if all(q[2]==0 for q in qs):roots.append((E(),E(1)))
+ 112  assert all(all(not peval(q,v) for q in qs) for v in roots)
+ 113  assert len(set(vkey(v) for v in roots))==len(roots)
+ 114  return roots,{'gcd':g,'infinity':all(q[2]==0 for q in qs),'quadratics':qs}
+ 115 
+ 116 def cycles(n):
+ 117  out=[]
+ 118  for rest in itertools.permutations(range(1,n)):
+ 119   seq=(0,)+rest;pi=[0]*n
+ 120   for i,j in zip(seq,seq[1:]+seq[:1]):pi[i]=j
+ 121   out.append(pi)
+ 122  assert len(set(map(tuple,out)))==len(out)
+ 123  return out
+ 124 
+ 125 def target(n,w):
+ 126  F=[[E(pow(w,i*j,p)) for j in range(n)] for i in range(n)];A=ei(n)
+ 127  for i in range(n):A[i][i]=E(pow(w,((n+1)//2)*i*i,p))
+ 128  Fi=einv(F);return einv([[Fi[i][j]+A[i][j] for j in range(n)] for i in range(n)])
+ 129 
+ 130 def edges(B,pi,tau):
+ 131  n=len(pi);ti=[tau.index(j) for j in range(n)];out=[]
+ 132  for i,k in itertools.combinations(range(n),2):
+ 133   for j in range(n):
+ 134    if j in {i,k,pi[i],pi[k],tau[i],tau[k]}:continue
+ 135    a,b=B[i][j],B[i][ti[j]];c,d=B[pi[i]][j],B[pi[i]][ti[j]];e,f=B[k][j],B[k][ti[j]];g,h=B[pi[k]][j],B[pi[k]][ti[j]]
+ 136    C=[[(a*f-b*e)%p,(a*h-b*g)%p],[(c*f-d*e)%p,(c*h-d*g)%p]]
+ 137    assert det(C)==det([[a,b],[c,d]])*det([[e,f],[g,h]])%p
+ 138    out.append((i,k,j,C))
+ 139  return out
+ 140 
+ 141 def row_domains(B,pi,tau):
+ 142  ee=edges(B,pi,tau);n=len(pi);adj=[[] for _ in range(n)]
+ 143  for i,k,j,C in ee:
+ 144   assert det(C),'singular transition needs separate stratum'
+ 145   H=[[C[0][1],C[1][1]],[-C[0][0]%p,-C[1][0]%p]];adj[i].append((k,H));adj[k].append((i,invert(H)))
+ 146  comp=[None]*n;maps=[None]*n;members=[]
+ 147  for root in range(n):
+ 148   if comp[root] is not None:continue
+ 149   ci=len(members);members.append([]);comp[root]=ci;maps[root]=[[1,0],[0,1]];stack=[root]
+ 150   while stack:
+ 151    i=stack.pop();members[ci].append(i)
+ 152    for k,H in adj[i]:
+ 153     if comp[k] is None:comp[k]=ci;maps[k]=mul(H,maps[i]);stack.append(k)
+ 154  qs=[[] for m in members]
+ 155  for i,k,j,C in ee:
+ 156   assert comp[i]==comp[k]
+ 157   D=mul(mul(tr(maps[i]),C),maps[k]);qs[comp[i]].append([D[0][0],(D[0][1]+D[1][0])%p,D[1][1]])
+ 158  domains=[];proof=[]
+ 159  for qq in qs:
+ 160   dom,pr=domain(qq);domains.append(dom);proof.append(pr)
+ 161  return domains,comp,maps,proof,len(ee)
+ 162 
+ 163 def sparse_matrices(B,pi,tau,ur):
+ 164  n=len(pi);ti=[tau.index(j) for j in range(n)];U=[[E() for _ in range(n)] for _ in range(n)]
+ 165  for i,(a,b) in enumerate(ur):U[i][i]=a;U[i][pi[i]]=b
+ 166  UB=em(U,B);vc=[];ranks=[]
+ 167  for j in range(n):
+ 168   rows=[[UB[i][j],UB[i][ti[j]]] for i in range(n) if j not in {i,pi[i],tau[i]}]
+ 169   r=erank(rows);assert r==1;ranks.append(r);first=next(row for row in rows if any(row));v=norm([-first[1],first[0]]);assert all(not sum((a*b for a,b in zip(row,v)),E()) for row in rows);vc.append(v)
+ 170  V=[[E() for _ in range(n)] for _ in range(n)]
+ 171  for j,(a,b) in enumerate(vc):V[j][j]=a;V[ti[j]][j]=b
+ 172  return U,V,vc,ranks
+ 173 
+ 174 def augmented(B,U,V):
+ 175  n=len(B);K=em(em(U,B),V);M=[]
+ 176  for i in range(n):
+ 177   for j in range(n):
+ 178    row=[E()]*(2*n+1);row[i]=V[i][j];row[n+j]=U[i][j];row[-1]=K[i][j];M.append(row)
+ 179  return M,K
+ 180 
+ 181 def main():
+ 182  assert pow(7,120,p)==p-1 and pow(91,5,p)==1 and 91!=1
+ 183  n=5;B=target(n,91);wanted=[[161,20,102,102,20],[20,182,62,26,92],[102,62,236,28,26],[102,26,28,236,62],[20,92,26,62,182]];assert B==[[E(x) for x in row] for row in wanted]
+ 184  G=sum(pow(91,3*j*j,p) for j in range(n))%p;c=5*G%p;assert (G,c,(1+c)%p)==(103,33,34) and G*G%p==5
+ 185  BF=[[E((pow(91,i*j,p)-G*pow(91,(-3*(i+j)**2)%5,p)+c*pow(91,(-3*i*i)%5,p)*(i==j))*pow(34,-1,p)) for j in range(n)] for i in range(n)];assert BF==B
+ 186  orders=cycles(n);records=[];certificates=[];reject=0;survive=0;branches=0;components={};edgecount=0;zero_bases={};colchecks=0
+ 187  for a,pi in enumerate(orders):
+ 188   for b,tau in enumerate(orders):
+ 189    ds,comp,maps,proof,ec=row_domains(wanted,pi,tau);edgecount+=ec
+ 190    if any(not d for d in ds):
+ 191     reject+=1;records.append({'pair':[a,b],'status':'ROW_EMPTY','component_proofs':proof});continue
+ 192    assert all(len(d)==2 for d in ds);survive+=1;components[len(ds)]=components.get(len(ds),0)+1;count=0
+ 193    for roots in itertools.product(*ds):
+ 194     ur=[transform(maps[i],roots[comp[i]]) for i in range(n)];U,V,vc,rs=sparse_matrices(B,pi,tau,ur);colchecks+=len(rs);M,K=augmented(B,U,V)
+ 195     for i in range(n):
+ 196      for j in range(n):
+ 197       if j not in {i,pi[i],tau[i]}:assert not K[i][j]
+ 198     r,ids=erank(M,True);assert r==11 and erank([row[:-1] for row in M])==10
+ 199     sub=[M[i] for i in ids];dd=edet(sub);assert dd
+ 200     rd=[sum(idx//n==i for idx in ids)-1 for i in range(n)];cd=[sum(idx%n==j for idx in ids)-1 for j in range(n)];assert min(rd+cd)>=0 and sum(rd)==sum(cd)==6
+ 201     lam=[E(i+2,i+1) for i in range(n)];mu=[E(i+9,2*i+1) for i in range(n)];UU=[[lam[i]*x for x in row] for i,row in enumerate(U)];VV=[[x*mu[j] for j,x in enumerate(row)] for row in V];MM,_=augmented(B,UU,VV);d2=edet([MM[i] for i in ids]);factor=E(1)
+ 202     for x,k in zip(lam,rd):factor=factor*x**k
+ 203     for x,k in zip(mu,cd):factor=factor*x**k
+ 204     assert d2==dd*factor
+ 205     zb=(sum(not v[0] for v in ur),sum(not v[0] for v in vc));zero_bases[zb]=zero_bases.get(zb,0)+1
+ 206     certificates.append({'pair':[a,b],'rows':[[x.enc() for x in v] for v in ur],'columns':[[x.enc() for x in v] for v in vc],'positions':[[i//n,i%n] for i in ids],'determinant':dd.enc(),'row_degrees':rd,'column_degrees':cd,'zero_bases':list(zb)})
+ 207     branches+=1;count+=1
+ 208    records.append({'pair':[a,b],'status':'AUGMENTED_MINOR_REJECT','components':len(ds),'branches':count,'component_proofs':proof})
+ 209  assert (reject,survive,branches,colchecks)==(384,192,624,3120);assert components=={2:120,1:72};assert zero_bases=={(0,1):240,(1,0):240,(0,0):144}
+ 210  # Independently generated valid sums, including endpoint boundaries.
+ 211  rng=random.Random(5724);positives=[]
+ 212  for z in range(12):
+ 213   pi=orders[z];tau=orders[(7*z+3)%24];plans=[];dirs=[]
+ 214   for branch,perm in enumerate([pi,tau]):
+ 215    weights=[E(0 if (z+branch+i)%4==0 else i+branch+2) for i in range(n)];den=ei(n)
+ 216    for i in range(n):den[i][perm[i]]=den[i][perm[i]]-weights[i]
+ 217    green=einv(den);L=[E(rng.randrange(1,p)) for i in range(n)];R=[E(rng.randrange(1,p)) for i in range(n)]
+ 218    if z%3==1:L[(z+branch)%n]=E()
+ 219    if z%3==2:R[(z+2*branch)%n]=E()
+ 220    plans.append([[L[i]*green[i][j]*R[j] for j in range(n)] for i in range(n)])
+ 221    # Exact leading valuation normalization of inverse sparse row/column pairs.
+ 222    if branch==0:
+ 223     rr=[]
+ 224     for i in range(n):
+ 225      # R_i^-1 cancels in each row. Remaining coefficients L_i^-1,
+ 226      # -w_i L_pi(i)^-1. Zero endpoint uses epsilon, valuation -1.
+ 227      co=[(E(1)/L[i],0) if L[i] else (E(1),-1),(-weights[i]/L[perm[i]],0) if L[perm[i]] else (-weights[i],-1)]
+ 228      val=min(v for a,v in co if a);rr.append(norm([a if v==val else E() for a,v in co]))
+ 229     dirs.append(rr)
+ 230    else:
+ 231     cc=[];ti=[perm.index(j) for j in range(n)]
+ 232     for j in range(n):
+ 233      # L_j^-1 cancels in each column; coefficients R_j^-1,
+ 234      # -w_tau^-1(j) R_tau^-1(j)^-1.
+ 235      i=ti[j];co=[(E(1)/R[j],0) if R[j] else (E(1),-1),(-weights[i]/R[i],0) if R[i] else (-weights[i],-1)];val=min(v for a,v in co if a);cc.append(norm([a if v==val else E() for a,v in co]))
+ 236     dirs.append(cc)
+ 237   BB=[[plans[0][i][j]+plans[1][i][j] for j in range(n)] for i in range(n)];U=[[E() for _ in range(n)] for i in range(n)];V=[[E() for _ in range(n)] for i in range(n)]
+ 238   for i,v in enumerate(dirs[0]):U[i][i]=v[0];U[i][pi[i]]=v[1]
+ 239   for j,v in enumerate(dirs[1]):V[j][j]=v[0];V[tau.index(j)][j]=v[1]
+ 240   M,K=augmented(BB,U,V);r=erank(M);assert r<=10
+ 241   for i in range(n):
+ 242    for j in range(n):
+ 243     if j not in {i,pi[i],tau[i]}:assert not K[i][j]
+ 244   positives.append({'trial':z,'augmented_rank':r,'singular_endpoint':z%3!=0})
+ 245  # Actual N3 positive target with known two-Green formula and all minors.
+ 246  w=15;t=207;kappa=2;nn=3;D=[E(w),E(1),E(1)];pi=[1,2,0];tau=[2,0,1];BB=target(nn,w);branches3=[]
+ 247  for perm in [pi,tau]:
+ 248   den=ei(nn)
+ 249   for i in range(nn):den[i][perm[i]]=den[i][perm[i]]-t
+ 250   green=einv(den);branches3.append([[kappa*D[i]*green[i][j]*D[j] for j in range(nn)] for i in range(nn)])
+ 251  assert BB==[[branches3[0][i][j]+branches3[1][i][j] for j in range(nn)] for i in range(nn)]
+ 252  U=einv(branches3[0]);V=einv(branches3[1]);M,K=augmented(BB,U,V);assert erank(M)==6
+ 253  for ids in itertools.combinations(range(9),7):assert not edet([M[i] for i in ids])
+ 254  summary={'status':'PASS','uploaded_or_constructor_code_executed':False,'prime':p,'quadratic_extension':'theta^2=7','Hamiltonian_cycles':24,'ordered_pairs':576,'row_rejections':reject,'survivor_pairs':survive,'survivor_component_counts':components,'branches':branches,'column_rank_one_checks':colchecks,'all_pair_row_relations':edgecount,'nonzero_augmented_minors':branches,'gauge_checks':branches,'zero_base_counts':[{'row':a,'column':b,'count':c} for (a,b),c in sorted(zero_bases.items())],'positive_boundary_controls':positives,'N3_positive_augmented_rank':6,'N3_all_maximal_minors':36}
+ 255  out=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).with_name('INDEPENDENT_RESULTS.json');data={'summary':summary,'order_records':records,'branch_certificates':certificates};out.write_text(json.dumps(data,indent=2)+'\n');print(json.dumps(summary,indent=2))
+ 256 if __name__=='__main__':main()

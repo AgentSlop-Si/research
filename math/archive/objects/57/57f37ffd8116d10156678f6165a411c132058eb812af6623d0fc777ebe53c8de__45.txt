@@ -1,0 +1,122 @@
+   1 """Exact Galois-orbit descriptors for fresh integer/rational-input radix-two DFTs.
+   2 
+   3 This constructs an O(N)-size *symbolic descriptor* of the whole Fourier vector.
+   4 It does NOT compute N exact complex register values with O(N) operations.
+   5 The field F_p tests check identities, not the Galois automorphism claim over Q.
+   6 """
+   7 from __future__ import annotations
+   8 from dataclasses import dataclass
+   9 from typing import Sequence
+  10 from cmath import exp
+  11 from math import tau
+  12 
+  13 
+  14 @dataclass(frozen=True)
+  15 class FrequencyDescriptor:
+  16     m: int
+  17     u: int
+  18     orbit_index: int
+  19 
+  20 
+  21 @dataclass
+  22 class OrbitDFT:
+  23     n: int
+  24     primitive_coefficients: list[list[int]]
+  25     dc: int
+  26     add_sub_count: int
+  27 
+  28     @classmethod
+  29     def build(cls, samples: Sequence[int]) -> 'OrbitDFT':
+  30         """Exactly 2(N-1) integer adds/subs, retaining N shared integers."""
+  31         n = len(samples)
+  32         if n < 2 or n & (n-1):
+  33             raise ValueError('length must be power of 2 >= 2')
+  34         a = [int(v) for v in samples]
+  35         levels: list[list[int]] = []
+  36         cost = 0
+  37         while len(a) > 1:
+  38             half = len(a)//2
+  39             r = [a[j]-a[j+half] for j in range(half)]
+  40             a = [a[j]+a[j+half] for j in range(half)]
+  41             levels.append(r)
+  42             cost += 2*half
+  43         assert cost == 2*(n-1)
+  44         return cls(n, levels, a[0], cost)
+  45 
+  46     def descriptor(self, k:int) -> FrequencyDescriptor | None:
+  47         if k<0 or k>=self.n:raise IndexError(k)
+  48         if k==0:return None
+  49         s=(k&-k).bit_length()-1
+  50         return FrequencyDescriptor(m=self.n>>s,u=k>>s,orbit_index=s)
+  51 
+  52     def coefficients(self, k:int) -> list[int]:
+  53         """Explicit rational cyclotomic power basis of X_k, O(phi(m)) output."""
+  54         desc=self.descriptor(k)
+  55         if desc is None:return [self.dc]
+  56         m,u=desc.m,desc.u
+  57         half=m//2
+  58         rep=self.primitive_coefficients[desc.orbit_index]
+  59         assert len(rep)==half and u%2==1
+  60         out=[0]*half
+  61         for j,v in enumerate(rep):
+  62             e=(u*j)%m
+  63             if e<half:out[e]+=v
+  64             else:out[e-half]-=v
+  65         # Multiplication by odd u is a signed permutation of cyclotomic basis.
+  66         assert sorted(abs(v) for v in out)==sorted(abs(v) for v in rep)
+  67         return out
+  68 
+  69     def evaluate_mod(self,k:int,p:int=998244353) -> int:
+  70         """Materialize one scalar modulo a field containing the needed root."""
+  71         desc=self.descriptor(k)
+  72         if desc is None:return self.dc%p
+  73         m=desc.m
+  74         if (p-1)%m:raise ValueError('p has no mth primitive root')
+  75         # 3 generates F_998244353^*; use slower fallback for other p.
+  76         root=pow(3,(p-1)//m,p)
+  77         if pow(root,m//2,p)==1:
+  78             for candidate in range(2,min(p,1024)):
+  79                 root=pow(candidate,(p-1)//m,p)
+  80                 if pow(root,m//2,p)!=1:break
+  81             else:raise ValueError('primitive root not located')
+  82         coeff=self.coefficients(k)
+  83         acc=0
+  84         w=1
+  85         for v in coeff:
+  86             acc=(acc+v*w)%p
+  87             w=w*root%p
+  88         return acc
+  89 
+  90     def evaluate_complex(self, k: int) -> complex:
+  91         """One numerical complex value, NOT an O(1) descriptor materialization."""
+  92         desc=self.descriptor(k)
+  93         if desc is None:return complex(self.dc)
+  94         m=desc.m
+  95         omega=exp(1j*tau/m)
+  96         return sum(c*omega**j for j,c in enumerate(self.coefficients(k)))
+  97 
+  98     def representative_bins_mod(self,p:int=998244353)->dict[int,int]:
+  99         """Only {0,1,2,4,...,N/2}, with O(N) arithmetic overall."""
+ 100         return {**{0:self.dc%p}, **{1<<s:self.evaluate_mod(1<<s,p)
+ 101                     for s in range(len(self.primitive_coefficients))}}
+ 102 
+ 103     @property
+ 104     def stored_coefficients(self)->int:
+ 105         return 1+sum(len(s) for s in self.primitive_coefficients)
+ 106 
+ 107     @property
+ 108     def expanded_coefficients(self)->int:
+ 109         """If *all* N spectra were emitted as explicit cyclotomic arrays."""
+ 110         # Each level m has phi(m)=m/2 frequencies and phi(m) basis coeffs.
+ 111         return 1+sum(len(s)**2 for s in self.primitive_coefficients)
+ 112 
+ 113     def expected_expanded(self)->int:
+ 114         return (self.n*self.n+2)//3
+ 115 
+ 116 
+ 117 def reference_dft_mod(x:Sequence[int],p:int=998244353)->list[int]:
+ 118     n=len(x)
+ 119     if (p-1)%n:raise ValueError
+ 120     w=pow(3,(p-1)//n,p)
+ 121     return [sum(int(v)*pow(w,k*j,p) for j,v in enumerate(x))%p
+ 122             for k in range(n)]

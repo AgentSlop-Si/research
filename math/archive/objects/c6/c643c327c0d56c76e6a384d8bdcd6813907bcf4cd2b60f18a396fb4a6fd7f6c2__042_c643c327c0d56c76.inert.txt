@@ -1,0 +1,96 @@
+# Arbitrary-support rectangular Fourier synthesis: bounded prior-art review
+
+Research date: 9 October 2026.
+
+## Bottom line
+
+For fresh arbitrary support and arbitrary complex coefficients, the strongest independent exact bound verified in this search remains
+
+\[
+O\left(k\log N+M(k)\log k+(1+N/k)M(k)+N\right),
+\]
+
+where \(M(k)\) is the arithmetic cost of degree-\(k\) polynomial multiplication. With classical complex FFT multiplication this is \(O(N\log k)\) in the regime \(k=\Theta(\log N)\). The sources below give a clean theorem-level explanation, rather than relying only on informal pruning folklore.
+
+This is a bounded-search result, **not** a proof that an independent \(O(N)\) or \(o(N\log k)\) algorithm is impossible or unknown throughout the literature. The excluded recent exact-DFT power-saving construction was found but is not being used as a mechanism or claimed as a new result.
+
+A useful concrete deliverable is a streaming implementation of the exact baseline with only \(O(k)\) auxiliary complex registers, assuming linear-space multiplication; retaining all outputs naturally takes \(O(N)\) registers. The long-output computation never requires an \(N\)-length inverse or an \(N\)-length FFT.
+
+## 1. The most relevant primary theorem
+
+[Bostan, Chyzak, Ollivier, Salvy, Schost, and Sedoglavic, *Fast computation of power series solutions of systems of differential equations* (2007)](https://mathexp.eu/bostan/publications/BCOSSS07.pdf), Theorem 2(b) and §4.1, give cost \(O(M(r)(1+N/r))\) for one scalar solution with a constant-coefficient order-\(r\) equation. The proof passes to rational generating functions and explicitly states that a degree-\(r\) rational function can be expanded to precision \(N\) in \(O(NM(r)/r)\) operations. Their characteristic-zero arithmetic model applies to complex coefficients. Their §1.5 distinguishes multiplication over general fields from fields supporting FFTs.
+
+Application here: set \(z_s=\zeta_N^{j_s}\) and
+
+\[
+F(t)=\sum_{m\ge0}f_mt^m=\sum_{s=1}^k\frac{a_s}{1-z_st}=P(t)/Q(t),
+\quad Q(t)=\prod_s(1-z_st),\quad \deg P<k.
+\]
+
+The resulting arithmetic bound depends on the number of terms, not on contiguity of the support, smoothness of \(N\), or a known-support reuse assumption.
+
+## 2. Fresh-input preprocessing and an explicit streaming realization
+
+The following is a direct derivation/implementation of the baseline, not a new asymptotic theorem.
+
+1. Compute \(z_s\) by binary exponentiation of the supplied root \(\zeta_N\), charging \(O(k\log N)\) operations. Repeated support values can simply remain repeated in the rational representation, or be merged first.
+2. Build \(P,Q\) by a balanced rational-sum tree. Combine \(P_1/Q_1+P_2/Q_2\) as \((P_1Q_2+P_2Q_1)/(Q_1Q_2)\). Leaves are \(a_s/(1-z_st)\). Charge \(O(M(k)\log k)\).
+3. Let block length \(b=k\). Compute \(R=Q^{-1}\bmod t^b\), using \(Q(0)=1\), once in \(O(M(k))\).
+4. Start with \(P_0=P\). At block \(r\), compute
+   \[
+   A_r=(P_rR)\bmod t^b,\qquad
+   P_{r+1}=(P_r-QA_r)/t^b.
+   \]
+   The numerator is divisible by \(t^b\), and \(\deg P_{r+1}<k\). The coefficients of \(A_r\) are the next \(b\) outputs, because
+   \[
+   P_r/Q=A_r+t^bP_{r+1}/Q.
+   \]
+5. Each block uses a constant number of degree-\(O(k)\) multiplications plus \(O(k)\) additions and copying. Truncate the final block to the required length.
+
+The sum tree can discard child data after each level, keeping \(O(k)\) live polynomial coefficients. The expansion retains only \(P_r,Q,R,A_r\) and multiplication scratch. This proves the stated streaming-space bound when the multiplication routine is linear-space. At \(k=\Theta(\log N)\), fresh preprocessing is polylogarithmic in \(N\) and does not hide the all-output bottleneck.
+
+General multiplication consequence: any permitted improvement \(M(k)=o(k\log k)\) immediately transfers to \(o(N\log k)\), subject to charged preprocessing and root availability. This is a reduction target, not an independent faster multiplication result.
+
+## 3. Transposed Vandermonde: the exact connection
+
+[Bostan, Lecerf, and Schost, *Tellegen's Principle into Practice* (ISSAC 2003)](https://mathexp.eu/bostan/publications/BoLeSc03.pdf), §6.2, identifies transposed Vandermonde multiplication with the initial coefficients of \(\sum_s a_s/(1-z_st)\). The paper gives the product-tree construction, its transpose, and square-size cost \(\tfrac32 M(k)\log k+O(M(k))\). It also explicitly discusses what support-dependent data can be reused across repeated evaluations.
+
+For the present rectangular problem, applying the square procedure separately to every block would unnecessarily repeat tree work. The rational-series block construction above is the sharper aspect-ratio adaptation. Precomputing a tree for free is not legitimate for fresh arbitrary support; it is explicitly charged here.
+
+A trap: geometric progression **of output arguments** does not make the transformed nodes \(z_s=\zeta_N^{j_s}\) an equally spaced geometric progression in the node index \(s\). Arbitrary exponents remain arbitrary Vandermonde nodes after transposition.
+
+## 4. Special-point evaluation does not remove arbitrary-support dependence
+
+[Bostan and Schost, *Polynomial evaluation and interpolation on special sets of points* (2005)](https://mathexp.eu/bostan/publications/BoSc05.pdf) gives \(M(n)+O(n)\)-scale algorithms for several Newton-basis operations on geometric progressions and related monomial-basis algorithms. These exploit structured evaluation nodes, and use polynomial multiplication as the computational primitive.
+
+For a dense degree-\(N-1\) polynomial with only \(k\) nonzero coefficients, invoking a dense geometric-evaluation theorem at degree \(N\) still incurs the large-size multiplication cost. Conversely, transposition gives arbitrary nodes indexed by the sparse support. Neither interpretation establishes \(O(N)\) synthesis for arbitrary \(k\)-term supports.
+
+[Nogneng and Schost, *On the evaluation of some sparse polynomials*](https://cs.uwaterloo.ca/~eschost/publications/SparseEvaluation.pdf) develops faster evaluation for specially structured sparse exponents, including quadratic exponent patterns. Its introduction separately identifies general sparse evaluation along geometric progressions with transposed Vandermonde algorithms. This is relevant boundary evidence: special exponent structure is additional input structure, not a generic solution for fresh supports.
+
+## 5. Remote-term recurrence algorithms: useful, but the wrong output geometry
+
+[Bostan and Mori, *A Simple and Fast Algorithm for Computing the N-th Term of a Linearly Recurrent Sequence* (2021)](https://mathexp.eu/bostan/publications/BoMo21.pdf), Theorems 1 and 3, give \(O(M(k)\log N)\) arithmetic algorithms for one remote coefficient and a remote block of \(k\) consecutive coefficients. They improve constants over earlier recurrence methods. This is valuable if only isolated times or a late short interval are requested.
+
+Using such remote-block access repeatedly for all outputs costs about \((N/k)M(k)\log N\), which is worse than sequential block expansion. Recursing on all parity branches likewise requires an honest count of all the branches; the single-branch \(\log N\) coefficient theorem does not automatically become a linear all-output theorem.
+
+## 6. Pruning and recent candidates checked
+
+[FFTW's primary documentation on pruned FFTs](https://fftw.org/pruned.html) explicitly states the general \(O(N\log k)\) arithmetic bound for either \(k\) requested outputs or \(k\) nonzero inputs. It explains why observed speed does not track arithmetic count alone, and notes that its sample implementation handles a simpler contiguous-output case. Its support does not constitute an optimality theorem for arbitrary arithmetic algorithms.
+
+[Franchetti and Püschel, *Generating High Performance Pruned FFT Implementations* (ICASSP 2009)](https://users.ece.cmu.edu/~franzf/papers/icassp09.pdf) develops a recursive general-radix pruned Cooley–Tukey formulation and implementation generation. Its reported improvements concern optimized pruned implementations, not a verified strict asymptotic improvement for fresh arbitrary supports.
+
+The 2025 [*Fast Compressed-Domain N-Point Discrete Fourier Transform: The “Twiddless” FFT Algorithm*](https://arxiv.org/abs/2505.23718) is **withdrawn** as of 21 December 2025. The author's arXiv notice identifies the surviving twiddle-free portion with decimation in frequency. It is not a stronger usable theorem.
+
+The recent [displacement-structured matrix work](https://arxiv.org/abs/2603.02425) concerns deterministic linear-system and nullspace algorithms with soft-linear structured-matrix bounds. The abstract does not supply a strict sub-\(N\log k\) rectangular matrix-vector theorem; soft-O notation alone cannot establish the improvement sought here.
+
+## 7. Why three plausible shortcuts do not close the gap
+
+These are algebraic deductions for this problem.
+
+- **Divisibility by \(1-t^N\):** \(Q\mid1-t^N\) is true for distinct root-of-unity nodes. But \((1-t^N)/Q\) has a long dense coefficient vector, and computing it is itself a rational-series expansion problem. It is not a free representation of all coefficients.
+- **Cyclic inverse:** \(Q\) is a zero divisor modulo \(t^N-1\). No ordinary cyclic inverse exists. Formal inversion modulo \(t^b\) is valid because \(Q(0)=1\); this is exactly the inversion used above.
+- **Approximate output heavy hitters:** for input \(x\) supported at one coordinate, all unitary Fourier coefficients have magnitude \(\|x\|_1/\sqrt N\). Thus there may be \(N\) coefficients above \(\varepsilon\|x\|_1/\sqrt N\). Generic sparse-output recovery followed by zero-filling cannot handle the stated arbitrary-input error criterion. A method exploiting a compact structured description of many heavy outputs would need another argument.
+
+## Research implication
+
+A new mechanism must improve beyond multiplication-based block advancement, or exploit a root-of-unity structure that applies to **all** supports without hiding equivalent expansion work. The rigorous baseline already handles fresh inputs, arbitrary transform length, and low workspace. The remaining issue is arithmetic work per emitted block, not merely missing preprocessing or an overlooked transposition.

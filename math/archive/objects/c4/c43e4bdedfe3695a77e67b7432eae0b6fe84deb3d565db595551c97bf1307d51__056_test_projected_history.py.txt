@@ -1,0 +1,89 @@
+"""Regression for replay work, not merely for equal numeric outputs."""
+from collections import deque
+import unittest
+import numpy as np
+from projected_fourier import ProjectedFourierState
+
+
+class CountedDeque(deque):
+    def __init__(self, values):
+        super().__init__(values)
+        self.visits=0
+
+    def __iter__(self):
+        for value in super().__iter__():
+            self.visits+=1
+            yield value
+
+    def __reversed__(self):
+        for value in super().__reversed__():
+            self.visits+=1
+            yield value
+
+
+class ProjectedHistoryTests(unittest.TestCase):
+    def make_state(self, capacity=None):
+        projection=np.arange(48).reshape(6,8).astype(complex)
+        return ProjectedFourierState(128,np.arange(8),projection,np.ones(6),event_capacity=capacity)
+
+    def test_one_unread_event_visits_one_record_not_all_retained_history(self):
+        state=self.make_state()
+        for _ in range(10000): state.add_coefficient(0,0.125)
+        state.query()  # rebuild, retaining old history deliberately
+        state.add_coefficient(1,2.0)
+        state.events=CountedDeque(state.events)
+        actual=state.query()
+        self.assertEqual(state.events.visits,1)
+        self.assertEqual(state.last_stats.strategy,'replay')
+        np.testing.assert_allclose(actual,state.coefficients@state.projection)
+
+    def test_replay_order_is_preserved(self):
+        state=self.make_state()
+        # Large cancellation makes chronological order numerically observable.
+        deltas=[1e16,-1e16,3.0]
+        expected=state.cached.copy()
+        for d in deltas:
+            state.add_coefficient(1,d)
+            expected += d*state.projection[1]
+        state.events=CountedDeque(state.events)
+        np.testing.assert_array_equal(state.query(),expected)
+        self.assertEqual(state.events.visits,3)
+
+    def test_bounded_history_rebuild_and_numeric_log_accounting(self):
+        state=self.make_state(capacity=2)
+        before=state.storage_bytes
+        for _ in range(10): state.add_coefficient(2,0.25)
+        self.assertEqual(state.storage_bytes-before,64)
+        np.testing.assert_allclose(state.query(),state.coefficients@state.projection)
+        self.assertEqual(state.last_stats.strategy,'rebuild')
+        state.compact()
+        self.assertEqual(state.storage_bytes,before)
+        self.assertEqual(state.storage_report()['event_numeric_bytes'],0)
+
+    def test_original_numerical_cases_with_uncompacted_history(self):
+        rng=np.random.default_rng(913)
+        n,r,q=512,8,21
+        basis=rng.normal(size=(r,n))+1j*rng.normal(size=(r,n))
+        bins=rng.choice(n,q,replace=False)
+        coeff=rng.normal(size=r).astype(complex)
+        state=ProjectedFourierState(n,bins,np.fft.fft(basis,axis=1)[:,bins],coeff)
+        time_signal=coeff@basis
+        for event in range(400):
+            d=complex(rng.normal(),rng.normal())
+            if event%2:
+                j=int(rng.integers(n)); state.add_point(j,d); time_signal[j]+=d
+            else:
+                i=int(rng.integers(r)); state.add_coefficient(i,d); time_signal+=d*basis[i]
+            if event%7==0:
+                np.testing.assert_allclose(state.query(),np.fft.fft(time_signal)[bins],atol=3e-9,rtol=3e-11)
+        np.testing.assert_allclose(state.query(),np.fft.fft(time_signal)[bins],atol=3e-9,rtol=3e-11)
+
+    def test_missing_one_event_forces_rebuild_even_with_short_backlog(self):
+        state=self.make_state(capacity=0)
+        state.add_coefficient(0,0.125)
+        np.testing.assert_allclose(state.query(),state.coefficients@state.projection)
+        self.assertEqual(state.last_stats.backlog,1)
+        self.assertEqual(state.last_stats.strategy,'rebuild')
+
+
+if __name__=='__main__': unittest.main(verbosity=2)

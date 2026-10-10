@@ -1,0 +1,152 @@
+# Exact periodic control variate plus the guarded approximate decoder
+
+## Fusion theorem
+
+Let `F[m,j]=exp(-2 pi i m j/N)` and `U=F/sqrt(N)`. The input consists of N
+Gaussian integers with O(log N)-bit coordinates. Fix epsilon in (0,1) and a
+constant polynomial failure exponent. Let `q=gcd(N,4)` and `n=N/q`.
+
+Compute any fresh, input-dependent q-periodic Gaussian-integer vector
+`g_j=a_(j mod q)`, and let `r=x-g`. An exact transform of g costs O(N) total
+word work, including writing its N output positions:
+
+    (F g)_(t n) = n sum_(s=0..q-1) a_s exp(-2 pi i s t/q),  0<=t<q;
+    (F g)_m = 0 at every other m.
+
+Because q is 1, 2 or 4, every coefficient in the short sum is one of ±1, ±i.
+Its real and imaginary coordinates are integers of O(log N) bits. No exact
+general root of unity, transcendental oracle, or large transform is required.
+
+Run the existing importance sampler and guarded decoder on r, producing R
+with the proved simultaneous guarantee
+
+    Pr[ max_m |R_m - (U r)_m| <= epsilon L_box(r)/sqrt(N) ] >= 1-delta.
+
+Then output `Y=F g/sqrt(N)+R`. Linearity gives the identical bound for
+`max_m |Y_m-(U x)_m|`. The exact structured component contributes zero error.
+The fit is deterministic conditional on the fresh input, so dependence of g
+on x causes no union bound or statistical adaptivity penalty. If the fit uses
+randomness, condition on that randomness and apply the same argument.
+
+All model qualifications of the decoder remain in force: fixed epsilon,
+`delta>=N^-c`, bounded words, full cold table construction, explicit output
+numerators and a common normalization. An exact shared `1/sqrt(N)` symbol may
+represent the unitary normalization; converting to ordinary numerical values
+requires paid finite precision and its own rounding budget.
+
+## A linear-time fit that cannot worsen the error certificate
+
+For each residue class s, fit real and imaginary coordinates independently.
+For a real cluster of n integers b_j, compute its rounded arithmetic mean a.
+Compute both `sum |b_j-a|` and `sum |b_j|`. Retain a only if its residual sum
+is no larger; otherwise use zero. Do this for each of the at most eight real
+clusters. An initial sum scan, a scoring scan and a residual-writing scan
+cost O(N). There is no sorting or free median selection.
+
+This proves
+
+    L_box(r) <= L_box(x).
+
+Thus the fused certificate is never weaker than the baseline certificate.
+This statement compares certified bounds, not the actual errors of two
+different randomized runs. Exact q-periodic inputs give r=0 and all outputs
+are exact. The integrator must detect zero residual mass before sampling.
+
+For near-periodic data `x=g_star+e` with Gaussian-integer q-periodic g_star,
+the rounded-mean fit additionally satisfies `L_box(r)<=3 L_box(e)`. Indeed,
+in one cluster its fitted displacement is `round(mean(e))`, whose absolute
+value is at most `2 |mean(e)|` (including half ties). The triangle inequality
+then gives the factor three, and selecting zero can only improve that score.
+
+An exact cluster median would improve this factor to one and still has an
+O(N) deterministic selection algorithm. **Sorting each cluster instead costs
+O(N log N) and would destroy the claimed fused complexity.** The delivered
+root implementation need not implement median selection to obtain the theorem.
+
+## Implemented stronger variant: exact means with an integer residual
+
+The root's `control_variate.py` implements this stronger variant. The
+rounded-mean alternative above is useful for comparison but is not the
+implemented fit. Exact means avoid fitting-roundoff loss while retaining
+the same integer sampler.
+Let `S_s=sum_(j mod q=s) x_j` and set `g_j=S_s/n`. Define Gaussian-integer
+scaled residuals
+
+    rho_j = n x_j - S_(j mod q).
+
+Now
+
+    F x = F g + (F rho)/n,
+    (F g)_(t n) = sum_s S_s exp(-2 pi i s t/q).
+
+The factors n cancel, so the structured spectrum remains Gaussian integer
+despite the rational time-domain mean. Fit each real cluster either by its
+exact mean or by zero: keep S only when `sum |n b_j-S| <= n sum |b_j|`, and
+otherwise replace S by zero. This ensures
+
+    L_box(rho)/n <= L_box(x).
+
+Run the unchanged integer sampler on rho and divide its output scale by n.
+The fused error is `epsilon L_box(rho)/(n sqrt(N))`. Every extra integer gains
+only O(log N) bits; all sums, products, comparisons and output numerators still
+fit in a fixed multiple of log N bits. Sampling weights are larger integers,
+but their ratios are exactly those of the rational residual.
+
+For any q-periodic comparison g_star, even with noninteger coordinates, exact
+means give `L_box(rho)/n <= 2 L_box(x-g_star)`: the mean displacement costs at
+most the cluster's original residual mass. The implementation uses the 1/n
+scale explicitly: if the decoder returns integer pair A with denominator D,
+the final numerator is `D*n*(F g)_m + L_box(rho)*A_m` and the common
+denominator is `D*n`.
+
+The implementation additionally evaluates the raw cluster sums at the q
+quarter-root frequencies and overwrites those q outputs with their exact
+values. Indeed `(F x)_(tn)=sum_s S_s exp(-2 pi i s t/q)` regardless of the
+selected fit. These corrections cannot increase approximation error and
+guarantee exact DC (and, where present, the other quarter-root frequencies)
+even when the residual is nonzero.
+
+For input component magnitudes below `2^b`, the residual mass is at most
+`2Nn*2^b`, each baseline coordinate at most `N*2^b`, and every final numerator
+at most `3Nn*2^b*D`. A conservative common machine width is therefore
+`max(decoder.w, b+2 bit_length(N)+bit_length(D)+4)` bits. The code reports
+this bound and asserts the final signed outputs fit. It is Theta(log N)
+under the required `b=O(log N)` input contract; accepting larger Python
+integers does not silently extend that complexity theorem.
+
+## Relation to the earlier exact structured work
+
+The Galois-defect, binary-index tensor, q-linear recurrence and shifted
+recurrence packages already provide exact O(N) field-operation evaluators
+on certified structured classes. The general identity `F x=F g+F(x-g)` can
+combine any such evaluator with a residual approximation **if** fitting,
+certification, the evaluator and the residual representation fit the same
+charged precision model. The earlier modular prototypes alone do not prove
+that a general complex fitted tensor or recurrence has a bounded-word exact
+representation. This periodic instance explicitly closes that interface using
+only Gaussian-integer spectra and integer residuals.
+
+It also avoids the orbit-walk error factor in the earlier approximate
+Galois-defect observation: the residual is approximated in the original
+Fourier map, not accumulated as a defect error along a long orbit.
+
+## Why a multiscale hierarchy does not automatically solve the exact goal
+
+An arbitrary input can have a nonzero dense residual after this fit; for
+example every fitted cluster can have mean zero. The residual sampler remains
+approximate in that case. The O(N) fused bound therefore applies to the
+approximate word-RAM goal, with an exact fast path when the residual is zero.
+
+A hierarchy can improve data-dependent residual mass, but it must pay all
+fits, all structured transforms, and every final residual. Constant-many
+linear-cost levels preserve O(N). Logarithmically many full-length levels
+cost O(N log N) unless a separately proved sharing mechanism reduces their
+total work. Choosing period N makes the residual vanish but leaves the full
+original DFT to compute. Splitting arbitrary data into more structured
+components likewise needs a proof that their total discovery/evaluation cost
+is o(N log N); merely summing their individual exact identities is insufficient.
+
+No universal FFT lower bound is asserted. The exact arbitrary-input target
+remains open in this research. This fusion supplies a stronger certified
+approximation for near-periodic inputs while retaining the all-input O(N)
+approximate word-RAM upper bound.

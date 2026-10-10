@@ -1,0 +1,65 @@
+   1 #!/usr/bin/env python3
+   2 """Independent replay of saved gate words; no experiment imports."""
+   3 import argparse
+   4 from fractions import Fraction as Q
+   5 from pathlib import Path
+   6 import hashlib
+   7 import json
+   8 
+   9 
+  10 def replay(word, dimension):
+  11     rows=[{i:Q(1)} for i in range(dimension)]
+  12     for op,dst,src,value in word:
+  13         assert 0 <= dst < dimension
+  14         if op=='neg':
+  15             assert src is None
+  16             rows[dst]={i:-a for i,a in rows[dst].items()}
+  17         else:
+  18             assert op=='add' and 0 <= src < dimension and src!=dst
+  19             scalar=Q(value)
+  20             for i,a in rows[src].items():
+  21                 rows[dst][i]=rows[dst].get(i,Q(0))+scalar*a
+  22                 if rows[dst][i]==0:
+  23                     del rows[dst][i]
+  24     return [sorted((i,str(a)) for i,a in row.items()) for row in rows]
+  25 
+  26 
+  27 def verify(root):
+  28     summary=json.loads((root/'summary.json').read_text())
+  29     for case in summary['cases']:
+  30         n=case['real_scalar_inputs']
+  31         name=f"t{case['t']}_r{case['r']}_s{case['start_stage']}"
+  32         data=json.loads((root/(name+'_certificate.json')).read_text())
+  33         expected=[{i:Q(1)} for i in range(case['dirty_lift']['full_state_dimension'])]
+  34         targets=[{i:Q(a) for i,a in row} for row in data['normalized_target_matrix']]
+  35         for j,target in enumerate(targets):
+  36             expected[n+j].update(target)
+  37         normalized=[sorted((i,str(a)) for i,a in row.items()) for row in expected]
+  38         for key in ('baseline_word','candidate_word'):
+  39             if key in data:
+  40                 actual=replay(data[key],len(expected))
+  41                 assert actual==normalized,(name,key)
+  42                 digest=hashlib.sha256(json.dumps(actual,separators=(',',':')).encode()).hexdigest()
+  43                 assert digest==case['dirty_lift']['full_state_matrix_sha256']
+  44         # Rebuild all subexpression incidences directly from the target matrix.
+  45         pairs={};triples={};outputs=set()
+  46         from itertools import combinations
+  47         def key(row):
+  48             m=min(row)
+  49             return tuple(sorted((i,str(a/row[m])) for i,a in row.items()))
+  50         for row in targets:
+  51             assert len(row)==4 and all(abs(a)==Q(1,4) for a in row.values())
+  52             outputs.add(key(row))
+  53             for size,counts in ((2,pairs),(3,triples)):
+  54                 for ids in combinations(row,size):
+  55                     k=key({i:row[i] for i in ids})
+  56                     counts[k]=counts.get(k,0)+1
+  57         assert len(outputs)==n and max(pairs.values())<=2 and max(triples.values())<=1
+  58         assert case['baseline_add_sub']==case['candidate_add_sub']==2*n
+  59         print(name, 'independent word and incidence certificate PASS')
+  60     return True
+  61 
+  62 
+  63 if __name__=='__main__':
+  64     p=argparse.ArgumentParser();p.add_argument('results',type=Path,nargs='?',default=Path(__file__).parent/'results')
+  65     verify(p.parse_args().results)

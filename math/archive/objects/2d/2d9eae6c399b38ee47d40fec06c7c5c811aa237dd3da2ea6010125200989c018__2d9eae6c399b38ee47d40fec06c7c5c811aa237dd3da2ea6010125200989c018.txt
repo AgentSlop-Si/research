@@ -1,0 +1,154 @@
+"""Fully counted elementary field gates of 2-factor dense CT vs radix-2 NTT.
+
+All fresh inputs; exact outputs; includes table preparation separately.
+Reported operation counts include multiplication by 1 and addition of 0, i.e.
+these are transparent executions rather than optimized algorithms.
+"""
+from pathlib import Path
+import json,random,time,statistics
+from types import SimpleNamespace
+from two_stage_ct import P,PRIMITIVE
+
+def charged_pow(base, exponent):
+    """Binary modular powering with *every* modular multiplication charged."""
+    out=1; count=0
+    while exponent:
+        if exponent&1:
+            out=out*base%P;count+=1
+        exponent>>=1
+        if exponent:
+            base=base*base%P;count+=1
+    return out,count
+
+
+class PreparedTwoStage:
+    def __init__(self,a,b):
+        self.n=a*b
+        self.plan_mul=0
+        def charged_root(N):
+            w,steps=charged_pow(PRIMITIVE,(P-1)//N)
+            self.plan_mul+=steps
+            return w
+        w=charged_root(self.n);wa=charged_root(a);wb=charged_root(b)
+        self.ct=SimpleNamespace(a=a,b=b,w=w,
+              input_order=[n1+a*n2 for n1 in range(a) for n2 in range(b)],
+              output_order=[k2+b*k1 for k2 in range(b) for k1 in range(a)],
+              shuffle=[n1*b+k2 for k2 in range(b) for n1 in range(a)])
+        def matrix_power_plan(N,w):
+            out=[];step=1
+            for j in range(N):
+                val=1;row=[]
+                for k in range(N):
+                    row.append(val)
+                    val=val*step%P;self.plan_mul+=1
+                out.append(row)
+                step=step*w%P;self.plan_mul+=1
+            return out
+        self.Fa=matrix_power_plan(a,wa)
+        self.Fb=matrix_power_plan(b,wb)
+        self.twiddle=[];step=1
+        for k2 in range(b):
+            val=1;row=[]
+            for n1 in range(a):
+                row.append(val)
+                val=val*step%P;self.plan_mul+=1
+            self.twiddle.append(row)
+            step=step*w%P;self.plan_mul+=1
+        self.mul=self.add=0
+
+    def apply(self,x):
+        a,b=self.ct.a,self.ct.b
+        z=[x[j] for j in self.ct.input_order]
+        y=[0]*self.n
+        for n1 in range(a):
+            for k2 in range(b):
+                acc=0
+                for n2 in range(b):
+                    acc=(acc+z[n1*b+n2]*self.Fb[k2][n2])%P
+                    self.mul+=1;self.add+=1
+                y[n1*b+k2]=acc
+        g=[y[j] for j in self.ct.shuffle]
+        for k2 in range(b):
+            for n1 in range(a):
+                g[k2*a+n1]=g[k2*a+n1]*self.twiddle[k2][n1]%P
+                self.mul+=1
+        z=[0]*self.n
+        for k2 in range(b):
+            for k1 in range(a):
+                acc=0
+                for n1 in range(a):
+                    acc=(acc+g[k2*a+n1]*self.Fa[k1][n1])%P
+                    self.mul+=1;self.add+=1
+                z[k2*a+k1]=acc
+        out=[0]*self.n
+        for i,k in enumerate(self.ct.output_order):out[k]=z[i]
+        return out
+
+class PreparedRadix2:
+    def __init__(self,n):
+        assert n&(n-1)==0
+        self.n=n
+        b=n.bit_length()-1
+        self.brev=[int(f'{i:0{b}b}'[::-1],2) for i in range(n)]
+        self.plan_mul=0
+        self.twiddles={}
+        length=2
+        while length<=n:
+            step,cost=charged_pow(PRIMITIVE,(P-1)//length)
+            self.plan_mul+=cost
+            val=1;arr=[]
+            for j in range(length//2):
+                arr.append(val)
+                val=val*step%P
+                self.plan_mul+=1
+            self.twiddles[length]=arr
+            length*=2
+        self.mul=self.add=0
+
+    def apply(self,x):
+        a=[x[i] for i in self.brev]
+        length=2
+        while length<=self.n:
+            half=length//2
+            tw=self.twiddles[length]
+            for j in range(0,self.n,length):
+                for k in range(half):
+                    t=a[j+k+half]*tw[k]%P
+                    u=a[j+k]
+                    a[j+k]=(u+t)%P
+                    a[j+k+half]=(u-t)%P
+                    self.mul+=1; self.add+=2
+            length*=2
+        return a
+
+def run():
+    out=[]
+    for n in (16,32,64,256,1024):
+        a=1 << ((n.bit_length()-1)//2)
+        b=n//a
+        ct=PreparedTwoStage(a,b); fft=PreparedRadix2(n)
+        seed_rng=random.Random(n*999+10)
+        x=[seed_rng.randrange(P) for _ in range(n)]
+        assert ct.apply(x)==fft.apply(x)
+        m1,ad1=ct.mul,ct.add
+        m2,ad2=fft.mul,fft.add
+        assert m1==n*(a+b+1)
+        assert ad1==n*(a+b)
+        assert m2==n//2*(n.bit_length()-1)
+        assert ad2==n*(n.bit_length()-1)
+        ratio=(m1+ad1)/(m2+ad2)
+        entry={'n':n,'two_stage_shape':[a,b],'two_stage_stage_rank':[b//2,a//2],
+               'two_stage_mul':m1,'two_stage_add':ad1,'two_stage_plan_mul':ct.plan_mul,
+               'radix2_mul':m2,'radix2_add':ad2,'radix2_plan_mul':fft.plan_mul,
+               'arithmetic_ratio_two_stage_over_fft':ratio,
+               'cold_total_two_stage':m1+ad1+ct.plan_mul,
+               'cold_total_radix2':m2+ad2+fft.plan_mul,
+               'cold_ratio':(m1+ad1+ct.plan_mul)/(m2+ad2+fft.plan_mul),
+               'exact_output':True}
+        out.append(entry)
+        print(f'GATE_AUDIT N={n} dense_two_factor={m1+ad1} radix2={m2+ad2} ratio={ratio:.3f} '
+              f'plans {ct.plan_mul} vs {fft.plan_mul}',flush=True)
+    with open(str(Path(__file__).resolve().parent/'cost_audit_results.json'),'w') as f:json.dump(out,f,indent=2)
+    return out
+
+if __name__=='__main__':run()

@@ -1,0 +1,401 @@
+   1 #!/usr/bin/env python3
+   2 """Independent v9 checks; Python standard library only; uploaded code is never run.
+   3 
+   4 Run: python independent_v9_checks.py [--source-root PATH] [--output PATH]
+   5 Without --source-root, source data are read from ../../source_archives/*v9*.zip
+   6 if present. Mathematical checks do not depend on the source being available.
+   7 """
+   8 from __future__ import annotations
+   9 import argparse
+  10 from collections import Counter
+  11 from decimal import Decimal, localcontext
+  12 from fractions import Fraction as F
+  13 import hashlib
+  14 import json
+  15 from math import gcd, isqrt
+  16 from pathlib import Path
+  17 from zipfile import ZipFile
+  18 
+  19 
+  20 def divisors(n):
+  21     return [d for d in range(1, n + 1) if n % d == 0]
+  22 
+  23 
+  24 def prime(n):
+  25     return n >= 2 and all(n % d for d in range(2, isqrt(n) + 1))
+  26 
+  27 
+  28 def mobius(n):
+  29     factors = 0
+  30     p = 2
+  31     while p * p <= n:
+  32         if n % p == 0:
+  33             n //= p
+  34             factors += 1
+  35             if n % p == 0:
+  36                 return 0
+  37         p += 1
+  38     return (-1) ** (factors + (n > 1))
+  39 
+  40 
+  41 def phi(n):
+  42     return sum(gcd(a, n) == 1 for a in range(n))
+  43 
+  44 
+  45 def character_average(n, c):
+  46     # Divisor-sum Ramanujan formula, rather than the uploaded quotient formula.
+  47     g = gcd(n, c)
+  48     return F(sum(d * mobius(n // d) for d in divisors(g)), phi(n))
+  49 
+  50 
+  51 def covariance(n, m):
+  52     ds = [set(range(u - m + 1, u + 1)) - {0} for u in range(m)]
+  53     return [[sum((character_average(n, d * (j - i))
+  54                   for d in ds[i % m] & ds[j % m]), F(0)) / n
+  55              for j in range(n)] for i in range(n)]
+  56 
+  57 
+  58 def explicit_projector_covariance(n, m):
+  59     k = n // m
+  60     return [[F(m * (i == j) - ((i - j) % k == 0), n)
+  61              for j in range(n)] for i in range(n)]
+  62 
+  63 
+  64 def valuation(d, p):
+  65     assert d
+  66     d = abs(d)
+  67     v = 0
+  68     while d % p == 0:
+  69         d //= p
+  70         v += 1
+  71     return v
+  72 
+  73 
+  74 def shell_checks():
+  75     records = []
+  76     positions = 0
+  77     for p in [x for x in range(2, 14) if prime(x)]:
+  78         for ell in range(2, 11):
+  79             for mu in range(1, ell // 2 + 1):
+  80                 m = p ** mu
+  81                 if m > 10000:
+  82                     continue
+  83                 n, k = p ** ell, p ** (ell - mu)
+  84                 # Sliding interval explicitly enumerates every displacement once,
+  85                 # then checks every local coordinate without floor-count formula.
+  86                 counts = Counter(valuation(d, p) for d in range(-m + 1, 0))
+  87                 expected = {v: (p - 1) * m // p ** (v + 1) for v in range(mu)}
+  88                 for u in range(m):
+  89                     assert counts == expected, (p, ell, mu, u, counts)
+  90                     positions += 1
+  91                     if u + 1 < m:
+  92                         counts[valuation(u - m + 1, p)] -= 1
+  93                         counts[valuation(u + 1, p)] += 1
+  94                 ranks = [(p - 1) * k // p ** (v + 1) for v in range(mu)]
+  95                 for v, count in expected.items():
+  96                     assert F(count * p ** (v + 1), (p - 1) * n) == F(m, n)
+  97                 assert m * sum(ranks) == n - k
+  98                 assert F(m * (n - k), n) == m - 1
+  99                 records.append({'p': p, 'L': ell, 'mu': mu, 'N': n,
+ 100                                 'M': m, 'rank': n - k, 'eigenvalue': str(F(m, n))})
+ 101     assert len(records) == 141
+ 102     return {'cases': len(records), 'local_positions_checked': positions, 'records': records}
+ 103 
+ 104 
+ 105 def trim(a):
+ 106     while len(a) > 1 and a[-1] == 0:
+ 107         a.pop()
+ 108     return a
+ 109 
+ 110 
+ 111 def poly_div_exact(a, b):
+ 112     a = a[:]
+ 113     q = [0] * (len(a) - len(b) + 1)
+ 114     for i in range(len(a) - len(b), -1, -1):
+ 115         c = a[i + len(b) - 1]
+ 116         assert b[-1] == 1
+ 117         q[i] = c
+ 118         for j, v in enumerate(b):
+ 119             a[i + j] -= c * v
+ 120     assert all(v == 0 for v in a)
+ 121     return trim(q)
+ 122 
+ 123 
+ 124 PHI = {1: [-1, 1]}
+ 125 
+ 126 
+ 127 def cyclotomic(n):
+ 128     if n not in PHI:
+ 129         f = [-1] + [0] * (n - 1) + [1]
+ 130         for d in divisors(n)[:-1]:
+ 131             f = poly_div_exact(f, cyclotomic(d))
+ 132         PHI[n] = f
+ 133     return PHI[n]
+ 134 
+ 135 
+ 136 def reduce_poly(a, polynomial):
+ 137     a = a[:] + [0] * max(0, len(polynomial) - 1 - len(a))
+ 138     for i in range(len(a) - 1, len(polynomial) - 2, -1):
+ 139         v = a[i]
+ 140         for j, c in enumerate(polynomial):
+ 141             a[i - len(polynomial) + 1 + j] -= v * c
+ 142     return a[:len(polynomial) - 1]
+ 143 
+ 144 
+ 145 def exhaustive_cyclotomic_covariance(n, m, output):
+ 146     """Direct all-state covariance from S[r,u]/S[r,t], in Q[eta]."""
+ 147     order = 2 * n
+ 148     units = [a for a in range(n) if gcd(a, n) == 1]
+ 149     accum = [[[0] * order for _ in range(n)] for _ in range(n)]
+ 150     means = [[0] * order for _ in range(n)]
+ 151     for a in units:
+ 152         for beta in range(n):
+ 153             terms = []
+ 154             for i in range(n):
+ 155                 r, u = divmod(i, m)
+ 156                 def phase(t):
+ 157                     return (2 * (a * t * (t - 1) // 2 + (a * m * r + beta) * t)
+ 158                             + (n % 2) * t) % order
+ 159                 es = [(phase(u) - phase(t) - 2 * output * (r * m + t)) % order
+ 160                       for t in range(m) if t != u]
+ 161                 terms.append(es)
+ 162                 for e in es:
+ 163                     means[i][e] += 1
+ 164             for i in range(n):
+ 165                 for j in range(n):
+ 166                     for ei in terms[i]:
+ 167                         for ej in terms[j]:
+ 168                             accum[i][j][(ej - ei) % order] += 1
+ 169     polynomial = cyclotomic(order)
+ 170     scale = n * n * len(units)  # Fourier normalization N, then number of states.
+ 171     q0 = covariance(n, m)
+ 172     for i in range(n):
+ 173         assert all(v == 0 for v in reduce_poly(means[i], polynomial))
+ 174         for j in range(n):
+ 175             expected = [0] * order
+ 176             coefficient = q0[i][j] * scale
+ 177             assert coefficient.denominator == 1
+ 178             expected[(2 * output * (i - j)) % order] = coefficient.numerator
+ 179             assert reduce_poly(accum[i][j], polynomial) == reduce_poly(expected, polynomial)
+ 180     return {'N': n, 'M': m, 'output': output, 'states': n * len(units),
+ 181             'matrix_entries': n * n, 'arithmetic': 'exact integer cyclotomic reduction'}
+ 182 
+ 183 
+ 184 def field_root(order):
+ 185     q = order + 1
+ 186     while not prime(q):
+ 187         q += order
+ 188     for base in range(2, q):
+ 189         w = pow(base, (q - 1) // order, q)
+ 190         if all(pow(w, order // p, q) != 1 for p in divisors(order) if prime(p)):
+ 191             return q, w
+ 192     raise AssertionError('root missing')
+ 193 
+ 194 
+ 195 def modular_decoder(n, m, a, beta):
+ 196     """Exact finite-field identity, unnormalized DFT (no square-root choice)."""
+ 197     k = n // m
+ 198     modulus, eta = field_root(2 * n)
+ 199     root = [pow(eta, j, modulus) for j in range(2 * n)]
+ 200     e = lambda exponent: root[exponent % (2 * n)]
+ 201     x = [(17 * i * i + 9 * i + 11) % modulus for i in range(n)]
+ 202     phases = [[2 * (a * t * (t - 1) // 2 + (a * m * r + beta) * t) + n % 2 * t
+ 203                for t in range(m)] for r in range(k)]
+ 204     d = [sum(e(phases[r][t]) * x[r * m + t] for t in range(m)) % modulus
+ 205          for r in range(k)]
+ 206     y = [e(-phases[r][t]) * d[r] % modulus for r in range(k) for t in range(m)]
+ 207     direct = [sum(y[t] * e(-2 * j * t) for t in range(n)) % modulus for j in range(n)]
+ 208     D = [sum(d[r] * e(-2 * m * j * r) for r in range(k)) % modulus for j in range(k)]
+ 209     idx = [a * j % n for j in range(n)]
+ 210     assert len(set(idx)) == n
+ 211     gauge = [e(2 * (a * j * (j - 1) // 2 + beta * j) + n % 2 * j) for j in range(n + 1)]
+ 212     assert gauge[-1] == modulus - 1
+ 213     terms = []
+ 214     for j, mm in enumerate(idx):
+ 215         boundary = e(-2 * (m * (mm + beta) + a * m * (m - 1) // 2) - n % 2 * m)
+ 216         force = (D[mm % k] - boundary * D[(mm + a * m) % k]) % modulus
+ 217         terms.append(force * pow(gauge[j], -1, modulus) % modulus)
+ 218     total = sum(terms) % modulus
+ 219     seed = total * pow(2, -1, modulus) % modulus
+ 220     prefix = 0
+ 221     got = [0] * n
+ 222     for j, mm in enumerate(idx):
+ 223         got[mm] = gauge[j] * (seed - prefix) % modulus
+ 224         prefix = (prefix + terms[j]) % modulus
+ 225     assert got == direct
+ 226     return {'N': n, 'M': m, 'a': a, 'beta': beta, 'field_modulus': modulus}
+ 227 
+ 228 
+ 229 def matrix_checks():
+ 230     pairs = [(4, 1), (4, 2), (8, 2), (9, 3), (16, 2), (16, 4),
+ 231              (25, 5), (27, 3), (32, 2), (32, 4), (49, 7),
+ 232              (64, 4), (64, 8), (81, 3), (81, 9), (121, 11), (125, 5)]
+ 233     records = []
+ 234     for n, m in pairs:
+ 235         q = covariance(n, m)
+ 236         assert q == explicit_projector_covariance(n, m)
+ 237         assert sum(q[i][i] for i in range(n)) == m - 1
+ 238         # Rank/idempotence then follow exactly from groups of size M.
+ 239         records.append({'N': n, 'M': m, 'rank': n - n // m,
+ 240                         'operator_norm': str(F(m, n) if m > 1 else F(0))})
+ 241     return records
+ 242 
+ 243 
+ 244 def composite_checks():
+ 245     pairs = [(12, 2), (12, 3), (18, 3), (20, 4), (30, 3), (30, 5),
+ 246              (36, 6), (42, 6), (45, 5), (60, 5), (60, 6), (72, 8)]
+ 247     records = []
+ 248     for n, m in pairs:
+ 249         q = covariance(n, m)
+ 250         assert sum(q[i][i] for i in range(n)) == m - 1
+ 251         defect = None
+ 252         for i in range(n):
+ 253             for j in range(n):
+ 254                 z = sum((q[i][r] * q[r][j] for r in range(n)), F(0)) - F(m, n) * q[i][j]
+ 255                 if z:
+ 256                     defect = {'i': i, 'j': j, 'Q_squared_minus_M_over_N_Q': str(z)}
+ 257                     break
+ 258             if defect:
+ 259                 break
+ 260         assert defect is not None
+ 261         records.append({'N': n, 'M': m, 'trace': m - 1, 'exact_nonprojector_witness': defect})
+ 262     n, m = 12, 2
+ 263     q = covariance(n, m)
+ 264     v = [0] * n
+ 265     for r, value in enumerate([2, 1, -1, -2, -1, 1]):
+ 266         v[2 * r] = value
+ 267     assert all(sum(q[i][j] * v[j] for j in range(n)) == F(v[i], 4) for i in range(n))
+ 268     return {'cases': records, 'exact_norm_lower_bound': {
+ 269         'N': n, 'M': m, 'eigenvector': v, 'eigenvalue': '1/4',
+ 270         'M_over_N': '1/6', 'ratio': '3/2'}}
+ 271 
+ 272 
+ 273 def ledger_checks():
+ 274     # Exact formulas evaluated at high precision; analytic proof is in the report.
+ 275     records = 0
+ 276     best = (Decimal(0), None)
+ 277     with localcontext() as ctx:
+ 278         ctx.prec = 55
+ 279         for L in list(range(2, 81)) + [100, 128, 256, 512, 1024, 2048]:
+ 280             for lm in sorted({1, max(1, L // 4), L // 2}):
+ 281                 lk = L - lm
+ 282                 for factor in [Decimal('0.01'), Decimal('0.001'), Decimal('0.000001'), Decimal('1e-12')]:
+ 283                     t = factor / L
+ 284                     c = (1 + t) ** 2 - 1
+ 285                     e = c + (1 + c) * (c + t * (2 + c))
+ 286                     aa = (1 + c) * (1 + t) ** lm - 1
+ 287                     b = (1 + e) ** lk - 1
+ 288                     h = (1 + aa) * (1 + b) * (1 + c) - 1
+ 289                     f = 2 * h + c * (1 + h) + t * (2 + c) * (1 + h)
+ 290                     q = (1 + c) * f + 2 * c
+ 291                     gamma = (1 + t) ** (2 * L) - 1
+ 292                     P = q + gamma * (2 + q)
+ 293                     bound = Decimal('1.5') * (1 + c) * (1 + t) * P + 3 * t * (1 + c) + c
+ 294                     ratio = bound / (L * t)
+ 295                     assert ratio <= 100
+ 296                     records += 1
+ 297                     if ratio > best[0]:
+ 298                         best = ratio, {'L': L, 'log2_M': lm, 'tL': str(factor)}
+ 299     return {'cases': records, 'largest_conservative_ledger_ratio': str(best[0]),
+ 300             'maximizer': best[1], 'proven_constant': 100,
+ 301             'arithmetic': '55-digit Decimal, corroborating analytic bounds'}
+ 302 
+ 303 
+ 304 
+ 305 def sparse_edge_checks():
+ 306     # Exact integer incidence/probability checks for the added restricted corollary.
+ 307     records = []
+ 308     for n, m in [(16, 2), (16, 4), (27, 3), (64, 4), (81, 3), (81, 9),
+ 309                  (125, 5), (256, 8), (729, 9)]:
+ 310         k = n // m
+ 311         units = [a for a in range(k) if gcd(a, k) == 1]
+ 312         worst = F(0)
+ 313         for delta in range(k):
+ 314             count = sum(any((a*d-delta) % k == 0
+ 315                             for d in range(-m+1, m) if d) for a in units)
+ 316             probability = F(count, len(units))
+ 317             assert probability <= F(2*m, k)
+ 318             if delta % m == 0:
+ 319                 assert probability == 0
+ 320             worst = max(worst, probability)
+ 321         records.append({'N': n, 'M': m, 'K': k,
+ 322                         'maximum_edge_probability': str(worst),
+ 323                         'bound': str(F(2*m, k)),
+ 324                         'zero_for_differences_divisible_by_M': True})
+ 325     return records
+ 326 
+ 327 
+ 328 def source_data(source_root):
+ 329     names = ['RESEARCH.md', 'PROJECTOR_CERTIFICATE.md', 'COMPOSITE_MODULUS_AUDIT.md',
+ 330              'projector_certificate_results.json', 'composite_modulus_results.json',
+ 331              'native_benchmark_results.csv', 'prototype.py', 'native_benchmark.cpp']
+ 332     data = {}
+ 333     if source_root:
+ 334         for name in names:
+ 335             data[name] = (source_root / name).read_bytes()
+ 336         origin = 'directory supplied with --source-root'
+ 337     else:
+ 338         archives = sorted((Path(__file__).resolve().parents[2] / 'source_archives').glob('*v9*.zip'))
+ 339         if not archives:
+ 340             return {'status': 'not supplied; mathematical checks remain standalone'}
+ 341         with ZipFile(archives[0]) as z:
+ 342             for name in names:
+ 343                 matches = [s for s in z.namelist() if s.endswith('/' + name) or s == name]
+ 344                 assert len(matches) == 1, (name, matches)
+ 345                 data[name] = z.read(matches[0])
+ 346         origin = 'sibling source archive ' + archives[0].name
+ 347     saved = json.loads(data['projector_certificate_results.json'])
+ 348     assert saved['cases'] == len(saved['records']) == 141
+ 349     for rec in saved['records']:
+ 350         n, m, k = rec['N'], rec['M'], rec['K']
+ 351         assert n == m * k and k >= m
+ 352         assert rec['zero_multiplicity'] == k and rec['nonzero_multiplicity'] == n - k
+ 353         assert F(rec['nonzero_eigenvalue']) == F(m, n)
+ 354         assert F(rec['trace']) == m - 1
+ 355     return {'status': 'read as inert data only', 'origin': origin,
+ 356             'sha256': {name: hashlib.sha256(blob).hexdigest() for name, blob in data.items()},
+ 357             'saved_certificate_records_consistent': len(saved['records'])}
+ 358 
+ 359 
+ 360 def main():
+ 361     parser = argparse.ArgumentParser(description=__doc__)
+ 362     parser.add_argument('--source-root', type=Path)
+ 363     parser.add_argument('--output', type=Path, default=Path(__file__).with_name('independent_v9_results.json'))
+ 364     args = parser.parse_args()
+ 365     output = {'status': 'PASS', 'uploaded_code_executed': False,
+ 366               'scope': 'exact approximation mechanism; no exact sub-N-log-N DFT conclusion'}
+ 367     output['source_data'] = source_data(args.source_root)
+ 368     output['shell_certificate'] = shell_checks()
+ 369     output['rational_covariance_checks'] = matrix_checks()
+ 370     output['all_state_cyclotomic_checks'] = [
+ 371         exhaustive_cyclotomic_covariance(n, m, out)
+ 372         for n, m, outs in [(4, 2, [0, 1]), (8, 2, [0, 1]), (9, 3, [0, 1]),
+ 373                            (12, 3, [0]), (16, 4, [0])]
+ 374         for out in outs]
+ 375     cycles = []
+ 376     for n, m in [(4, 1), (4, 2), (6, 2), (8, 2), (9, 3), (12, 3),
+ 377                  (16, 4), (25, 5), (27, 3), (35, 5), (49, 7), (64, 8), (81, 9)]:
+ 378         units = [a for a in range(n) if gcd(a, n) == 1]
+ 379         for a in sorted({units[0], units[len(units) // 2], units[-1]}):
+ 380             for beta in sorted({0, 1, n // 2, n - 1}):
+ 381                 cycles.append(modular_decoder(n, m, a, beta))
+ 382     output['finite_field_decoder_checks'] = cycles
+ 383     output['composite_exact_counterexamples'] = composite_checks()
+ 384     output['precision_ledger_checks'] = ledger_checks()
+ 385     output['sparse_fourier_edge_checks'] = sparse_edge_checks()
+ 386     output['summary'] = {
+ 387         'shell_cases': output['shell_certificate']['cases'],
+ 388         'shell_local_positions': output['shell_certificate']['local_positions_checked'],
+ 389         'rational_covariance_cases': len(output['rational_covariance_checks']),
+ 390         'all_state_cyclotomic_cases': len(output['all_state_cyclotomic_checks']),
+ 391         'finite_field_decoder_cases': len(cycles),
+ 392         'composite_nonprojector_cases': len(output['composite_exact_counterexamples']['cases']),
+ 393         'precision_ledger_cases': output['precision_ledger_checks']['cases'],
+ 394         'sparse_fourier_edge_cases': len(output['sparse_fourier_edge_checks'])}
+ 395     args.output.parent.mkdir(parents=True, exist_ok=True)
+ 396     args.output.write_text(json.dumps(output, indent=2) + '\n')
+ 397     print(json.dumps({'status': 'PASS', **output['summary']}, indent=2))
+ 398 
+ 399 
+ 400 if __name__ == '__main__':
+ 401     main()

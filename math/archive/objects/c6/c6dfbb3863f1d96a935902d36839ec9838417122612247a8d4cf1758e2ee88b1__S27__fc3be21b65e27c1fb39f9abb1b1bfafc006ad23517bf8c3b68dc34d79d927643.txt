@@ -1,0 +1,156 @@
+   1 #!/usr/bin/env python3
+   2 """Independent finite-field verification for Phase 9. Non-fallback exact equality."""
+   3 from __future__ import annotations
+   4 import unittest, random
+   5 from phase9_dense_cycle import (
+   6     P, Costs, make_dense_cycle, exact_dense_cycle_with_innovations,
+   7     exact_reference_dft, berlekamp_massey, decode_sparse_syndromes,
+   8     probabilistic_verify, learn_eigenvalues, find_innovations,
+   9     root_of_unity,
+  10 )
+  11 from phase8_weyl_cycle import exact_ntt
+  12 
+  13 
+  14 def matrix_rank_mod(matrix):
+  15     if not matrix:return 0
+  16     a=[row[:] for row in matrix];rows=len(a);cols=len(a[0]);r=0
+  17     for j in range(cols):
+  18         p=next((i for i in range(r,rows) if a[i][j]),None)
+  19         if p is None:continue
+  20         a[r],a[p]=a[p],a[r]
+  21         factor=pow(a[r][j],P-2,P)
+  22         for k in range(j,cols):a[r][k]=a[r][k]*factor%P
+  23         for i in range(r+1,rows):
+  24             z=a[i][j]
+  25             if z:
+  26                 for k in range(j,cols):a[i][k]=(a[i][k]-z*a[r][k])%P
+  27         r+=1
+  28         if r==rows:break
+  29     return r
+  30 
+  31 
+  32 def quadratic_reference(x):
+  33     n=len(x);wn=root_of_unity(n)
+  34     table=[pow(wn,-a% n,P) for a in range(n)]
+  35     return [sum(x[b]*table[a*b %n] for b in range(n))%P for a in range(n)]
+  36 
+  37 
+  38 class Phase9Tests(unittest.TestCase):
+  39     def run_case(self,k,m,innov,s,seed,expect_mode=None,lam_override=None):
+  40         x,metadata=make_dense_cycle(k,m,innov,seed,lam_override)
+  41         answer,cert,counts=exact_dense_cycle_with_innovations(
+  42             x,m,s,3,3,Costs(),random.Random(991+seed),True)
+  43         self.assertIsNotNone(answer,f'{k},{m},{s},{cert}')
+  44         self.assertEqual(answer,exact_reference_dft(x))
+  45         if k*m<=128:self.assertEqual(answer,quadratic_reference(x))
+  46         if expect_mode:self.assertEqual(cert['mode'],expect_mode)
+  47         self.assertEqual(cert['innovation_total'],sum(map(len,innov.values())))
+  48         self.assertEqual(cert['verification_rounds'],3)
+  49         return x,metadata,cert,counts
+  50 
+  51     def test_a_dense_controller_no_errors(self):
+  52         for k,m in [(8,4),(16,8),(32,8),(64,8),(64,16),
+  53                     (128,8),(128,16),(256,16),(512,16)]:
+  54             for seed in range(3):
+  55                 _,meta,cert,c=self.run_case(k,m,{},0,seed,'direct-geometric')
+  56                 self.assertTrue(all(v!=0 for v in meta['kernel_c']))
+  57                 self.assertEqual(cert['innovation_total'],0)
+  58 
+  59     def test_b_constant_total_error_exact_linear_mode(self):
+  60         for k,m in [(16,8),(32,8),(64,16),(128,16),(256,16)]:
+  61             for seed in range(4):
+  62                 rng=random.Random(seed*93+k)
+  63                 event_t=rng.randrange(1,m-1)
+  64                 innovations={event_t:[(b,rng.randrange(1,P)) for b in rng.sample(range(k),2)]}
+  65                 self.run_case(k,m,innovations,2,seed,'direct-geometric')
+  66 
+  67     def test_c_errors_every_step_short_ntt_mode(self):
+  68         for k,m in [(16,8),(32,8),(64,8),(64,16),(128,16),(256,16)]:
+  69             for s in (1,2,3):
+  70                 rng=random.Random(k*11+m*17+s)
+  71                 errors={t:[(b,rng.randrange(1,P)) for b in rng.sample(range(k),s)]
+  72                         for t in range(1,m-1)}
+  73                 self.run_case(k,m,errors,s,42+s,'batched-small-NTT')
+  74 
+  75     def test_d_singular_denominators_are_exact(self):
+  76         for k,m in [(16,8),(32,8),(64,16)]:
+  77             n=k*m;wn=root_of_unity(n)
+  78             rng=random.Random(k+m)
+  79             lam=[rng.randrange(1,P) for _ in range(k)]
+  80             lam[0]=1
+  81             lam[1]=pow(wn,1+k,P)   # singular at output ell=1,j=1
+  82             errors={t:[((t*5+2)%k,1000+t)] for t in range(1,m-1)}
+  83             self.run_case(k,m,errors,1,83,'batched-small-NTT',lam)
+  84             self.run_case(k,m,{1:[(5,123)]},1,83,'direct-geometric',lam)
+  85 
+  86     def test_e_random_arbitrary_rejected(self):
+  87         for k,m in [(16,8),(32,8),(64,16)]:
+  88             rng=random.Random(500+k+m)
+  89             for _ in range(12):
+  90                 raw=[rng.randrange(P) for _ in range(k*m)]
+  91                 z,cert,_=exact_dense_cycle_with_innovations(
+  92                     raw,m,2,None,3,Costs(),rng,True)
+  93                 self.assertIsNone(z)
+  94                 self.assertFalse(cert['accepted'])
+  95 
+  96     def test_f_excess_sparse_errors_rejected(self):
+  97         k,m=64,16
+  98         x,_=make_dense_cycle(k,m,{7:[(2,123),(9,456),(17,777)]},seed=37)
+  99         z,cert,_=exact_dense_cycle_with_innovations(x,m,1,None,3,Costs(),random.Random(33),True)
+ 100         self.assertIsNone(z)
+ 101 
+ 102     def test_g_nonzero_dense_kernel_and_full_column_rank(self):
+ 103         k,m=32,8
+ 104         x,meta=make_dense_cycle(k,m,{},seed=55)
+ 105         c=meta['kernel_c'];lam=meta['lambda']
+ 106         self.assertEqual(len(set(lam)),k)
+ 107         self.assertEqual(sum(int(v!=0) for v in c),k)
+ 108         cols=[[x[b*m+t] for b in range(k)] for t in range(m)]
+ 109         self.assertEqual(matrix_rank_mod(list(map(list,zip(*cols)))),m)
+ 110         for t in range(m-1):
+ 111             for b in range(k):
+ 112                 expected=sum(c[d]*cols[t][(b+d)%k] for d in range(k))%P
+ 113                 self.assertEqual(cols[t+1][b],expected)
+ 114         self.assertEqual(self.run_case(k,m,{},0,55)[2]['lambda_nonzero'],k)
+ 115 
+ 116     def test_h_syndrome_alias_requires_fingerprint(self):
+ 117         k,m=32,8
+ 118         x,meta=make_dense_cycle(k,m,{},seed=9)
+ 119         wn=root_of_unity(k);theta=[pow(wn,-j%k,P) for j in range(3)]
+ 120         amps=[(theta[1]-theta[2])%P,(theta[2]-theta[0])%P,
+ 121               (theta[0]-theta[1])%P]
+ 122         self.assertEqual(sum(amps)%P,0)
+ 123         self.assertEqual(sum(a*t for a,t in zip(amps,theta))%P,0)
+ 124         corrupted=x[:]
+ 125         for b,a in enumerate(amps):corrupted[b*m+3]=(corrupted[b*m+3]+a)%P
+ 126         cols=[[corrupted[b*m+t] for b in range(k)] for t in range(m)]
+ 127         f0,lam,tab=learn_eigenvalues(cols,k*m,Costs())
+ 128         ev=find_innovations(cols,lam,tab,1,Costs())
+ 129         self.assertEqual(sum(map(len,ev)),0)  # deliberately invisible to 2 probes!
+ 130         self.assertFalse(probabilistic_verify(cols,lam,ev,tab,m,Costs(),3,random.Random(281)))
+ 131         z,cert,_=exact_dense_cycle_with_innovations(
+ 132             corrupted,m,1,None,3,Costs(),random.Random(281),True)
+ 133         self.assertIsNone(z)
+ 134         self.assertEqual(cert['reason'],'independent recurrence fingerprint failed')
+ 135 
+ 136     def test_i_prony_recovers_two_spikes(self):
+ 137         k=32;root=pow(root_of_unity(k),P-2,P)
+ 138         for s in (0,1,2,3):
+ 139             for seed in range(25):
+ 140                 rng=random.Random(330+seed+31*s)
+ 141                 locs=rng.sample(range(k),s)
+ 142                 amps=[rng.randrange(1,P) for _ in range(s)]
+ 143                 syndrome=[sum(a*pow(root,b*ell,P) for b,a in zip(locs,amps))%P
+ 144                           for ell in range(6)]
+ 145                 decoded=decode_sparse_syndromes(syndrome,k,root,3,Costs())
+ 146                 self.assertEqual(sorted(decoded),sorted(zip(locs,amps)))
+ 147 
+ 148     def test_j_one_singular_and_one_event_with_direct_limit(self):
+ 149         k,m=32,8;n=k*m;w=root_of_unity(n)
+ 150         rng=random.Random(983)
+ 151         lam=[rng.randrange(1,P) for _ in range(k)]
+ 152         lam[3]=pow(w,3+4*k,P)
+ 153         self.run_case(k,m,{m-2:[(7,997)]},1,2,'direct-geometric',lam)
+ 154 
+ 155 
+ 156 if __name__=='__main__':unittest.main(verbosity=2)

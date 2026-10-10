@@ -1,0 +1,223 @@
+0001 #!/usr/bin/env python3
+0002 """Reusable calibrated binary-input FFT plans with a bounded process-local cache.
+0003 
+0004 Inputs: C-contiguous 1-D NumPy uint8 or bool arrays containing only 0 and 1.
+0005 Lengths: powers of two from 16 through 2**31. Every execution validates values.
+0006 No dtype conversion occurs. Outputs: a fresh complex128 array or explicit out=.
+0007 
+0008 A plan calibrates once at creation. Retuning is explicit via plan.retune().
+0009 Calibration uses seeded random inputs, not per-node or per-transform feedback.
+0010 """
+0011 import ctypes as ct
+0012 from functools import lru_cache
+0013 import math
+0014 from pathlib import Path
+0015 import random
+0016 import subprocess
+0017 import time
+0018 import numpy as np
+0019 
+0020 HERE=Path(__file__).resolve().parent
+0021 METHODS=('radix2_fused2','codelet4','codelet8','codelet16','lookup4','lookup8')
+0022 FLAGS=['-O3','-march=native','-DNDEBUG','-fno-math-errno','-ffp-contract=fast','-std=c11','-Wall','-Wextra','-fPIC','-shared']
+0023 _LIB=None
+0024 
+0025 
+0026 def _library():
+0027     global _LIB
+0028     if _LIB is not None:return _LIB
+0029     binary=HERE/'libadaptive_fft.so'
+0030     sources=[HERE/'adaptive_fft.c',HERE/'leaf_fft.c']
+0031     if not binary.exists() or any(p.stat().st_mtime>binary.stat().st_mtime for p in sources):
+0032         subprocess.run(['gcc',*FLAGS,str(sources[0]),'-lm','-o',str(binary)],check=True)
+0033     lib=ct.CDLL(str(binary));P=ct.c_void_p;U=ct.c_uint
+0034     lib.fft_adaptive_create.argtypes=[ct.c_size_t];lib.fft_adaptive_create.restype=P
+0035     lib.fft_adaptive_destroy.argtypes=[P]
+0036     lib.fft_adaptive_select.argtypes=[P,ct.c_int];lib.fft_adaptive_select.restype=ct.c_int
+0037     lib.fft_adaptive_execute.argtypes=[P,P,P];lib.fft_adaptive_execute.restype=ct.c_int
+0038     lib.fft_adaptive_execute_candidate.argtypes=[P,ct.c_int,P,P];lib.fft_adaptive_execute_candidate.restype=ct.c_int
+0039     lib.fft_adaptive_bench_candidate.argtypes=[P,ct.c_int,P,U,P,U];lib.fft_adaptive_bench_candidate.restype=ct.c_double
+0040     lib.fft_adaptive_bench_selected.argtypes=[P,P,U,P,U];lib.fft_adaptive_bench_selected.restype=ct.c_double
+0041     _LIB=lib;return lib
+0042 
+0043 
+0044 def _ptr(a):return ct.c_void_p(a.ctypes.data)
+0045 def _check_status(status):
+0046     if status==-2:raise ValueError('Input values must be exactly 0 or 1; output was not modified.')
+0047     if status:raise RuntimeError(f'Native FFT returned status {status}')
+0048 
+0049 
+0050 def _length(n):
+0051     if isinstance(n,bool) or not isinstance(n,(int,np.integer)) or n<16 or n&(n-1) or n>2**31:
+0052         raise ValueError('N must be a power of two from 16 through 2**31.')
+0053     return int(n)
+0054 
+0055 
+0056 def _dtype(dtype):
+0057     d=np.dtype(dtype)
+0058     if d not in (np.dtype(np.uint8),np.dtype(np.bool_)):
+0059         raise TypeError('Only uint8 and bool are supported; no implicit dtype conversion is performed.')
+0060     return d
+0061 
+0062 
+0063 class BinaryFFTPlan:
+0064     """Owns an immutable FFT plan and 1/32 KiB lookup tables after calibration.
+0065 
+0066     Caller owns inputs and outputs. Concurrent execute calls with separate output
+0067     arrays are supported; close/retune must not run concurrently with execution.
+0068     Shared cached plans should not be closed by individual callers. Use
+0069     clear_plan_cache() to release cache references; explicitly held plans remain
+0070     open and can be closed individually when no longer in use.
+0071     """
+0072     def __init__(self,n,dtype=np.uint8,*,method=None,margin=0.08,rounds=9,target_ms=8,pool_count=4,seed=None):
+0073         self.n=_length(n);self.dtype=_dtype(dtype);self._handle=None;self._lib=_library()
+0074         self._margin=float(margin)
+0075         if not 0<=self._margin<1:raise ValueError('margin must be in [0,1).')
+0076         start=time.perf_counter();self._handle=self._lib.fft_adaptive_create(self.n)
+0077         if not self._handle:raise MemoryError('Could not allocate native FFT plan.')
+0078         self.setup_seconds=time.perf_counter()-start
+0079         self.calibration_count=0
+0080         try:
+0081             if method is None:
+0082                 self.retune(rounds=rounds,target_ms=target_ms,pool_count=pool_count,seed=seed)
+0083             else:
+0084                 _check_status(self._lib.fft_adaptive_select(self._handle,METHODS.index(method)))
+0085                 self.method=method
+0086                 self.calibration={'method':method,'status':'skipped_explicit_method','elapsed_ms':0.,'calibration_count':0}
+0087         except BaseException:self.close();raise
+0088 
+0089     @property
+0090     def closed(self):return self._handle is None
+0091     def _open(self):
+0092         if self.closed:raise RuntimeError('This FFT plan is closed.')
+0093 
+0094     def close(self):
+0095         if self._handle is not None:self._lib.fft_adaptive_destroy(self._handle);self._handle=None
+0096     def __enter__(self):self._open();return self
+0097     def __exit__(self,*args):self.close()
+0098     def __del__(self):
+0099         try:self.close()
+0100         except Exception:pass
+0101 
+0102     def _input(self,x):
+0103         self._open()
+0104         if not isinstance(x,np.ndarray):raise TypeError('Input must be a NumPy array; no implicit conversion is performed.')
+0105         if x.dtype!=self.dtype:raise TypeError(f'Plan expects {self.dtype}; got {x.dtype}.')
+0106         if x.ndim!=1 or x.size!=self.n:raise ValueError(f'Expected a one-dimensional array of length {self.n}.')
+0107         if not x.flags.c_contiguous:raise ValueError('Input must be C-contiguous.')
+0108         return x
+0109 
+0110     def _output(self,x,out):
+0111         if out is None:return np.empty(self.n,dtype=np.complex128)
+0112         if not isinstance(out,np.ndarray) or out.dtype!=np.complex128 or out.shape!=(self.n,) or not out.flags.c_contiguous or not out.flags.writeable or not out.flags.aligned:
+0113             raise ValueError('out must be an aligned, writable C-contiguous complex128 array of matching length.')
+0114         if np.shares_memory(x,out):raise ValueError('Input and output buffers must not overlap.')
+0115         return out
+0116 
+0117     def execute(self,x,*,out=None):
+0118         x=self._input(x);out=self._output(x,out)
+0119         _check_status(self._lib.fft_adaptive_execute(self._handle,_ptr(x),_ptr(out)))
+0120         return out
+0121 
+0122     def execute_candidate(self,method,x,*,out=None):
+0123         """Explicit diagnostic control; normal callers should use execute()."""
+0124         x=self._input(x);out=self._output(x,out);idx=METHODS.index(method)
+0125         _check_status(self._lib.fft_adaptive_execute_candidate(self._handle,idx,_ptr(x),_ptr(out)))
+0126         return out
+0127 
+0128     def benchmark(self,method,pool,out,repeats):
+0129         """Timed C batch, including input-value validation and all FFT work."""
+0130         self._open()
+0131         if not isinstance(pool,np.ndarray) or pool.dtype!=self.dtype or pool.ndim!=2 or pool.shape[1]!=self.n or not pool.flags.c_contiguous:
+0132             raise ValueError('pool must be a contiguous (count, N) array matching the plan dtype.')
+0133         if len(pool)<1 or repeats<1 or repeats>2**32-1:raise ValueError('Invalid pool/repeat count.')
+0134         self._output(pool,out)
+0135         if method=='selected':
+0136             value=self._lib.fft_adaptive_bench_selected(self._handle,_ptr(pool),len(pool),_ptr(out),int(repeats))
+0137         else:
+0138             value=self._lib.fft_adaptive_bench_candidate(self._handle,METHODS.index(method),_ptr(pool),len(pool),_ptr(out),int(repeats))
+0139         if value<0:_check_status(int(value))
+0140         return value
+0141 
+0142     def retune(self,*,rounds=9,target_ms=8,pool_count=4,seed=None):
+0143         """Explicit one-time recalibration; never called by execute()."""
+0144         self._open()
+0145         if not 3<=rounds<=31 or not 1<=target_ms<=100 or not 1<=pool_count<=32:
+0146             raise ValueError('Calibration requires 3..31 rounds, 1..100 target ms, and 1..32 inputs.')
+0147         start=time.perf_counter()
+0148         seed=int(seed if seed is not None else 0xA17F00+self.n+int(self.dtype==np.dtype(np.bool_)))
+0149         pool=np.random.default_rng(seed).integers(0,2,(pool_count,self.n),dtype=np.uint8)
+0150         if self.dtype==np.dtype(np.bool_):pool=pool.view(np.bool_)
+0151         out=np.empty(self.n,dtype=np.complex128);samples={m:[] for m in METHODS};repeats={}
+0152         reference=np.fft.fft(pool[0]);max_error=0.
+0153         for m in METHODS:
+0154             self.execute_candidate(m,pool[0],out=out)
+0155             max_error=max(max_error,float(np.max(np.abs(out-reference))))
+0156             np.testing.assert_allclose(out,reference,atol=2e-9,rtol=2e-11)
+0157             estimate=self.benchmark(m,pool,out,pool_count*2)
+0158             repeats[m]=max(pool_count,int(math.ceil(target_ms/1000/estimate/pool_count)*pool_count))
+0159         order=list(METHODS);rng=random.Random(seed^0xBEEFF00D)
+0160         for _ in range(rounds):
+0161             rng.shuffle(order)
+0162             for m in order:samples[m].append(self.benchmark(m,pool,out,repeats[m]))
+0163         medians={m:float(np.median(s)) for m,s in samples.items()}
+0164         arithmetic=min(METHODS[:4],key=medians.get);lookup=min(METHODS[4:],key=medians.get)
+0165         advantage=1-medians[lookup]/medians[arithmetic]
+0166         paired_wins=sum(a<b for a,b in zip(samples[lookup],samples[arithmetic]))
+0167         stable=paired_wins>=math.ceil(0.75*rounds)
+0168         chosen=lookup if advantage>=self._margin and stable else arithmetic
+0169         _check_status(self._lib.fft_adaptive_select(self._handle,METHODS.index(chosen)))
+0170         self.method=chosen;self.calibration_count+=1
+0171         self.calibration={
+0172             'method':chosen,'status':'calibrated','best_arithmetic':arithmetic,'best_lookup':lookup,
+0173             'lookup_advantage_fraction':advantage,'required_lookup_advantage_fraction':self._margin,
+0174             'arithmetic_fallback_used':chosen==arithmetic,'lookup_paired_round_wins':paired_wins,
+0175             'required_lookup_paired_round_wins':math.ceil(0.75*rounds),'seed':seed,'rounds':rounds,
+0176             'target_sample_ms':target_ms,'pool_count':pool_count,
+0177             'samples_us':{m:[v*1e6 for v in s] for m,s in samples.items()},
+0178             'median_us':{m:v*1e6 for m,v in medians.items()},'transforms_per_sample':repeats,
+0179             'max_correctness_error':max_error,'elapsed_ms':(time.perf_counter()-start)*1000,
+0180             'calibration_count':self.calibration_count,
+0181         }
+0182         return self.calibration
+0183 
+0184 
+0185 # Cache is bounded to eight (N, dtype) entries. Eviction releases the cache's
+0186 # reference; explicitly held plans remain alive until closed/released.
+0187 @lru_cache(maxsize=8)
+0188 def _cached_plan(n,dtype_str):return BinaryFFTPlan(n,np.dtype(dtype_str))
+0189 
+0190 
+0191 def get_plan(n,dtype=np.uint8):
+0192     """Return the same calibrated plan on repeated requests for N and dtype."""
+0193     n=_length(n);d=_dtype(dtype)
+0194     plan=_cached_plan(n,d.str)
+0195     if plan.closed:
+0196         # Explicitly closing a shared cached plan invalidates it. Recreate on the
+0197         # next access rather than returning a dangling native pointer.
+0198         _cached_plan.cache_clear();plan=_cached_plan(n,d.str)
+0199     return plan
+0200 
+0201 
+0202 def cache_info():return _cached_plan.cache_info()
+0203 def clear_plan_cache():
+0204     """Release cached references. User-held plans remain open until close()."""
+0205     _cached_plan.cache_clear()
+0206 
+0207 
+0208 def binary_fft(x,*,out=None):
+0209     """Convenience API with a plan cache; returns independent outputs by default."""
+0210     if not isinstance(x,np.ndarray):raise TypeError('Input must be a NumPy array.')
+0211     d=_dtype(x.dtype)
+0212     if x.ndim!=1:raise ValueError('Input must be one-dimensional.')
+0213     return get_plan(x.size,d).execute(x,out=out)
+0214 
+0215 
+0216 if __name__=='__main__':
+0217     import argparse,json
+0218     ap=argparse.ArgumentParser();ap.add_argument('--size',type=int,default=4096);args=ap.parse_args()
+0219     x=np.random.default_rng(7).integers(0,2,args.size,dtype=np.uint8)
+0220     p=get_plan(x.size,x.dtype);y=p.execute(x)
+0221     print(json.dumps({'n':p.n,'method':p.method,'plan_setup_ms':p.setup_seconds*1000,
+0222                       'calibration_ms':p.calibration['elapsed_ms'],'cache_reused':p is get_plan(x.size,x.dtype),
+0223                       'max_error':float(np.max(np.abs(y-np.fft.fft(x))))},indent=2))

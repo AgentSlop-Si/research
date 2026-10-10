@@ -1,0 +1,192 @@
+   1 """Deterministic full-output, globally l2-scaled approximate Fourier transform.
+   2 
+   3 The error/work theorem is for ideal arithmetic and exact norm comparisons.
+   4 This NumPy complex128 prototype is not a certified floating-point algorithm.
+   5 It does not compute an exact FFT except when it falls back or prunes only zeros.
+   6 """
+   7 from collections import Counter
+   8 import math
+   9 import numpy as np
+  10 
+  11 
+  12 def _component_scale(x,stats,label):
+  13     m=len(x)
+  14     stats[label+'_component_reads']+=2*m
+  15     stats[label+'_absolute_values']+=2*m
+  16     stats[label+'_comparisons']+=max(0,2*m-1)
+  17     return float(max(np.max(np.abs(x.real),initial=0.0),
+  18                      np.max(np.abs(x.imag),initial=0.0)))
+  19 
+  20 
+  21 def _scaled_norm(x,stats):
+  22     """Scaled sum of squares avoids squaring very large/small components."""
+  23     m=len(x)
+  24     stats['norm_calls']+=1
+  25     stats['norm_value_volume']+=m
+  26     scale=_component_scale(x,stats,'norm_scale')
+  27     stats['norm_zero_comparisons']+=1
+  28     if scale==0.0:
+  29         return 0.0
+  30     re=x.real/scale
+  31     im=x.imag/scale
+  32     stats['norm_scaling_component_reads']+=2*m
+  33     stats['norm_temporary_component_writes']+=2*m
+  34     stats['norm_dot_component_reads']+=4*m
+  35     stats['norm_real_divisions']+=2*m
+  36     stats['norm_real_multiplications']+=2*m+1
+  37     stats['norm_real_additions']+=max(0,2*m-1)
+  38     stats['norm_square_roots']+=1
+  39     return scale*math.sqrt(float(np.dot(re,re)+np.dot(im,im)))
+  40 
+  41 
+  42 def _rescale(out,scale,stats):
+  43     stats['rescaling_real_multiplications']+=2*len(out)
+  44     stats['rescaling_complex_writes']+=len(out)
+  45     with np.errstate(over='ignore',invalid='ignore',under='ignore'):
+  46         out*=scale
+  47     stats['finite_output_component_checks']+=2*len(out)
+  48     if not np.all(np.isfinite(out)):
+  49         raise OverflowError('The complex128 output is not finite after rescaling')
+  50     return out
+  51 
+  52 
+  53 def energy_pruned_fft(values,epsilon,*,return_trace=False):
+  54     """Approximate numpy.fft.fft(values,norm='ortho'), returning output/stats.
+  55 
+  56 For ideal arithmetic, every output error is at most epsilon*||values||_2.
+  57 N must be a positive power of two, epsilon finite and >=0, all inputs finite.
+  58 The initial input scan, normalization, norm scans, coefficients and complete
+  59 output materialization are included in the stated work. Counts are logical
+  60 array/arithmetic counts, not Python instruction counts or exact native flops.
+  61 """
+  62     x=np.asarray(values,dtype=np.complex128)
+  63     if x.ndim!=1:
+  64         raise ValueError('input must be one-dimensional')
+  65     n=len(x)
+  66     if n<1 or n&(n-1):
+  67         raise ValueError('length must be a positive power of two')
+  68     if not math.isfinite(float(epsilon)) or epsilon<0:
+  69         raise ValueError('epsilon must be finite and nonnegative')
+  70     if not np.all(np.isfinite(x)):
+  71         raise ValueError('input values must be finite')
+  72     stats=Counter(n=n,finite_input_component_checks=2*n)
+  73     scale=_component_scale(x,stats,'input_scale')
+  74     out=np.zeros(n,dtype=np.complex128)
+  75     stats['initial_output_zero_writes']=n
+  76     if scale==0.0:
+  77         stats['all_zero_input']=1
+  78         stats['pruned_output_count']=n
+  79         stats['returned_output_count']=n
+  80         return out,dict(stats)
+  81     # Scale components separately to avoid complex-division overflow paths.
+  82     work=np.empty(n,dtype=np.complex128)
+  83     work.real=x.real/scale
+  84     work.imag=x.imag/scale
+  85     stats['input_normalization_component_reads']=2*n
+  86     stats['input_normalization_temporary_component_writes']=2*n
+  87     stats['input_normalization_real_divisions']=2*n
+  88     stats['input_normalization_complex_writes']=n
+  89     root_norm=_scaled_norm(work,stats)
+  90     if epsilon==0:
+  91         # Only this branch uses an ordinary library FFT on the entire input.
+  92         out=np.fft.fft(work,norm='ortho')
+  93         stats['full_fft_fallback']=1
+  94         stats['fallback_fft_length']=n
+  95         stats['fallback_radix2_butterfly_count']=n*(n.bit_length()-1)//2
+  96         stats['fallback_output_writes']=n
+  97         stats['computed_output_count']=n
+  98         stats['returned_output_count']=n
+  99         return _rescale(out,scale,stats),dict(stats)
+ 100     if epsilon>=1:
+ 101         stats['pruned_output_count']=n
+ 102         stats['pruned_node_count']=1
+ 103         stats['returned_output_count']=n
+ 104         return out,dict(stats)
+ 105     threshold=float(epsilon)*root_norm
+ 106     stats['threshold_real_multiplications']=1
+ 107     roots=None
+ 108     inverse_sqrt_two=1/math.sqrt(2.0)
+ 109     stats['constant_square_roots']=1
+ 110     stats['constant_real_divisions']=1
+ 111     # The depth-d node owns frequencies offset (mod stride=2**d).
+ 112     stack=[(work,0,1,0,root_norm)]
+ 113     trace=[]
+ 114     active_per_depth=Counter()
+ 115     norm_per_depth=Counter()
+ 116     while stack:
+ 117         v,offset,stride,depth,known_norm=stack.pop()
+ 118         m=len(v)
+ 119         stats['visited_nodes']+=1
+ 120         stats['logical_node_index_operations']+=5
+ 121         if known_norm is None:
+ 122             node_norm=_scaled_norm(v,stats)
+ 123         else:
+ 124             node_norm=known_norm
+ 125         norm_per_depth[depth]+=m
+ 126         stats['prune_norm_comparisons']+=1
+ 127         if node_norm<=threshold:
+ 128             stats['pruned_node_count']+=1
+ 129             stats['pruned_output_count']+=m
+ 130             if return_trace:
+ 131                 trace.append(dict(depth=depth,length=m,offset=offset,stride=stride,
+ 132                                   norm=node_norm,threshold=threshold,pruned=True))
+ 133             continue
+ 134         active_per_depth[depth]+=1
+ 135         if m==1:
+ 136             out[offset]=v[0]
+ 137             stats['computed_output_count']+=1
+ 138             stats['computed_output_writes']+=1
+ 139             continue
+ 140         if roots is None:
+ 141             roots=np.exp((-2j*np.pi/n)*np.arange(n//2,dtype=np.float64))
+ 142             stats['root_exponential_evaluations']=n//2
+ 143             stats['root_phase_scalar_products']=n//2
+ 144             stats['root_phase_scalar_setup']=2
+ 145             stats['root_coefficient_writes']=n//2
+ 146             stats['root_index_initializations']=n//2
+ 147         half=m//2
+ 148         even=(v[:half]+v[half:])*inverse_sqrt_two
+ 149         odd=(v[:half]-v[half:])*inverse_sqrt_two
+ 150         odd*=roots[::n//m]
+ 151         stats['split_nodes']+=1
+ 152         stats['split_complex_values_read']+=2*m+half
+ 153         stats['split_complex_values_written']+=m+half
+ 154         stats['split_complex_temporary_writes']+=m
+ 155         stats['split_value_volume']+=m
+ 156         stats['butterflies']+=half
+ 157         stats['complex_additions_or_subtractions']+=m
+ 158         stats['complex_multiplications']+=half
+ 159         stats['real_scalings_of_complex_values']+=m
+ 160         stats['twiddle_coefficient_reads']+=half
+ 161         stats['logical_split_index_operations']+=half+8
+ 162         stack.append((odd,offset+stride,stride*2,depth+1,None))
+ 163         stack.append((even,offset,stride*2,depth+1,None))
+ 164         stats['max_pending_nodes']=max(stats['max_pending_nodes'],len(stack))
+ 165         if return_trace:
+ 166             trace.append(dict(depth=depth,length=m,offset=offset,stride=stride,
+ 167                               norm=node_norm,threshold=threshold,pruned=False))
+ 168     stats['returned_output_count']=n
+ 169     stats['active_nodes_by_depth']=dict(sorted(active_per_depth.items()))
+ 170     stats['norm_value_volume_by_depth']=dict(sorted(norm_per_depth.items()))
+ 171     stats['scaled_input_norm']=root_norm
+ 172     stats['input_component_scale']=scale
+ 173     stats['scaled_prune_threshold']=threshold
+ 174     if return_trace:
+ 175         stats['trace']=trace
+ 176     return _rescale(out,scale,stats),dict(stats)
+ 177 
+ 178 
+ 179 def ideal_split_volume_bound(n,epsilon):
+ 180     """Conservative real-valued bound on sum of lengths of split nodes."""
+ 181     if n<1 or n&(n-1):
+ 182         raise ValueError('length must be a positive power of two')
+ 183     if not math.isfinite(float(epsilon)) or epsilon<0:
+ 184         raise ValueError('epsilon must be finite and nonnegative')
+ 185     if epsilon<=0:
+ 186         return n*(n.bit_length()-1)
+ 187     if epsilon>=1:
+ 188         return 0.0
+ 189     if epsilon<=1/math.sqrt(n):
+ 190         return n*(n.bit_length()-1)
+ 191     return sum(min(2**d,epsilon**-2)*n/(2**d)
+ 192                for d in range(n.bit_length()-1))

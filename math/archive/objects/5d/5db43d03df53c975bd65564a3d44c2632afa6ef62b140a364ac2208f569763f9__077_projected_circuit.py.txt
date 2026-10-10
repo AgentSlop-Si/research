@@ -1,0 +1,396 @@
+"""Persistent sum/convolution circuits projected onto a fixed frequency union.
+
+Classical Fourier identities, approximate complex128 execution. No division,
+relation discovery, dense-output shortcut, or integer bit-complexity claim.
+Registration consumes dense inputs but retains only selected projections.
+"""
+from __future__ import annotations
+
+from bisect import bisect_left
+from collections import Counter, OrderedDict
+from dataclasses import dataclass
+import operator
+import weakref
+
+import numpy as np
+from scipy import fft
+
+
+def integer(value):
+    if isinstance(value, (bool, np.bool_)):
+        raise TypeError('boolean is not an index')
+    return operator.index(value)
+
+
+def scalar(value):
+    z = complex(value)
+    if not np.isfinite(z):
+        raise ValueError('finite scalar required')
+    return z
+
+
+def indices(values, n, *, unique=False):
+    raw = list(values)
+    out = np.asarray([integer(v) for v in raw], dtype=np.int64)
+    if not len(out) or np.any((out < 0) | (out >= n)):
+        raise ValueError('nonempty indices in [0,n) required')
+    if unique and len(set(map(int, out))) != len(out):
+        raise ValueError('registered bins must be unique')
+    out.flags.writeable = False
+    return out
+
+
+@dataclass(frozen=True, eq=False, slots=True, weakref_slot=True)
+class Node:
+    owner: object
+    uid: int
+    op: str
+    children: tuple
+    data: object = None
+
+
+@dataclass(frozen=True, slots=True)
+class _Tree:
+    expr: Node
+    size: int
+    left: object = None
+    right: object = None
+
+
+class ProjectedCircuit:
+    """One immutable frequency union and a byte-bounded evaluated-node LRU.
+
+    cache_bytes bounds numeric cached node vectors, not registered projections,
+    graph objects, returned outputs, or temporary evaluation workspace.
+    The default registration backend is a full native FFT followed by gather;
+    'pruned' optionally uses the uploaded arbitrary-output plan, explicitly.
+    """
+    def __init__(self, n, bins, *, cache_bytes=32*1024**2,
+                 registration='full', radix='auto'):
+        self.n = integer(n)
+        if not 1 <= self.n < 2**31:
+            raise ValueError('require 1 <= n < 2**31 for exact int64 phase reduction')
+        self.bins = indices(bins, self.n, unique=True)
+        self.q = len(self.bins)
+        self._where = {int(k): i for i, k in enumerate(self.bins)}
+        self.cache_budget = integer(cache_bytes)
+        if self.cache_budget < 0 or registration not in ('full', 'pruned'):
+            raise ValueError('invalid cache budget or registration backend')
+        self.registration, self.radix = registration, radix
+        self._plan = None
+        self._token = object()
+        self._next = 0
+        self._intern = weakref.WeakValueDictionary()
+        self._basis = {}
+        self._cache = OrderedDict()
+        self._cache_bytes = 0
+        self.stats = Counter()
+
+    def _check(self, node):
+        if not isinstance(node, Node) or node.owner is not self._token:
+            raise ValueError('node belongs to a different circuit')
+
+    def _node(self, op, children=(), data=None):
+        children = tuple(children)
+        for c in children:
+            self._check(c)
+        key = (op, tuple(c.uid for c in children), data)
+        found = self._intern.get(key)
+        if found is not None:
+            self.stats['intern_hits'] += 1
+            return found
+        self._next += 1
+        obj = Node(self._token, self._next, op, children, data)
+        self._intern[key] = obj
+        self.stats['new_nodes'] += 1
+        return obj
+
+    def register_projection(self, values):
+        """Trust caller's correspondence to bins; copy numeric data for isolation."""
+        a = np.array(values, dtype=np.complex128, copy=True)
+        if a.shape != (self.q,) or not np.all(np.isfinite(a)):
+            raise ValueError('projection must be a finite vector of length q')
+        a.flags.writeable = False
+        sid = len(self._basis)
+        self._basis[sid] = a
+        self.stats['registered_bases'] += 1
+        return self._node('basis', data=sid)
+
+    def register(self, values):
+        a = np.asarray(values)
+        if a.shape != (self.n,) or not np.all(np.isfinite(a)):
+            raise ValueError('input must be a finite length-n vector')
+        if self.registration == 'pruned':
+            if self._plan is None:
+                from arbitrary_output import ArbitraryBinsDFTPlan
+                self._plan = ArbitraryBinsDFTPlan(self.n, self.bins, radix=self.radix)
+            y = self._plan.execute(a)
+        elif np.isrealobj(a):
+            half = fft.rfft(np.asarray(a, dtype=np.float64))
+            y = half[np.minimum(self.bins, self.n-self.bins)].copy()
+            high = self.bins > self.n//2
+            y[high] = np.conj(y[high])
+        else:
+            y = fft.fft(np.asarray(a, dtype=np.complex128))[self.bins]
+        self.stats['registrations'] += 1
+        return self.register_projection(y)
+
+    def release_registration_plan(self):
+        self._plan = None
+
+    def impulse(self, position=0, amplitude=1):
+        p = integer(position)
+        if not 0 <= p < self.n:
+            raise ValueError('impulse position outside [0,n)')
+        return self.scale(self._node('impulse', data=p), amplitude)
+
+    def add(self, left, right):
+        return self._node('add', (left, right))
+
+    def convolve(self, left, right):
+        return self._node('mul', (left, right))
+
+    def scale(self, node, value):
+        self._check(node)
+        z = scalar(value)
+        return node if z == 1 else self._node('scale', (node,), z)
+
+    def shift(self, node, amount):
+        self._check(node)
+        s = integer(amount) % self.n
+        return node if s == 0 else self._node('shift', (node,), s)
+
+    def sum(self, terms):
+        terms = list(terms)
+        if not terms:
+            return self.impulse(0, 0)
+        for node in terms:
+            self._check(node)
+        while len(terms) > 1:
+            terms = [self.add(terms[i], terms[i+1]) if i+1 < len(terms)
+                     else terms[i] for i in range(0, len(terms), 2)]
+        return terms[0]
+
+    def relation(self, terms, edits=()):
+        """terms are (basis/expression node, coefficient, circular shift)."""
+        pieces = [self.scale(self.shift(node, s), c) for node, c, s in terms]
+        merged = {}
+        for p, d in edits:
+            p = integer(p)
+            if not 0 <= p < self.n:
+                raise ValueError('edit outside [0,n)')
+            merged[p] = scalar(merged.get(p, 0)+scalar(d))
+        pieces.extend(self.impulse(p, d) for p, d in sorted(merged.items()) if d)
+        return self.sum(pieces)
+
+    def from_phase5(self, states):
+        """Project existing single- OR multi-basis metadata without signal().
+
+        Existing dense basis spectra are borrowed only during this call; the
+        new engine keeps neither them nor their owning states alive.
+        """
+        imported, out = {}, []
+        for state in states:
+            if state.n != self.n:
+                raise ValueError('state period mismatch')
+            terms = []
+            for (base, s), c in state.terms.items():
+                key = id(base)
+                if key not in imported:
+                    half = np.asarray(base.spectrum)
+                    v = half[np.minimum(self.bins, self.n-self.bins)].copy()
+                    hi = self.bins > self.n//2
+                    v[hi] = np.conj(v[hi])
+                    imported[key] = self.register_projection(v)
+                terms.append((imported[key], c, s))
+            out.append(self.relation(terms, state.edits.items()))
+        return out
+
+    def product(self, factors):
+        factors = tuple(factors)
+        if not factors:
+            raise ValueError('need at least one factor')
+        for node in factors:
+            self._check(node)
+        def build(lo, hi):
+            if hi-lo == 1:
+                return _Tree(factors[lo], 1)
+            mid = (lo+hi)//2
+            a, b = build(lo, mid), build(mid, hi)
+            return _Tree(self.convolve(a.expr, b.expr), hi-lo, a, b)
+        return ProductVersion(self, build(0, len(factors)))
+
+    def _phase(self, shift):
+        # n<2**31 keeps k*shift in signed int64, before float conversion.
+        return np.exp((-2j*np.pi/self.n)*((self.bins*shift) % self.n))
+
+    def clear_cache(self):
+        self._cache.clear()
+        self._cache_bytes = 0
+
+    def _remember(self, uid, value):
+        if value.nbytes > self.cache_budget:
+            return
+        self._cache[uid] = value
+        self._cache_bytes += value.nbytes
+        while self._cache_bytes > self.cache_budget:
+            _, old = self._cache.popitem(last=False)
+            self._cache_bytes -= old.nbytes
+            self.stats['evictions'] += 1
+
+    def query_many(self, roots, bins=None):
+        """Share every reachable node once across roots; iterative execution.
+
+        The fixed UNION is evaluated, even when a smaller view is gathered.
+        Fusing roots can reduce work; heterogeneous bin sets may waste work.
+        """
+        roots = tuple(roots)
+        for node in roots:
+            self._check(node)
+        take = None
+        if bins is not None:
+            ks = indices(bins, self.n)
+            try:
+                take = np.asarray([self._where[int(k)] for k in ks])
+            except KeyError as e:
+                raise ValueError('requested bin was not registered') from e
+        values, scheduled, order = {}, set(), []
+        stack = [(r, False) for r in reversed(roots)]
+        while stack:
+            node, ready = stack.pop()
+            if ready:
+                order.append(node)
+                continue
+            if node.uid in scheduled:
+                continue
+            scheduled.add(node.uid)
+            if node.op == 'basis':
+                values[node.uid] = self._basis[node.data]
+            elif node.uid in self._cache:
+                values[node.uid] = self._cache[node.uid]
+                self._cache.move_to_end(node.uid)
+                self.stats['cache_hits'] += 1
+            else:
+                stack.append((node, True))
+                stack.extend((c, False) for c in reversed(node.children))
+        uses = Counter(r.uid for r in roots)
+        for node in order:
+            uses.update(c.uid for c in node.children)
+        self.stats['last_evaluated_nodes'] = len(order)
+        self.stats['evaluated_nodes'] += len(order)
+        self.stats['last_schedule_nodes'] = len(scheduled)
+        peak = len(values)
+        with np.errstate(over='raise', invalid='raise'):
+            for node in order:
+                args = [values[c.uid] for c in node.children]
+                if node.op == 'impulse':
+                    y = self._phase(node.data)
+                elif node.op == 'add':
+                    y = args[0]+args[1]
+                elif node.op == 'mul':
+                    y = args[0]*args[1]
+                elif node.op == 'scale':
+                    y = args[0]*node.data
+                elif node.op == 'shift':
+                    y = args[0]*self._phase(node.data)
+                else:
+                    raise ValueError('unknown node operation')
+                if not np.all(np.isfinite(y)):
+                    raise FloatingPointError('nonfinite circuit result')
+                y.flags.writeable = False
+                values[node.uid] = y
+                peak = max(peak, len(values))
+                self._remember(node.uid, y)
+                for child in node.children:
+                    uses[child.uid] -= 1
+                    if uses[child.uid] == 0:
+                        del values[child.uid]
+        self.stats['last_peak_live_vectors'] = peak
+        return [values[r.uid].copy() if take is None else values[r.uid][take].copy()
+                for r in roots]
+
+    def query(self, node, bins=None):
+        return self.query_many([node], bins)[0]
+
+    def memory_report(self):
+        return {'basis_projection_bytes': sum(a.nbytes for a in self._basis.values()),
+                'basis_count': len(self._basis), 'cache_bytes': self._cache_bytes,
+                'cache_budget': self.cache_budget,
+                'registration_plan_bytes': 0 if self._plan is None else self._plan.plan_bytes,
+                'bin_index_bytes': self.bins.nbytes,
+                'live_interned_nodes': len(self._intern),
+                'dense_inputs_retained': False,
+                'excludes_graph_objects_outputs_and_temporary_workspace': True}
+
+    def export(self, roots):
+        """Portable operation schedule; projections/inputs deliberately separate."""
+        roots = tuple(roots)
+        seen, order, stack = set(), [], [(r, False) for r in reversed(roots)]
+        while stack:
+            node, ready = stack.pop()
+            self._check(node)
+            if ready:
+                data = [node.data.real, node.data.imag] if node.op == 'scale' else node.data
+                order.append({'id': node.uid, 'op': node.op,
+                              'children': [c.uid for c in node.children], 'data': data})
+            elif node.uid not in seen:
+                seen.add(node.uid)
+                stack.append((node, True))
+                stack.extend((c, False) for c in reversed(node.children))
+        return {'schema': 'projected-circuit-v1', 'n': self.n,
+                'bins': self.bins.tolist(), 'nodes': order,
+                'roots': [r.uid for r in roots]}
+
+
+@dataclass(frozen=True)
+class ProductVersion:
+    engine: ProjectedCircuit
+    tree: _Tree
+
+    @property
+    def root(self):
+        return self.tree.expr
+
+    def factor(self, at):
+        at = integer(at)
+        if not 0 <= at < self.tree.size:
+            raise IndexError('factor index out of range')
+        node = self.tree
+        while node.left is not None:
+            if at < node.left.size:
+                node = node.left
+            else:
+                at -= node.left.size
+                node = node.right
+        return node.expr
+
+    def replace_many(self, replacements):
+        changes = dict(replacements)
+        for key, node in changes.items():
+            integer(key)
+            if not 0 <= key < self.tree.size:
+                raise IndexError('factor index out of range')
+            self.engine._check(node)
+        keys = sorted(changes)
+        def rebuild(tree, offset, lo, hi):
+            if lo == hi:
+                return tree
+            if tree.left is None:
+                expr = changes[offset]
+                return tree if expr is tree.expr else _Tree(expr, 1)
+            mid = offset+tree.left.size
+            split = bisect_left(keys, mid, lo, hi)
+            a = rebuild(tree.left, offset, lo, split)
+            b = rebuild(tree.right, mid, split, hi)
+            if a is tree.left and b is tree.right:
+                return tree
+            return _Tree(self.engine.convolve(a.expr, b.expr), tree.size, a, b)
+        return ProductVersion(self.engine, rebuild(self.tree, 0, 0, len(keys)))
+
+    def edit(self, at, position, delta):
+        old = self.factor(at)
+        new = self.engine.add(old, self.engine.impulse(position, delta))
+        return self.replace_many({at: new})
+
+    def frequencies(self, bins=None):
+        return self.engine.query(self.root, bins)

@@ -1,0 +1,180 @@
+"""Reproducible tests for the exact spectral shear-gauge theorem.
+
+Reference DFT and Gaussian rank routines do not invoke any fast Fourier engine.
+"""
+import math,random,unittest
+import phase_union_general as phase
+import newton_union as prior
+import shear_gauge_union as shear
+
+
+def primitive_n_root(p,n):
+    assert (p-1)%n==0
+    factors=[];z=n;f=2
+    while f*f<=z:
+        if z%f==0:
+            factors.append(f)
+            while z%f==0:z//=f
+        f+=1
+    if z>1:factors.append(z)
+    for b in range(2,p):
+        w=pow(b,(p-1)//n,p)
+        if pow(w,n,p)==1 and all(pow(w,n//f,p)!=1 for f in factors):return w
+    raise AssertionError('no root')
+
+
+def dft_slow(x,p,w):
+    n=len(x);roots=phase.phase_table(n,p,w)
+    return [sum(x[j]*roots[(-k*j)%n] for j in range(n))%p for k in range(n)]
+
+
+def rank_mod(rows,p):
+    a=[list(map(lambda x:x%p,row)) for row in rows]
+    m=len(a);n=len(a[0]);rank=0
+    for j in range(n):
+        pivot=next((i for i in range(rank,m) if a[i][j]%p),None)
+        if pivot is None:continue
+        a[pivot],a[rank]=a[rank],a[pivot]
+        inverse=pow(a[rank][j],-1,p)
+        a[rank]=[v*inverse%p for v in a[rank]]
+        for i in range(rank+1,m):
+            factor=a[i][j]
+            if factor:a[i]=[(v-factor*u)%p for v,u in zip(a[i],a[rank])]
+        rank+=1
+        if rank==m:break
+    return rank
+
+
+def fixture(n,q,p,d=1,first_noise=1,other_noise=1,mu=17,a=3,seed=17001):
+    rng=random.Random(seed+n+d+a+mu)
+    w=primitive_n_root(p,n)
+    m=n//q
+    if d>1:
+        init=[[rng.randrange(p) for u in range(m)] for j in range(d)]
+        init[1]=init[0][:] # exact pilot for d>=2
+    else:init=[[rng.randrange(p) for u in range(m)]]
+    changes=[[] for _ in range(q)]
+    for t in range(d,q):
+        count=first_noise if t==1 else other_noise
+        freq=rng.sample(range(m),min(count,m))
+        changes[t]=[(h,rng.randrange(1,p)) for h in freq]
+    v=prior.build_newton_signal(n,p,w,q,d,init,changes)
+    x=shear.synthesize_from_gauged(v,p,q,a,mu)
+    return x,v,w,sum(len(e) for e in changes)
+
+
+class ShearGaugeTest(unittest.TestCase):
+    def test_radix_sort_orders(self):
+        rng=random.Random(172)
+        for base in [2,3,5,8,16,33]:
+            for maximum in [0,1,17,323,998244352]:
+                records=[(rng.randrange(maximum+1),i,-i) for i in range(70)]
+                got=shear.radix_sort_nonnegative_records(records,maximum,base)
+                self.assertEqual(got,sorted(records,key=lambda a:a[0]))
+
+    def test_inverse_scaled_roots(self):
+        for n,p in [(64,998244353),(72,1009),(256,998244353)]:
+            w=primitive_n_root(p,n)
+            roots=phase.phase_table(n,p,w)
+            for mu in [1,17,roots[5]]:
+                inv=shear.inverse_for_scaled_roots(roots,mu,p)
+                for k in range(n):
+                    den=(1-mu*roots[-k%n])%p
+                    self.assertEqual(den*inv[k]%p, 1 if den else 0)
+
+    def test_recover_unknown_shift_scale(self):
+        for n,q,p,a,mu in [(64,8,998244353,3,17),
+                           (72,8,1009,4,23),(144,12,1009,5,29),
+                           (256,16,998244353,7,47)]:
+            for noise in [0,1,2]:
+                if noise and noise>= (n//q)/4:continue
+                x,v,w,R=fixture(n,q,p,1,noise,0,mu,a,seed=500+noise)
+                rec=shear.discover_shear_scale(x,p,w,q)
+                self.assertIsNotNone(rec, (n,noise))
+                self.assertEqual((rec.a,rec.mu),(a,mu))
+                self.assertGreater(2*rec.agreeing_pairs,rec.emitted_pairs)
+
+    def test_many_lengths_and_orders(self):
+        cases=[(64,8,998244353),(72,8,1009),(144,12,1009),
+               (256,16,998244353),(1024,32,998244353)]
+        for n,q,p in cases:
+            for d in [1,2,3,4]:
+                if d>=q:continue
+                for mu in [1,17]:
+                    x,v,w,R=fixture(n,q,p,d,1,1,mu,3 if (n//q)!=9 else 4,
+                                     seed=n+d+mu)
+                    found=shear.recognize(x,p,w,d,max(R,q),q)
+                    self.assertIsNotNone(found,(n,d,mu))
+                    self.assertEqual(found.shear,3 if n//q!=9 else 4)
+                    self.assertEqual(found.scalar,mu)
+                    self.assertEqual(len(found.base.events),R)
+                    got,cnt=shear.transform_certified(found,True)
+                    self.assertEqual(got,dft_slow(x,p,w),(n,d,mu))
+                    self.assertEqual(cnt['phase_baseline_terms'],n*d)
+                    self.assertEqual(cnt['phase_event_terms'],q*R)
+
+    def test_linear_full_rank_dense_orbit_old_rejects(self):
+        n=256;q=m=16;p=998244353
+        w=primitive_n_root(p,n)
+        rng=random.Random(177)
+        # Ensure the initial short spectrum is fully dense.
+        roots=phase.phase_table(m,p,pow(w,q,p))
+        from delta_graph import direct_row_dft
+        while True:
+            b=[rng.randrange(p) for _ in range(m)]
+            B=direct_row_dft(b,p,roots)
+            if all(B):break
+        v=[0]*n
+        for t in range(q):
+            for u in range(m):v[t+q*u]=b[u]
+        mu=17;a=3
+        self.assertNotEqual(pow(mu,m,p),1) # no mode has zero ordinary change
+        x=shear.synthesize_from_gauged(v,p,q,a,mu)
+        rows=[[x[t+q*u] for u in range(m)] for t in range(q)]
+        self.assertEqual(rank_mod(rows,p),m)
+        self.assertIsNone(prior.recognize(x,p,w,1,q,q))
+        found=shear.recognize(x,p,w,1,q,q)
+        self.assertIsNotNone(found)
+        self.assertEqual(len(found.base.events),0)
+        got=shear.transform_certified(found)
+        self.assertEqual(got,dft_slow(x,p,w))
+        # For every h, the ordinary first difference spectrum is nonzero:
+        # C_t[h] = (mu*eta^(-ah))^t * B_h.
+        for h in range(m):
+            self.assertNotEqual(mu*roots[(-a*h)%m]%p,1)
+        # Old support is (q-1)*m, ours is 0.
+        self.assertEqual((q-1)*m,240)
+
+    def test_bad_input_reject_or_exact_only(self):
+        rng=random.Random(170017)
+        for n,q,p in [(64,8,998244353),(144,12,1009),(256,16,998244353)]:
+            w=primitive_n_root(p,n)
+            for k in range(25):
+                x=[rng.randrange(p) for _ in range(n)]
+                got,cert=shear.transform_if_recognized(x,p,w,1,q,q)
+                if got is not None:self.assertEqual(got,dft_slow(x,p,w))
+
+    def test_reject_invalid_primitive_root(self):
+        n=64;p=998244353
+        x=[i*i%p for i in range(n)]
+        with self.assertRaises(ValueError):
+            shear.recognize(x,p,1,1,q=8)
+
+    def test_corrupted_after_clean_pilot(self):
+        n=256;q=16;p=998244353
+        x,v,w,R=fixture(n,q,p,3,1,2,19,5,seed=1022)
+        found=shear.recognize(x,p,w,3,2*q,q)
+        self.assertIsNotNone(found)
+        self.assertEqual(shear.transform_certified(found),dft_slow(x,p,w))
+
+    def test_mixed_lengths_not_simple_fft_permutation(self):
+        n=72;q=8;m=9;p=1009;a=4;mu=1
+        x,v,w,R=fixture(n,q,p,1,1,1,mu,a,seed=303)
+        cert=shear.recognize(x,p,w,1,q,q)
+        self.assertIsNotNone(cert)
+        self.assertEqual(shear.transform_certified(cert),dft_slow(x,p,w))
+        # h=1, s=0: k'=k+Q*a*h not equivalent to h mod M.
+        self.assertNotEqual((1+q*a*1)%m,1)
+
+
+if __name__=='__main__': unittest.main(verbosity=2)

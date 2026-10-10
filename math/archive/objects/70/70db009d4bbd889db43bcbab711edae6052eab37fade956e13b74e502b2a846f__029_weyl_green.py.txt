@@ -1,0 +1,132 @@
+"""Phase16: independently testable global Weyl/Green obstruction.
+
+Conventions: (Sx)_k = x_{k-1}, (Dx)_k = omega**k*x_k,
+F[k,j] = omega**(k*j) (unnormalized for exact finite-field testing).
+For any commutative field with n-th primitive omega:
+  (a I + b S + delta D) F = F (a I + delta S + b D^{-1}).
+
+Over complex numbers use |a| > |b|+|delta| for uniform stability.
+The cyclic Green solver is O(n) field operations; calculating Bx = LF x
+is NOT thereby O(n) for arbitrary x.
+"""
+from dataclasses import dataclass
+
+
+P = 2013265921  # prime = 15 * 2^27 + 1, NTT prime
+PRIMITIVE_GENERATOR = 31
+
+
+def root_for_n(n, p=P, generator=PRIMITIVE_GENERATOR):
+    if n < 2 or (p - 1) % n:
+        raise ValueError('n must divide p-1, n>=2')
+    omega = pow(generator, (p - 1) // n, p)
+    if pow(omega, n, p) != 1:
+        raise ValueError('not an n-th root')
+    fac = []
+    d = n
+    q = 2
+    while q * q <= d:
+        if d % q == 0:
+            fac.append(q)
+            while d % q == 0:
+                d //= q
+        q += 1
+    if d > 1:
+        fac.append(d)
+    if any(pow(omega, n // q, p) == 1 for q in fac):
+        raise ValueError('not primitive for n')
+    return omega
+
+
+def field_dft(x, omega, p=P):
+    n = len(x)
+    powers = [pow(omega, k, p) for k in range(n)]
+    out = []
+    for wk in powers:
+        term = 1
+        acc = 0
+        for v in x:
+            acc = (acc + v * term) % p
+            term = term * wk % p
+        out.append(acc)
+    return out
+
+
+@dataclass
+class WeylGreen:
+    n: int
+    omega: int
+    p: int = P
+    a: int = 7
+    b: int = 2
+    delta: int = 1
+
+    def __post_init__(self):
+        n,p=self.n,self.p
+        self.wpowers = [pow(self.omega,k,p) for k in range(n)]
+        self.diagonal = [(self.a+self.delta*w)%p for w in self.wpowers]
+        self.inverse_diag = [pow(d,-1,p) for d in self.diagonal]
+        # h_k is coefficient of unknown cyclic predecessor y[-1].
+        self.h=[]
+        coeff=1
+        for idg in self.inverse_diag:
+            coeff = (-self.b*coeff*idg)%p
+            self.h.append(coeff)
+        det_factor=(1-self.h[-1])%p
+        if not det_factor:
+            raise ValueError('singular cyclic green operator')
+        self.inv_det_factor=pow(det_factor,-1,p)
+
+    def apply_L(self,x):
+        p,n=self.p,self.n
+        return [(self.diagonal[k]*x[k]+self.b*x[(k-1)%n])%p for k in range(n)]
+
+    def apply_P(self,x):
+        # P=F^-1 L F=aI+delta S+b D^-1
+        p,n=self.p,self.n
+        return [(self.a*x[j] + self.delta*x[(j-1)%n]
+                 +self.b*self.wpowers[(-j)%n]*x[j])%p for j in range(n)]
+
+    def solve_L(self,rhs):
+        """O(n) operations using one streaming recurrence plus one correction.
+        No Fourier routine called. All inversions depend only on n and coefficients.
+        """
+        p=self.p
+        z=[]
+        last=0
+        for val,idg in zip(rhs,self.inverse_diag):
+            last=((val-self.b*last)*idg)%p
+            z.append(last)
+        c=(z[-1]*self.inv_det_factor)%p
+        return [(v+h*c)%p for v,h in zip(z,self.h)]
+
+    def rhs_column_direct(self,j):
+        """Column j of B=L F, independent dense closed formula."""
+        p=self.p
+        wminj=self.wpowers[(-j)%self.n]
+        return [(pow(self.omega,k*j,p) *
+                (self.a+self.delta*self.wpowers[k]+self.b*wminj))%p
+                for k in range(self.n)]
+
+    def dft_column(self,j):
+        return [pow(self.omega,k*j,self.p) for k in range(self.n)]
+
+    def dft_of_sparse_preprocessed_column(self,j):
+        e=[0]*self.n
+        e[j]=1
+        return field_dft(self.apply_P(e),self.omega,self.p)
+
+
+def complex_Green_bounds(a=7,b=2,delta=1):
+    """Exact norm inequalities from reverse triangle: ||L|| <= top,
+    ||L^-1|| <= 1/bottom, provided bottom>0.
+    Both shift and modulation are unitary.
+    """
+    top=abs(a)+abs(b)+abs(delta)
+    bottom=abs(a)-abs(b)-abs(delta)
+    if bottom <= 0:
+        raise ValueError('diagonal dominance not certified')
+    return {'operator_norm_upper':top,'smallest_singular_lower':bottom,
+            'condition_number_upper':top/bottom,
+            'forcing_entry_amplitude_lower':bottom,
+            'forcing_entry_amplitude_upper':top}

@@ -1,0 +1,301 @@
+   1	import math
+   2	import json
+   3	from dataclasses import dataclass, asdict
+   4	from typing import List, Tuple, Dict
+   5	import numpy as np
+   6	
+   7	PHASES = np.array([1+0j, -1+0j, 1j, -1j], dtype=np.complex128)
+   8	
+   9	@dataclass
+  10	class Params:
+  11	    N: int
+  12	    B: int
+  13	    eps_sample: float
+  14	    eps_phase: float
+  15	    h1: float
+  16	    h2: float
+  17	    delta: float
+  18	    Q_start: int
+  19	    Q_slope: int
+  20	    descriptor_bits: int
+  21	    gamma: float
+  22	    g_wordfit: int
+  23	    g_used: int
+  24	    k_min: int
+  25	    k_used: int
+  26	    G: int
+  27	    field_bits: int
+  28	    lanes_per_word: int
+  29	    words_per_vector: int
+  30	
+  31	
+  32	def unitary_fft(x: np.ndarray) -> np.ndarray:
+  33	    return np.fft.fft(x) / math.sqrt(len(x))
+  34	
+  35	
+  36	def concentration_k(N: int, eps_sample: float, delta: float) -> int:
+  37	    # Safe componentwise Hoeffding + union bound:
+  38	    # P(max_m |err_m| > eps_sample * L/sqrt(N)) <= delta
+  39	    # using Re/Im <= eps_sample/sqrt(2).
+  40	    return math.ceil(4.0 * math.log(4.0 * N / delta) / (eps_sample ** 2))
+  41	
+  42	
+  43	def choose_params(N: int, eps_sample=0.35, eps_phase=0.08, h1=0.06, h2=0.04,
+  44	                  delta=0.05, gamma=0.75, B=None, g_override=None) -> Params:
+  45	    if B is None:
+  46	        B = max(2, math.ceil(math.log2(N)))
+  47	    # Ensure pi/Q_start + pi*B/Q_slope <= eps_phase.
+  48	    Q_start = max(2, math.ceil(2 * math.pi / eps_phase))
+  49	    Q_slope = max(2, math.ceil(2 * math.pi * B / eps_phase))
+  50	    alphabet = 1 + 4 * Q_start * Q_slope  # +1 null symbol (not used in full groups)
+  51	    p = math.ceil(math.log2(alphabet))
+  52	    logN = math.log2(N)
+  53	    g_wordfit = max(1, math.floor(gamma * logN / p))
+  54	    g = g_wordfit if g_override is None else max(1, int(g_override))
+  55	    k_min = concentration_k(N, eps_sample, delta)
+  56	    # Make k a multiple of g so every group has equal weight and no padding factor.
+  57	    k = g * math.ceil(k_min / g)
+  58	    G = k // g
+  59	    qv = math.ceil(1.0 / h1) + 2
+  60	    # Each table lane is stored as nonnegative z+qv. Adding G vectors must not carry across lanes.
+  61	    max_field_sum = G * (2 * qv)
+  62	    field_bits = max(2, math.ceil(math.log2(max_field_sum + 1)) + 1)
+  63	    # Use a sufficiently large constant-factor word so products/indices fit in the model.
+  64	    w = max(64, math.ceil(4 * logN))
+  65	    lanes_per_word = max(1, w // field_bits)
+  66	    words_per_vector = math.ceil(B / lanes_per_word)
+  67	    return Params(N, B, eps_sample, eps_phase, h1, h2, delta,
+  68	                  Q_start, Q_slope, p, gamma, g_wordfit, g,
+  69	                  k_min, k, G, field_bits, lanes_per_word, words_per_vector)
+  70	
+  71	
+  72	def signed_atom_distribution(x: np.ndarray):
+  73	    masses = []
+  74	    atoms = []
+  75	    for j, z in enumerate(x):
+  76	        a = float(z.real)
+  77	        b = float(z.imag)
+  78	        if a != 0.0:
+  79	            masses.append(abs(a)); atoms.append((j, 0 if a > 0 else 1))
+  80	        if b != 0.0:
+  81	            masses.append(abs(b)); atoms.append((j, 2 if b > 0 else 3))
+  82	    L = float(sum(masses))
+  83	    if L == 0.0:
+  84	        return L, np.array([], dtype=float), []
+  85	    return L, np.asarray(masses, dtype=float) / L, atoms
+  86	
+  87	
+  88	def sample_atoms(x: np.ndarray, k: int, rng: np.random.Generator):
+  89	    # Prototype sampling. The theorem note gives the O(N) two-pass sorted-threshold implementation.
+  90	    L, probs, atoms = signed_atom_distribution(x)
+  91	    if L == 0.0:
+  92	        return 0.0, []
+  93	    idx = rng.choice(len(atoms), size=k, replace=True, p=probs)
+  94	    return L, [atoms[int(i)] for i in idx]
+  95	
+  96	
+  97	def exact_sampled_spectrum(N: int, L: float, samples: List[Tuple[int,int]]) -> np.ndarray:
+  98	    if not samples:
+  99	        return np.zeros(N, dtype=np.complex128)
+ 100	    y = np.zeros(N, dtype=np.complex128)
+ 101	    amp = L / len(samples)
+ 102	    for j, sc in samples:
+ 103	        y[j] += amp * PHASES[sc]
+ 104	    return unitary_fft(y)
+ 105	
+ 106	
+ 107	def quant_phase_bin(num: int, den: int, Q: int) -> int:
+ 108	    # nearest bin to num/den mod 1; prototype uses exact integer numerator.
+ 109	    r = num % den
+ 110	    return int((Q * r + den // 2) // den) % Q
+ 111	
+ 112	
+ 113	def group_key_for_block(samples, m0: int, p: Params, group_idx: int):
+ 114	    lo = group_idx * p.g_used
+ 115	    hi = lo + p.g_used
+ 116	    out = []
+ 117	    for j, sc in samples[lo:hi]:
+ 118	        qa = quant_phase_bin(j * m0, p.N, p.Q_start)
+ 119	        qb = quant_phase_bin(j, p.N, p.Q_slope)
+ 120	        out.append((sc, qa, qb))
+ 121	    return tuple(out)
+ 122	
+ 123	
+ 124	def build_group_entry(key, p: Params, lanes: int):
+ 125	    t = np.arange(lanes, dtype=float)
+ 126	    v = np.zeros(lanes, dtype=np.complex128)
+ 127	    for sc, qa, qb in key:
+ 128	        alpha = qa / p.Q_start
+ 129	        beta = qb / p.Q_slope
+ 130	        v += PHASES[sc] * np.exp(-2j * np.pi * (alpha + t * beta))
+ 131	    v /= p.g_used
+ 132	    zr = np.rint(v.real / p.h1).astype(np.int64)
+ 133	    zi = np.rint(v.imag / p.h1).astype(np.int64)
+ 134	    qv = math.ceil(1.0 / p.h1) + 2
+ 135	    zr = np.clip(zr, -qv, qv)
+ 136	    zi = np.clip(zi, -qv, qv)
+ 137	    return zr, zi
+ 138	
+ 139	
+ 140	def pack_nonnegative_lanes(vals: np.ndarray, field_bits: int, lanes_per_word: int):
+ 141	    words = []
+ 142	    mask = (1 << field_bits) - 1
+ 143	    for start in range(0, len(vals), lanes_per_word):
+ 144	        word = 0
+ 145	        chunk = vals[start:start+lanes_per_word]
+ 146	        for lane, val in enumerate(chunk):
+ 147	            iv = int(val)
+ 148	            if iv < 0 or iv > mask:
+ 149	                raise ValueError((iv, field_bits))
+ 150	            word |= iv << (lane * field_bits)
+ 151	        words.append(word)
+ 152	    return words
+ 153	
+ 154	
+ 155	def unpack_nonnegative_lanes(words, count: int, field_bits: int, lanes_per_word: int):
+ 156	    vals = []
+ 157	    mask = (1 << field_bits) - 1
+ 158	    for word in words:
+ 159	        for lane in range(lanes_per_word):
+ 160	            vals.append((word >> (lane * field_bits)) & mask)
+ 161	            if len(vals) == count:
+ 162	                return np.asarray(vals, dtype=np.int64)
+ 163	    return np.asarray(vals, dtype=np.int64)
+ 164	
+ 165	
+ 166	def packed_decode(N: int, L: float, samples, p: Params):
+ 167	    if L == 0.0:
+ 168	        return np.zeros(N, dtype=np.complex128), {"table_entries": 0, "lookup_count": 0, "packed_word_adds": 0}
+ 169	    assert len(samples) == p.k_used and p.k_used % p.g_used == 0
+ 170	    cache: Dict[Tuple, Tuple[np.ndarray,np.ndarray]] = {}
+ 171	    out = np.zeros(N, dtype=np.complex128)
+ 172	    qv = math.ceil(1.0 / p.h1) + 2
+ 173	    lookup_count = 0
+ 174	    packed_word_adds = 0
+ 175	
+ 176	    for m0 in range(0, N, p.B):
+ 177	        lanes = min(p.B, N - m0)
+ 178	        wr_sum = [0] * math.ceil(lanes / p.lanes_per_word)
+ 179	        wi_sum = [0] * math.ceil(lanes / p.lanes_per_word)
+ 180	        for group_idx in range(p.G):
+ 181	            key = group_key_for_block(samples, m0, p, group_idx)
+ 182	            ent = cache.get(key)
+ 183	            if ent is None:
+ 184	                ent = build_group_entry(key, p, lanes)
+ 185	                cache[key] = ent
+ 186	            zr, zi = ent
+ 187	            # Offset signed lane by qv before packed addition.
+ 188	            pr = pack_nonnegative_lanes(zr + qv, p.field_bits, p.lanes_per_word)
+ 189	            pi = pack_nonnegative_lanes(zi + qv, p.field_bits, p.lanes_per_word)
+ 190	            for a in range(len(wr_sum)):
+ 191	                wr_sum[a] += pr[a]
+ 192	                wi_sum[a] += pi[a]
+ 193	                packed_word_adds += 2
+ 194	            lookup_count += 1
+ 195	
+ 196	        sr = unpack_nonnegative_lanes(wr_sum, lanes, p.field_bits, p.lanes_per_word) - p.G * qv
+ 197	        si = unpack_nonnegative_lanes(wi_sum, lanes, p.field_bits, p.lanes_per_word) - p.G * qv
+ 198	        avg = (p.h1 / p.G) * (sr.astype(float) + 1j * si.astype(float))
+ 199	        # Final fixed-point output rounding in normalized phasor-average units.
+ 200	        avg = p.h2 * (np.rint(avg.real / p.h2) + 1j * np.rint(avg.imag / p.h2))
+ 201	        out[m0:m0+lanes] = (L / math.sqrt(N)) * avg
+ 202	
+ 203	    stats = {"table_entries": len(cache), "lookup_count": lookup_count,
+ 204	             "packed_word_adds": packed_word_adds}
+ 205	    return out, stats
+ 206	
+ 207	
+ 208	def decoder_bound_normalized(p: Params):
+ 209	    # Bound in units of L/sqrt(N): phase trajectory error + group rounding + final rounding.
+ 210	    # |exp(i a)-exp(i b)| <= |a-b|; quantizer design makes <= eps_phase.
+ 211	    return p.eps_phase + p.h1 / math.sqrt(2) + p.h2 / math.sqrt(2)
+ 212	
+ 213	
+ 214	def cost_model(log2N: int, eps_sample=0.35, eps_phase=0.08, h1=0.06,
+ 215	               delta_power=1.0, gamma=0.75):
+ 216	    # Symbolic-scale model using N=2^m without constructing N.
+ 217	    m = float(log2N)
+ 218	    B = max(2, math.ceil(m))
+ 219	    Q0 = max(2, math.ceil(2 * math.pi / eps_phase))
+ 220	    Q1 = max(2, math.ceil(2 * math.pi * B / eps_phase))
+ 221	    pbits = math.ceil(math.log2(1 + 4 * Q0 * Q1))
+ 222	    g = max(1, math.floor(gamma * m / pbits))
+ 223	    lnN = m * math.log(2)
+ 224	    # delta=N^{-delta_power}
+ 225	    lnfactor = math.log(4.0) + (1.0 + delta_power) * lnN
+ 226	    k0 = math.ceil(4.0 * lnfactor / (eps_sample ** 2))
+ 227	    k = g * math.ceil(k0 / g)
+ 228	    G = k // g
+ 229	    qv = math.ceil(1.0 / h1) + 2
+ 230	    field_bits = max(2, math.ceil(math.log2(G * (2*qv) + 1)) + 1)
+ 231	    w = max(64, math.ceil(4*m))
+ 232	    lpw = max(1, w // field_bits)
+ 233	    wpv = math.ceil(B / lpw)
+ 234	    # Ratios of selected costs to N.
+ 235	    key_ops_ratio = k / B
+ 236	    lookup_ratio = G / B
+ 237	    packed_add_ratio = 2 * G * wpv / B
+ 238	    preprocess_log2_entries = pbits * g
+ 239	    preprocess_exponent = preprocess_log2_entries / m
+ 240	    return {
+ 241	        "log2N": log2N, "B": B, "descriptor_bits": pbits, "g": g, "k": k, "G": G,
+ 242	        "field_bits": field_bits, "words_per_vector": wpv,
+ 243	        "key_ops_over_N": key_ops_ratio,
+ 244	        "lookups_over_N": lookup_ratio,
+ 245	        "packed_word_adds_over_N": packed_add_ratio,
+ 246	        "table_exponent_logN": preprocess_exponent,
+ 247	        "preprocess_polylog_factor_note": "entry construction/storage is polylog(N); exponent < gamma asymptotically"
+ 248	    }
+ 249	
+ 250	
+ 251	def make_inputs(N, rng):
+ 252	    flat = np.ones(N, dtype=np.complex128)
+ 253	    gaussian = rng.normal(size=N) + 1j*rng.normal(size=N)
+ 254	    phase = np.exp(2j*np.pi*rng.random(N))
+ 255	    power = (rng.normal(size=N)+1j*rng.normal(size=N)) / np.sqrt(np.arange(1, N+1))
+ 256	    spike_noise = 0.03*(rng.normal(size=N)+1j*rng.normal(size=N))
+ 257	    idx = rng.choice(N, size=max(1,N//64), replace=False)
+ 258	    spike_noise[idx] += rng.normal(size=len(idx))*5 + 1j*rng.normal(size=len(idx))*5
+ 259	    return {"flat":flat, "gaussian":gaussian, "random_phase":phase, "power_law":power, "spike_noise":spike_noise}
+ 260	
+ 261	
+ 262	def run_experiment():
+ 263	    rng = np.random.default_rng(20261009)
+ 264	    results = {"experiments": [], "cost_model": []}
+ 265	    # Small-N prototype: use g=4 to exercise grouped lookup/packing. This is algebra testing,
+ 266	    # not a claim that the conservative word-fit inequality already gives g=4 at these N.
+ 267	    for N in [256, 1024, 4096]:
+ 268	        p = choose_params(N, eps_sample=0.45, eps_phase=0.08, h1=0.05, h2=0.04,
+ 269	                          delta=0.05, gamma=0.75, g_override=4)
+ 270	        for name, x in make_inputs(N, rng).items():
+ 271	            L, samples = sample_atoms(x, p.k_used, rng)
+ 272	            exact_sampled = exact_sampled_spectrum(N, L, samples)
+ 273	            approx, stats = packed_decode(N, L, samples, p)
+ 274	            exact_full = unitary_fft(x)
+ 275	            scale = L / math.sqrt(N) if L else 1.0
+ 276	            dec_err = float(np.max(np.abs(approx-exact_sampled))/scale) if L else 0.0
+ 277	            total_err = float(np.max(np.abs(approx-exact_full))/scale) if L else 0.0
+ 278	            sample_err = float(np.max(np.abs(exact_sampled-exact_full))/scale) if L else 0.0
+ 279	            results["experiments"].append({
+ 280	                "N":N, "case":name, "params":asdict(p), "decoder_error_normalized":dec_err,
+ 281	                "sampling_error_normalized":sample_err, "total_error_normalized":total_err,
+ 282	                "decoder_bound_normalized":decoder_bound_normalized(p), **stats
+ 283	            })
+ 284	    for m in [20, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024]:
+ 285	        results["cost_model"].append(cost_model(m))
+ 286	    return results
+ 287	
+ 288	
+ 289	if __name__ == "__main__":
+ 290	    r = run_experiment()
+ 291	    with open("results.json", "w", encoding="utf-8") as f:
+ 292	        json.dump(r, f, indent=2)
+ 293	    ex = r["experiments"]
+ 294	    print("experiments", len(ex))
+ 295	    print("max normalized decoder error", max(z["decoder_error_normalized"] for z in ex))
+ 296	    print("max decoder bound", max(z["decoder_bound_normalized"] for z in ex))
+ 297	    print("decoder bound violations", sum(z["decoder_error_normalized"] > z["decoder_bound_normalized"] + 1e-12 for z in ex))
+ 298	    print("median normalized total error", float(np.median([z["total_error_normalized"] for z in ex])))
+ 299	    print("cost tail")
+ 300	    for z in r["cost_model"][-5:]:
+ 301	        print(z)

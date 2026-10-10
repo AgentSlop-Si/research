@@ -1,0 +1,172 @@
+1: """Exact audit of replacing FFT phases by a shared sign-only butterfly core.
+2: 
+3: This is an offline matrix/certificate laboratory, not a new fast transform.
+4: Finite-field nonzero minors lift to the cyclotomic field for these matrices.
+5: """
+6: from __future__ import annotations
+7: import math
+8: import numpy as np
+9: 
+10: 
+11: def power_two(n):
+12:     if type(n) is not int or n<2 or n&(n-1):raise ValueError('power-of-two n >= 2')
+13:     return n.bit_length()-1
+14: 
+15: 
+16: def is_prime(p):
+17:     return type(p) is int and p>=3 and all(p%d for d in range(2,math.isqrt(p)+1))
+18: 
+19: 
+20: def root_of_unity(n,p,generator=3):
+21:     power_two(n)
+22:     if not is_prime(p) or (p-1)%n:raise ValueError('prime must support this length')
+23:     if p>=2**31:raise ValueError('int64 arithmetic bound requires p < 2**31')
+24:     w=pow(generator,(p-1)//n,p)
+25:     if pow(w,n,p)!=1 or pow(w,n//2,p)==1:raise ValueError('root not primitive')
+26:     return w
+27: 
+28: 
+29: def bit_reverse(n):
+30:     bits=power_two(n)
+31:     return [int(f'{j:0{bits}b}'[::-1],2) for j in range(n)]
+32: 
+33: 
+34: def matrices(n,p=65537):
+35:     w=root_of_unity(n,p)
+36:     powers=[pow(w,j,p) for j in range(n)]
+37:     f=np.array([[powers[(i*j)%n] for j in range(n)] for i in range(n)],dtype=np.int64)
+38:     rev=bit_reverse(n)
+39:     c=np.array([[1 if (i&rev[j]).bit_count()%2==0 else p-1 for j in range(n)]
+40:                 for i in range(n)],dtype=np.int64)
+41:     return f,c
+42: 
+43: 
+44: def mm(a,b,p):
+45:     """Accumulate one outer product at a time to avoid int64 dot overflow."""
+46:     a=np.asarray(a,dtype=np.int64)%p;b=np.asarray(b,dtype=np.int64)%p
+47:     if a.ndim!=2 or b.ndim!=2 or a.shape[1]!=b.shape[0]:raise ValueError('matrix shape')
+48:     if p>=2**31:raise ValueError('int64 arithmetic bound')
+49:     out=np.zeros((a.shape[0],b.shape[1]),dtype=np.int64)
+50:     for k in range(a.shape[1]):out=(out+a[:,k,None]*b[k,None,:])%p
+51:     return out
+52: 
+53: 
+54: def elimination_certificate(a,p):
+55:     """Return pivot original rows/columns and the determinant of their minor."""
+56:     a=np.asarray(a,dtype=np.int64).copy()%p
+57:     row_ids=list(range(a.shape[0]));rows=[];cols=[];pivot_values=[];r=0
+58:     for c in range(a.shape[1]):
+59:         hits=np.flatnonzero(a[r:,c])
+60:         if len(hits)==0:continue
+61:         at=r+int(hits[0]);a[[r,at]]=a[[at,r]]
+62:         row_ids[r],row_ids[at]=row_ids[at],row_ids[r]
+63:         rows.append(row_ids[r]);cols.append(c)
+64:         pivot=int(a[r,c]);pivot_values.append(pivot)
+65:         a[r]=(a[r]*pow(pivot,-1,p))%p
+66:         if r+1<a.shape[0]:a[r+1:]=(a[r+1:]-a[r+1:,c,None]*a[r])%p
+67:         r+=1
+68:         if r==a.shape[0]:break
+69:     determinant=1
+70:     for v in pivot_values:determinant=determinant*v%p
+71:     return {'rank_mod_p':r,'rows':rows,'columns':cols,'minor_determinant_mod_p':determinant}
+72: 
+73: 
+74: def determinant_python(a,p):
+75:     """Independent arbitrary-precision implementation for certificate replay."""
+76:     a=[[int(x)%p for x in row] for row in a];n=len(a);out=1
+77:     if any(len(row)!=n for row in a):raise ValueError('square matrix')
+78:     for col in range(n):
+79:         pivot=next((i for i in range(col,n) if a[i][col]),None)
+80:         if pivot is None:return 0
+81:         if pivot!=col:a[col],a[pivot]=a[pivot],a[col];out=-out%p
+82:         v=a[col][col];out=out*v%p;inv=pow(v,-1,p)
+83:         for i in range(col+1,n):
+84:             factor=a[i][col]*inv%p
+85:             if factor:
+86:                 for j in range(col+1,n):a[i][j]=(a[i][j]-factor*a[col][j])%p
+87:             a[i][col]=0
+88:     return out
+89: 
+90: 
+91: def kernel_basis(n):
+92:     """e_0 and indicators of the distinct 2-adic valuation classes."""
+93:     bits=power_two(n);out=np.zeros((n,bits+1),dtype=np.int64);out[0,0]=1
+94:     for s in range(bits):out[2**s::2**(s+1),s+1]=1
+95:     return out
+96: 
+97: 
+98: def make_certificate(n,p=65537):
+99:     f,c=matrices(n,p);error=(f-c)%p
+100:     cert=elimination_certificate(error,p)
+101:     return {'n':n,'p':p,'root':root_of_unity(n,p),
+102:             'definition':'F[k,j]=w^(k*j); C[k,j]=(-1)^popcount(k & bitreverse(j))',
+103:             'general_lower_bound':n//2-1,'general_upper_bound':n-power_two(n)-1,
+104:             'nonzero_entries':int(np.count_nonzero(error)),
+105:             'kernel_dimension':power_two(n)+1,**cert}
+106: 
+107: 
+108: def verify_certificate(cert):
+109:     n=cert['n'];p=cert['p'];f,c=matrices(n,p);e=(f-c)%p
+110:     if cert['root']!=root_of_unity(n,p):return False
+111:     rows=cert['rows'];cols=cert['columns'];rank=cert['rank_mod_p']
+112:     if len(rows)!=rank or len(cols)!=rank:return False
+113:     if len(set(rows))!=rank or len(set(cols))!=rank:return False
+114:     if any(type(i) is not int or i<0 or i>=n for i in rows+cols):return False
+115:     if rank!=n-power_two(n)-1:return False
+116:     if cert['general_upper_bound']!=rank or cert['general_lower_bound']!=n//2-1:return False
+117:     if cert['kernel_dimension']!=power_two(n)+1:return False
+118:     if cert['nonzero_entries']!=n*(n-power_two(n)-1):return False
+119:     if np.count_nonzero(e)!=cert['nonzero_entries']:return False
+120:     det=determinant_python(e[np.ix_(rows,cols)],p)
+121:     if not det or det!=cert['minor_determinant_mod_p']:return False
+122:     return not np.any(mm(e,kernel_basis(n),p))
+123: 
+124: 
+125: def stages(n,p=65537,*,phases=True):
+126:     """Iterative radix-two stages; bit reversal is the initial permutation."""
+127:     power_two(n);out=[]
+128:     for bits in range(1,n.bit_length()):
+129:         size=1<<bits;half=size//2;w=root_of_unity(size,p)
+130:         stage=np.zeros((n,n),dtype=np.int64)
+131:         for start in range(0,n,size):
+132:             for k in range(half):
+133:                 a=start+k;b=a+half;v=pow(w,k,p) if phases else 1
+134:                 stage[a,a]=stage[b,a]=1;stage[a,b]=v;stage[b,b]=-v%p
+135:         out.append(stage)
+136:     return out
+137: 
+138: 
+139: def telescope(n,p=65537):
+140:     """Keep the true future stages in the correction; no missing mixed terms."""
+141:     bs=stages(n,p);cs=stages(n,p,phases=False)
+142:     error=np.zeros((n,n),dtype=np.int64);core=np.eye(n,dtype=np.int64)
+143:     full=np.eye(n,dtype=np.int64)
+144:     for b,c in zip(bs,cs):
+145:         error=(mm(b,error,p)+mm((b-c)%p,core,p))%p
+146:         full=mm(b,full,p);core=mm(c,core,p)
+147:     reverse=bit_reverse(n)
+148:     return full[:,reverse],core[:,reverse],error[:,reverse]
+149: 
+150: 
+151: def naive_single_corrections(n,p=65537):
+152:     """Intentionally incomplete expansion used only as a negative control."""
+153:     bs=stages(n,p);cs=stages(n,p,phases=False);error=np.zeros((n,n),dtype=np.int64)
+154:     for i in range(len(bs)):
+155:         term=(bs[i]-cs[i])%p
+156:         for j in range(i-1,-1,-1):term=mm(term,cs[j],p)
+157:         for j in range(i+1,len(bs)):term=mm(cs[j],term,p)
+158:         error=(error+term)%p
+159:     return error[:,bit_reverse(n)]
+160: 
+161: 
+162: def shared_core_audit(n,g,d0,p=65537):
+163:     """General bound for [[G,D0 G],[G,-D0 G]] after an even/odd split."""
+164:     m=n//2;f=matrices(m,p)[0] if m>1 else np.ones((1,1),dtype=np.int64)
+165:     d=np.array([pow(root_of_unity(n,p),k,p) for k in range(m)],dtype=np.int64)
+166:     d0=np.asarray(d0,dtype=np.int64)%p;g=np.asarray(g,dtype=np.int64)%p
+167:     a=(f-g)%p;b=(d[:,None]*f-d0[:,None]*g)%p
+168:     ra=elimination_certificate(a,p)['rank_mod_p'];rb=elimination_certificate(b,p)['rank_mod_p']
+169:     mismatches=int(np.count_nonzero((d-d0)%p))
+170:     assert ra+rb>=mismatches
+171:     return {'n':n,'rank_first_residual':ra,'rank_second_residual':rb,
+172:             'rank_full_residual':ra+rb,'different_twiddles':mismatches}

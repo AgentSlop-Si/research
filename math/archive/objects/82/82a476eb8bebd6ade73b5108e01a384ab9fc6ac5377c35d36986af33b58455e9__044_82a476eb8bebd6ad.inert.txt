@@ -1,0 +1,188 @@
+# Fourier research: exact graph extensions and a complete approximate packing construction
+
+Research checkpoint — 9 October 2026.
+
+**The independent exact, arbitrary-fresh-input, full-output o(N log N) goal
+has not been achieved.** The new material does enable a complete O(N)
+randomized Word-RAM construction for a different, explicitly approximate
+problem. This checkpoint also adds an exact graph fast path and sharper
+tests for proposed exact factorizations. It does not import the
+Swapnil/OpenAI/CrocSwap route as the source of a speedup.
+
+## Result and model at a glance
+
+| Route | Fresh inputs and outputs | Charged result | Status |
+|---|---|---|---|
+| Guarded phasor-table approximation | Arbitrary bounded-word complex inputs; every output | O(N), fixed global additive accuracy, polynomial failure parameter; all tables and output work charged | Complete derivation and tested implementation components; no practical speed or novelty claim |
+| Weighted affine-cycle graph | Detected low-defect relation, including fully dense inputs; every exact output | O(N(s+1)); linear for fixed defect budget s | Exact proofs, implementation, independent checks |
+| All-input wrapper around that graph | Arbitrary exact inputs; every output | O(N log N) worst case for fixed defect budget | Verified fallback; main goal remains unmet |
+| Nonunitary bidirectional macro factorization | Arbitrary exact inputs | No uniform o(log N)-stage construction found | New scoped bounds narrow the surviving mechanism |
+
+## 1. What the new approximate material let us finish
+
+Use the negative-sign unnormalized DFT F and put
+
+    L_box(x) = sum_j (|Re x_j| + |Im x_j|).
+
+Fix epsilon in (0,1), a constant input bit bound, and a constant failure
+exponent c. For signed integer complex components of O(log N) bits
+(or a shared bounded-word fixed-point scale), and delta >= N^(-c), the
+construction produces every approximate Fourier coefficient with
+
+\[
+\Pr\bigl[\|\widetilde F x-Fx\|_\infty
+                 \le \epsilon L_\Box(x)\bigr]\ge1-\delta.
+\]
+
+For the unitary transform U=F/sqrt(N), the bound is
+epsilon L_box(x)/sqrt(N). All N output pairs are explicitly materialized
+as rational/fixed-point values. The unnormalized output avoids treating a
+square root as an exact word primitive. A sampling cap can declare failure;
+on that event one may materialize zeros with a failure flag, without changing
+the time or success bound.
+
+The machine uses Theta(log N)-bit words, ordinary bounded integer/bit
+operations, directly indexed memory, and independent random words.
+Constants depend on fixed epsilon and the bit/failure bounds. Every input
+read, descriptor, table entry, lookup, addition and output write is charged.
+
+The decisive change is **guarded packed addition**. After signed-atom
+importance sampling, K=O(log N) atoms describe the approximate transform.
+Quantized trajectories over B=Theta(log N) output bins form short descriptors.
+Group g=Theta(log N/loglog N) descriptors into one key and build the entire
+table of at most N^gamma keys for fixed gamma<1. Each group-average lane is
+an integer in [-H,H], where H depends only on epsilon. Add H and give the
+field enough bits for the sum of G=K/g groups:
+
+\[
+r=\lceil\log_2(2HG+1)\rceil.
+\]
+
+Adding the packed words cannot carry between fields. Unpack each final lane
+once. This removes both the proposed second table and the transpose.
+
+| Fully charged work | Asymptotic cost at fixed accuracy |
+|---|---:|
+| Read input, form integer masses, write outputs | O(N) |
+| Capped exact sampling and binary searches | O(log² N) beyond input scan |
+| Certified integer trigonometric grid | O(log N) |
+| Build complete trajectory table | N^gamma polylog(N) = o(N) |
+| Form all descriptors and packed keys | O(N) |
+| Read and add packed group rows | O(N loglog N (1+logloglog N)/log N) = o(N) |
+
+Integer Machin and Taylor series supply the table phasors with a proved
+error bound. No sine/cosine oracle or unlimited integer is a unit operation.
+The finite small-N region has a directly evaluated certified base case.
+That threshold can be enormous; the theorem does not imply a useful runtime
+crossover.
+
+`fft_wordram_decoder_research/THEOREM.md` gives the complete decoder proof.
+`fft_wordram_integration/SAMPLING_AND_MODEL.txt` gives the sampling/error
+ledger and the finite-input contract. Independent reviews are in
+`fft_wordram_review_research/`.
+
+**The accuracy distinction matters.** This is a global additive bound,
+not coefficient-relative accuracy, backward stability, or exact recovery.
+For dense noise the allowance may exceed most true coefficients. Taking
+epsilon toward zero with N changes the cost and does not yield exact FFT
+or exact integer multiplication. Sampling and finite-alphabet tables have
+substantial prior art; novelty has not been established.
+
+### What was actually executed
+
+The end-to-end audit checked 24 fresh inputs and all 10,760 coefficients at
+N=64,257,1024, including dense coherent tones, tone mixtures, noise, power
+laws and spike/noise controls. The largest observed error divided by L_box
+was 0.115171 (rounded upward), below the tested tolerance 0.5. This supports
+the implementation; the probability guarantee comes from the proof.
+
+Separate complete-table tests cover 25 sampled lists, 1,860 outputs,
+two-sample keys and rows spanning nine words per component. Independent
+guarded-sum testing covers 22,393 configurations; additional checks cover
+integer trigonometry and rational sample-count selection.
+
+The accessible experiments use deliberately small B and g, not the growing
+asymptotic schedule. Every reported cold-call count includes full eager
+table setup. **The Python prototype is slower than NumPy FFT in these
+experiments. No measured practical FFT speedup is claimed.**
+
+## 2. A new exact graph fast path
+
+With the positive-sign exact DFT F[k,j]=q^(kj), define
+
+\[
+(Mx)_j=q^{bj}x_{aj+c},\qquad
+(\widehat M y)_k=q^{-ca^{-1}(k+b)}y_{a^{-1}(k+b)}.
+\]
+
+All indices are modulo N, and changing the summation index proves
+FM=Mhat F. For dyadic N, a=1 mod4 and odd b,c make both permutations
+single cycles. Detect a scalar lambda, verify every coordinate of
+u=(I-lambda M)x, transform its s nonzero defects, and solve one weighted
+cycle for all Fourier outputs. A singular cycle or failed detector is
+explicitly declined. The all-input wrapper then pays for an ordinary FFT.
+
+A concrete fully dense one-defect family lies outside the prior
+four-parameter nearest-neighbor q-linear relation. Its audited cold count
+is 14N+1 exact field operations. At N=8192 this is 114,689, versus 167,936
+for the supplied, separately counted radix-2 comparator. Root tables,
+discovery, verification, cycle closure and all outputs are included.
+
+This is a restricted input family; its parameters do not span arbitrary
+N-dimensional inputs. Counts are exact field operations, not word runtime
+or bit complexity. See `fft_bidirectional_graph_research/` for the proof,
+fallback, independent exhaustive checks and per-size measurements.
+
+## 3. Exact macro research: new constraints and the surviving case
+
+The supplied one-way inverse-scan result was already present in our prior
+checkpoint and is not counted as a new discovery. The additions are:
+
+1. For t>=1 one-way scans with arbitrary internal permutations and total
+   broadcast rank budget B, a boundary-sensitive Fourier rigidity argument
+   strengthens the necessary condition to
+   **(2B+1) 2^(t-1)+B >= N**. At N=64,t=5 this requires B>=2 instead of 1.
+2. A nondegenerate one-channel bidirectional sum has the exact form
+   **A=L^-1 T R^-1**, with bidiagonal L,R and tridiagonal T. Preparation
+   costs 17N-19 field gates; application costs 9N-8 in the given evaluator.
+   If the contiguous components of each T_j have size at most b_j, then
+   **product_j(2b_j+1) >= N** is necessary for a Fourier factorization,
+   even with arbitrary shuffles. Bounded components cannot give sublog
+   stage count in this architecture.
+3. Dense inverses can retain rank-one cut structure. Internal permutations
+   can destroy the common-order cut constraint. The new movement inequality
+   requires extensive permutation travel for few stages, but this is not a
+   RAM-time lower bound: an arbitrary permutation still costs O(N).
+4. The supplied F8 optimum quasiseparable order 3 is correct. It gives a
+   lower bound of three scalar channels in each direction; the rank result
+   alone is not an explicit three-channel realization.
+
+These are architecture-specific statements. They do not prove a general
+FFT lower bound. The exact constructive target now needs long connected
+tridiagonal couplings, nonunitary weights and global internal permutations,
+plus a uniform factorization and fully paid coefficient generation. No such
+general speedup is supplied here.
+
+## Reproduce and inspect
+
+From this extracted directory, run `python3 run_all.py`. Python's standard
+library suffices for all exact components and the decoder; the integrated
+reference audit additionally uses NumPy. Tests use small exact prime and
+cyclotomic fields as controls, not a fixed-prime all-length asymptotic claim.
+
+`VALIDATION.json` lists nine completed audit outputs, all PASS, and binds them
+to the reviewed code hashes. `MANIFEST.json` hashes every included file.
+`materials/` preserves the four supplied materials and their source index.
+The prior checkpoint is `fft_materials_extension_20261009.zip`; this archive
+is self-contained for the new tests and does not replay all prior research.
+
+## Primary-source context
+
+The closest table primitive found is Liberty and Zucker's
+[Mailman algorithm](https://www.cs.yale.edu/homes/el327/papers/mailmanAlgorithm.pdf),
+which explicitly charges matrix preprocessing. Sparse convex approximation
+is established in approximate-Carathéodory work, including
+[Barman](https://arxiv.org/pdf/1406.2296). These sources motivate a careful
+prior-art distinction; neither is cited as proving this complete fresh-input
+construction. `fft_wordram_literature_research/SOURCE_NOTES.md` records the
+targeted review. No priority claim or exhaustive novelty certificate is made.

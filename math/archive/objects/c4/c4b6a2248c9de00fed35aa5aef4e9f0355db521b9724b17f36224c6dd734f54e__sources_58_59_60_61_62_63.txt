@@ -1,0 +1,369 @@
+===== SOURCE 58 fft_new_theory/cost_ledger.py SHA256 b44397a0da3b085d3ef8e881b29922ddd15bdd37e13245bc8eecca6e19355b92 =====
+   1 #!/usr/bin/env python3
+   2 """Symbolic (log2 N)-parameter cost ledger: never allocates N entries."""
+   3 from math import ceil, floor, log2, log, pi, sqrt
+   4 import json
+   5 
+   6 def plan(K,eps=.8,a=1.,gamma=.25):
+   7     B=K
+   8     P0=ceil(32*pi/eps);P1=ceil(32*pi*B/eps)
+   9     p=ceil(log2(4*P0*P1))
+  10     g=max(1,floor(gamma*K/p))
+  11     kmin=ceil(16/(eps*eps)*(log(4)+(a+1)*K*log(2)))
+  12     G=ceil(kmin/g);k=g*G
+  13     h1=eps/(64*sqrt(2));coord_count=ceil(2/h1)+3
+  14     s1=ceil(log2(coord_count**2))
+  15     L=floor(gamma*K/(G*s1))
+  16     if L<=0: return {'log2N':K,'regime_ready':False,'group_count':G,'symbol_bits':s1,'reason':'One transpose lane does not yet fit the N^gamma address bound'}
+  17     chunks=ceil(B/L)
+  18     return {'log2N':K,'regime_ready':True,'B':B,'descriptor_bits':p,'group_size':g,'groups':G,'sample_count':k,
+  19             'transpose_chunk_lanes':L,'transpose_chunks':chunks,'T1_log2_entries_upper':g*p,
+  20             'Ttr_log2_entries_upper':G*s1*L,'T2_log2_entries_upper':G*s1,
+  21             'online_ops_per_block_upper_schematic':k+G+chunks*G+B+chunks,
+  22             'schematic_online_ops_over_B':round((k+G+chunks*G+B+chunks)/B,3)}
+  23 
+  24 if __name__=='__main__':
+  25     print(json.dumps([plan(k) for k in (1000,1000000,100000000,10000000000)],indent=2))
+===== END SOURCE 58; 1216 bytes; 25 lines =====
+===== SOURCE 59 fft_new_theory/prototype.py SHA256 6e7178236bde2f1196fdaf23f2231464a54d8149d518c22a3ed1efea6b4b4013 =====
+   1 from random import Random
+   2 from math import isqrt
+   3 
+   4 def prime(n):
+   5     if n < 2: return False
+   6     for i in range(2,isqrt(n)+1):
+   7         if n%i==0: return False
+   8     return True
+   9 
+  10 def field_for_order(n):
+  11     m=2
+  12     while True:
+  13         q=m*n+1
+  14         if prime(q):
+  15             for a in range(2,min(100,q)):
+  16                 root=pow(a,m,q)
+  17                 if root!=1 and pow(root,n,q)==1:
+  18                     return q,root
+  19         m+=1
+  20 
+  21 def inv_matrix_green(cycle,weights,q):
+  22     n=len(cycle)
+  23     W=1
+  24     for w in weights:W=W*w%q
+  25     if W==1:return None
+  26     den=pow((1-W)%q,-1,q)
+  27     g=[[0]*n for _ in range(n)]
+  28     for i in range(n):
+  29         k=i;prod=den
+  30         for j in range(n):
+  31             g[i][k]=prod
+  32             prod=prod*weights[k]%q
+  33             k=cycle[k]
+  34         assert k==i
+  35     return g
+  36 
+  37 def rank_mod(a,q):
+  38     a=[row[:] for row in a]
+  39     if not a:return 0
+  40     n,m=len(a),len(a[0]); pivot=0
+  41     for col in range(m):
+  42         i=next((i for i in range(pivot,n) if a[i][col]%q),None)
+  43         if i is None:continue
+  44         a[pivot],a[i]=a[i],a[pivot]
+  45         v=pow(a[pivot][col],-1,q)
+  46         for c in range(col,m):a[pivot][c]=a[pivot][c]*v%q
+  47         for k in range(pivot+1,n):
+  48             f=a[k][col]
+  49             if f:
+  50                 for c in range(col,m):a[k][c]=(a[k][c]-f*a[pivot][c])%q
+  51         pivot+=1
+  52         if pivot==n:break
+  53     return pivot
+  54 
+  55 def separate(rows,cols,row_position,col_position):
+  56     # Select at least floor(half) rows and columns with disjoint ordered locations
+  57     nr=len(rows)//2;nc=len(cols)//2
+  58     assert nr>=1 and nc>=1
+  59     ro=sorted(rows,key=lambda r:row_position[r]);co=sorted(cols,key=lambda c:col_position[c])
+  60     rl=ro[:nr];rh=ro[-nr:];cl=co[:nc];ch=co[-nc:]
+  61     if row_position[rl[-1]] < col_position[ch[0]]:
+  62         return rl,ch
+  63     assert col_position[cl[-1]] < row_position[rh[0]]
+  64     return rh,cl
+  65 
+  66 def random_case(n,Q,seed):
+  67     rng=Random(seed); q,w=field_for_order(n)
+  68     components=[]
+  69     R=list(range(n));C=list(range(n))
+  70     for u in range(Q):
+  71         order=list(range(n));rng.shuffle(order)
+  72         cycle=[0]*n
+  73         for j in range(n):cycle[order[j]]=order[(j+1)%n]
+  74         weights=[rng.randrange(q) for _ in range(n)]
+  75         G=inv_matrix_green(cycle,weights,q)
+  76         while G is None:
+  77             weights=[rng.randrange(q) for _ in range(n)]
+  78             G=inv_matrix_green(cycle,weights,q)
+  79         rowmap=list(range(n));colmap=list(range(n));rng.shuffle(rowmap);rng.shuffle(colmap)
+  80         pos={c:j for j,c in enumerate(order)}
+  81         rpos={i:pos[rowmap[i]] for i in range(n)}
+  82         cpos={i:pos[colmap[i]] for i in range(n)}
+  83         components.append((G,rowmap,colmap,rpos,cpos,weights,cycle))
+  84         R,C=separate(R,C,rpos,cpos)
+  85         assert max(rpos[r] for r in R)<min(cpos[c] for c in C) or max(cpos[c] for c in C)<min(rpos[r] for r in R)
+  86     m=len(R);assert m==n//(2**Q)
+  87     cumulative=[[0]*m for _ in range(m)]
+  88     for u,(G,rowmap,colmap,rpos,cpos,weights,cycle) in enumerate(components):
+  89         block=[[G[rowmap[r]][colmap[c]] for c in C] for r in R]
+  90         local_rank=rank_mod(block,q)
+  91         assert local_rank<=1,(n,Q,seed,u,local_rank,R,C)
+  92         for r in range(m):
+  93             for c in range(m): cumulative[r][c]=(cumulative[r][c]+block[r][c])%q
+  94     sumrank=rank_mod(cumulative,q)
+  95     assert sumrank<=Q
+  96     fourier=[[pow(w,(i*j)%n,q) for j in C] for i in R]
+  97     frank=rank_mod(fourier,q)
+  98     return {'n':n,'Q':Q,'m':m,'field':q,'root':w,'sumrank':sumrank,'fourier_rank':frank,'contradiction':m>Q and frank==m}
+  99 
+ 100 if __name__=='__main__':
+ 101     for n,Q in [(13,2),(17,2),(41,3),(83,4),(127,5)]:
+ 102         from time import perf_counter
+ 103         t=perf_counter();v=[random_case(n,Q,seed) for seed in range(10)]
+ 104         print(v[0], 'passes',sum(x['contradiction'] for x in v), 'seconds',round(perf_counter()-t,3))
+===== END SOURCE 59; 3773 bytes; 104 lines =====
+===== SOURCE 60 fft_nonlinear_rank_research_2026-10-10/build_certificates.py SHA256 f398ba15bc15c6df678000175d4ee2d31526488786df76d869461c8abb8b428e =====
+   1 from __future__ import annotations
+   2 import json,random
+   3 from pathlib import Path
+   4 from nonlinear_fourier_oracle import moving_partition_certificate
+   5 from permutation_edits import affine_from_columns,mcnot_permutation,rank_permutation_difference,robust_rank_limit
+   6 from exact_field_controls import fourier_rank_mod
+   7 
+   8 BASE=Path(__file__).resolve().parent
+   9 # Reproduce the earlier GF(2) layout from its published deterministic seed.
+  10 def _random_invertible_columns(k,rng):
+  11     columns=[1<<i for i in range(k)]
+  12     for _ in range(2*k*k):
+  13         i,j=rng.sample(range(k),2)
+  14         if rng.randrange(4)==0:
+  15             mask=(1<<i)|(1<<j)
+  16             columns=[c ^ ((((c>>i)&1)^((c>>j)&1))*mask) for c in columns]
+  17         else:
+  18             columns=[c ^ (((c>>j)&1)<<i) for c in columns]
+  19     return columns
+  20 
+  21 def legacy_columns(k,seed=20261016):
+  22     rng=random.Random(seed+17*k)
+  23     return [_random_invertible_columns(k,rng) for _ in range(3)]
+  24 
+  25 def pullback_mask(mask,cols):
+  26     return sum(((v&mask).bit_count()%2)<<i for i,v in enumerate(cols))
+  27 
+  28 def produce():
+  29     obj={'date':'2026-10-10','status':'Exact rank obstructions, NOT an improved FFT',
+  30          'previous_archive':'prior_checkpoint_full.zip',
+  31          'nonaffine_256':{},'edit_robust':{}}
+  32     k=8;n=1<<k;cols=legacy_columns(k)
+  33     perms=[affine_from_columns(c) for c in cols]
+  34     baseline=moving_partition_certificate(k,perms,[1]*4,112)
+  35     gates=[{'controls':list(cs),'target':tar} for cs,tar in [((2,7),6),((3,6),2),((2,4),3),((3,4),2),((2,3),4)]]
+  36     changed=[p.copy() for p in perms]
+  37     for step in gates:
+  38         changed[2]=changed[2][mcnot_permutation(k,step['controls'],step['target'])]
+  39     result=moving_partition_certificate(k,changed,[1]*4,112)
+  40     C=[x for x in range(n) if ((x&112).bit_count()&1)==0]
+  41     assert result['rank_gap']==4 and result['capacity_bound']==124
+  42     obj['nonaffine_256']={
+  43          'k':k,'stages':4,'stage_rank_bound':1,
+  44          'affine_shuffle_columns':cols,
+  45          'toffoli_gate_sequence_in_shuffle_2':gates,
+  46          'baseline_affine_witness':{x:y for x,y in baseline.items() if x!='output_rows'},
+  47          'witness':result,
+  48          'modular_fourier_ranks':{str(p):fourier_rank_mod(n,result['output_rows'],C,p) for p in (12289,65537)},
+  49          'directed_scan_network_mincut':124,
+  50          'full_shuffle_nonaffine_mismatches_to_its_linearized_map':160
+  51     }
+  52     for k in (11,12):
+  53         n=1<<k; cols=legacy_columns(k)
+  54         affine=[affine_from_columns(c) for c in cols]
+  55         input_mask={11:1648,12:3584}[k]
+  56         baseline=moving_partition_certificate(k,affine,[1]*4,input_mask)
+  57         bmask=input_mask
+  58         for col in cols:bmask=pullback_mask(bmask,col)
+  59         rec={'input_mask':input_mask,'output_mask':bmask,
+  60              'stage_capacities':baseline['stage_channel_budget'],
+  61              'capacity':baseline['capacity_bound'],
+  62              'complex_fourier_rank':baseline['exact_complex_fourier_rank']}
+  63         changed=[p.copy() for p in affine]
+  64         edits=[{'shuffle_index':0,'controls':[0,2],'target':k-1},
+  65                {'shuffle_index':1,'controls':[1,3],'target':k-1}]
+  66         ds=[]
+  67         for gate in edits:
+  68             j=gate['shuffle_index']
+  69             changed[j]=changed[j][mcnot_permutation(k,gate['controls'],gate['target'])]
+  70             ds.append(rank_permutation_difference(changed[j],affine[j]))
+  71         assert ds==[n//8,n//8]
+  72         assert rec['complex_fourier_rank']>robust_rank_limit(rec['capacity'],ds)
+  73         obj['edit_robust'][str(n)]={
+  74           'k':k,'affine_shuffle_columns':cols,
+  75           'base_input_mask':rec['input_mask'],
+  76           'base_output_mask':rec['output_mask'],
+  77           'base_stage_boundaries':rec['stage_capacities'],
+  78           'base_capacity':rec['capacity'],
+  79           'exact_complex_fourier_rank':rec['complex_fourier_rank'],
+  80           'nonlinear_edits':edits,
+  81           'edit_ranks':ds,
+  82           'perturbed_network_rank_bound_on_original_endpoint_sets':robust_rank_limit(rec['capacity'],ds),
+  83           'strict_gap':rec['complex_fourier_rank']-robust_rank_limit(rec['capacity'],ds)
+  84         }
+  85     (BASE/'EXACT_CERTIFICATES.json').write_text(json.dumps(obj,indent=2))
+  86     for key,v in obj['edit_robust'].items():
+  87         print('ROBUST',key,'Fourier rank',v['exact_complex_fourier_rank'],'network max',v['perturbed_network_rank_bound_on_original_endpoint_sets'],'gap',v['strict_gap'])
+  88     w=obj['nonaffine_256']['witness'];print('NONAFFINE',w['N'],'Fourier',w['exact_complex_fourier_rank'],'network',w['capacity_bound'],'gap',w['rank_gap'])
+  89 if __name__=='__main__':produce()
+===== END SOURCE 60; 4526 bytes; 89 lines =====
+===== SOURCE 61 fft_nonlinear_rank_research_2026-10-10/exact_field_controls.py SHA256 f0cd3ec849926bbaffe4cd7382bc06e1d49c1e076b908adb10c134da12981fe9 =====
+   1 """Independent exact finite-field matrix-rank controls (not proofs over C)."""
+   2 from __future__ import annotations
+   3 import numpy as np
+   4 
+   5 
+   6 def prime_root(n:int,p:int):
+   7     if n&(n-1) or (p-1)%n:raise ValueError('n must divide p-1 and be power of two')
+   8     for g in range(2,p):
+   9         z=pow(g,(p-1)//n,p)
+  10         if pow(z,n//2,p)!=1:return z
+  11     raise RuntimeError('no root')
+  12 
+  13 
+  14 def rank_mod(A,p):
+  15     a=np.array(A,dtype=np.int64,copy=True)%p
+  16     m,n=a.shape;row=0
+  17     for col in range(n):
+  18         if row>=m:break
+  19         piv=np.flatnonzero(a[row:,col])
+  20         if not len(piv):continue
+  21         loc=row+int(piv[0]);a[[row,loc]]=a[[loc,row]]
+  22         inv=pow(int(a[row,col]),-1,p)
+  23         if row+1<m:
+  24             scale=(a[row+1:,col]*inv)%p
+  25             a[row+1:,col+1:]=(a[row+1:,col+1:]-scale[:,None]*a[row,col+1:])%p
+  26             a[row+1:,col]=0
+  27         row+=1
+  28     return row
+  29 
+  30 
+  31 def fourier_rank_mod(n,rows,cols,p):
+  32     root=prime_root(n,p)
+  33     powers=np.array([pow(root,i,p) for i in range(n)],dtype=np.int64)
+  34     R=np.asarray(rows,dtype=np.int64);C=np.asarray(cols,dtype=np.int64)
+  35     return rank_mod(powers[(R[:,None]*C[None,:])%n],p)
+  36 
+  37 
+  38 def separated_generator_stage(n,p,rng):
+  39     a,b,c,e,d=[rng.integers(1,p,size=n) for _ in range(5)]
+  40     s=np.zeros((n,n),dtype=np.int64)
+  41     for i in range(n):
+  42         for j in range(n):
+  43             s[i,j]=int((a[i]*b[j] if i>j else c[i]*e[j] if i<j else d[i])%p)
+  44     return s
+===== END SOURCE 61; 1409 bytes; 44 lines =====
+===== SOURCE 62 fft_nonlinear_rank_research_2026-10-10/permutation_edits.py SHA256 4661ea8fbda7f8d978ddf84a778372297d9ce3c019634d6c2b838dd20c127438 =====
+   1 """Exact rank-distance robustness for arbitrary nonlinear index shuffles."""
+   2 from __future__ import annotations
+   3 from itertools import combinations
+   4 import numpy as np
+   5 
+   6 
+   7 def affine_from_columns(columns, offset=0):
+   8     k=len(columns); n=1<<k
+   9     p=np.empty(n,dtype=np.int64);p[0]=offset
+  10     for x in range(1,n):
+  11         lsb=x&-x
+  12         p[x]=int(p[x^lsb])^int(columns[lsb.bit_length()-1])
+  13     if len(np.unique(p))!=n:raise ValueError('GF2 columns not invertible')
+  14     return p
+  15 
+  16 
+  17 def mcnot_permutation(k,controls,target):
+  18     if target in controls or any(c<0 or c>=k for c in controls) or not 0<=target<k or len(set(controls))!=len(controls):
+  19         raise ValueError('invalid controls/target')
+  20     n=1<<k; mask=sum(1<<c for c in controls)
+  21     return np.fromiter((x ^ ((1<<target) if (x&mask)==mask else 0) for x in range(n)),dtype=np.int64)
+  22 
+  23 
+  24 def rank_permutation_difference(p,a):
+  25     """Exact rank_C(P-A) = N - #(cycles in A^{-1}∘P), no matrices."""
+  26     p=np.asarray(p,dtype=np.int64);a=np.asarray(a,dtype=np.int64)
+  27     n=len(p)
+  28     if len(a)!=n or sorted(p.tolist())!=list(range(n)) or sorted(a.tolist())!=list(range(n)):
+  29         raise ValueError('inputs must be permutations of equal length')
+  30     inv=np.empty(n,dtype=np.int64);inv[a]=np.arange(n,dtype=np.int64)
+  31     q=inv[p];visited=np.zeros(n,dtype=np.bool_);cycles=0
+  32     for x in range(n):
+  33         if visited[x]:continue
+  34         cycles+=1
+  35         y=x
+  36         while not visited[y]:
+  37             visited[y]=True;y=int(q[y])
+  38     return n-cycles
+  39 
+  40 
+  41 def gate_edit_rank(k, number_of_controls):
+  42     return (1<<k)//(1<<(number_of_controls+1))
+  43 
+  44 
+  45 def robust_rank_limit(base_capacity:int,shuffle_edit_ranks:list[int]):
+  46     """Telescoping subadditivity: rank(M[R,C]) <= cap(base)+sum(rank(Pj-Aj))."""
+  47     return base_capacity+sum(shuffle_edit_ranks)
+===== END SOURCE 62; 1791 bytes; 47 lines =====
+===== SOURCE 63 fft_nonlinear_rank_research_2026-10-10/scan_network_cut.py SHA256 9f721f96eb0154ecb389ffac487b66413f537dde0bafbb1469dcdd01354a3feb =====
+   1 """Independent max-flow check for the scalar scan-network cut at N=256.
+   2 
+   3 Model: two one-channel directional recurrence wires per QS1 stage, input and
+   4 output scalar wires, diagonal connections, and exact interstage permutations.
+   5 The minimum source-to-output cut upper-bounds submatrix rank.
+   6 """
+   7 from __future__ import annotations
+   8 import numpy as np
+   9 import networkx as nx
+  10 from scipy.sparse import csr_matrix
+  11 from scipy.sparse.csgraph import maximum_flow
+  12 
+  13 
+  14 def exact_mincut(n,ranks,shuffles,rows,cols):
+  15     if len(shuffles)!=len(ranks)-1:raise ValueError('incorrect shuffle count')
+  16     big=5*n*(1+sum(ranks))
+  17     G=nx.DiGraph()
+  18     def edge(u,v,cap=big):G.add_edge(u,v,capacity=cap)
+  19     t=len(ranks)
+  20     for s,r in enumerate(ranks):
+  21         for j in range(n):
+  22             edge((s,'x',j,'i'),(s,'x',j,'o'),1)
+  23             edge((s,'y',j,'i'),(s,'y',j,'o'),1)
+  24             edge((s,'x',j,'o'),(s,'y',j,'i'))
+  25         for j in range(1,n):
+  26             edge((s,'f',j,'i'),(s,'f',j,'o'),r)
+  27             edge((s,'x',j-1,'o'),(s,'f',j,'i'))
+  28             edge((s,'f',j,'o'),(s,'y',j,'i'))
+  29             if j<n-1:edge((s,'f',j,'o'),(s,'f',j+1,'i'))
+  30         for j in range(n-2,-1,-1):
+  31             edge((s,'b',j,'i'),(s,'b',j,'o'),r)
+  32             edge((s,'x',j+1,'o'),(s,'b',j,'i'))
+  33             edge((s,'b',j,'o'),(s,'y',j,'i'))
+  34             if j>0:edge((s,'b',j,'o'),(s,'b',j-1,'i'))
+  35     for s,p in enumerate(shuffles):
+  36         for j,source in enumerate(p):
+  37             edge((s,'y',int(source),'o'),(s+1,'x',j,'i'))
+  38     nodes=list(G.nodes()); id_by_name={name:i for i,name in enumerate(nodes)}
+  39     source=len(nodes);sink=source+1
+  40     er=[]
+  41     for a,b,data in G.edges(data=True):er.append((id_by_name[a],id_by_name[b],int(data['capacity'])))
+  42     for c in cols:er.append((source,id_by_name[(0,'x',int(c),'i')],big))
+  43     for r in rows:er.append((id_by_name[(t-1,'y',int(r),'o')],sink,big))
+  44     ii=np.array([e[0] for e in er],dtype=np.int32)
+  45     jj=np.array([e[1] for e in er],dtype=np.int32)
+  46     vv=np.array([e[2] for e in er],dtype=np.int64)
+  47     a=csr_matrix((vv,(ii,jj)),shape=(sink+1,sink+1))
+  48     return int(maximum_flow(a,source,sink,method='dinic').flow_value)
+===== END SOURCE 63; 2139 bytes; 48 lines =====

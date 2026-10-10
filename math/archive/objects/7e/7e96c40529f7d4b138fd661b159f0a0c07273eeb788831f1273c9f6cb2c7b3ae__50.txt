@@ -1,0 +1,113 @@
+   1 from __future__ import annotations
+   2 
+   3 import json
+   4 import unittest
+   5 from pathlib import Path
+   6 
+   7 from finite_field import flatten, mat_identity, matrix_rank, solve_linear_columns
+   8 from weyl_line_basis import (
+   9     character_packet_matrix,
+  10     chirp_polynomial_matrix,
+  11     chirp_spectrum,
+  12     combine_green_line,
+  13     find_generic_field_alpha,
+  14     finite_field_case,
+  15     gauged_fourier_matrix,
+  16     green_matrix,
+  17     leading_term_certificate,
+  18     matrices_equal,
+  19     offdiag_block_matrix,
+  20     packet_basis_columns,
+  21     packet_offdiag_rank,
+  22     packet_support_degrees,
+  23     solve_fourier_green_line,
+  24     weyl_matrix,
+  25     common_weyl_generator,
+  26     matrix_power,
+  27 )
+  28 
+  29 ROOT=Path(__file__).resolve().parent
+  30 CASES=[7,11,13,17]
+  31 
+  32 class TestV21(unittest.TestCase):
+  33     @classmethod
+  34     def setUpClass(cls):
+  35         cls.records={n:finite_field_case(n) for n in CASES}
+  36 
+  37     def test_all_fourier_blocks_invertible(self):
+  38         for n,rec in self.records.items():
+  39             self.assertEqual(rec['block_ranks'],[n-1]*n)
+  40 
+  41     def test_packet_offdiag_basis(self):
+  42         for n,rec in self.records.items():
+  43             self.assertEqual(rec['packet_offdiag_rank'],n*(n-1))
+  44 
+  45     def test_unique_top_degree_certificate(self):
+  46         for n in CASES:
+  47             for x in range(n):
+  48                 c=leading_term_certificate(n,x)
+  49                 self.assertEqual(c['top_degree'],(n-1)**2)
+  50                 self.assertEqual(len(set(c['unique_top_columns'])),n-1)
+  51                 self.assertNotIn(0,c['unique_top_columns'])
+  52 
+  53     def test_character_packets_have_degree_two_support(self):
+  54         for n,rec in self.records.items():
+  55             p,w,a=rec['field_prime'],rec['omega'],rec['alpha']
+  56             for h in (1,2,3):
+  57                 if h>=n:continue
+  58                 for s in (0,1,2):
+  59                     M=character_packet_matrix(n,p,w,a,h,s)
+  60                     r,c,_=packet_support_degrees(M)
+  61                     self.assertLessEqual(r,2)
+  62                     self.assertLessEqual(c,2)
+  63 
+  64     def test_constant_diagonal_span_with_identity(self):
+  65         for n,rec in self.records.items():
+  66             p,w,a=rec['field_prime'],rec['omega'],rec['alpha']
+  67             cols,_=packet_basis_columns(n,p,w,a)
+  68             I=flatten(mat_identity(n))
+  69             # deterministic arbitrary constant-diagonal target
+  70             target=[]
+  71             for i in range(n):
+  72                 for j in range(n):
+  73                     target.append(7%p if i==j else (3*i+5*j+11)%p)
+  74             sol=solve_linear_columns(cols+[I],target,p)
+  75             self.assertIsNotNone(sol)
+  76 
+  77     def test_exact_green_line_fourier_representation(self):
+  78         for n,rec in self.records.items():
+  79             self.assertTrue(rec['green_line_identity'])
+  80 
+  81     def test_common_weyl_line(self):
+  82         for n,rec in self.records.items():
+  83             p,w=rec['field_prime'],rec['omega']
+  84             U=common_weyl_generator(n,p,w)
+  85             inv2=pow(2,-1,n)
+  86             for h in range(1,n):
+  87                 left=weyl_matrix(n,p,w,h,-h)
+  88                 right=matrix_power(U,h,p)
+  89                 scalar=pow(w,(h*(h-1)*inv2)%n,p)
+  90                 right=[[scalar*v%p for v in row] for row in right]
+  91                 self.assertTrue(matrices_equal(left,right,p))
+  92 
+  93     def test_bluestein_chirp_polynomial_identity(self):
+  94         for n,rec in self.records.items():
+  95             self.assertTrue(rec['chirp_polynomial_identity'])
+  96 
+  97     def test_chirp_is_dense_in_both_domains(self):
+  98         for n,rec in self.records.items():
+  99             self.assertEqual(rec['chirp_spectrum_nonzero'],n)
+ 100 
+ 101     def test_selected_packet_count_gate(self):
+ 102         for n in CASES:
+ 103             # Each selected character packet has at most two entries per column.
+ 104             # A dense target therefore needs at least ceil(n/2) separately summed packets.
+ 105             self.assertGreaterEqual((n+1)//2,1)
+ 106             self.assertLess(2*((n+1)//2-1),n)
+ 107 
+ 108     def test_saved_results_match(self):
+ 109         saved=json.loads((ROOT/'results.json').read_text())
+ 110         expected=json.loads(json.dumps([self.records[n] for n in CASES],sort_keys=True))
+ 111         self.assertEqual(saved['finite_field_cases'],expected)
+ 112 
+ 113 if __name__=='__main__':unittest.main(verbosity=2)

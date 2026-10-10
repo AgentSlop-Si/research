@@ -1,0 +1,194 @@
+# Global FFT sharing with internal shuffles: exact inverse-sparsity and broadcast-rank barriers
+
+**Checkpoint:** 9 October 2026.  
+**Question:** Can a full, fresh, exact DFT be computed with `o(log N)` whole-array linear-time mixing passes, when arbitrary permutations are allowed *between* passes?  
+**Status:** Two rigorous, *architecture-specific* obstruction theorems; a verified scan implementation of ordinary radix-2 FFT; an independently verified counterexample that marks where the theorems stop. **No new asymptotically faster FFT and no general linear-circuit lower bound.**
+
+This is a continuation of the preceding `fft_wide_scan_cutrank` experiment, not a restart of collision caching, CrocSwap rank-certificate tuning, chirp recurrence, Galois orbits, dynamic-FFT reuse or bit packing. The earlier fixed-layout cut-rank proof failed to constrain intermediate permutations. The first theorem below remains valid with *unlimited* such permutations.
+
+## 1. Computational model and cost contract
+
+Let the transform be the complete, unnormalized DFT
+
+\[
+(F_N)_{k,j}=\omega^{kj},\quad 0\leq k,j<N,
+\]
+where \(\omega\) is a primitive \(N\)th root over a field of characteristic zero, or a field of characteristic not dividing \(N\) containing that root. The input is an arbitrary **fresh** vector, and all \(N\) scalar outputs must be materialized.
+
+Every stage is an invertible square \(N\times N\) linear map. The permitted primitives are:
+
+1. **Forward weighted scan**, \(y_0=b_0x_0\), \(y_i=a_i y_{i-1}+b_ix_i\). One pass uses \(O(N)\) arithmetic; invertibility forces each \(b_i\ne0\).
+2. **Backward weighted scan**, the symmetric recurrence from \(N-1\) toward zero.
+3. **Monomial stages**, including arbitrary coordinate permutations and invertible diagonal multiplications. Charge their memory traffic and nontrivial scalar multiplies in any actual algorithm; we permit unlimited ones in the *lower bound*.
+4. **Optional rank-\(r\) broadcast**, \(H=I+UV^T\) with \(\operatorname{rank}(UV^T)\le r\), invertible. A dense rank-one broadcast can be evaluated with a dot product and an axpy in \(\Theta(N)\) arithmetic. A sparse broadcast may cost less, so we do not silently turn a rank bound into a time bound.
+
+A circuit is a product of these invertible stages in any order. Let \(t\) be the number of *one-way scans*; let \(B\) be the **sum of the rank budgets** of its broadcast stages. All choices of scan weights and shuffles are input-independent, but can be arbitrary complex constants. There is no floating-point assumption and no restriction on coefficient magnitude in these algebraic proofs.
+
+Additional scratch registers; direct sums/linear combinations of scan *outputs* in a **single** stage; unrestricted dense matrix-vector primitives; and nonlinear operations are outside the theorems unless reduced to this model. In particular, "two scans followed by adding their results" is not the same operator as their **composition**. This exception is explored in Section 6.
+
+## 2. New obstruction to the internal-shuffle escape: inverse locality
+
+**Lemma A (scan inverse).** For an invertible forward scan,
+
+\[
+ x_i=b_i^{-1}(y_i-a_i y_{i-1})\quad(i\ge1),\qquad x_0=b_0^{-1}y_0.
+\]
+
+Thus its inverse matrix is **lower bidiagonal**, with at most two nonzero entries in each row (the boundary row has one). The inverse of a backward scan is upper bidiagonal. The inverse of a permutation or invertible diagonal is monomial, with one nonzero in each row and column.
+
+**Lemma B (row-support multiplication).** If every row of \(A\) has at most \(s\) nonzero entries and every row of \(B\) at most \(r\), then every row of \(AB\) has at most \(sr\) nonzero entries. This follows by expanding each row of \(AB\) as a linear combination of at most \(s\) rows of \(B\). It does not require any sign, norm, or field assumptions.
+
+**Theorem 1 (any internal shuffles).** If \(F_N\) is a product of \(t\) invertible one-way weighted scans and any number of monomial stages **with no broadcasts**, then
+
+\[
+\boxed{2^t\ge N,\qquad t\ge\lceil\log_2 N\rceil.}
+\]
+
+*Proof.* Invert the factorization and reverse factor order. The inverse network still consists of \(t\) bidiagonal factors and arbitrary monomials, so its rows have support at most \(2^t\). But \(F_N^{-1}=N^{-1}(\omega^{-jk})_{j,k}\) has **no zero entries**. Each row has support \(N\). QED.
+
+**Refinement for powers of two.** A bidiagonal inverse of a scan has one boundary row with at most one nonzero. Its first application to an identity matrix produces at most \(2N-1\) nonzero entries in total. Each later inverse-scan multiplication can increase the *sum* of row-support sizes by at most a factor two, since each row of a bidiagonal matrix is supported on at most two adjacent rows and **each source row appears in at most two destinations**. Permutations and invertible diagonal stages preserve support mass. Thus
+
+\[
+\operatorname{nnz}(F_N^{-1})\le\min\{N^2,(2N-1)2^{t-1}\}\qquad(t\ge1).
+\]
+
+When \(N=2^L\) and \(t=L\), the right-hand side is strictly less than \(N^2\). Consequently
+
+\[
+\boxed{t\ge\log_2 N+1\quad\text{for powers of two }N\ge2.}
+\]
+
+This is only a slight sharpening; the important asymptotic statement remains \(\Omega(\log N)\) **global scans** even with internal shuffles. If every full scan costs \(\Theta(N)\) actual operations, this architecture consequently costs \(\Omega(N\log N)\). If scan coefficients vanish and implementations skip inactive positions, the theorem still constrains scan *count*, but does not alone prove a proportional total arithmetic-gate lower bound for those degenerate passes.
+
+## 3. Generalized hybrid: scans plus low-rank global broadcasts
+
+The previous theorem does not handle a dense inverse produced by a rank-one update. For example, \(I+\mathbf1\mathbf1^T\) is one \(O(N)\)-work broadcast, but its inverse is \(I-\mathbf1\mathbf1^T/(N+1)\), which is dense over characteristic zero. We therefore derive a different invariant.
+
+**Lemma C (broadcast inverse is low-rank perturbation).** If \(H=I+UV^T\) is invertible, then
+
+\[
+H^{-1}-I=-H^{-1}UV^T,
+\]
+
+which has rank at most \(r\), where \(r\ge\operatorname{rank}(UV^T)\). This requires no explicit Sherman–Morrison/Woodbury inversion and no numerical conditioning assumption.
+
+**Lemma D (telescoping).** Replacing any invertible rank-\(r_i\) broadcast factors within a product by identities changes the resulting product by a matrix of rank at most \(\sum_i r_i\). Expand the product difference one factor at a time; a difference whose only changed factor has rank at most \(r_i\), even after multiplying on both sides by arbitrary matrices.
+
+Thus after inverting the entire circuit and replacing all broadcast-inverse factors by identity matrices, we obtain
+
+\[
+F_N^{-1}=S+E,\qquad \max_j\|S_{j,:}\|_0\le 2^t,\qquad \operatorname{rank}(E)\le B.
+\]
+
+We next establish a very simple **Fourier sparse-plus-low-rank rigidity lemma**.
+
+**Lemma E (consecutive-row Vandermonde witness).** For any Fourier matrix \(F_N\) (or its inverse), any matrix \(S\) having at most \(s\) nonzero entries per row satisfies
+
+\[
+\boxed{\operatorname{rank}(F_N-S)\ge\left\lfloor\frac{N}{s+1}\right\rfloor.}
+\]
+
+*Proof.* Set \(q=\lfloor N/(s+1)\rfloor\). For the first \(q\) rows, at most \(qs\) columns contain any nonzero element of \(S\). Since \(q(s+1)\le N\), we can find at least \(q\) columns on which all these entries of \(S\) vanish. On the corresponding \(q\times q\) submatrix, \(F_N-S\) equals \(F_N\). Because the row indices are \(0,1,\dots,q-1\) and the selected column indices are distinct, this submatrix is a Vandermonde matrix with distinct nodes \(\omega^j\). Its determinant is nonzero, so \(\operatorname{rank}(F_N-S)\ge q\). Identically for \(F_N^{-1}\), with roots \(\omega^{-j}\). QED.
+
+This is an **elementary, weak rank-rigidity inequality**. Fourier/circulant matrices are known to be *not rigid* in the stronger Valiant sense [1]; we do **not** claim a general-purpose circuit lower bound from this lemma.
+
+**Theorem 2 (scan–broadcast tradeoff, arbitrary internal shuffles).** Every such factorization of \(F_N\) satisfies
+
+\[
+\boxed{B\ge\left\lfloor\frac{N}{2^t+1}\right\rfloor\,,}
+\]
+
+or equivalently
+
+\[
+\boxed{(B+1)(2^t+1)>N.}
+\]
+
+*Proof.* Apply Lemma E to \(F_N^{-1}=S+E\), with \(s=2^t\) and \(\operatorname{rank}(E)\le B\). The internal permutations are absorbed by row/column monomial factors and do not change the row-support product bound. QED.
+
+**Asymptotic consequence.** If the number of one-way scans obeys \(t=o(\log N)\), then \(2^t=N^{o(1)}\), hence
+
+\[
+B\ge N^{1-o(1)}.
+\]
+
+So this restricted architecture cannot use **both** sublogarithmically many scan stages **and** a subpolynomial broadcast-rank budget. If each broadcast is dense and charges \(\Theta(N)\) operations, the requisite broadcasts would themselves be expensive. However, total broadcast rank is **not** an unconditional arithmetic-operation lower bound: sparse vectors and alternative representations alter that price. The theorem also does not cover stage additions, non-square extra workspace, or unrelated global mixers.
+
+## 4. Exact computational control: Fourier transform using two scans per butterfly level
+
+We need to ensure our theorem does not accidentally reject an ordinary FFT. In `scan_hybrid.py`, the code performs a full fresh radix-2 NTT with one *backward* scan followed by one *forward* scan for each butterfly level.
+
+For one pair, let \(z=w b\). The butterfly is \((a,z)\mapsto(a+z,a-z)\). We factor it as:
+
+1. Diagonal: \((a,z)\mapsto(a,-2z)\).
+2. Backward scan/shear: \((a,-2z)\mapsto(a+z,-2z)\), using coefficient \(-1/2\).
+3. Forward scan/shear: \((a+z,-2z)\mapsto(a+z,a-z)\).
+
+Adjacent pair boundaries have zero scan coefficients so pairs remain independent. A precomputed permutation groups each level's Cooley–Tukey pairs adjacently; an inverse permutation restores normal order. A first bit-reversal permutation supplies the usual DIT schedule. The scalar twiddles are input-independent and **not free to prepare**.
+
+Thus for \(N=2^L\), this deliberately nonoptimal implementation uses:
+
+- exactly \(2L\) scan passes;
+- exactly \(2L\) pair-reordering calls plus one bit reversal;
+- \(NL\) scalar additions in the two scans;
+- \(NL\) scalar data-path multiplications (\(NL/2\) twiddle scaling and \(NL/2\) backward-shear scaling);
+- \(N-1\) tabulated twiddle entries, needing \(N-L-1\) multiplication steps to generate by recurrence when one primitive \(N\)-th root is supplied; obtaining the stage roots is additionally charged, \(O(L^2)\) with naïve exponentiation and less if reused;
+- \(N+2NL\) counted word movements for bit reversal and pre/post pair shuffles (an explicit *upper bound*; fewer actual moves if permutation is identity).
+
+Therefore this concrete all-output implementation is \(\Theta(N\log N)\) in the same sequential arithmetic model. It is *not faster than* the ordinary FFT. It merely establishes that the `log N + 1` vs `2 log N` stage bound is tight to a factor of at most two in this architecture.
+
+The exact tests compare **every input basis vector** through N=64 and fresh uniformly random vectors through N=256 against an independent O(N^2) modular DFT. The transform also passes at a second prime 2013265921. All weights and output values are reduced modulo their corresponding prime, so the checks have no floating-point tolerance loophole. This finite NTT demonstration does not automatically give an all-length bit-complexity theorem for a fixed prime.
+
+## 5. Broadcast-budget numerical examples
+
+Theorem 2's necessary bounds for \(N=64\) are:
+
+| One-way scans t | Max support per inverse row | Minimum total broadcast rank B |
+|---:|---:|---:|
+| 0 | 1 | 32 |
+| 1 | 2 | 21 |
+| 2 | 4 | 12 |
+| 3 | 8 | 7 |
+| 4 | 16 | 3 |
+| 5 | 32 | 1 |
+| 6 | 64 | 0 from Theorem 2 |
+
+The scan-only Theorem 1's support-mass refinement nevertheless requires **at least seven scans** for this length, as its all-dense inverse cannot be formed in six scans. These are *necessary conditions*, not evidence that any shorter mixed network exists.
+
+The exact experiment checks `word_certificate` on 60 random invertible words of scans, broadcasts, shuffles and diagonals (N=4,8,16), verifying both the row-sparse part's support and the rank of the removed-broadcast difference. The independent auditor verifies 288 exact Vandermonde minor witnesses over two independent finite fields, 10 primitive-root-length cases and 64 hand-factored pair-butterfly cases. Tests check 254 full basis columns, 35 fresh random vectors, plus a larger additional regression suite. The captured counts live in `audit_results.json` and `independent_results.json`.
+
+## 6. Honest escape hatch: adding scan *outputs* is not composing scans
+
+Our inverse-sparsity theorem **does not apply** to a single stage
+
+\[
+H=L_{\rm forward}+U_{\rm backward}
+\]
+
+which evaluates *two* weighted scans from the same input and adds their results. This still uses only \(O(N)\) arithmetic with temporary workspace but the inverse can be fully dense. `bidirectional_sum_escape` verifies, with concrete nonzero weights and exact arithmetic, that \(H^{-1}\) has all \(N^2\) entries nonzero at N=4,8,16,32, and that subtracting its own diagonal does not leave a low-rank matrix in those examples.
+
+No such \(H\) was found or claimed to equal an FFT. Some special bidirectional sums, including \(I+\mathbf1\mathbf1^T\), are simply a rank-one broadcast and are already handled by Theorem 2. The tested generic weighted sums are **not covered by the current lower bound**. Extra scratch restored by a stage is another avenue that would require a new, precise model and proof.
+
+This is a legitimate next falsifiable direction, not an established speedup.
+
+## 7. Relationship to literature and originality
+
+This project's local contribution is combining elementary inverse support and sparse-plus-low-rank rank arguments into a **specific rejection test for interleaved one-way scan/shuffle/broadcast FFT proposals**, with an executable all-output control. We have not conducted a priority-level literature search and make **no first-to-prove claim**.
+
+The proofs build on familiar tools: sparse matrix products, the Vandermonde determinant, quasiseparable scan inverses, and classical matrix rigidity. Relevant related literature:
+
+- [1] Alman–Williams and others, *Fourier and Circulant Matrices Are Not Rigid* (CCC 2019), https://doi.org/10.4230/LIPIcs.CCC.2019.17 . The current weak lower bound is consistent with that paper, not a contradiction.
+- [2] Pernet, *Computing with quasiseparable matrices*, https://arxiv.org/abs/1602.01246 . Off-diagonal ranks of one-way scans are a standard structured-matrix phenomenon.
+- [3] Delvaux–Van Barel, *Rank-deficient submatrices of Fourier matrices* (2008), https://doi.org/10.1016/j.laa.2008.04.043 . Fourier block ranks and orderings were extensively studied before these experiments.
+- [4] Cooley–Tukey radix-two FFT, classical factorization. Our two-scan encoding is an elementary restatement with more work, not a new transform.
+- [5] OpenAI exact Fourier theorem #130, https://github.com/openai/math/blob/main/lean/docs/130.md . The present restricted lower bounds do not contradict its unrestricted exact model.
+
+## 8. Research conclusion and next gate
+
+**Rejected:** An `o(log N)`-pass exact Fourier evaluator formed from invertible one-way weighted scans, *even with arbitrary internal permutations*. A small collection of rank-one/global low-rank broadcasts cannot rescue this architecture: it must pay the exact broadcast-rank tradeoff above.
+
+**Still untested:** Products of genuinely **bidirectional-sum** O(N)-cost stages with internal permutations, whose inverse need not be sparse or a low-rank perturbation of a row-sparse matrix. Other unrestricted exact linear-circuit models are also unaffected.
+
+A next candidate must give an all-N algebraic factorization with fewer fully charged operations than a standard FFT, not merely fewer named passes. It must not silently reuse input-dependent spectra, exploit only selected outputs, hide high-precision multiplications, or replace a bidirectional sum with an uncharged dense macro.
+
+**Final scope:** No proven O(N) exact arbitrary-input full DFT; no new universal sub-NlogN upper bound; no new general matrix-rigidity lower bound. The result is a useful, exact, architecture-specific failure certificate for our original global-reuse hypothesis.

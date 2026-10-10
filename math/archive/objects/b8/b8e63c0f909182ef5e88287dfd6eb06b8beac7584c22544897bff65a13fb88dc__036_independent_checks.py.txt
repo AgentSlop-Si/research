@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Newly authored v17 review controls; uploaded programs are never imported."""
+import random,json,pathlib,itertools,hashlib,math
+R=pathlib.Path(__file__).resolve().parent
+
+def prime(n):return n>=2 and all(n%d for d in range(2,math.isqrt(n)+1))
+def field(n):
+ k=max(1,1000000//n)
+ while not prime(k*n+1):k+=1
+ p=k*n+1;factors=[d for d in range(2,n+1) if n%d==0 and prime(d)]
+ for g in range(2,p):
+  w=pow(g,k,p)
+  if all(pow(w,n//q,p)!=1 for q in factors):return p,w
+
+def rank(A,p):
+ B=[[x%p for x in row] for row in A]
+ if not B:return 0
+ m=len(B);n=len(B[0]);r=0
+ for j in range(n):
+  i=next((i for i in range(r,m) if B[i][j]),None)
+  if i is None:continue
+  B[r],B[i]=B[i],B[r];q=pow(B[r][j],-1,p);B[r]=[x*q%p for x in B[r]]
+  for i in range(r+1,m):
+   q=B[i][j]
+   if q:B[i]=[(x-q*y)%p for x,y in zip(B[i],B[r])]
+  r+=1
+  if r==m:break
+ return r
+
+def mm(A,B,p):return [[sum(x*y for x,y in zip(a,b))%p for b in zip(*B)] for a in A]
+def sub(A,I,J):return [[A[i][j] for j in J] for i in I]
+def permutation(n,rng):q=list(range(n));rng.shuffle(q);return q
+
+def sparse(sig,p,rng,mode):
+ n=len(sig)
+ for _ in range(100):
+  d=[0 if mode=='zero_diagonal' else rng.randrange(1,p) for i in sig]
+  e=[0 if mode=='zero_edges' else rng.randrange(1,p) for i in sig]
+  A=[[0]*n for _ in sig]
+  for i in range(n):A[i][i]=d[i];A[i][sig[i]]=(A[i][sig[i]]+e[i])%p
+  if rank(A,p)==n:return A
+ raise AssertionError('no invertible sparse sample')
+
+def witness(sa,sb):
+ n=len(sa);i=next((i for i in range(n) if sa[i]!=i),None)
+ I=[0,1] if i is None else [i,sa[i]]
+ X=sorted(set(I)|{sa[i] for i in I});H=set(X)|{sb[i] for i in I};S=set(range(n))-H
+ assert len(S)>n/2
+ tau=[sb.index(j) for j in range(n)];j=next(j for j in sorted(S) if tau[j] in S)
+ J=[j,tau[j]] if tau[j]!=j else [j,next(v for v in sorted(S) if v!=j)]
+ Y=sorted(set(J)|{tau[j] for j in J});assert len(X)<=3 and len(Y)<=3 and not H&set(J)
+ return I,J,X,Y
+
+def check_green():
+ rng=random.Random(171731);comb=0;cases=[]
+ for n in [11,13,17,19,29,31]:
+  p,w=field(n)
+  for trial in range(300):
+   sa=list(range(n)) if trial==0 else permutation(n,rng);sb=list(range(n)) if trial==1 else permutation(n,rng)
+   I,J,X,Y=witness(sa,sb);comb+=1
+   if trial>=12:continue
+   mode=['random','zero_diagonal','zero_edges'][trial%3];A=sparse(sa,p,rng,mode);B=sparse(sb,p,rng,mode)
+   rp=permutation(n,rng);cp=permutation(n,rng);dl=[rng.randrange(1,p) for _ in range(n)];dr=[rng.randrange(1,p) for _ in range(n)]
+   T=[[dl[i]*pow(w,rp[i]*cp[j],p)*dr[j]%p for j in range(n)] for i in range(n)]
+   U=sub(A,I,X);V=sub(B,Y,J);H=sub(T,X,Y);lhs=mm(mm(U,H,p),V,p)
+   assert rank(U,p)==rank(V,p)==2
+   assert rank(H,p)==min(len(X),len(Y))
+   assert rank(lhs,p)>=1
+   assert all((A[i][j]+B[i][j])%p==0 for i in I for j in J)
+   cases.append(dict(N=n,field=p,root=w,mode=mode,Rsize=len(X),Csize=len(Y),lhs_rank=rank(lhs,p)))
+ return dict(combinatorial_cases=comb,exact_matrix_cases=len(cases),cases=cases)
+
+def qs(n,p,rng):
+ a,b,c,e,h,g=[[rng.randrange(7) for _ in range(n)] for _ in range(6)];X=[[0]*n for _ in range(n)]
+ for i in range(n):
+  X[i][i]=rng.randrange(9)
+  for j in range(i):
+   z=a[i]*b[j]
+   for k in range(j+1,i):z=z*h[k]%p
+   X[i][j]=z%p
+  for j in range(i+1,n):
+   z=c[i]*e[j]
+   for k in range(i+1,j):z=z*g[k]%p
+   X[i][j]=z%p
+ return X
+
+def check_two_stage():
+ rng=random.Random(171710);cases=[]
+ for n in [10,11,16,31]:
+  p,w=field(n);W=n//2;I=list(range(W));Js=[list(range(W)),list(range(n-W,n))]
+  for trial in range(30):
+   A=qs(n,p,rng);B=qs(n,p,rng);q=permutation(n,rng)
+   if trial==0:A=[[int(i==j) for j in range(n)] for i in range(n)]
+   P=[[int(i==q[j]) for j in range(n)] for i in range(n)];M=mm(mm(B,P,p),A,p)
+   overlaps=[len(set(I)&{q[j] for j in J}) for J in Js];assert sum(overlaps)<=W
+   k=min(range(2),key=lambda k:overlaps[k]);J=Js[k];actual=rank(sub(M,I,J),p);bound=2+overlaps[k]
+   assert actual<=bound<W
+   cols=permutation(n,rng)
+   F=[[pow(w,i*cols[j],p) for j in J] for i in I];assert rank(F,p)==W
+   cases.append(dict(N=n,field=p,root=w,width=W,selected_input_boundary=k,overlaps=overlaps,product_rank=actual,rank_cap=bound,fourier_rank=W))
+ return dict(cases=len(cases),details=cases)
+
+out={'two_green':check_green(),'two_stage_boundary':check_two_stage(),'uploaded_code_executed':False}
+(R/'INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps({'green_cases':out['two_green']['exact_matrix_cases'],'combinatorial_cases':out['two_green']['combinatorial_cases'],'two_stage_cases':out['two_stage_boundary']['cases']},indent=2))

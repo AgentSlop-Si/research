@@ -1,0 +1,64 @@
+# Exact graph reuse: fixed-kernel and phase-state checkpoint
+
+**Status: no independent o(N log N) or O(N) fresh-input exact FFT has been obtained.** This checkpoint completes three narrowly defined investigations of the remaining high-rank correction problem. It contains exact proofs, executable verifiers, charged operation counts, and the unresolved construction target. It does not replace the earlier research or switch to the integer-mult-kappa/CrocSwap route.
+
+The goal remains arbitrary fresh input, every output, exact computation, sequential work, with preprocessing, scalar constants, addressing, memory, and recovery charged in a specified arithmetic model. Approximate grouped-stage tables and sampled/pruned transforms from the preceding checkpoint are separate results and were not repeated here.
+
+## Results and decisions
+
+| Mechanism | Exact finding | Cost / decision |
+|---|---|---|
+| q-Pascal fixed kernel | F = S T diag(d) T^T S; both triangular actions use the same root-dependent kernel | Preparation is O(N) field work given the root. Total action is 2C(N)+O(N). A faster evaluator for C(N) remains missing. |
+| Dyadic Fourier details | Invertible linear-time input preparation yields disjoint twisted Fourier blocks of lengths 1,2,...,N/2 | Standard evaluation restores exactly N log2(N) additions, plus twiddles. Retain the representation; no speedup claim. |
+| Paired-bit phase-state chain | Exact internal state rank is 2^min(s,L-s); subtracting Walsh increases interior-cut rank by one | Rules out a constant-width exact chain in this order. It is not a bound on general FFT arithmetic circuits. |
+
+The fixed-kernel factorization is established prior art, independently specialized and verified here. Its value for this project is that it isolates one explicit graph-building target without assuming repeated input values. The other results prevent mistaking compact descriptions or small correction formulas for cheap evaluation.
+
+## The concrete remaining construction
+
+For N=2^L and a primitive Nth root q, define
+
+    f[j] = product_(a=1..j)(1-q^a),  f[0]=1
+    t[j] = 1/f[j]
+    (T x)[i] = sum_(j=0..i) t[i-j] x[j].
+
+Find a uniform exact evaluator for T on arbitrary fresh x with total cost o(N log N), preferably O(N), including its own preparation. Then the verified factorization gives the same asymptotic Fourier improvement using two such actions and O(N) extra work. No such evaluator is supplied in this checkpoint.
+
+The attractive relation (1-z)H(z)=H(qz) modulo z^N, where H(z)=sum t[j]z^j, generates coefficients cheaply. Its full orbit is a tautology and its half-orbit multiplier is dense. It has not eliminated the filtering work. A proved nonzero midpoint Hankel determinant also excludes a read-once linear filter with fewer than N/2 state coordinates when past inputs/outputs cannot be reread. This is a restricted memory statement, not a time lower bound.
+
+For the user's translation idea, an identity such as SA*SB=(SA-k)*SB+k*SB remains exact. Fresh-input savings still require an independently cheaper evaluation of the translated term and its correction. The present fixed-kernel representation shares constants, while its two variable input vectors must each be processed. Previous warm-cache product-DAG speedups remain separate and are not being claimed again.
+
+## Verified evidence
+
+| Verifier | Coverage | Result |
+|---|---|---|
+| `fixed_kernel/run_audit.py` | 538 full basis vectors across 18 cases; N through 128 over two prime fields; N through 16 over exact rational cyclotomic fields; 36 Hankel determinants; coefficient and inverse identities; operation counts | PASS |
+| `walsh_details/audit.py` | 252 full basis vectors plus 10,920 block-matrix entries; N through 64 over two prime fields; inverse input preparation | PASS |
+| `phase_states/verify_phase_states.py` | 30 complete unfoldings through N=64 and 90 cross-phase/minor cases through N=1024; every nontrivial cut, two prime fields | PASS |
+
+Finite checks audit implementations. The stated all-size identities and restricted state results have algebraic proofs in the mechanism documents. No floating-point rank threshold or timing curve is used as proof. The direct evaluators are deliberately slow exact oracles, not competitive FFT implementations. Exact field-operation counts are not bit-complexity claims; root construction and representation remain model-dependent.
+
+Run every verifier with standard-library Python:
+
+```sh
+python3 run_all.py
+```
+
+## Continuity and do-not-repeat decisions
+
+This package follows `fft_deferred_correction_audit.zip`, `fft_phase12_recursive_cache_rewrites.zip`, and `FFT_RESEARCH_CANONICAL_CHECKPOINT_2026-10-09.md`, and incorporates the goal boundary in `NEXT_EXACT_CHALLENGE.md` and `RESEARCH.md` version 12 (stage-template/tabulation/sampling). It does not supersede the complete prior checkpoint.
+
+- Do not present q-Pascal factorization, Fourier-to-convolution reduction, or dyadic detail decomposition as globally new algorithms.
+- Do not repeat these complete finite audits as a new research result unless a mechanism or proof changes.
+- Do not replace exact arbitrary inputs with approximation, a warm cache, selected outputs, or structured data without changing the stated goal.
+- Do not infer a general running-time lower bound from ordinary rank, Hankel rank, tensor unfolding rank, or independent detail variables.
+- Do not claim the earlier conjecture rank(F-C)=N-log2(N)-1 is now proved for all N. This checkpoint does not prove it.
+- A worthwhile next experiment must specify a new evaluator for the fixed kernel (or another complete exact representation), derive its composition and work recurrence first, and only then test it. More coefficient-generation identities alone do not meet the target.
+
+## Primary context
+
+- A. Kuznetsov, *Using q-calculus to study LDL^T factorization of a certain Vandermonde matrix*, https://arxiv.org/abs/1507.02959 . Known exact factorization and inverse-kernel context.
+- J. Chen, E. M. Stoudenmire, S. R. White, *Quantum Fourier Transform Has Small Entanglement*, https://arxiv.org/abs/2210.08468 . Tensor-network context; compressed input and approximation assumptions must be kept explicit.
+- J. Chen, M. Lindsey, *Direct interpolative construction of the discrete Fourier transform as a matrix product operator*, https://arxiv.org/abs/2404.03182 . Approximate operator compression with error guarantees.
+
+The phrase "no independent improvement" describes this research route. It is not a blanket assertion about all arithmetic models or the separate unrestricted exact-complex formalization at https://github.com/openai/math/blob/main/lean/docs/130.md .

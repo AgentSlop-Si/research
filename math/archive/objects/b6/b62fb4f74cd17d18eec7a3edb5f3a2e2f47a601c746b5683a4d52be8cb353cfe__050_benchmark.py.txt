@@ -1,0 +1,147 @@
+"""Compare AdaptiveFFT to the SAME optimized rFFT backend on this machine.
+
+Run: OPENBLAS_NUM_THREADS=1 python benchmark.py
+All figures include cache hashing, candidate checking, span discovery,
+output materialization and (where relevant) model creation.
+"""
+from __future__ import annotations
+import json
+import platform
+import statistics
+import time
+import numpy as np
+from adaptive_fft import AdaptiveFFT, CanonicalFFTGraph
+
+rng = np.random.default_rng(20261008)
+
+
+def median_timed(callback, repeats=7):
+    observed=[]
+    last=None
+    for _ in range(repeats):
+        st=time.perf_counter_ns()
+        last=callback()
+        observed.append((time.perf_counter_ns()-st)/1e6)
+    return statistics.median(observed), last
+
+
+def main():
+    backend=AdaptiveFFT(mode='plain')
+    transform=backend._forward
+    results=[]
+    print('backend:', backend.backend, '| NumPy:', np.__version__)
+    print(f'{"case":<24} {"N":>8} {"base(ms)":>12} {"adaptive(ms)":>14} {"speedup":>10} {"methods":>28}')
+
+    for n in (4096,16384,65536):
+        a=rng.standard_normal(n)
+        b=rng.standard_normal(n)
+        patterns={
+            'exact_repeat': [a.copy() for _ in range(12)],
+            'shift_stream': [np.roll(a, int(s)) for s in rng.integers(1,n,12)],
+            'sparse_stream': None,
+            'unrelated': [rng.standard_normal(n) for _ in range(12)]
+        }
+        # All successive sparse inputs have exactly one edited coordinate.
+        run=a.copy()
+        changes=[]
+        for _ in range(12):
+            pos=int(rng.integers(0,n))
+            run=run.copy();run[pos]+=1.0
+            changes.append(run)
+        patterns['sparse_stream']=changes
+
+        for label, seq in patterns.items():
+            expected=[transform(x) for x in seq]
+            engine=AdaptiveFFT(max_cache_bytes=32*1024*1024,max_references=3,mode='auto')
+            if label != 'unrelated':
+                engine.rfft(a)
+            actual=[engine.rfft(x) for x in seq]
+            assert all(np.allclose(j,k,atol=1e-7,rtol=1e-10) for j,k in zip(expected,actual))
+
+            def baseline():
+                return [transform(x) for x in seq]
+            def adaptive():
+                worker=AdaptiveFFT(max_cache_bytes=32*1024*1024,max_references=3,mode='auto')
+                if label!='unrelated':
+                    worker.rfft(a)
+                for x in seq:
+                    worker.rfft(x)
+                return worker.summary()['stats']
+            tb,_=median_timed(baseline,7)
+            ta,stats=median_timed(adaptive,7)
+            speed=tb/ta
+            method=','.join(f'{k}:{v}' for k,v in stats.items())
+            print(f'{label:<24} {n:>8} {tb:>12.3f} {ta:>14.3f} {speed:>9.2f}x {method:>28}')
+            results.append({'case':label,'n':n,'count':len(seq),'baseline_ms':tb,
+                            'adaptive_ms':ta,'speedup':speed,'strategies':stats})
+
+    for n in (4096, 16384, 65536):
+        m=32
+        u=rng.standard_normal(n)
+        v=rng.standard_normal(n)
+        co=rng.integers(-3,4,(m,2)).astype(float)
+        x=co[:,0,None]*u+co[:,1,None]*v
+        dense=rng.standard_normal((m,n))
+        for label,matrix in (('low_rank_batch',x),('dense_batch',dense)):
+            expect=transform(matrix, axis=1)
+            engine=AdaptiveFFT(mode='auto')
+            actual, info=engine.fft_batch(matrix,return_info=True)
+            assert np.allclose(actual,expect,atol=1e-6,rtol=1e-10)
+            def baseline():return transform(matrix,axis=1)
+            def adaptive():
+                w=AdaptiveFFT(mode='auto')
+                return w.fft_batch(matrix, return_info=True)[1]
+            tb,_=median_timed(baseline, 7)
+            ta,details=median_timed(adaptive, 7)
+            speed=tb/ta
+            print(f'{label:<24} {n:>8} {tb:>12.3f} {ta:>14.3f} {speed:>9.2f}x {str(details["strategies"]):>28}')
+            results.append({'case':label,'n':n,'count':m,'baseline_ms':tb,
+                            'adaptive_ms':ta,'speedup':speed,'strategies':details['strategies']})
+
+    # An explicitly provided compressed representation avoids expensive rank
+    # detection. Do not confuse this benchmark with finding bases from dense
+    # independent arrays: the basis/coefficients are already known.
+    for n in (4096, 16384, 65536):
+        m=128
+        basis=rng.standard_normal((2,n))
+        co=rng.integers(-3,4,(m,2)).astype(float)
+        signals=co @ basis
+        engine=AdaptiveFFT(mode='auto')
+        np.testing.assert_allclose(engine.fft_family(basis,co),
+                                   transform(signals,axis=1),rtol=1e-10,atol=1e-7)
+        tb,_=median_timed(lambda:transform(signals,axis=1),7)
+        ta,_=median_timed(lambda:AdaptiveFFT().fft_family(basis,co),7)
+        speed=tb/ta
+        print(f'{"known_basis_128":<24} {n:>8} {tb:>12.3f} {ta:>14.3f} {speed:>9.2f}x {"2 basis FFTs + 128 sums":>28}')
+        results.append({'case':'known_basis_128','n':n,'count':m,'rank':2,
+                        'baseline_ms':tb,'adaptive_ms':ta,'speedup':speed,
+                        'assumption':'basis and coefficients supplied; no detection/materialization costs'})
+
+    # The standalone symbolic graph is a research measurement, not part of
+    # the optimized runtime path. Count butterflies for a repetitive block.
+    for n in (256, 1024, 4096):
+        data = rng.integers(0,2,n)
+        period8=np.tile(np.array([1,0,0,1,1,0,1,0]),n//8)
+        for label,x in (('random_binary',data),('period8',period8)):
+            g=CanonicalFFTGraph(); root=g.add(x); value=g.evaluate(root)
+            assert np.allclose(value,np.fft.fft(x),atol=1e-9)
+            standard=n*int(np.log2(n))//2
+            used=g.butterflies
+            print('DAG',label,n,standard,used,'saved%',round(100*(1-used/standard),2))
+            results.append({'case':'dag_'+label,'n':n,'ordinary_butterflies':standard,
+                            'unique_dag_butterflies':used, 'saving_pct':100*(1-used/standard)})
+
+    output={'benchmark':'AdaptiveFFT vs native optimized FFT',
+            'python':platform.python_version(),'platform':platform.platform(),
+            'numpy':np.__version__,'backend':backend.backend,
+            'notes':('Exploratory local wall-clock measurements, median 7 runs; '
+                     'real-valued rFFT, cache and verification overhead included; '
+                     'known_basis measurements assume already-given factorization; '
+                     'these timings do not demonstrate sub-NlogN worst-case complexity.'),
+            'results':results}
+    with open('benchmark_results.json','w') as file:
+        json.dump(output,file,indent=2)
+    print('Saved benchmark_results.json')
+
+if __name__ == '__main__':
+    main()

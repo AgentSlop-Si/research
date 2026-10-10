@@ -1,0 +1,261 @@
+   1 #!/usr/bin/env python3
+   2 """New independent exact controls; imports no supplied research program."""
+   3 import hashlib
+   4 import json
+   5 import math
+   6 from pathlib import Path
+   7 import random
+   8 
+   9 HERE = Path(__file__).resolve().parent
+  10 
+  11 
+  12 def eye(n, p):
+  13     return [[int(i == j) for j in range(n)] for i in range(n)]
+  14 
+  15 
+  16 def zero(n):
+  17     return [[0] * n for _ in range(n)]
+  18 
+  19 
+  20 def add(a, b, p):
+  21     return [[(x+y) % p for x, y in zip(r, s)] for r, s in zip(a, b)]
+  22 
+  23 
+  24 def scale(a, c, p):
+  25     return [[c*x % p for x in r] for r in a]
+  26 
+  27 
+  28 def mul(a, b, p):
+  29     cols = list(zip(*b))
+  30     return [[sum(x*y for x,y in zip(r,c)) % p for c in cols] for r in a]
+  31 
+  32 
+  33 def transpose(a):
+  34     return list(map(list, zip(*a)))
+  35 
+  36 
+  37 def block(a,b,c,d):
+  38     return [r+s for r,s in zip(a,b)] + [r+s for r,s in zip(c,d)]
+  39 
+  40 
+  41 def rank(a,p):
+  42     a=[r[:] for r in a]
+  43     i=0
+  44     for j in range(len(a[0])):
+  45         k=next((k for k in range(i,len(a)) if a[k][j]), None)
+  46         if k is None:
+  47             continue
+  48         a[i],a[k]=a[k],a[i]
+  49         f=pow(a[i][j],-1,p)
+  50         a[i]=[x*f%p for x in a[i]]
+  51         for k in range(i+1,len(a)):
+  52             f=a[k][j]
+  53             if f:
+  54                 a[k]=[(x-f*y)%p for x,y in zip(a[k],a[i])]
+  55         i+=1
+  56         if i==len(a):
+  57             break
+  58     return i
+  59 
+  60 
+  61 def inverse(a,p):
+  62     n=len(a); a=[r[:] + e for r,e in zip(a,eye(n,p))]
+  63     for j in range(n):
+  64         k=next(k for k in range(j,n) if a[k][j])
+  65         a[j],a[k]=a[k],a[j]
+  66         f=pow(a[j][j],-1,p); a[j]=[x*f%p for x in a[j]]
+  67         for k in range(n):
+  68             if k!=j and a[k][j]:
+  69                 f=a[k][j]; a[k]=[(x-f*y)%p for x,y in zip(a[k],a[j])]
+  70     return [r[n:] for r in a]
+  71 
+  72 
+  73 def off_diagonal_count(a):
+  74     return sum(x!=0 for i,r in enumerate(a) for j,x in enumerate(r) if i!=j)
+  75 
+  76 
+  77 def signed_cycle(n,p,variant):
+  78     rng=random.Random(610100+n*13+variant)
+  79     order=list(range(n))
+  80     if variant:
+  81         rng.shuffle(order)
+  82     signs=[1]*n
+  83     if variant:
+  84         signs=[rng.choice((-1,1)) for _ in range(n)]
+  85     if math.prod(signs)!=-1:
+  86         signs[-1]*=-1
+  87     t=zero(n)
+  88     for k,v in enumerate(order):
+  89         t[order[(k+1)%n]][v]=signs[k]%p
+  90     return t,order,signs
+  91 
+  92 
+  93 def green_scan(order,signs,t,x,p):
+  94     n=len(x)
+  95     carry=0
+  96     for k,v in enumerate(order):
+  97         carry=(x[v]+t*signs[(k-1)%n]*carry)%p
+  98     last=carry*pow((1+pow(t,n,p))%p,-1,p)%p
+  99     out=[0]*n
+ 100     for k,v in enumerate(order):
+ 101         last=(x[v]+t*signs[(k-1)%n]*last)%p
+ 102         out[v]=last
+ 103     return out
+ 104 
+ 105 
+ 106 def matvec(a,x,p):
+ 107     return [sum(u*v for u,v in zip(r,x))%p for r in a]
+ 108 
+ 109 
+ 110 def apply_fft_escape(x,z,p,ledger):
+ 111     N=len(x)
+ 112     if N==1:
+ 113         return x[:]
+ 114     if N==2:
+ 115         ledger['arithmetic']+=2
+ 116         return [(x[0]+x[1])%p,(x[0]-x[1])%p]
+ 117     n=N//2; half=pow(2,-1,p); t=pow(2,-1,p)
+ 118     order=list(range(n)); signs=[1]*(n-1)+[-1]
+ 119     assert pow(t,N,p)!=1
+ 120     def C(v,negative=False):
+ 121         g=green_scan(order,signs,t,v,p)
+ 122         h=green_scan(order,signs,-t%p,v,p)
+ 123         ledger['green_applications']+=2
+ 124         ledger['arithmetic']+=9*n+2
+ 125         return [((b-a) if negative else (a-b))%p for a,b in zip(g,h)]
+ 126     def Cinv(v,scalar=1):
+ 127         # Each output uses two signed permuted inputs and two scalar multiplies.
+ 128         out=[0]*n
+ 129         c1=scalar*pow(2*t%p,-1,p)%p; c2=-scalar*t*half%p
+ 130         for k,src in enumerate(order):
+ 131             nxt=order[(k+1)%n]; prev=order[(k-1)%n]
+ 132             out[src]=(c1*signs[k]*v[nxt]+c2*signs[(k-1)%n]*v[prev])%p
+ 133         ledger['signed_permutation_passes']+=2
+ 134         ledger['arithmetic']+=3*n
+ 135         return out
+ 136     u=[(x[j]+x[j+n])*half%p for j in range(n)]
+ 137     v=[(x[j]-x[j+n])*half%p for j in range(n)]
+ 138     ledger['arithmetic']+=4*n
+ 139     v=[pow(z,j,p)*v[j]%p for j in range(n)]
+ 140     ledger['arithmetic']+=n
+ 141     u=apply_fft_escape(u,z*z%p,p,ledger)
+ 142     v=apply_fft_escape(v,z*z%p,p,ledger)
+ 143     u=[2*a%p for a in u]; ledger['arithmetic']+=n
+ 144     v=Cinv(v)
+ 145     b=Cinv(u,-half)
+ 146     v=[(a+b)%p for a,b in zip(v,b)]; ledger['arithmetic']+=n
+ 147     a=C(v)
+ 148     u=[(a+b)%p for a,b in zip(u,a)]; ledger['arithmetic']+=n
+ 149     v=C(v,negative=True)
+ 150     out=[0]*N
+ 151     for j in range(n):
+ 152         out[2*j]=(u[j]+v[j])%p
+ 153         out[2*j+1]=(u[j]-v[j])%p
+ 154     ledger['arithmetic']+=2*n
+ 155     ledger['output_permutation_words']+=N
+ 156     return out
+ 157 
+ 158 
+ 159 def main():
+ 160     for prime in (998244353,2013265921):
+ 161         assert all(prime%d for d in range(2,math.isqrt(prime)+1))
+ 162     records=[]; vector_records=[]; all_size_records=[]
+ 163     for p,generator in ((998244353,3),(2013265921,31)):
+ 164         for N in (4,8,16,32,64):
+ 165             n=N//2; I=eye(n,p); Z=zero(n); half=pow(2,-1,p)
+ 166             z=pow(generator,(p-1)//N,p)
+ 167             assert pow(z,N,p)==1 and pow(z,N//2,p)==p-1
+ 168             F=[[pow(z,i*j,p) for j in range(N)] for i in range(N)]
+ 169             E=block(I,I,I,scale(I,-1,p)); Einv=scale(E,half,p)
+ 170             raw=mul(mul(Einv,F,p),E,p)
+ 171             blocks=[ [r[j:j+n] for r in raw[i:i+n]] for i,j in ((0,0),(0,n),(n,0),(n,n)) ]
+ 172             ranks=[rank(a,p) for a in blocks]
+ 173             assert ranks==[n//2]*4
+ 174             parity=list(range(0,N,2))+list(range(1,N,2))
+ 175             shuffled=mul(mul(Einv,[F[i] for i in parity],p),E,p)
+ 176             f=[[pow(z,2*i*j,p) for j in range(n)] for i in range(n)]
+ 177             d=[[int(i==j)*pow(z,j,p)%p for j in range(n)] for i in range(n)]
+ 178             fd=mul(f,d,p)
+ 179             assert shuffled==block(f,fd,f,scale(fd,-1,p))
+ 180             H=block(I,I,I,scale(I,-1,p))
+ 181             for variant in range(3):
+ 182                 T,order,signs=signed_cycle(n,p,variant)
+ 183                 Ti=transpose(T)
+ 184                 assert mul(T,Ti,p)==I
+ 185                 for denom in (2,3):
+ 186                     t=pow(denom,-1,p)
+ 187                     assert pow(t,N,p)!=1
+ 188                     Gp=inverse(add(I,scale(T,-t,p),p),p)
+ 189                     Gm=inverse(add(I,scale(T,t,p),p),p)
+ 190                     C=add(Gp,scale(Gm,-1,p),p)
+ 191                     Ci=scale(add(Ti,scale(T,-t*t%p,p),p),pow(2*t%p,-1,p),p)
+ 192                     assert mul(C,Ci,p)==I and mul(Ci,C,p)==I
+ 193                     C2=mul(C,C,p); CCt=mul(C,transpose(C),p)
+ 194                     if n>=4: assert off_diagonal_count(C2)>0
+ 195                     else: assert off_diagonal_count(C2)==0
+ 196                     if n>=8: assert off_diagonal_count(CCt)>0
+ 197                     else: assert off_diagonal_count(CCt)==0
+ 198                     B=scale(Ci,-half,p)
+ 199                     S=mul(block(I,C,Z,I),block(I,Z,B,I),p)
+ 200                     assert S==block(scale(I,half,p),C,B,I)
+ 201                     L=block(I,Z,Z,scale(C,-1,p))
+ 202                     R=block(scale(I,2,p),Z,Z,Ci)
+ 203                     assert mul(mul(L,S,p),R,p)==H
+ 204                     full=mul(mul(mul(L,S,p),R,p),block(f,Z,Z,fd),p)
+ 205                     assert full==shuffled
+ 206                     # Same-kernel mask family: AB = Da C^2 Db remains non-diagonal.
+ 207                     aa=[i+2 for i in range(n)]; bb=[2*i+3 for i in range(n)]
+ 208                     AB=[[aa[i]*C2[i][j]*bb[j]%p for j in range(n)] for i in range(n)]
+ 209                     if n>=4: assert off_diagonal_count(AB)>0
+ 210                     x=[(i*i+7*i+11)%p for i in range(n)]
+ 211                     assert green_scan(order,signs,t,x,p)==matvec(Gp,x,p)
+ 212                     records.append({'prime':p,'N':N,'route_variant':variant,'pole_denominator':denom,
+ 213                         'raw_Fourier_sector_ranks':ranks,'C_squared_offdiagonal_entries':off_diagonal_count(C2),
+ 214                         'C_Ctranspose_offdiagonal_entries':off_diagonal_count(CCt),
+ 215                         'inverse_kernel_identity':True,'normalized_full_Fourier_identity':True})
+ 216         for N in (1,2,4,8,16,32,64,128,256):
+ 217             z=pow(generator,(p-1)//N,p)
+ 218             rng=random.Random(14471+N)
+ 219             x=[rng.randrange(p) for _ in range(N)]
+ 220             ledger={'arithmetic':0,'green_applications':0,'signed_permutation_passes':0,'output_permutation_words':0}
+ 221             y=apply_fft_escape(x,z,p,ledger)
+ 222             assert y==[sum(pow(z,i*j,p)*x[j] for j in range(N))%p for i in range(N)]
+ 223             if N>=2:
+ 224                 assert ledger['arithmetic']==17*N*(N.bit_length()-1)-14*N-4
+ 225             vector_records.append({'prime':p,'N':N,'exact_seeded_vector_pass':True,**ledger})
+ 226     for p,generator,sizes in ((998244353,3,(7,14,17)),(2013265921,31,(3,5,6,10,12,15))):
+ 227         for N in sizes:
+ 228             M=1
+ 229             while M<2*N-1: M*=2
+ 230             eta=pow(generator,(p-1)//(2*N),p)
+ 231             assert pow(eta,N,p)==p-1
+ 232             z=eta*eta%p
+ 233             assert pow(z,N,p)==1 and all(pow(z,d,p)!=1 for d in range(1,N))
+ 234             w=pow(generator,(p-1)//M,p)
+ 235             x=[(7*j*j+9*j+31)%p for j in range(N)]
+ 236             a=[0]*M; b=[0]*M
+ 237             for j in range(N):
+ 238                 a[j]=x[j]*pow(eta,j*j,p)%p
+ 239             for j in range(-(N-1),N):
+ 240                 b[j%M]=pow(eta,(-j*j)%(2*N),p)
+ 241             ledger={'arithmetic':0,'green_applications':0,'signed_permutation_passes':0,'output_permutation_words':0}
+ 242             aa=apply_fft_escape(a,w,p,ledger); bb=apply_fft_escape(b,w,p,ledger)
+ 243             product=[u*v%p for u,v in zip(aa,bb)]
+ 244             forward=apply_fft_escape(product,w,p,ledger)
+ 245             conv=[forward[-j%M]*pow(M,-1,p)%p for j in range(M)]
+ 246             y=[pow(eta,j*j,p)*conv[j]%p for j in range(N)]
+ 247             expected=[sum(pow(z,i*j,p)*x[j] for j in range(N))%p for i in range(N)]
+ 248             assert y==expected
+ 249             arithmetic=ledger['arithmetic']+2*M+2*N
+ 250             assert arithmetic==3*(17*M*(M.bit_length()-1)-14*M-4)+2*M+2*N
+ 251             all_size_records.append({'prime':p,'N':N,'convolution_length':M,
+ 252                                      'three_FFTs_including_kernel_spectrum_charged':True,
+ 253                                      'exact_non_dyadic_vector_pass':True,'arithmetic_upper_bound':arithmetic})
+ 254     out={'status':'PASS','scope':'Exact finite controls supporting the separate uniform algebraic proof; no asymptotic speedup claimed.',
+ 255          'source_programs_executed_or_imported':False,'matrix_instances':len(records),'matrix_controls':records,
+ 256          'vector_controls':vector_records,'all_size_controls':all_size_records,'checker_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+ 257     (HERE/'EXACT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+ 258     print(json.dumps({'status':'PASS','matrix_instances':len(records),'vector_instances':len(vector_records),'non_dyadic_instances':len(all_size_records)}))
+ 259 
+ 260 if __name__=='__main__':
+ 261     main()

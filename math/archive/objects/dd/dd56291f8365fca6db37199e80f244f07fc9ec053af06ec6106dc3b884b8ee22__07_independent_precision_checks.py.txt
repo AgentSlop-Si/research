@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""Fresh independent numerical controls. Uploaded programs are never imported/run.
+mpmath is used only as a high-precision reference / arithmetic simulator; it is
+not represented as a rigorously outward-rounded interval certificate.
+"""
+import json, math
+from pathlib import Path
+import mpmath as mp
+mp.mp.dps = 110
+HERE=Path(__file__).resolve().parent
+SOURCE=HERE/'SOURCE_RESULT_SUMMARY.json'
+
+def q_for(n): return 1 << (n-1).bit_length()
+def grid(n):
+    q=q_for(n)
+    js=[(2*k*q+n)//(2*n) for k in range(n)]
+    return q,js,[k*q-j*n for k,j in enumerate(js)]
+def bound(R,z):
+    a=abs(z)/2
+    if not a: return mp.mpf(0)
+    if a>=R+1: return mp.inf
+    return 2*mp.exp(a*a/(R+1))*a**R/mp.factorial(R)/(1-a/(R+1))
+def B(z): return 1+2*mp.exp(z*z/8)*mp.expm1(z/2)
+def rank(n,target,centered):
+    z=mp.pi*(n-1)/q_for(n)/(2 if centered else 1)
+    return next(r for r in range(1,300) if bound(r,z)<=target)
+def choose(n,M,target):
+    q=q_for(n); z=mp.pi*(n-1)/(2*q); d=mp.pi*(M-1)/q; K=q//M
+    best=None
+    for R in range(1,50):
+        for H in range(12):
+            e=bound(R,z)+B(z)*bound(H+1,d)
+            proxy=(2*H+1)*q+(2*H+1)*R*K+R*(q+K*max(1,(K.bit_length()-1))+n)+n
+            if e<=target and (best is None or proxy<best['proxy']):
+                best={'R':R,'H':H,'bound':e,'proxy':proxy}
+    return best
+
+def round_real(x,p):
+    if not x:return mp.mpf(0)
+    a,e=mp.frexp(x)
+    return mp.ldexp(mp.nint(mp.ldexp(a,p)),e-p)
+def rnd(z,p): return mp.mpc(round_real(mp.re(z),p),round_real(mp.im(z),p))
+def multiply(a,b,p):
+    # Explicit four rounded real products and two rounded additions.
+    ar,ai,br,bi=map(mp.mpf,(mp.re(a),mp.im(a),mp.re(b),mp.im(b)))
+    re=round_real(round_real(ar*br,p)-round_real(ai*bi,p),p)
+    im=round_real(round_real(ar*bi,p)+round_real(ai*br,p),p)
+    return mp.mpc(re,im)
+def terms_for(p,divisor=128):
+    eta=mp.power(2,-p)/divisor
+    L=1
+    while mp.pi**L/mp.factorial(L)>eta: L+=1
+    return L
+
+def taylor_exp(angle,L,p):
+    # Input angle already correctly rounded at p bits by caller.
+    term=mp.mpc(1); total=term
+    for j in range(1,L):
+        term=multiply(term,mp.mpc(0,angle),p)
+        term=mp.mpc(round_real(term.real/j,p),round_real(term.imag/j,p))
+        total=rnd(total+term,p)
+    return total
+
+def reanchored(n,p):
+    q,js,rs=grid(n); c=mp.mpf(n-1)/(2*q)
+    B0=terms_for(p); Lg=terms_for(p,128*B0)
+    workp=p+math.ceil(math.log2((1<<18)*B0*(Lg+1)))
+    # A real implementation supplies a certified rational pi interval of this
+    # width. This checker deliberately isolates arithmetic from pi setup.
+    pi_hat=round_real(mp.pi,workp)
+    roots={}
+    for d in (1,2):
+        ang=round_real(-2*pi_hat*c*(mp.mpf(q-d*n)/n),workp)
+        roots[d]=taylor_exp(ang,Lg,workp)
+    out=[]
+    for start in range(0,n,B0):
+        ang=round_real(-pi_hat*(n-1)*rs[start]/(q*n),workp)
+        y=taylor_exp(ang,B0,workp)
+        out.append(y)
+        for k in range(start+1,min(n,start+B0)):
+            y=multiply(y,roots[js[k]-js[k-1]],workp)
+            out.append(y)
+    err=max(abs(y-mp.exp(-1j*mp.pi*(n-1)*r/(q*n))) for y,r in zip(out,rs))
+    return {'N':n,'target_bits':p,'B':B0,'root_terms':Lg,'working_bits':workp,
+            'max_error':float(err),'error_over_target':float(err*mp.power(2,p))}
+
+def bessel_series(m,z,L):
+    lead=(z/2)**m/mp.factorial(m); term=mp.mpf(1); total=term
+    for j in range(1,L):
+        term *= -(z*z/4)/(j*(m+j)); total +=term
+    return lead*total
+
+def main():
+    results={'provenance':'Fresh code, no imports/execution of uploaded code. High precision checks support, do not replace, accompanying proofs.'}
+    saved=json.loads(SOURCE.read_text())
+    ranks=[]
+    for row in saved['rank_table']:
+        n=row['N']; tol=mp.mpf(str(row['target_tail']))
+        old,new=rank(n,tol,False),rank(n,tol,True)
+        assert old==row['uncentered_rank'] and new==row['centered_rank']
+        ranks.append({'N':n,'target':str(tol),'old':old,'new':new})
+    results['rank_checks']=ranks
+    choices=[]
+    for row in saved['parameter_choices']:
+        s=row['v12']; r=choose(s['n'],s['block'],mp.mpf(str(s['target'])))
+        assert (r['R'],r['H'],r['proxy'])==(s['rank'],s['halfwidth'],s['work_proxy'])
+        assert abs(r['bound']-s['deterministic_error_bound'])<mp.mpf('1e-15')*max(1,r['bound'])
+        choices.append({'N':s['n'],'target':s['target'],'R':r['R'],'H':r['H'],'bound':float(r['bound']),'proxy':r['proxy']})
+    results['parameter_checks']=choices
+    results['source_centered_envelope']=mp.nstr(B(mp.pi/2),50)
+    results['centered_envelope']=mp.nstr(2*mp.exp(mp.pi/4)-1,50)
+    # Exact integer grid and high precision carrier identity on all small sizes.
+    max_phase=mp.mpf(0); transitions=0
+    for n in range(1,258):
+        q,js,rs=grid(n); c=mp.mpf(n-1)/(2*q)
+        assert all(2*abs(r)<=n for r in rs)
+        for k in range(n-1):
+            d=js[k+1]-js[k]; assert d in (1,2)
+            ratio=mp.exp(-2j*mp.pi*c*mp.mpf(q-d*n)/n)
+            lhs=mp.exp(-2j*mp.pi*c*mp.mpf(rs[k+1])/n)
+            rhs=mp.exp(-2j*mp.pi*c*mp.mpf(rs[k])/n)*ratio
+            max_phase=max(max_phase,abs(lhs-rhs)); transitions+=1
+    results['carrier_identity']={'lengths':257,'transitions':transitions,'max_error':float(max_phase)}
+    # An admissible relative-error model shows that logarithmic tree depth is
+    # insufficient. Identical signed local perturbations accumulate at every node.
+    stress=[]
+    for p in (24,53,80):
+        delta=mp.power(2,-p)
+        for k in (16,256,4096,65536):
+            arithmetic=abs(mp.exp(1j*(k-1)*delta)-1)
+            leaves=abs(mp.exp(1j*k*delta)-1)
+            assert arithmetic >= mp.mpf('0.99')*(k-1)*delta
+            assert leaves >= mp.mpf('0.99')*k*delta
+            stress.append({'p':p,'leaves':k,'tree_depth':int(math.log2(k)),
+                           'arithmetic_error_over_u':float(arithmetic/delta),
+                           'root_error_over_u':float(leaves/delta)})
+    results['adversarial_product_model']=stress
+    repairs=[]
+    for p in (24,53,80):
+        for n in (37,257,1025,4095):
+            r=reanchored(n,p); assert r['error_over_target']<1; repairs.append(r)
+    results['reanchored_rounding_controls']=repairs
+    # Factorial Bessel construction, including negative arguments and tiny modes.
+    target=mp.power(2,-80); a=mp.pi/4
+    L=1
+    while mp.exp(a*a)*a**(2*L)/mp.factorial(L)**2>target/16:L+=1
+    checks=0; maxerr=mp.mpf(0); maxratio=mp.mpf(0)
+    zs=[mp.mpf(0),mp.pi/2,-mp.pi/2,mp.pi/7,-mp.pi/7,mp.pi/(2**10),-mp.pi/(2**30)]
+    for m in range(41):
+        maj=mp.mpf(1) if m==0 else (mp.pi/4)**m/mp.factorial(m)
+        for z in zs:
+            e=abs(bessel_series(m,z,L)-mp.besselj(m,z))
+            maxerr=max(maxerr,e);maxratio=max(maxratio,e/(target*maj));checks+=1
+            assert e<=target*maj
+    results['factorial_series']={'checks':checks,'terms':L,'target_bits':80,'max_absolute_error':float(maxerr),'max_majorized_error_over_target':float(maxratio)}
+    # Convolution of symmetric uniform majorants has exactly B * Lambda mass.
+    convolution=[]
+    for H in (0,1,2,4):
+        D=mp.pi/16
+        def m(r): return mp.mpf(1) if r==0 else (mp.pi/4)**abs(r)/mp.factorial(abs(r))
+        def ell(h): return mp.mpf(1) if h==0 else (D/2)**abs(h)/mp.factorial(abs(h))
+        lam=sum(ell(h) for h in range(-H,H+1))
+        mass=sum((1 if r==0 else 2)*sum(m(r-h)*ell(h) for h in range(-H,H+1)) for r in range(100))
+        Buniform=2*mp.exp(mp.pi/4)-1
+        rel=abs(mass-Buniform*lam)/(Buniform*lam)
+        assert rel<mp.mpf('1e-105')
+        convolution.append({'H':H,'mass':float(mass),'relative_discrepancy':float(rel)})
+    results['symmetric_envelope_mass']=convolution
+    # A small centered positive argument is already more unstable for the
+    # forward order recurrence than the uncentered pi/K mode.
+    amps=[]
+    for N,M,R in ((511,8,11),(4095,8,14),(65535,16,19)):
+        q=q_for(N)
+        zvals=[abs(mp.pi*mp.mpf(2*b*M-(N-1))/(2*q)) for b in range((N+M-1)//M)]
+        z=min(z for z in zvals if z>0)
+        e0,e1=mp.mpf(0),mp.mpf(1)
+        for r in range(1,R): e0,e1=e1,(2*r/z)*e1-e0
+        lower=mp.factorial(R-1)/z**(R-1)
+        assert e1>=lower
+        amps.append({'N':N,'M':M,'R':R,'minimum_nonzero_abs_z':float(z),'extra_seed_bits_lower_bound':float(mp.log(lower,2)),'actual_log2_amplification':float(mp.log(abs(e1),2))})
+    results['forward_bessel_recurrence_stress']=amps
+    (HERE/'CHECK_RESULTS.json').write_text(json.dumps(results,indent=2)+'\n')
+    print(json.dumps({'status':'PASS','rank_cases':len(ranks),'parameter_cases':len(choices),'carrier_identity':results['carrier_identity'],
+      'adversarial_models':len(stress),'reanchored_cases':len(repairs),'worst_reanchored_target_ratio':max(r['error_over_target'] for r in repairs),
+      'bessel_checks':checks,'factorial_terms':L,'envelope':results['centered_envelope'],'forward_amplification':amps},indent=2))
+if __name__=='__main__':main()

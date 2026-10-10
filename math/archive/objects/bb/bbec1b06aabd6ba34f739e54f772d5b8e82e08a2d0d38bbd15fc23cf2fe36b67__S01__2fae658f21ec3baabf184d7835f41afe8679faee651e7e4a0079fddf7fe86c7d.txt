@@ -1,0 +1,108 @@
+   1 """Independent test of Fourier rectangle optimization.
+   2 
+   3 For n <= 6 enumerate ALL row/column subset rectangles, impose rank-1 by
+   4 modular 2x2 minors (not using phase7.rank_one_rectangle), solve exact-cover
+   5 MILP and compare to predicted n min_{d|n}(d+n/d). In addition run independent
+   6 field-arithmetic full transforms using direct reference for a broad list n.
+   7 """
+   8 from __future__ import annotations
+   9 import json
+  10 import random
+  11 import time
+  12 from pathlib import Path
+  13 from scipy.optimize import milp, Bounds, LinearConstraint
+  14 from scipy.sparse import lil_matrix
+  15 from phase7 import test_field, divisors, optimal_tile_cost, one_pass_tiled_dft, shared_two_axis_dft
+  16 
+  17 
+  18 def independent_rankone(I,J,n):
+  19     # Integer modulus identity is equivalent to a vanishing 2x2 Fourier minor.
+  20     for a in I:
+  21         for b in I:
+  22             for c in J:
+  23                 for d in J:
+  24                     if ((a-b)*(c-d))%n:
+  25                         return False
+  26     return True
+  27 
+  28 
+  29 def exact_cover_optimum(n):
+  30     subsets=[tuple(k for k in range(n) if mask>>k&1) for mask in range(1,1<<n)]
+  31     options=[]
+  32     for I in subsets:
+  33         for J in subsets:
+  34             if independent_rankone(I,J,n):
+  35                 options.append((I,J))
+  36     obj=[len(I)+len(J) for I,J in options]
+  37     M=lil_matrix((n*n,len(options)),dtype=float)
+  38     for idx,(I,J) in enumerate(options):
+  39         for k in I:
+  40             for j in J:
+  41                 M[k*n+j,idx]=1
+  42     lin=LinearConstraint(M.tocsr(),[1]*(n*n),[1]*(n*n))
+  43     result=milp(c=obj,integrality=[1]*len(options),bounds=Bounds(0,1),constraints=lin,
+  44                 options={'time_limit':80,'mip_rel_gap':0.0})
+  45     if result.status != 0 or result.mip_gap > 1e-9:
+  46         raise AssertionError((n,'not certified optimal',result.status,result.message, result.mip_gap))
+  47     active=[idx for idx,v in enumerate(result.x) if v>=0.5]
+  48     chosen=[options[idx] for idx in active]
+  49     cost=round(result.fun)
+  50     assert sum(len(I)+len(J) for I,J in chosen)==cost
+  51     assert cost == optimal_tile_cost(n), (n,cost,optimal_tile_cost(n))
+  52     assert len(active)>=n
+  53     return {'n':n,'candidate_rectangles':len(options),'optimal_cost':cost,
+  54             'analytical_cost':optimal_tile_cost(n),'selected_blocks':len(active),
+  55             'solver_status':'global optimum (MILP optimality certificate)'}
+  56 
+  57 
+  58 def independent_direct(x,w,p):
+  59     n=len(x); y=[]
+  60     for k in range(n):
+  61         a=0
+  62         for j in range(n):
+  63             a=(a+x[j]*pow(w,(-k*j)%n,p))%p
+  64         y.append(a)
+  65     return y
+  66 
+  67 
+  68 def audit():
+  69     t0=time.monotonic()
+  70     results={'exact_cover':[], 'independent_dft':[], 'two_axis':[],
+  71              'status':'passed','description':'independent exhaustive rank-one exact cover and exact field DFT'}
+  72     for n in range(2,7):
+  73         results['exact_cover'].append(exact_cover_optimum(n))
+  74     rng=random.Random(170017)
+  75     coefficients=0
+  76     for n in (2,3,4,5,6,7,8,9,10,12,15,16,18,20,21,24,25,27,28,30,32,36,40,48,49,60,63,64,72,81,96,100,120,128,144,180,196,225,256):
+  77         p,w=test_field(n)
+  78         passes=0
+  79         for trial in range(2 if n <= 100 else 1):
+  80             x=[rng.randrange(p) for _ in range(n)]
+  81             actual,ledger=one_pass_tiled_dft(x,p,w)
+  82             reference=independent_direct(x,w,p)
+  83             assert actual==reference, (n,trial)
+  84             assert ledger.muls==n*min(d+n//d for d in divisors(n))
+  85             assert ledger.adds==ledger.muls-n
+  86             passes+=1
+  87             coefficients+=n
+  88         results['independent_dft'].append({'n':n,'prime_field':p,'runs':passes,'multiplications':ledger.muls})
+  89     for n in (4,8,16,32,64,128,256,512):
+  90         p,w=test_field(n)
+  91         x=[rng.randrange(p) for _ in range(n)]
+  92         out,ledger=shared_two_axis_dft(x,p,w)
+  93         assert out == independent_direct(x,w,p)
+  94         assert ledger.butterflies==n*(n.bit_length()-1)//2
+  95         results['two_axis'].append({'n':n,'butterflies':ledger.butterflies,
+  96                                     'scalar_muls':ledger.muls,'root_muls':ledger.root_muls})
+  97         coefficients+=n
+  98     results['coefficients_independently_checked']=coefficients
+  99     results['elapsed_seconds']=round(time.monotonic()-t0,3)
+ 100     return results
+ 101 
+ 102 
+ 103 if __name__=='__main__':
+ 104     result=audit()
+ 105     path=Path(__file__).with_name('AUDIT_RESULTS.json')
+ 106     path.write_text(json.dumps(result,indent=2)+'\n')
+ 107     print(json.dumps({k:(len(v) if isinstance(v,list) else v) for k,v in result.items()}, indent=2))
+ 108     print('small-n MILP optima:',result['exact_cover'])

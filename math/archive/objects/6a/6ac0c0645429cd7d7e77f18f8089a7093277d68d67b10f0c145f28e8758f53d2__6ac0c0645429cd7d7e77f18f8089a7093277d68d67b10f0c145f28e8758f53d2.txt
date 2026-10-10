@@ -1,0 +1,101 @@
+"""Phase 16: explicit O(N)-gate unitary compilation of path Green Cayleys.
+
+Given U unitary with rank-1 strict lower semiseparable structure
+U[i,j] = u[i]*v[j] for i>j, a bottom-up sweep annihilates all
+entries below the first subdiagonal; an ordinary unitary Hessenberg
+sweep then diagonalizes U. At most 2N-3 two-coordinate unitary gates.
+
+Checkpoints use dense matrices only for an independent *verification*,
+not as the proposed execution algorithm or coefficient-preparation proof.
+The structural theorem relies on tridiagonal inverse Green formulas.
+"""
+import json
+import numpy as np
+
+
+def complex_givens_to_zero_lower(a,b):
+    norm=np.hypot(abs(a),abs(b))
+    if norm<1e-14:
+        return np.eye(2,dtype=complex)
+    return np.array([[np.conj(a), np.conj(b)],[-b, a]],complex)/norm
+
+
+def compile_semiseparable_unitary(matrix, tolerance=1e-9):
+    A=np.array(matrix,dtype=complex,copy=True)
+    n=A.shape[0]
+    assert A.shape==(n,n)
+    err=float(np.linalg.norm(A@A.conj().T-np.eye(n),ord=np.inf))
+    assert err<tolerance,(n,err)
+    moves=[]
+
+    def eliminate(p,q,col):
+        G=complex_givens_to_zero_lower(A[p,col],A[q,col])
+        A[[p,q],:]=G @ A[[p,q],:]
+        moves.append((p,q,G))
+        assert abs(A[q,col])<tolerance
+
+    # Use the nearest shared column k-2 to avoid exponentially tiny
+    # first-column entries of a diagonally dominant Green function.
+    # Transform any strict-lower rank-one-semiseparable unitary U
+    # into a unitary upper Hessenberg matrix.
+    for k in range(n-1,1,-1):
+        eliminate(k-1,k,k-2)
+    below_hess=np.tril(A,-2)
+    max_hess=float(np.max(np.abs(below_hess))) if n>2 else 0.
+    if max_hess>=tolerance:
+        raise ValueError(f'not strict lower semiseparable rank 1, below Hessenberg={max_hess}')
+
+    for j in range(n-1):
+        eliminate(j,j+1,j)
+    max_off=float(np.max(np.abs(A-np.diag(np.diag(A)))))
+    assert max_off<tolerance,(n,'not diagonal',max_off)
+    D=np.diag(A)
+    assert max(abs(np.abs(D)-1))<tolerance
+    assert len(moves)<=2*n-3
+    return moves,D,dict(n=n,givens=len(moves),
+          hessenberg_error=max_hess,diagonal_error=max_off,
+          unitarity_error=err)
+
+
+def apply_compiled(moves,diagonal,x):
+    v=np.asarray(x,dtype=complex)*diagonal
+    for p,q,G in reversed(moves):
+        v[[p,q]]=G.conj().T@v[[p,q]]
+    return v
+
+
+def path_cayley_matrix(n,alpha,weights=None):
+    if weights is None: weights=np.ones(n-1)
+    A=np.diag(weights,k=1)+np.diag(weights,k=-1)
+    I=np.eye(n)
+    return (I+1j*alpha*A)@np.linalg.inv(I-1j*alpha*A)
+
+
+def lower_rank_one_audit(A,tolerance=1e-8):
+    n=len(A);max_minor=0.
+    # Every full rectangle below an index cut has rank <=1.
+    for k in range(1,n):
+        B=A[k:,:k]
+        s=np.linalg.svd(B,compute_uv=False)
+        max_minor=max(max_minor,float(s[1]) if len(s)>1 else 0.)
+    assert max_minor<tolerance,(n,max_minor)
+    return max_minor
+
+
+def validate(n,alpha,seed=1616):
+    rng=np.random.default_rng(seed+n)
+    weights=rng.uniform(.4,1.5,size=n-1)
+    U=path_cayley_matrix(n,alpha,weights)
+    minor=lower_rank_one_audit(U)
+    moves,D,stats=compile_semiseparable_unitary(U)
+    x=rng.normal(size=n)+1j*rng.normal(size=n)
+    calculated=apply_compiled(moves,D,x)
+    err=float(np.max(np.abs(calculated-U@x)))
+    assert err<1e-8, (n,alpha,err)
+    stats.update(alpha=alpha,lower_rank_one_error=minor,reconstruction_error=err)
+    return stats
+
+if __name__=='__main__':
+    for alpha in [1/32,.5,2.0]:
+        for n in [4,8,16,32,64,128]:
+            print(json.dumps(validate(n,alpha)))

@@ -1,0 +1,163 @@
+# Independent audit and completion of the packed approximate-output argument
+
+9 October 2026. This is a new model-specific algorithm/proof assembled during the audit, with the packing step proved rather than assumed. It is NOT a theorem contained in the uploaded checkpoint, NOT an exact Fourier algorithm, and NOT a novelty claim. The key tiled-transpose construction is independently verified here, together with explicit model, randomness, preprocessing, and output-error details.
+
+## 1. Precise qualified result
+
+Fix constants 0<epsilon<1, integer c>=1, input-width exponent C>=0, and 0<gamma<1. The input consists of N complex numbers whose real and imaginary components are signed integers of magnitude at most N^C. A common word-encoded dyadic or bounded-width rational fixed-point input scale is also allowed, by scaling the output and guarantee uniformly. An arbitrary exact-real scaling oracle is not assumed. Let
+
+    L = sum_j (|Re x_j|+|Im x_j|).
+
+Use a randomized word RAM with word size w=K ceil(log2(N+2)), for a sufficiently large fixed K depending on C and the constant-width output format. Allow ordinary word addition/subtraction, comparisons, Boolean operations, shifts, multiplication, and random uniform words. Integer division may be included, but is not essential: the few fixed divisors used online have precomputed reciprocal quotients with constant-time correction. Inputs, addresses, and charged tables occupy O(N) words. No arbitrary-size integer is a unit-cost word.
+
+There is a uniform algorithm in this model which, for every such fresh input, explicitly writes all N approximate complex outputs in O_epsilon,c,C(N) word operations and O_epsilon,c,C(N) words, including all tables and input-dependent preprocessing, with
+
+    Pr[ max_m |output_m-(U_N x)_m| > epsilon L/sqrt(N) ] <= N^(-c).
+
+Hence the guarantee also satisfies any requested delta>=N^(-c). Here U_N is the unitary Fourier matrix, with either exponent convention handled consistently. All N output coordinates are separately materialized; a shared binary fixed-point exponent is ordinary output formatting, not a compressed transform oracle.
+
+The statement is asymptotic with constants depending on fixed accuracy, failure exponent, and input width. Its threshold/constants can be enormous. It is not an empirical claim of practical speed. It does not cover arbitrary exact real/complex inputs, exact Fourier outputs, relative per-coefficient error, epsilon vanishing with N without reanalysis, or superpolynomially small delta.
+
+## 2. Exact signed-atom sampling and its cost
+
+If L=0, return all zeros. Otherwise form n=2N nonnegative integer masses: the magnitudes of each real and imaginary coordinate. Each has an associated coordinate and one of the phases +1,-1,+i,-i (zero masses have no effect).
+
+The classical alias construction can be specified entirely with integers: start with scaled masses v_i=n m_i and common denominator L. Maintain lists v_i<L and v_i>=L. Pop a small s and large l, record threshold v_s and alias l, replace v_l by v_l-(L-v_s), and reclassify l. Remaining entries have threshold L and can alias themselves. At most n-1 pairings occur. Every intermediate integer is bounded by O(n max_i m_i+L)=N^O(1), hence by one word after choosing K large enough. This is O(N) time and space with every input read.
+
+A sample uses independent uniform I in {0,...,n-1} and R in {0,...,L-1}, then chooses I if R<threshold[I], otherwise alias[I]. This gives exactly mass_i/L. A uniform bounded integer uses random bits truncated to the smallest power-of-two interval covering the bound and rejects the excess; each attempt succeeds with probability at least 1/2.
+
+Set a desired sample count
+
+    k_min = ceil(64 epsilon^(-2) [(c+1) ln N + ln 8]).
+
+The final k below is between k_min and 2k_min+O(g), hence Theta(log N). Cap each of the 2k bounded-integer draws at
+
+    T = ceil(log2(4 k N^c))
+
+attempts. Probability that any draw fails is at most N^(-c)/2. On a failure the algorithm may output zeros and count that run as a failed approximation. Conditional on all draws succeeding, accepted samples are still independent and have the exact desired distribution. The total worst-case capped sampling work is O(kT)=O(log^2 N)=O(N), rather than an unbounded rejection loop.
+
+For atom samples A_l, y=(L/k) sum_l A_l is unbiased. For each row m the normalized phasors Z_l have |Z_l|=1. A real/imaginary bounded-variable tail bound and a union over all rows give
+
+    Pr[ ||U_N y-U_N x||_infinity > epsilon_s L/sqrt(N) ]
+        <= 4N exp(-k epsilon_s^2/4).
+
+With epsilon_s=epsilon/4 and k>=k_min, this is at most N^(-c)/2. Combined with capped-sampler failure, total failure is at most N^(-c). The remainder of the decoder is deterministic.
+
+## 3. Descriptors, uniform phasor preparation, and first table
+
+Let q be a constant number of bits sufficient to encode one rounded complex point in the bounded square [-2,2]^2 at the first-level accuracy. It depends on epsilon, not N. This q is the lane-symbol width; it is NOT the atom-descriptor width.
+
+Choose B as a power of two of order w/q, small enough that qB<=w. For fixed epsilon, B=Theta(log N). Choose power-of-two phase grids Q0,Q1 with
+
+    Q0 >= 16 pi/epsilon,
+    Q1 >= 16 pi B/epsilon.
+
+Rounding a block-start phase to Q0 points and a slope to Q1 points introduces a total phase error at every lane t<B of at most
+
+    pi/Q0 + pi t/Q1 <= epsilon/8.
+
+An atom descriptor consists of the two grid indices. Its sign/quadrant phase is folded into the first grid index; Q0 is a multiple of four. Thus descriptor width d=log2(Q0)+log2(Q1)=Theta(log log N) for fixed epsilon.
+
+Take
+
+    g = floor(gamma log2 N/d),
+    G = the least power of two >= ceil(k_min/g),
+    k = gG.
+
+For all sufficiently large N, g>=1, k>=k_min, k=O(log N), G=Theta(log log N), and all needed fit conditions below hold. Resampling to k samples makes every group have the same size g. There is no unweighted-average error from a shorter final group.
+
+Table 1 has one entry for every dg-bit key, so at most 2^(dg)<=N^gamma entries. Each entry is the rounded B-lane average trajectory for those g descriptors and is packed into qB<=w bits, one word. Invalid component codes can be assigned arbitrary outputs; with the power-of-two phase grids every descriptor key itself is valid.
+
+Uniform build: all descriptor phases are rational multiples of 2pi with denominators dividing max(Q0,Q1)=O(B/epsilon). Prepare that many phasors to complex error at most epsilon/8. This uses O_epsilon(B) word work: round those phases to a sufficiently fine constant-size phase grid, and compute that grid's rational cosine/sine approximations by convergent elementary series at fixed epsilon-dependent accuracy. Such constants are generated and charged, not assumed to be an unbounded exact trig oracle. Alternatively a charged polylogarithmic-precision elementary routine is sufficient. In either case all scalar bit widths are O(log N), and all evaluation error is included here.
+
+For each table key, explicitly decode its g atoms, evaluate and sum each of its B trajectories, divide by g, and round to the first output grid. All this takes polylog(N) time per entry, even using a conservative bitwise division. Thus total first-table construction and storage are N^gamma polylog(N)=o(N) time and O(N^gamma) output words. Give the first grid enough precision that its complex rounding error is at most epsilon/8. Convex averaging preserves the phase and phasor-preparation error bounds.
+
+## 4. Second table
+
+Table 2 accepts a qG-bit key consisting of one first-level symbol from every group and returns a rounded mean of those G symbols. Because G=O(log log N), its number of entries is
+
+    2^(qG) = (log N)^O_epsilon,c(1).
+
+Brute-force construction in O(G) word work per entry is polylogarithmic in N, hence o(N). Rounding its complex result introduces error at most epsilon/8. Choose a constant output-symbol width sufficient for that precision. Invalid input codes are safely assigned arbitrary values and never queried by a valid table-1 output.
+
+## 5. The tiled packed transpose, with exact mask proof
+
+For one output block, the G first-table lookups produce G words, each holding B q-bit symbols. For all sufficiently large N,
+
+    qG^2 <= w and G divides B.
+
+Partition the B lanes into B/G chunks of G lanes each. For one chunk, extract its qG consecutive bits from every row word and concatenate the G slices into one word. This costs O(G) operations and yields a G-by-G matrix of q-bit symbols in row-major bit order. Its size is qG^2<=w.
+
+Write G=2^a. A symbol at row r and column s starts at bit q(rG+s). Transposing the square swaps address bits j and a+j for j=0,...,a-1 while leaving payload bits unchanged. For stage j define
+
+    D_j = q 2^j (G-1),
+
+and mask M_j selecting every payload bit in symbols whose row bit j is 0 and column bit j is 1. These are exactly the lower-address members of pairs whose addresses differ by D_j. The operation
+
+    t = ((z >> D_j) XOR z) AND M_j
+    z = z XOR t XOR (t << D_j)
+
+swaps both members of every such disjoint pair. All other bits stay unchanged. Applying every j exchanges the complete row and column address fields, hence produces the transpose. The operation uses O(log G) word operations. All masks are built once in O(qG^2 log G)=polyloglog(N) word work.
+
+After transposition, the G symbols for each lane occupy one contiguous qG-bit interval. Extract each interval in O(1), look it up in table 2 in O(1), and write its explicit output in O(1). This costs O(G) per chunk. Across B/G chunks, the cost is
+
+    O((B/G)(G+log G)) = O(B).
+
+There is no hidden O(BG) lane-key formation, no O(N log log N) transposition term, and no word larger than w bits in the claimed asymptotic regime.
+
+Independent executable verification, containing no uploaded imports, checked 30,030 bit-basis vectors, 900 random packed words, and 1,512 gathered lane keys across G in {1,2,4,8,16,32} and q in {1,2,3,4,5,7}. Every comparison with a separately coded unpack/transpose/repack oracle passed. Testing every bit basis proves the tested linear bit permutations exactly. See verify_packed_transpose.py and its JSON output. Cases whose qG^2 exceeds a particular physical word size are algebraic tests, not claims that those cases fit that physical word.
+
+## 6. Descriptor creation is also O(N)
+
+Maintain for every sampled coordinate j the exact residue u_j=j m0 mod N at the current block start m0, and an increment v_j=Bj mod N. Initially u_j=0. After a block update u_j=(u_j+v_j) mod N with at most one subtract, since both residues are below N.
+
+Increments can be prepared by O(log B) modular doublings per sampled j; total O(k log B)=polylog(N). Online block-start quantization rounds Q0 u_j/N; slope quantization rounds Q1 j/N and can be cached. These bounded-width fixed-divisor quotients use constant-time word division, or reciprocal multiplication with at most one correction. A reciprocal can be found once by bitwise long division in O(log N) word steps. Choose its precision above the largest numerator; multiplying its approximation underestimates the true quotient by less than one. Intermediate products are polynomial in N and fit within the selected constant factor K in w.
+
+Constructing all group keys by shifts/OR costs O(k) operations per block. There are ceil(N/B) blocks, and k=Theta(log N)=O(B), so this is O(N). Updating all residues is another O(N). The G table-1 accesses and subsequent tiled table-2 computation fit within the O(B) per-block bound. The final partial block is computed and only its remaining outputs written.
+
+## 7. Complete deterministic error and explicit output format
+
+Let f_m be the empirical mean of the sampled unit phasors, so |f_m|<=1 and (U y)_m=L f_m/sqrt(N). Four deterministic error sources each contribute at most epsilon/8 to the complex mean:
+
+1. accumulated block phase quantization;
+2. phasor/table constant approximation;
+3. first-level group rounding;
+4. second-level mean rounding.
+
+Their total is at most epsilon/2. Equal group sizes are essential to the mean identity. The computed mean fhat_m therefore satisfies |fhat_m-f_m|<=epsilon/2 and |fhat_m|<=1+epsilon/2.
+
+Reserve another epsilon/4 for final output scaling and rounding. This can be done without a free square-root primitive or a compressed symbolic output. Let a=ceil(log2(N)/2), so c_N=2^a/sqrt(N) lies in [1,2). Approximate c_N to absolute error epsilon/64 using a constant-accuracy binary search: comparisons of N v^2 with 2^(2a+2b) determine whether v/2^b is below or above c_N. The precision b depends only on epsilon, and every integer here has O(log N) bits. Thus the one-time work is O_epsilon(1) word operations (or a conservative polylogarithmic amount if needed for a chosen elementary implementation).
+
+Multiply each fhat by this rational approximation, and round to a fixed binary grid with complex error at most epsilon/64. Multiply the resulting signed integer numerators by L and use the common denominator 2^(a+b_out). Each complex output is now an explicit pair of O(log N)-bit integers with a shared binary scale. Since |fhat|<=3/2 and c_N>=1, the additional normalized complex error is less than (3/2+1)epsilon/64<epsilon/4. No exact irrational answer is asserted.
+
+On sampler success and concentration success, total error is at most
+
+    epsilon/4 (sampling) + epsilon/2 (decoder) + epsilon/4 (output)
+        = epsilon,
+
+times L/sqrt(N). This proves the stated all-output additive guarantee.
+
+## 8. Small sizes and asymptotic accounting
+
+The large-N construction requires g>=1, qG^2<=w, G<=B, table-2 keys fitting a word, and tables within the stated memory. For fixed epsilon,c,C,gamma all hold beyond a finite effectively determined threshold. Before that threshold use a directly evaluated approximate Fourier transform with sufficient charged fixed-point precision. Since this is a finite range depending only on fixed parameters, its worst cost is bounded by a parameter-dependent constant times N. This is a legitimate asymptotic fallback, but the possibly huge constant is a major practical limitation and must be disclosed.
+
+For large N, the fully charged costs are:
+
+- Read input, compute L, construct integer alias table: O(N).
+- First lookup-table build: N^gamma polylog(N)=o(N).
+- Second table and transpose masks: polylog(N)=o(N).
+- Bounded random sampling and initial residues: polylog(N)=o(N).
+- All descriptor keys and residue updates: O(N).
+- All table retrievals, tiled transposes, per-lane extraction, normalization, and N explicit outputs: O(N).
+
+Total O(N) time and O(N) words. There is no exact-output consequence, no claimed practical benchmark, and no asserted literature priority.
+
+## 9. Research boundary
+
+This completes the key packing objection constructively under explicit bounded-input word-RAM assumptions and gives a full candidate approximation theorem. It does not validate the uploaded checkpoint's unqualified phrase 'fresh arbitrary dense input' as an exact-complex RAM claim. The next meaningful checks are independent whole-algorithm implementation/error tests, constants/thresholds, and prior-art comparison for this relatively weak l1-scaled additive Fourier guarantee. It would be inaccurate either to call this a new exact FFT speedup or to discard the approximation idea solely because the uploaded version lacked its packing proof.
+
+## 10. Provenance and implementation status
+
+The entire O(N) evaluator has not been implemented or benchmarked here. The executed tests are solely the packed-transpose and gathered-key checks stated in Section 5. The all-input running-time and error result rests on the explicit argument above, not those finite tests. The later user-supplied `fft_wordram_packed_decoder_v3(1).zip` offers a simpler single-table guarded-addition route. That alternative is credited to the attachment and is audited separately; the two-table method above remains an independently checked alternative but is no longer the simplest presentation.
+
+If fully explicit self-contained numeric records are preferred to a shared binary exponent, there are only constantly many final quantized complex symbols at fixed epsilon. After reading L, precompute each symbol's scaled numeric result as a word-sized real/imaginary mantissa-exponent record, with the Section 7 error budget. Then each output lane emits its own full numeric record by constant-time table access. This retains O(N) time and avoids any lazy-output interpretation. The threshold qG^2<=w can be enormous, especially since G includes an epsilon^(-2) factor; this proof is not evidence of practicality in a 64-bit RAM regime.

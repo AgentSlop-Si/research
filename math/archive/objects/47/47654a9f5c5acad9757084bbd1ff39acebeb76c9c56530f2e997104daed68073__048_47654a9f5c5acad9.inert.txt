@@ -1,0 +1,121 @@
+# A finite sharing target for arbitrary fresh transforms
+
+Date: 2026-10-08. Status: theory and search specification, no new fast circuit found here.
+
+## Strongest next target
+
+Find an exact word on 16 registers for H_16 = H_2^{tensor 4}, H_2 = [[1,1],[1,-1]], using at most 31 embedded H_2 calls, interleaved with invertible diagonal scalings and permutations. The ordinary tensor schedule uses 32. The full 16-by-16 matrix must be checked exactly; no spare zero registers, hidden nonlinear operation, or data-dependent equality is allowed.
+
+This has an explicit asymptotic acceptance gate through the pinned #130 finite-win theorem. It is materially different from finding one fewer scalar addition in an arbitrary DAG, or a smaller fixed FFT base case. A successful word is not assumed to exist at width 16.
+
+## Baseline and model
+
+The pinned exact-DFT preprint already states a uniform all-length algorithm:
+O(N (log N)^theta (log log N)^(4-theta)),
+theta = 0.99999999999978935615699598..., in an exact complex-register model with unrestricted intermediate magnitudes and scalars, charged scalar preparation and logarithmic-word random-access addressing, and one supplied specified root of polynomial order. This is already o(N log N) asymptotically. It is neither a stable floating-point nor a bit-complexity theorem. Its constants are enormous. The new target would improve/simplify a usable finite certificate within that setting, not establish that every computational model has crossed the FFT barrier.
+
+Source: [model and main theorem](https://github.com/openai/math/blob/fd4aeeb2ee4fc729c18d98444fed42fd0529eeeb/preprints/An-explicit-power-saving-for-the-exact-discrete-Fourier-transform-September-25-2026/build/sections/introduction.tex).
+
+The established Alman–Rao FFT bound (15/4)N log_2 N + O(N) improves a leading constant in a real-arithmetic count. It does not supply a growing factor. Source: https://arxiv.org/abs/2211.06459 .
+
+## Why ordinary blocked FFT substitutions do not suffice
+
+If a radix-b block costs C(b), and each combining level has O(N) additional twiddle/routing work, then an ordinary radix-b schedule costs
+
+T(N;b) = O(N log_b N [C(b)/b + 1]) + preparation.
+
+For fixed b and a fixed positive block cost this remains Theta(N log N) in the specified repeated schedule. Even C(b)=rho b log b with fixed rho>0 gives only a constant-factor change. A growing b requires C(b)=o(b log b), preparation below the target bound, and fully charged routing. Merely assuming such a kernel restates the hard part.
+
+This does not mean a fixed finite improvement can never amplify. The following different recursion does amplify a finite saving.
+
+## The finite-win certificate and recursion
+
+Take fixed q,b>=2, Q=q^b, a fixed invertible nonmonomial q-by-q matrix A, and an exact Q-register word for A^{tensor b} with g<b q^{b-1} forward A calls and invertible monomials. A further fixed-width word must generate the shear I+E_12 from forward A calls and monomials. For the specific C kernel below, the source provides that shear word explicitly.
+
+Let f(k) be the cost of A^{tensor k} divided by q^k. Tensor the finite word across j=floor(k/b) groups. In each call slot, one q-dimensional active block and Q-q singleton blocks occur on every group. Sectors with r active groups have relative total dimension
+
+Pr[K=r] = binomial(j,r) (q/Q)^r (1-q/Q)^(j-r).
+
+This probability is deterministic bookkeeping of all sectors, not randomized computation. Charging the monomials, packing, leftover fewer than b factors, and schedule work gives
+
+f(k) <= C0 + g E[f(K)], K~Bin(floor(k/b),q/Q).
+
+For 0<s<1, Jensen's inequality and induction give f(k)=O((k+1)^s) whenever
+
+g (q/(bQ))^s < 1.
+
+The strict margin absorbs constant overhead and the finite initial range. The saving recursively applies to a smaller active-sector fraction, unlike adding a cheaper cost at each ordinary FFT level. Monomials are not free in runtime: they cost linear volume at each fixed word slot, already included in C0.
+
+Source: [finite certificate and tensor amplification](https://github.com/openai/math/blob/fd4aeeb2ee4fc729c18d98444fed42fd0529eeeb/preprints/An-explicit-power-saving-for-the-exact-discrete-Fourier-transform-September-25-2026/build/sections/synthesis.tex).
+Linear packing and tensor-monomial traversal: [synchronization](https://github.com/openai/math/blob/fd4aeeb2ee4fc729c18d98444fed42fd0529eeeb/preprints/An-explicit-power-saving-for-the-exact-discrete-Fourier-transform-September-25-2026/build/sections/synchronization.tex).
+
+For q=2,b=4,g=31, the critical power is
+
+s0 = log(31)/log(32) = 0.990839262077375... .
+
+Any s>s0, s<1, passes. A conservative exact choice is s=199/200; the moment certificate is the integer inequality 31^200 < 32^199. Numerically, 31*32^(-199/200)=0.9856834517244776.
+
+A printed exact rational/Q(i) word can use the source's explicit linear packing and polynomial exact-width Fourier compiler. The all-length reduction then gives the conditional bound
+
+O(N (log N)^s (log log N)^(4-s)).
+
+The generic existential appendix also has a slower bounded-printer route; do not attach this explicit rate to an unprinted existential circuit with unknown preparation. For an actual fixed rational finite witness its constant preparation is finite and explicit, and the sector packing must still be implemented/verified.
+
+Source: [all-length reduction and charged preparation](https://github.com/openai/math/blob/fd4aeeb2ee4fc729c18d98444fed42fd0529eeeb/preprints/An-explicit-power-saving-for-the-exact-discrete-Fourier-transform-September-25-2026/build/sections/all-lengths.tex).
+
+## Why width 16 is the first unexcluded target of this form
+
+The output matrices H_2^{tensor b} and C^{tensor b} are dense. Give each initial register one token. A two-register operation can only propagate the union of its two previous support upper bounds; cancellation can remove actual support but cannot create new dependencies. Diagonal scalings and permutations do not spread tokens and can be treated as relabelings.
+
+The classical complete gossip theorem says n>=4 registers need at least 2n-4 such pair meetings before every register can depend on every input. Thus:
+- n=4: at least 4 calls, equal to b 2^(b-1).
+- n=8: at least 12 calls, again equal to the tensor baseline.
+- n=16: at least 28 calls, while the baseline is 32.
+
+Therefore a strict finite win is impossible at b=2 or b=3 in this exact-width pair-call/monomial model, even with unrestricted coefficients and cancellation. At b=4 the support bound leaves budgets 28 through 31 unexcluded. It does not show a word exists.
+
+Primary proof: Baker and Shostak, Gossips and Telephones (1972), https://www.math.uni-bielefeld.de/~sillke/PUZZLES/gossips.pdf . The same scanned collection includes Tijdeman's explicit matrix formulation.
+
+## Why phase-only search cannot win
+
+The specific #130 kernel is
+
+C = [[a,b],[b,a]], a=(1+i)/2, b=(1-i)/2.
+
+It is unitary and every entry has squared modulus 1/2. Consequently C^{tensor b} has matrix entropy b 2^b. If all inserted monomials are unitary (permutation plus phases), every prefix is unitary, monomials preserve entropy, and each two-row unitary gate raises entropy by at most 2. Hence at least b2^(b-1) calls are required.
+
+This is a precise exclusion of phase-only words for this maximally mixing C, not a claim about arbitrary normalized kernels. Any successful C word with fewer calls needs genuine nonunit diagonal scalings, and its recursively amplified algorithm is outside the unitary model. Numerical conditioning must be treated separately.
+
+Primary entropy argument: Ailon (2013), Theorem 2.1 and proof, https://arxiv.org/html/1305.4745v1 . Further bounded-conditioning model: https://arxiv.org/abs/1403.1307 .
+
+## Exact search grammar and verification
+
+Let S=diag(1,i). Direct multiplication gives H_2=a^{-1} S C S. Therefore H_2 and C call counts are equivalent under invertible monomial factors; the targets H_16 and C^{tensor 4} differ by fixed tensor diagonals.
+
+A reverse projective-row step of the form
+
+r' = kappa (r + alpha s),
+s' = lambda (r - alpha s)
+
+is B=diag(kappa,lambda) H_2 diag(1,alpha). Its inverse also uses one H_2 call:
+
+B^{-1}=diag(1,alpha^{-1}) H_2 diag((2kappa)^{-1},(2lambda)^{-1}).
+
+All three scalars must be explicit and nonzero. With arbitrary rational alpha this represents rational diagonal-H-diagonal pair operations up to projective scaling; a finite alphabet is only a restricted search.
+
+Accept only an independently replayed exact 16-by-16 identity, with:
+1. At most 31 genuine two-register H_2/C calls.
+2. Complete nonzero diagonal factors and permutations.
+3. Exactly the declared 16-register state, with no discarded workspace.
+4. Explicit ordering and normalization.
+5. Kernel-count recurrence plus separately charged scalar operations and array work.
+6. If making an all-length claim, the uniform sector scheduler and #130 compiler interface.
+
+A negative result applies only to the actual topology/coefficient/excursion budget searched. Timeout or heuristic failure gives no general lower bound. A numerical near-solution is not a certificate. Even a valid new word requires comparison against existing finite-win witnesses before any novelty or record claim.
+
+## Relation to earlier attempts
+
+The prior two-stage cancellation-free proof and cancellation-aware heuristic are valid only for their narrower scalar-addition tasks. A 15-versus-16 scalar addition objective does not supply the exact-width finite-win identity above, nor a framed residual histogram. This new target changes the acceptance criterion to a finite object with a proved asymptotic lifting path.
+
+The h24 central-wire compression and h32 variants already noted by the parent remain prior work. No novelty claim is made for the general finite-win mechanism, the lower-bound tools, or the search formulation.
+

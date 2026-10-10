@@ -1,0 +1,65 @@
+   1 #!/usr/bin/env python3
+   2 from pathlib import Path
+   3 from fractions import Fraction as F
+   4 from math import factorial
+   5 import json,hashlib
+   6 HERE=Path(__file__).resolve().parent
+   7 SRC=HERE/'source_evidence/HALF_GRID_CUTS.json'
+   8 def layout(m):
+   9  n=m*m;counts=[0]*(n+1);areas=[(i//m+1)*(i%m+1) for i in range(n)]
+  10  for a in areas:counts[a]+=1
+  11  pos=[];v=0
+  12  for c in counts:pos.append(v);v+=c
+  13  order=[0]*n
+  14  for i,a in enumerate(areas):order[pos[a]]=i;pos[a]+=1
+  15  sigma=[0]*n
+  16  for k,i in enumerate(order):sigma[i]=order[n-1-k]
+  17  return order,sigma
+  18 
+  19 def propagate(m,sources,cut):
+  20  n=m*m;order,sigma=layout(m);cut=set(cut);assert all(0<=v<7*n for v in cut)
+  21  x=[i in sources and i not in cut for i in range(n)]
+  22  for native,balanced,out in [(1,2,3),(4,5,6)]:
+  23   a=[False]*n;b=[False]*n
+  24   for i in range(n):
+  25    a[i]=(native*n+i not in cut) and (x[i] or (i>=m and a[i-m]) or (i%m>0 and a[i-1]))
+  26    b[i]=(balanced*n+i not in cut) and (x[n-1-i] or (i>=m and b[i-m]) or (i%m>0 and b[i-1]))
+  27   x=[out*n+i not in cut and (a[i] or b[sigma[i]]) for i in range(n)]
+  28  return x
+  29 records=[]
+  30 for d in json.loads(SRC.read_text()):
+  31  m=d['M']
+  32  if m not in [8,16,32]:continue
+  33  n=m*m;cut=d['cut_state_vertices'];assert len(cut)==len(set(cut))==d['cut_capacity']
+  34  out=propagate(m,set(range(n//2,n)),cut);assert not any(out[:n//2]) and len(cut)<n//2
+  35  records.append({'M':m,'N':n,'cut_vertices':len(cut),'Fourier_rank':n//2,'method':'topological Boolean propagation'})
+  36 for m in [64,128]:
+  37  n=m*m;order,sigma=layout(m);A=set(order[:n//2]);B=set(order[n//2:]);rhoB={n-1-j for j in B}
+  38  assert {sigma[i] for i in A}==B
+  39  overlap=B&rhoB
+  40  frontier={i for i in B if (i>=m and i-m in A) or (i%m>0 and i-1 in A)}
+  41  assert len(frontier)<=2*m
+  42  S=overlap|frontier;cut={wire*n+i for wire in [2,5] for i in S};out=propagate(m,B,cut)
+  43  assert not any(out[i] for i in A) and len(cut)<n//4
+  44  records.append({'M':m,'N':n,'h':len(overlap),'frontier':len(frontier),'single_stage_union':len(S),
+  45                  'cut_vertices':len(cut),'Fourier_rank_lower_bound':n//4,'method':'topological Boolean propagation'})
+  46 exp_lower=sum(F(7,4)**k/F(factorial(k)) for k in range(6))
+  47 assert exp_lower==F(700667,122880) and exp_lower>F(50,9)
+  48 assert F(9,50)*(1+F(7,4))==F(99,200)
+  49 # Lens upper series coefficient, after factoring sqrt(7).
+  50 coefficient=F(2,3)*F(7,125)+F(2,15)*F(49,3125)/(1-F(7,25))
+  51 assert coefficient==F(679,16875)
+  52 assert 7<F(8,3)**2 and coefficient*F(8,3)<F(27,250)
+  53 assert 99*257**2<100*256**2
+  54 assert 17*256**2-4216*256-1108==33708>0 and 34*256-4216>0
+  55 # Tail expression was independently expanded as exact polynomial coefficients.
+  56 assert F(1,4)-F(27,125)==F(17,500)
+  57 assert -2*F(27,125)-8==-F(4216,500)
+  58 assert -F(27,125)-2==-F(1108,500)
+  59 result={'source':str(SRC.relative_to(HERE)),'source_sha256':hashlib.sha256(SRC.read_bytes()).hexdigest(),
+  60         'finite_cases':records,'rational_tail_constants':{'exponential_lower_sum':str(exp_lower),'lens_coefficient_of_sqrt7':str(coefficient),
+  61         'lens_rational_upper':'27/250','threshold_M':256,'gap_at_threshold':'33708/500','tail_gap_increasing':True},
+  62         'conclusion':'Identity-permutation middle is excluded for every dyadic M>=8, for all component masks/diagonals. No arbitrary-middle or other-route exclusion.',
+  63         'source_programs_executed':False}
+  64 (HERE/'INDEPENDENT_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+  65 print(json.dumps(result,indent=2))

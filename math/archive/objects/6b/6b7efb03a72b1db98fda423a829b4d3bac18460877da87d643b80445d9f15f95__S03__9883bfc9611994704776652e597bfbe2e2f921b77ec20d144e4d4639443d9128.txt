@@ -1,0 +1,49 @@
+   1 """Exploratory: one-pass rank-r tile cost r*(rows+cols) for all rectangles.
+   2 This is a deliberately *defined* dense-factor accounting model. The result is
+   3 not a gate lower bound because factors may be sparse and sharing is excluded.
+   4 """
+   5 from scipy.optimize import milp, Bounds, LinearConstraint
+   6 from scipy.sparse import lil_matrix
+   7 from phase7 import test_field,optimal_tile_cost
+   8 
+   9 
+  10 def rank_mod(mat,p):
+  11     arr=[[v%p for v in row] for row in mat]
+  12     m=len(arr);n=len(arr[0])
+  13     rank=0
+  14     for j in range(n):
+  15         pivot=next((k for k in range(rank,m) if arr[k][j]),None)
+  16         if pivot is None:continue
+  17         arr[rank],arr[pivot]=arr[pivot],arr[rank]
+  18         inv=pow(arr[rank][j],-1,p)
+  19         for jj in range(j,n):arr[rank][jj]=arr[rank][jj]*inv%p
+  20         for rr in range(rank+1,m):
+  21             c=arr[rr][j]
+  22             if c:
+  23                 for jj in range(j,n):arr[rr][jj]=(arr[rr][jj]-c*arr[rank][jj])%p
+  24         rank+=1
+  25         if rank==m:break
+  26     return rank
+  27 
+  28 
+  29 def solve(n):
+  30     p,w=test_field(n)
+  31     powers=[pow(w,(-u)%n,p) for u in range(n)]
+  32     subsets=[tuple(k for k in range(n) if mask>>k&1) for mask in range(1,1<<n)]
+  33     options=[]
+  34     for I in subsets:
+  35         for J in subsets:
+  36             r=rank_mod([[powers[(i*j)%n] for j in J] for i in I],p)
+  37             options.append((I,J,r))
+  38     o=[r*(len(I)+len(J)) for I,J,r in options]
+  39     M=lil_matrix((n*n,len(options)))
+  40     for col,(I,J,r) in enumerate(options):
+  41         for i in I:
+  42             for j in J:
+  43                 M[i*n+j,col]=1
+  44     res=milp(c=o,integrality=[1]*len(o),bounds=Bounds(0,1),constraints=LinearConstraint(M.tocsr(),1,1),options={'time_limit':60,'mip_rel_gap':0})
+  45     chosen=[options[i] for i,v in enumerate(res.x) if v>.5]
+  46     return {'n':n,'opts':len(options),'ranked_cost':round(res.fun),'rankone_cost':optimal_tile_cost(n),'status':res.status, 'mix':{r:sum(1 for I,J,rr in chosen if r==rr) for I,J,r in chosen}}
+  47 if __name__=='__main__':
+  48     for n in range(2,7):
+  49         print(solve(n),flush=True)

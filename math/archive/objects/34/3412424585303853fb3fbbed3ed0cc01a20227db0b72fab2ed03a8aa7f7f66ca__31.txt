@@ -1,0 +1,134 @@
+0001 import sys
+0002 from pathlib import Path
+0003 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+0004 import unittest
+0005 import numpy as np
+0006 from lazy_spectrum import LazySpectrum
+0007 
+0008 class TestLazySpectrum(unittest.TestCase):
+0009     def test_point_edits_and_partial_bins(self):
+0010         rng=np.random.default_rng(1001)
+0011         for n in [17,64,256,1024]:
+0012             x=rng.standard_normal(n)+1j*rng.standard_normal(n)
+0013             state=LazySpectrum.from_spectrum(np.fft.fft(x))
+0014             edits=[]
+0015             for _ in range(30):
+0016                 j=int(rng.integers(0,n)); d=complex(rng.normal(),rng.normal())
+0017                 x[j]+=d; edits.append((j,d)); state.add_edit(j,d)
+0018             bins=rng.integers(0,n,size=min(25,n)).tolist()
+0019             got=state.bins(bins)
+0020             want=np.fft.fft(x)[bins]
+0021             self.assertTrue(np.allclose(got,want,rtol=2e-11,atol=2e-10))
+0022 
+0023     def test_duplicate_edits_cancel(self):
+0024         n=64
+0025         x=np.arange(n,dtype=float)
+0026         state=LazySpectrum.from_spectrum(np.fft.fft(x))
+0027         state.add_edits([(7,2),(7,-2),(3,4)])
+0028         self.assertEqual(state.pending_count,1)
+0029         x[3]+=4
+0030         got,_=state.materialize(method='direct')
+0031         self.assertTrue(np.allclose(got,np.fft.fft(x)))
+0032 
+0033     def test_dense_direct_and_factorized(self):
+0034         rng=np.random.default_rng(1002)
+0035         for n in [64,256,1024]:
+0036             base=rng.normal(size=n)+1j*rng.normal(size=n)
+0037             idx=rng.choice(n,size=min(12,n),replace=False)
+0038             vals=rng.normal(size=len(idx))+1j*rng.normal(size=len(idx))
+0039             altered=base.copy(); altered[idx]+=vals
+0040             for method in ['direct','factorized']:
+0041                 s=LazySpectrum.from_spectrum(np.fft.fft(base))
+0042                 s.add_edits(zip(idx.tolist(),vals.tolist()))
+0043                 got,plan=s.materialize(method=method)
+0044                 self.assertTrue(np.allclose(got,np.fft.fft(altered),rtol=2e-11,atol=3e-10))
+0045                 self.assertEqual(plan.pending_edits,len(idx))
+0046 
+0047     def test_commit(self):
+0048         n=128
+0049         rng=np.random.default_rng(1003)
+0050         x=rng.normal(size=n)
+0051         s=LazySpectrum.from_spectrum(np.fft.fft(x))
+0052         s.add_edits([(1,2.0),(7,-1.5)])
+0053         plan=s.compact(method='direct')
+0054         self.assertEqual(plan.pending_edits,2)
+0055         self.assertEqual(s.pending_count,0)
+0056         self.assertEqual(s.dense_term_count,1)
+0057         x[1]+=2;x[7]-=1.5
+0058         self.assertTrue(np.allclose(s.bins([0,1,3,127]),np.fft.fft(x)[[0,1,3,127]]))
+0059 
+0060     def test_lazy_basis_plus_sparse(self):
+0061         rng=np.random.default_rng(1004)
+0062         n=256
+0063         basis=rng.normal(size=(3,n))
+0064         coeff=np.array([2.0,-0.5,0.25])
+0065         edits=[(2,1.25),(17,-0.75),(250,0.5)]
+0066         s=LazySpectrum.from_basis(np.fft.fft(basis,axis=1),coeff,edits=edits)
+0067         x=coeff@basis
+0068         for j,d in edits:x[j]+=d
+0069         bins=[0,1,7,31,100,255]
+0070         self.assertTrue(np.allclose(s.bins(bins),np.fft.fft(x)[bins],atol=2e-10))
+0071         dense,_=s.materialize(method='direct')
+0072         self.assertTrue(np.allclose(dense,np.fft.fft(x),atol=3e-10))
+0073 
+0074 
+0075     def test_dense_native(self):
+0076         rng=np.random.default_rng(1006)
+0077         n=1024
+0078         base=rng.normal(size=n)+1j*rng.normal(size=n)
+0079         s=LazySpectrum.from_spectrum(np.fft.fft(base))
+0080         edits=[(4,2+1j),(77,-.5j),(900,1.25)]
+0081         for j,d in edits: base[j]+=d
+0082         s.add_edits(edits)
+0083         got,plan=s.materialize(method='native')
+0084         self.assertEqual(plan.method,'native')
+0085         self.assertTrue(np.allclose(got,np.fft.fft(base),rtol=2e-11,atol=3e-10))
+0086 
+0087     def test_validation(self):
+0088         with self.assertRaises(ValueError): LazySpectrum(0)
+0089         s=LazySpectrum.from_spectrum(np.ones(8))
+0090         with self.assertRaises(ValueError): s.add_edit(8,1)
+0091         with self.assertRaises(ValueError): s.bins([8])
+0092 
+0093 if __name__=='__main__':unittest.main()
+0094 
+0095 class TestPreparedBinView(unittest.TestCase):
+0096     def test_prepared_support_queries(self):
+0097         from lazy_spectrum import PreparedBinView
+0098         rng=np.random.default_rng(1005)
+0099         for n in [64,1024,4096]:
+0100             x=rng.standard_normal(n)+1j*rng.standard_normal(n)
+0101             support=rng.choice(n,size=min(12,n),replace=False).tolist()
+0102             bins=rng.choice(n,size=min(17,n),replace=True).tolist()
+0103             view=PreparedBinView(np.fft.fft(x),support,bins)
+0104             for _ in range(40):
+0105                 j=int(rng.choice(support)); d=complex(rng.normal(),rng.normal())
+0106                 x[j]+=d; view.add_edit(j,d)
+0107                 self.assertTrue(np.allclose(view.values(),np.fft.fft(x)[bins],rtol=2e-11,atol=3e-10))
+0108             self.assertLessEqual(view.phase_bytes,view.full_phase_cache_equivalent_bytes)
+0109 
+0110     def test_bad_support(self):
+0111         from lazy_spectrum import PreparedBinView
+0112         base=np.ones(16,dtype=complex)
+0113         with self.assertRaises(ValueError): PreparedBinView(base,[1,1],[0])
+0114         view=PreparedBinView(base,[1,2],[0,3])
+0115         with self.assertRaises(ValueError): view.add_edit(3,1)
+0116 
+0117 class TestBufferedSpectrum(unittest.TestCase):
+0118     def test_threshold_flush(self):
+0119         from lazy_spectrum import BufferedSpectrum
+0120         rng=np.random.default_rng(1007);n=256
+0121         x=rng.normal(size=n)+1j*rng.normal(size=n)
+0122         s=BufferedSpectrum.from_spectrum(np.fft.fft(x),flush_threshold=4,flush_method='native')
+0123         for j in [1,3,5,7,9,11,13,15,17]:
+0124             d=complex(rng.normal(),rng.normal());x[j]+=d;s.add_edit(j,d)
+0125         self.assertEqual(s.flush_count,2)
+0126         self.assertEqual(s.pending_count,1)
+0127         bins=[0,1,17,200,255]
+0128         self.assertTrue(np.allclose(s.bins(bins),np.fft.fft(x)[bins],atol=3e-10))
+0129 
+0130     def test_threshold_planner(self):
+0131         from lazy_spectrum import suggest_flush_threshold,threshold_cost_proxy
+0132         b=suggest_flush_threshold(65536,64,16,backend='native')
+0133         self.assertGreaterEqual(b,1);self.assertLessEqual(b,65536)
+0134         self.assertLessEqual(threshold_cost_proxy(65536,64,16,b),threshold_cost_proxy(65536,64,16,1))

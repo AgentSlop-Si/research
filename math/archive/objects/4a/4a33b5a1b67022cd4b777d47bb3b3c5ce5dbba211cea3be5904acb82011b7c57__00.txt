@@ -1,0 +1,95 @@
+1: from __future__ import annotations
+2: import json, math, time
+3: from pathlib import Path
+4: import numpy as np
+5: 
+6: from sparse_surrogate import (
+7:     accuracy_tradeoff, make_head_tail_plan, plan_head_tail,
+8:     approximate_dft_all_head_tail, flat_natural_scale_support_lower_bound,
+9:     sparse_surrogate_linf_lower_bound,
+10: )
+11: 
+12: OUT={}
+13: 
+14: # 1. Pure theorem tradeoff. Use powers of two so it maps directly to the backend.
+15: rows=[]
+16: for p in [12,16,20,24,32,48,64,96,128]:
+17:     n=1<<p
+18:     ln=math.log(n)
+19:     delta=n**-2
+20:     schedules={
+21:         'eps=0.5':0.5,
+22:         'eps=1/sqrt(logN)':1/math.sqrt(ln),
+23:         'eps=1/logN':1/ln,
+24:         'eps=exp(-sqrt(logN))':math.exp(-math.sqrt(ln)),
+25:     }
+26:     for name,eps in schedules.items():
+27:         plan=accuracy_tradeoff(n,eps,delta)
+28:         rows.append({
+29:             'log2N':p,'schedule':name,'epsilon':eps,'delta':delta,
+30:             'k':plan.samples,'log2_b':plan.inner_log2,
+31:             'depth_ratio':plan.depth_ratio,
+32:             'k_over_N_log10': math.log10(plan.samples)-p*math.log10(2),
+33:         })
+34: OUT['accuracy_tradeoff']=rows
+35: 
+36: # 2. Head/tail planning on a few signal families.
+37: n=2**16
+38: rng=np.random.default_rng(20261009)
+39: inputs={
+40:     'flat':np.ones(n,dtype=np.complex128),
+41:     'gaussian':rng.normal(size=n)+1j*rng.normal(size=n),
+42:     'power_0.8':np.exp(2j*np.pi*rng.random(n))/(np.arange(n)+1.0)**0.8,
+43:     'power_1.2':np.exp(2j*np.pi*rng.random(n))/(np.arange(n)+1.0)**1.2,
+44:     'exponential':np.exp(2j*np.pi*rng.random(n))*np.exp(-0.08*np.arange(n)),
+45:     'spikes_plus_noise':(0.003*(rng.normal(size=n)+1j*rng.normal(size=n))),
+46: }
+47: inputs['spikes_plus_noise'][:32]+=np.linspace(20,3,32)*np.exp(2j*np.pi*rng.random(32))
+48: 
+49: head_rows=[]
+50: eps=.18; delta=.02
+51: for name,x in inputs.items():
+52:     base=make_head_tail_plan(x,eps,delta,0)
+53:     best=plan_head_tail(x,eps,delta,max_head=512)
+54:     record={
+55:         'name':name,'plain_support_bound':base.support_upper_bound,
+56:         'best_head':best.head_size,'best_samples':best.requested_samples,
+57:         'best_support_bound':best.support_upper_bound,
+58:         'tail_ratio':best.tail_ratio,
+59:         'support_reduction':(base.support_upper_bound/max(1,best.support_upper_bound)),
+60:         'method':best.method,
+61:     }
+62:     # One numerical validation if the predicted support is still sparse enough.
+63:     t0=time.perf_counter()
+64:     out,p=approximate_dft_all_head_tail(x,eps,delta,plan=best,rng=np.random.default_rng(7),return_plan=True)
+65:     t1=time.perf_counter()
+66:     ref=np.fft.fft(x,norm='ortho')
+67:     target=eps*np.linalg.norm(x,1)/math.sqrt(n)
+68:     record.update({
+69:         'observed_error':float(np.max(np.abs(out-ref))),
+70:         'target_bound':float(target),
+71:         'error_over_bound':float(np.max(np.abs(out-ref))/target if target else 0),
+72:         'wall_ms':1000*(t1-t0),
+73:     })
+74:     head_rows.append(record)
+75: OUT['head_tail']=head_rows
+76: 
+77: # 3. Rigorous sparse-surrogate ceiling on flat inputs.
+78: ceil_rows=[]
+79: n=2**20
+80: for eta in [0.9,0.75,0.5,0.25,0.1,0.01]:
+81:     k=flat_natural_scale_support_lower_bound(n,eta)
+82:     ceil_rows.append({'eta':eta,'required_k':k,'required_fraction':k/n})
+83: OUT['flat_natural_scale_ceiling']=ceil_rows
+84: 
+85: # Lower bound curve for k=N^alpha on a normalized flat vector.
+86: lb=[]
+87: # Formula avoids allocating 2^20 vector: error >= sqrt(1-k/N)/sqrt(N) for ||x||2=1.
+88: for alpha in [0,0.1,0.25,0.5,0.75,0.9,0.99]:
+89:     k=max(1,int(round(n**alpha)))
+90:     natural_ratio=math.sqrt(max(0.0,1-k/n)) # lower bound divided by ||x||2/sqrt(N)
+91:     lb.append({'alpha':alpha,'k':k,'k_fraction':k/n,'lower_bound_over_natural_scale':natural_ratio})
+92: OUT['flat_lower_bound_curve']=lb
+93: 
+94: Path('benchmark_sparse_surrogate_v2_results.json').write_text(json.dumps(OUT,indent=2))
+95: print(json.dumps(OUT,indent=2))

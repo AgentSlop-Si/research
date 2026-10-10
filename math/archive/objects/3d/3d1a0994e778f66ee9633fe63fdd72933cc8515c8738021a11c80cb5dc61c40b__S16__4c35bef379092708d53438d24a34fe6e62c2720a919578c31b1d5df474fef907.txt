@@ -1,0 +1,265 @@
+   1 #!/usr/bin/env python3
+   2 """Independent exact Phase20 review. No uploaded code imports or execution.
+   3 The independent gate scans constant-degree gcds at each subgroup node, using a
+   4 nonzero resultant witness. Separate Lagrange interpolation controls check the
+   5 source's compressed degree-45 elimination strategy.
+   6 """
+   7 import collections,itertools,json,math,pathlib,random
+   8 ROOT=pathlib.Path(__file__).resolve().parent
+   9 rng=random.Random(202610092344)
+  10 PERMS=list(itertools.permutations(range(3)))
+  11 SIGNS=[(-1)**sum(v[i]>v[j] for i in range(3) for j in range(i+1,3)) for v in PERMS]
+  12 def trim(q):
+  13     q=list(q)
+  14     while q and q[-1]==0:q.pop()
+  15     return q
+  16 
+  17 def pmul(a,b,p):
+  18     c=[0]*(len(a)+len(b)-1)
+  19     for i,x in enumerate(a):
+  20         for j,y in enumerate(b):c[i+j]=(c[i+j]+x*y)%p
+  21     return trim(c)
+  22 def padd(a,b,p):
+  23     c=[0]*max(len(a),len(b))
+  24     for i,v in enumerate(a):c[i]=v
+  25     for i,v in enumerate(b):c[i]=(c[i]+v)%p
+  26     return trim(c)
+  27 def peval(q,x,p):
+  28     v=0
+  29     for c in reversed(q):v=(v*x+c)%p
+  30     return v
+  31 
+  32 def premainder(a,b,p):
+  33     a=trim(a);b=trim(b);iv=pow(b[-1],-1,p)
+  34     while len(a)>=len(b):
+  35         q=a[-1]*iv%p;shift=len(a)-len(b)
+  36         for i,c in enumerate(b):a[shift+i]=(a[shift+i]-q*c)%p
+  37         a=trim(a)
+  38     return a
+  39 
+  40 def pgcd(a,b,p):
+  41     a,b=trim(a),trim(b)
+  42     while b:a,b=b,premainder(a,b,p)
+  43     return [v*pow(a[-1],-1,p)%p for v in a] if a else []
+  44 
+  45 def hankel_polynomial(R,w,base,p):
+  46     result=[]
+  47     for perm,sign in zip(PERMS,SIGNS):
+  48         term=[sign%p]
+  49         for i in range(3):
+  50             k=base+i+perm[i]
+  51             term=pmul(term,[R[k],-R[k]*pow(w,k,p)%p],p)
+  52         result=padd(result,term,p)
+  53     return result
+  54 
+  55 def determinant(M,p):
+  56     A=[row[:] for row in M];value=1
+  57     for k in range(len(A)):
+  58         j=next((j for j in range(k,len(A)) if A[j][k]%p),None)
+  59         if j is None:return 0
+  60         if j!=k:A[k],A[j]=A[j],A[k];value=-value
+  61         pivot=A[k][k];value=value*pivot%p;iv=pow(pivot,-1,p)
+  62         for i in range(k+1,len(A)):
+  63             q=A[i][k]*iv%p
+  64             for j in range(k,len(A)):A[i][j]=(A[i][j]-q*A[k][j])%p
+  65     return value%p
+  66 
+  67 def resultant(R,w,p):
+  68     P=hankel_polynomial(R,w,0,p);Q=hankel_polynomial(R,w,1,p)
+  69     P=([*P]+[0]*(4-len(P)))[::-1];Q=([*Q]+[0]*(4-len(Q)))[::-1]
+  70     M=[]
+  71     for poly in (P,Q):
+  72         for j in range(3):M.append([0]*j+poly+[0]*(2-j))
+  73     return determinant(M,p)
+  74 
+  75 def numeric_hankel(seq,b,p):return determinant([[seq[b+i+j] for j in range(3)] for i in range(3)],p)
+  76 def dft(r,w,p,count=None):
+  77     n=len(r)
+  78     return [sum(v*pow(w,j*k%n,p) for j,v in enumerate(r))%p for k in range(n if count is None else count)]
+  79 def idft(R,w,p):return [v*pow(len(R),-1,p)%p for v in dft(R,pow(w,-1,p),p)]
+  80 def structured(n,p,w,d,a,h):
+  81     denom=[(1-a*pow(w,d*k,p))%p for k in range(n)]
+  82     if not all(denom):return None
+  83     H=dft(h,w,p);return idft([v*pow(q,-1,p)%p for v,q in zip(H,denom)],w,p)
+  84 def decode(r,d,a,w,p):
+  85     n=len(r);h=[(r[j]-a*r[(j-d)%n])%p for j in range(n)];H=dft(h,w,p)
+  86     return [H[k]*pow(q,-1,p)%p if q else sum(r[j]*pow(w,k*j,p) for j in range(n))%p for k in range(n) for q in [(1-a*pow(w,k*d,p))%p]]
+  87 
+  88 def gate(r,w,p,source_resonance_guard=True):
+  89     n=len(r);R=dft(r,w,p,8);meta={'nonzero_witness':None,'linear_candidates':0,'full_checks':0,'skipped_non_coprime_guard':0}
+  90     for z in range(46):
+  91         if resultant(R,z,p):meta['nonzero_witness']=z;break
+  92     if meta['nonzero_witness'] is None:return None,{**meta,'reason':'zero-resultant'}
+  93     for d in range(1,n):
+  94         z=pow(w,d,p);g=pgcd(hankel_polynomial(R,z,0,p),hankel_polynomial(R,z,1,p),p)
+  95         if len(g)!=2:continue
+  96         a=(-g[0])%p;meta['linear_candidates']+=1
+  97         if not a:continue
+  98         Y=[R[k]*(1-a*pow(z,k,p))%p for k in range(8)]
+  99         if any(numeric_hankel(Y,b,p) for b in (2,3)):continue
+ 100         resonances=sum((1-a*pow(w,d*k,p))%p==0 for k in range(n))
+ 101         if (pow(a,n,p)==1 and math.gcd(d,n)!=1) if source_resonance_guard else (resonances>1):
+ 102             meta['skipped_non_coprime_guard']+=1;continue
+ 103         meta['full_checks']+=1
+ 104         h=[(r[j]-a*r[(j-d)%n])%p for j in range(n)]
+ 105         if 1<=sum(map(bool,h))<=2:return (d,a,h),{**meta,'reason':'accepted','resonances':resonances}
+ 106     return None,{**meta,'reason':'no-certificate'}
+ 107 
+ 108 # Independent Lagrange interpolation at 46 points, not source Newton code.
+ 109 def interpolate(values,p):
+ 110     H=[1]
+ 111     for x in range(len(values)):H=pmul(H,[-x%p,1],p)
+ 112     result=[0]*len(values)
+ 113     for x,value in enumerate(values):
+ 114         Q=[0]*len(values);Q[-1]=H[-1]
+ 115         for j in range(len(Q)-2,-1,-1):Q[j]=(H[j+1]+x*Q[j+1])%p
+ 116         assert (H[0]+x*Q[0])%p==0
+ 117         denominator=math.prod(x-j for j in range(len(values)) if j!=x)%p
+ 118         scale=value*pow(denominator,-1,p)%p
+ 119         for j,c in enumerate(Q):result[j]=(result[j]+scale*c)%p
+ 120     return trim(result)
+ 121 def strip(q,p):
+ 122     q=list(q);z=o=0
+ 123     while q and q[0]==0:q=q[1:];z+=1
+ 124     while len(q)>1 and peval(q,1,p)==0:
+ 125         Q=[0]*(len(q)-1);Q[-1]=q[-1]
+ 126         for j in range(len(Q)-2,-1,-1):Q[j]=(q[j+1]+Q[j+1])%p
+ 127         assert (q[0]+Q[0])%p==0
+ 128         q=Q;o+=1
+ 129     return q,z,o
+ 130 
+ 131 # Reproduce the declared finite support/parameter grid, not all GF(97)^8.
+ 132 p,n,w=97,8,pow(5,12,97);fast=slow=0;reasons=collections.Counter();examples=[]
+ 133 for d in (1,3,5,7):
+ 134     for a in (2,3,5,7,11):
+ 135         for j,k in itertools.combinations(range(n),2):
+ 136             for u,v in ((2,3),(5,7),(11,13),(17,19)):
+ 137                 h=[0]*n;h[j]=u;h[k]=v;r=structured(n,p,w,d,a,h);assert r is not None
+ 138                 got,meta=gate(r,w,p)
+ 139                 if got:
+ 140                     fast+=1;dd,aa,hh=got;assert decode(r,dd,aa,w,p)==dft(r,w,p)
+ 141                 else:
+ 142                     slow+=1;reasons[meta['reason']]+=1
+ 143                     if len(examples)<3:examples.append({'delta':d,'alpha':a,'support':[j,k],'amplitudes':[u,v],'reason':meta['reason']})
+ 144 assert (fast,slow)==(2184,56),(fast,slow)
+ 145 grid={'p':p,'N':n,'cases':fast+slow,'accepted':fast,'declined':slow,'decline_reasons':dict(reasons),'examples':examples,'exact_output_entries_for_accepted_inputs':8*fast,'scope':'28 supports x 4 delays x 5 alphas x 4 amplitude pairs; not all field vectors'}
+ 146 
+ 147 # Exact counterexample to the source's overly conservative noncoprime guard.
+ 148 noncoprime_counterexample=None
+ 149 for n in (8,16,24,32):
+ 150     p=97;w=pow(5,(p-1)//n,p)
+ 151     for d in range(1,n):
+ 152         g=math.gcd(d,n)
+ 153         if g!=2:continue
+ 154         for power in range(1,n):
+ 155             a=pow(w,power,p)
+ 156             if pow(a,n//g,p)==1:continue
+ 157             for j,k in itertools.combinations(range(min(n,8)),2):
+ 158                 h=[0]*n;h[j]=2;h[k]=3;r=structured(n,p,w,d,a,h)
+ 159                 assert r is not None
+ 160                 R=dft(r,w,p,8);gg=pgcd(hankel_polynomial(R,pow(w,d,p),0,p),hankel_polynomial(R,pow(w,d,p),1,p),p)
+ 161                 if len(gg)!=2:continue
+ 162                 source,sm=gate(r,w,p);fixed,fm=gate(r,w,p,False)
+ 163                 if source is None and fixed is not None:
+ 164                     noncoprime_counterexample={'N':n,'p':p,'omega':w,'delta':d,'alpha':a,'h':h,'r':r,'actual_resonances':0,'alpha_to_N':pow(a,n,p),'alpha_to_cycle_length':pow(a,n//g,p),'true_gcd':gg,'nonzero_resultant_witness':sm['nonzero_witness'],'nonzero_resultant_value':resultant(R,sm['nonzero_witness'],p),'source_guard_rejects_all_candidates':True,'correct_resonance_gate_accepts':True}
+ 165                     assert decode(r,fixed[0],fixed[1],w,p)==dft(r,w,p)
+ 166                     break
+ 167             if noncoprime_counterexample:break
+ 168         if noncoprime_counterexample:break
+ 169     if noncoprime_counterexample:break
+ 170 assert noncoprime_counterexample is not None
+ 171 
+ 172 # Interpolation, degree and root-group folding checks across independent fields.
+ 173 interpolation=[];interpolation_inputs=[]
+ 174 for p,n,g in ((97,8,5),(257,16,3),(2013265921,128,31)):
+ 175     w=pow(g,(p-1)//n,p)
+ 176     for mode in ('generic','two_defect','zero','sparse','character'):
+ 177         if mode=='generic':r=[rng.randrange(p) for _ in range(n)]
+ 178         elif mode=='two_defect':
+ 179             h=[0]*n;h[1]=7;h[n//2]=11;d=n//2-1;a=2
+ 180             while pow(a,n,p)==1:a+=1
+ 181             r=structured(n,p,w,d,a,h);assert r is not None
+ 182         elif mode=='zero':r=[0]*n
+ 183         elif mode=='sparse':r=[0]*n;r[0]=2;r[3]=5
+ 184         else:r=[pow(w,3*j,p) for j in range(n)]
+ 185         R=dft(r,w,p,8);T=interpolate([resultant(R,z,p) for z in range(46)],p)
+ 186         assert len(T)<=46
+ 187         for z in range(46,min(p,70)):assert peval(T,z,p)==resultant(R,z,p)
+ 188         reduced,z,o=strip(T,p)
+ 189         for q in range(2,min(p,20)):assert peval(T,q,p)==peval(reduced,q,p)*pow(q,z,p)*pow(q-1,o,p)%p
+ 190         folded=[0]*n
+ 191         for j,v in enumerate(reduced):folded[j%n]=(folded[j%n]+v)%p
+ 192         assert dft(folded,w,p)==[peval(reduced,pow(w,j,p),p) for j in range(n)]
+ 193         row={'p':p,'N':n,'mode':mode,'degree':len(T)-1,'zero_factor':z,'one_factor':o,'reduced_degree':len(reduced)-1,'palindromic':reduced==reduced[::-1]}
+ 194         interpolation.append(row)
+ 195         if mode in ('generic','two_defect'):interpolation_inputs.append(r)
+ 196 
+ 197 # The formerly rejected Phase19 wrap-collision is genuinely accepted.
+ 198 p=2013265921;n=128;w=pow(31,(p-1)//n,p);d=63;a=pow(w,9,p)
+ 199 r=[0]*n
+ 200 for t in range(n):r[t*d%n]=pow(a,t,p)*(3 if t<17 else 5)%p
+ 201 choice,meta=gate(r,w,p);assert choice is not None and meta['resonances']==1
+ 202 assert decode(r,choice[0],choice[1],w,p)==dft(r,w,p)
+ 203 resonant={'N':n,'p':p,'accepted_delay':choice[0],'accepted_alpha':choice[1],'resonances_repaired':1,'exact_full_DFT_equal':True}
+ 204 
+ 205 # Eight-probe adversary: same proposals, changed unprobed Fourier coordinate.
+ 206 h=[0]*n;h[11]=5;h[93]=9;r=structured(n,p,w,37,17,h);assert r is not None
+ 207 base,meta=gate(r,w,p);assert base
+ 208 mutant=[(r[j]+pow(n,-1,p)*pow(w,-8*j,p))%p for j in range(n)]
+ 209 assert dft(mutant,w,p,8)==dft(r,w,p,8)
+ 210 assert dft(mutant,w,p)[8]!=dft(r,w,p)[8]
+ 211 choice,meta=gate(mutant,w,p);assert choice is None and meta['full_checks']>0
+ 212 mutation={'N':n,'unchanged_prefix':8,'changed_bin':8,'full_certificate_rejects':True,'full_checks':meta['full_checks']}
+ 213 
+ 214 # New family controls across both dyadic and nondyadic lengths.
+ 215 family_controls=[]
+ 216 for p,n,g in ((998244353,17,3),(2013265921,30,31),(2013265921,60,31),(2013265921,128,31),(2013265921,384,31)):
+ 217     w=pow(g,(p-1)//n,p);d=next(d for d in range(n//3+1,n) if math.gcd(d,n)==1)
+ 218     accepted=0
+ 219     for trial in range(3):
+ 220         h=[0]*n;j,k=rng.sample(range(n),2);h[j]=7;h[k]=11
+ 221         r=structured(n,p,w,d,2,h);assert r is not None
+ 222         choice,meta=gate(r,w,p)
+ 223         if choice:
+ 224             accepted+=1;assert decode(r,choice[0],choice[1],w,p)==dft(r,w,p)
+ 225     family_controls.append({'N':n,'p':p,'cases':3,'accepted':accepted})
+ 226 
+ 227 # Soundness on unrelated random vectors, and small-degree interpolation controls.
+ 228 random_rows=[]
+ 229 for p,n,g in ((97,8,5),(257,16,3),(2013265921,128,31)):
+ 230     w=pow(g,(p-1)//n,p);accepted=0
+ 231     for _ in range(20):
+ 232         r=[rng.randrange(p) for _ in range(n)];choice,meta=gate(r,w,p)
+ 233         if choice:
+ 234             accepted+=1;assert sum(map(bool,choice[2]))<=2
+ 235             assert decode(r,choice[0],choice[1],w,p)==dft(r,w,p)
+ 236     random_rows.append({'N':n,'p':p,'inputs':20,'accepted_certificates':accepted,'false_acceptances':0})
+ 237 for degree in (0,1,10,32,45):
+ 238     p=97;q=[rng.randrange(p) for _ in range(degree+1)];q[-1]=1
+ 239     assert interpolate([peval(q,z,p) for z in range(46)],p)==q
+ 240 
+ 241 # Corrected guard versus actual resonance counts; source remains untouched.
+ 242 resonance_guard_cases=0;conservative_false_rejections=0
+ 243 for n in (8,12,16,24,32):
+ 244     p=97;w=pow(5,(p-1)//n,p)
+ 245     for d in range(1,n):
+ 246         g=math.gcd(d,n)
+ 247         for a in range(1,p):
+ 248             zeros=sum((1-a*pow(w,d*k,p))%p==0 for k in range(n))
+ 249             expected=g if pow(a,n//g,p)==1 else 0
+ 250             assert zeros==expected
+ 251             corrected_reject=g>1 and pow(a,n//g,p)==1
+ 252             assert corrected_reject==(zeros>1)
+ 253             old_reject=g>1 and pow(a,n,p)==1
+ 254             conservative_false_rejections+=bool(old_reject and not corrected_reject)
+ 255             resonance_guard_cases+=1
+ 256 p=97;n=8;w=pow(5,12,p);d=2;a=1;r=[3,7,3,7,5,7,5,7]
+ 257 h=[(r[j]-a*r[(j-d)%n])%p for j in range(n)]
+ 258 zeros=[k for k in range(n) if (1-a*pow(w,d*k,p))%p==0]
+ 259 assert h==[95,0,0,0,2,0,0,0] and zeros==[0,4]
+ 260 assert math.gcd(d,n)>1 and pow(a,n//math.gcd(d,n),p)==1
+ 261 assert decode(r,d,a,w,p)==dft(r,w,p)
+ 262 resonance_guard={'exhaustive_pairs':resonance_guard_cases,'old_guard_nonresonant_false_rejections':conservative_false_rejections,'corrected_predicate_matches_more_than_one_actual_zero':True,'genuine_non_coprime_example':{'N':n,'p':p,'delta':d,'alpha':a,'r':r,'h':h,'zero_denominator_bins':zeros,'corrected_guard_rejects':True,'optional_two_direct_repairs_match_DFT':True,'two_repairs_cost_O_2N_not_free':True}}
+ 263 
+ 264 out={'corrected_resonance_guard_controls':resonance_guard,'dyadic_and_nondyadic_family_controls':family_controls,'finite_parameter_grid':grid,'noncoprime_nonresonant_counterexample':noncoprime_counterexample,'resultant_interpolation_controls':interpolation,'Phase19_resonant_counterexample_now_recovered':resonant,'unchanged_eight_probe_adversary':mutation,'generic_soundness_controls':random_rows,'uploaded_code_executed':False,'uploaded_modules_imported':False,'source_selector_execution_claim':False,'independent_gate':'degree<=45 nonzero polynomial witness, direct constant-degree gcd subgroup scan, full exact support certificate'}
+ 265 text=json.dumps(out,indent=2,sort_keys=True)+'\n';(ROOT/'INDEPENDENT_RESULTS.json').write_text(text);print(text,end='')

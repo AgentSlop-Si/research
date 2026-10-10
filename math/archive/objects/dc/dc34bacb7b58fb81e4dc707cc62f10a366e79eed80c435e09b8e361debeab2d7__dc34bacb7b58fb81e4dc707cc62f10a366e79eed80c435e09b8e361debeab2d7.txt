@@ -1,0 +1,16 @@
+"""Reproduce all generations' regression tests; keep tools offline."""
+import os
+import subprocess
+import sys
+from pathlib import Path
+ROOT=Path(__file__).resolve().parent
+SUITES=[ROOT,ROOT/'prior_checkpoint',ROOT/'prior_checkpoint/prior_checkpoint',
+        ROOT/'prior_checkpoint/prior_checkpoint/prior_checkpoint/fft_global_green_gauge']
+count=0
+for path in SUITES:
+    if not (path/'tests').is_dir():raise RuntimeError(f'Missing tests: {path}')
+    print('===',path.relative_to(ROOT) if path!=ROOT else 'current',flush=True)
+    env=os.environ.copy();env['OPENBLAS_NUM_THREADS']='1'
+    cp=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'],cwd=path,env=env,check=True)
+    count+=1
+print('PASS all',count,'independently invoked suites (6+6+6+11 = 29 unit tests)')

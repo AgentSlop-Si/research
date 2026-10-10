@@ -1,0 +1,637 @@
+#!/usr/bin/env python3
+"""Streaming-majority + stable-scan global-chirp Fourier sketch (v8).
+
+This continuation adds two mechanisms to the v7 global quadratic-chirp row:
+
+1. A gauge transformation turns each recurrence cycle into a prefix sum.  A
+   Blelloch balanced exclusive scan evaluates every prefix in O(N) work and
+   O(log N) arithmetic depth, replacing the sequential recurrence's O(N)
+   roundoff-depth path.
+
+2. Exact coordinatewise medians are replaced by three shifted quantization
+   grids.  Boyer--Moore majority cancellation is run independently for each
+   output coordinate and each grid.  If a strict majority of row estimates
+   lie in a radius-tau interval around the target, at least two grids put all
+   good values into one cell; the median of their three candidate cell centers
+   is within 5 tau / 2.  This needs O(1) state per scalar output and therefore
+   O(N) total memory even when the number of rows grows.
+
+The code is a reproducible research prototype, not an optimized FFT library.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import numpy.typing as npt
+
+from prototype_base_v7 import (
+    ChirpState,
+    compress_blocks,
+    direct_row_estimate,
+    draw_state,
+    exact_unitary_dft,
+    local_phase_matrix,
+    materialize_projected_signal,
+    one_row_estimate as sequential_one_row_estimate,
+    worst_case_signal,
+)
+
+ComplexArray = npt.NDArray[np.complex128]
+
+
+def _complex_dtype(dtype: np.dtype[Any] | type[np.complexfloating[Any, Any]]) -> np.dtype[Any]:
+    dt = np.dtype(dtype)
+    if dt not in (np.dtype(np.complex64), np.dtype(np.complex128)):
+        raise ValueError("dtype must be complex64 or complex128")
+    return dt
+
+
+def pairwise_sum_1d(values: npt.ArrayLike, dtype: np.dtype[Any] | type = np.complex128) -> complex:
+    """Balanced pairwise sum for a one-dimensional array.
+
+    Padding with exact zeros lets the same code handle non-power-of-two lengths.
+    The reduction uses O(n) additions and depth ceil(log2 n).
+    """
+    dt = _complex_dtype(dtype)
+    x = np.asarray(values, dtype=dt).reshape(-1)
+    if x.size == 0:
+        return complex(0.0)
+    size = 1 << (int(x.size - 1).bit_length())
+    work = np.zeros(size, dtype=dt)
+    work[: x.size] = x
+    width = size
+    while width > 1:
+        work[: width // 2] = work[:width:2] + work[1:width:2]
+        width //= 2
+    return complex(work[0])
+
+
+def pairwise_sum_axis1(values: npt.ArrayLike, dtype: np.dtype[Any] | type = np.complex128) -> np.ndarray:
+    """Balanced pairwise reduction along axis 1."""
+    dt = _complex_dtype(dtype)
+    x = np.asarray(values, dtype=dt)
+    if x.ndim != 2:
+        raise ValueError("values must be two-dimensional")
+    cols = x.shape[1]
+    if cols == 0:
+        return np.zeros(x.shape[0], dtype=dt)
+    size = 1 << (int(cols - 1).bit_length())
+    work = np.zeros((x.shape[0], size), dtype=dt)
+    work[:, :cols] = x
+    width = size
+    while width > 1:
+        work[:, : width // 2] = work[:, :width:2] + work[:, 1:width:2]
+        width //= 2
+    return work[:, 0].copy()
+
+
+def balanced_exclusive_scan(values: npt.ArrayLike, dtype: np.dtype[Any] | type = np.complex128) -> np.ndarray:
+    """Blelloch exclusive prefix sum with O(n) work and O(log n) depth.
+
+    The returned vector p satisfies p[j] = sum(values[:j]).
+    """
+    dt = _complex_dtype(dtype)
+    original = np.asarray(values, dtype=dt).reshape(-1)
+    n = int(original.size)
+    if n == 0:
+        return np.empty(0, dtype=dt)
+    size = 1 << (n - 1).bit_length()
+    work = np.zeros(size, dtype=dt)
+    work[:n] = original
+
+    stride = 2
+    while stride <= size:
+        right = np.arange(stride - 1, size, stride)
+        left = right - stride // 2
+        work[right] = work[left] + work[right]
+        stride *= 2
+
+    work[-1] = dt.type(0.0 + 0.0j)
+    stride = size
+    while stride >= 2:
+        right = np.arange(stride - 1, size, stride)
+        left = right - stride // 2
+        temp = work[left].copy()
+        work[left] = work[right]
+        work[right] = work[right] + temp
+        stride //= 2
+    return work[:n].copy()
+
+
+def _stable_seed_value(
+    d: npt.ArrayLike,
+    n: int,
+    m: int,
+    state: ChirpState,
+    seed: int,
+    dtype: np.dtype[Any] | type = np.complex128,
+) -> complex:
+    """Direct cycle seed with pairwise local and global reductions."""
+    dt = _complex_dtype(dtype)
+    d_arr = np.asarray(d, dtype=dt)
+    k = n // m
+    r = np.arange(k, dtype=np.int64)[:, None]
+    t = np.arange(m, dtype=np.int64)[None, :]
+    c = (((2 * state.a * m) % n) * r + state.beta + seed) % n
+    phase = ((state.a % n) * ((t * t) % n) + (c * t) % n) % n
+    local_terms = np.exp(-2j * np.pi * phase.astype(np.float64) / n).astype(dt)
+    p = pairwise_sum_axis1(local_terms, dt)
+    block_phase = np.exp(-2j * np.pi * seed * np.arange(k) / k).astype(dt)
+    return pairwise_sum_1d(d_arr * block_phase * p, dt) / math.sqrt(n)
+
+
+def _cycle_arrays(
+    d_fft: np.ndarray,
+    n: int,
+    m: int,
+    state: ChirpState,
+    seed: int,
+    dtype: np.dtype[Any] | type,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return cycle indices, exact gauge phases A_j, and gauged forcing terms.
+
+    For m_j = seed + 2 a j (mod N), the original recurrence is
+
+        y_{j+1} = alpha_j y_j - alpha_j F_j,
+        alpha_j = exp(2 pi i (a + beta + m_j)/N).
+
+    The exact cumulative product is
+
+        A_j = exp(2 pi i (a j^2 + (beta+seed) j)/N).
+
+    Hence z_j = y_j/A_j obeys z_{j+1}=z_j-F_j/A_j.
+    """
+    dt = _complex_dtype(dtype)
+    k = n // m
+    length = n // 2
+    j = np.arange(length, dtype=np.int64)
+    step = (2 * state.a) % n
+    idx = (seed + step * j) % n
+
+    # Prototype sizes are chosen so int64 products remain safe.  Every product
+    # is reduced modulo N before conversion to a phase.
+    phase_num = ((state.a * ((j * j) % n)) + ((state.beta + seed) % n) * j) % n
+    gauge = np.exp(2j * np.pi * phase_num.astype(np.float64) / n).astype(dt)
+
+    boundary_num = (
+        (state.a * ((m * m) % n))
+        + ((idx * m) % n)
+        + ((state.beta * m) % n)
+    ) % n
+    boundary = np.exp(-2j * np.pi * boundary_num.astype(np.float64) / n).astype(dt)
+    forcing = (
+        d_fft[idx % k]
+        - boundary * d_fft[(idx + 2 * state.a * m) % k]
+    ) / math.sqrt(n)
+    gauged_forcing = forcing / gauge
+    return idx, gauge, gauged_forcing.astype(dt)
+
+
+def decode_balanced_scan(
+    d: npt.ArrayLike,
+    n: int,
+    m: int,
+    state: ChirpState,
+    dtype: np.dtype[Any] | type = np.complex128,
+) -> np.ndarray:
+    """Stable O(N)-work decoder using two balanced gauged prefix scans."""
+    dt = _complex_dtype(dtype)
+    d_arr = np.asarray(d, dtype=dt)
+    k = n // m
+    if d_arr.shape != (k,):
+        raise ValueError("d must have length K=N/M")
+    state.validate(n)
+
+    # NumPy FFT computes in double precision; casting models storage/rounding at
+    # the requested decoder precision while retaining a trusted FFT backend.
+    d_fft = np.asarray(np.fft.fft(d_arr.astype(np.complex128)), dtype=dt)
+    out = np.empty(n, dtype=dt)
+
+    for seed in (0, 1):
+        seed_value = dt.type(_stable_seed_value(d_arr, n, m, state, seed, dt))
+        idx, gauge, terms = _cycle_arrays(d_fft, n, m, state, seed, dt)
+        prefix = balanced_exclusive_scan(terms, dt)
+        out[idx] = gauge * (seed_value - prefix)
+    return out
+
+
+
+def decode_sequential_low_precision(
+    d: npt.ArrayLike,
+    n: int,
+    m: int,
+    state: ChirpState,
+    dtype: np.dtype[Any] | type = np.complex64,
+) -> np.ndarray:
+    """Original first-order recurrence with every step rounded to dtype."""
+    dt = _complex_dtype(dtype)
+    d_arr = np.asarray(d, dtype=dt)
+    k = n // m
+    if d_arr.shape != (k,):
+        raise ValueError("d must have length K=N/M")
+    d_fft = np.asarray(np.fft.fft(d_arr.astype(np.complex128)), dtype=dt)
+    out = np.empty(n, dtype=dt)
+    step = (2 * state.a) % n
+    sqrt_n = math.sqrt(n)
+    for seed in (0, 1):
+        out[seed] = dt.type(_stable_seed_value(d_arr, n, m, state, seed, dt))
+        idx = seed
+        while True:
+            nxt = (idx + step) % n
+            if nxt == seed:
+                break
+            leading = dt.type(np.exp(-2j * np.pi * (state.a + idx + state.beta) / n))
+            boundary_num = (state.a * m * m + idx * m + state.beta * m) % n
+            boundary = dt.type(np.exp(-2j * np.pi * boundary_num / n))
+            forcing = dt.type(
+                (d_fft[idx % k] - boundary * d_fft[(idx + 2 * state.a * m) % k])
+                / sqrt_n
+            )
+            out[nxt] = dt.type((out[idx] - forcing) / leading)
+            idx = nxt
+    return out
+
+
+def decode_sequential_gauged_scan(
+    d: npt.ArrayLike,
+    n: int,
+    m: int,
+    state: ChirpState,
+    dtype: np.dtype[Any] | type = np.complex64,
+) -> np.ndarray:
+    """Gauge-transformed recurrence with a serial prefix accumulation."""
+    dt = _complex_dtype(dtype)
+    d_arr = np.asarray(d, dtype=dt)
+    k = n // m
+    d_fft = np.asarray(np.fft.fft(d_arr.astype(np.complex128)), dtype=dt)
+    out = np.empty(n, dtype=dt)
+    for seed in (0, 1):
+        seed_value = dt.type(_stable_seed_value(d_arr, n, m, state, seed, dt))
+        idx, gauge, terms = _cycle_arrays(d_fft, n, m, state, seed, dt)
+        prefix = np.empty_like(terms)
+        acc = dt.type(0.0 + 0.0j)
+        for j in range(terms.size):
+            prefix[j] = acc
+            acc = dt.type(acc + terms[j])
+        out[idx] = gauge * (seed_value - prefix)
+    return out
+
+def balanced_one_row_estimate(
+    x: npt.ArrayLike,
+    m: int,
+    state: ChirpState,
+    dtype: np.dtype[Any] | type = np.complex128,
+) -> np.ndarray:
+    x_arr = np.asarray(x, dtype=np.complex128)
+    d = compress_blocks(x_arr, m, state)
+    return decode_balanced_scan(d, int(x_arr.size), m, state, dtype)
+
+
+@dataclass
+class MajorityGridState:
+    """Vectorized Boyer--Moore states for three shifted scalar grids."""
+
+    candidate: np.ndarray  # shape (3,N), int64 cell IDs
+    count: np.ndarray      # shape (3,N), int32 counters
+
+    @classmethod
+    def zeros(cls, n: int) -> "MajorityGridState":
+        return cls(
+            candidate=np.zeros((3, n), dtype=np.int64),
+            count=np.zeros((3, n), dtype=np.int32),
+        )
+
+
+def _grid_offsets(tau: float) -> tuple[float, np.ndarray]:
+    if not math.isfinite(tau) or tau <= 0.0:
+        raise ValueError("tau must be positive and finite")
+    width = 7.0 * tau
+    return width, np.array([0.0, width / 3.0, 2.0 * width / 3.0], dtype=np.float64)
+
+
+def majority_grid_update(state: MajorityGridState, values: npt.ArrayLike, tau: float) -> None:
+    """Consume one scalar-vector sample in all three shifted grids."""
+    vals = np.asarray(values, dtype=np.float64)
+    if vals.ndim != 1 or vals.size != state.candidate.shape[1]:
+        raise ValueError("values shape does not match majority state")
+    width, offsets = _grid_offsets(tau)
+    for grid in range(3):
+        ids = np.floor((vals - offsets[grid]) / width).astype(np.int64)
+        counts = state.count[grid]
+        candidates = state.candidate[grid]
+        empty = counts == 0
+        candidates[empty] = ids[empty]
+        counts[empty] = 1
+        active = ~empty
+        equal = active & (candidates == ids)
+        different = active & ~equal
+        counts[equal] += 1
+        counts[different] -= 1
+
+
+def majority_grid_finalize(state: MajorityGridState, tau: float) -> np.ndarray:
+    """Return the median of the three candidate cell centers."""
+    width, offsets = _grid_offsets(tau)
+    centers = offsets[:, None] + (state.candidate.astype(np.float64) + 0.5) * width
+    return np.median(centers, axis=0)
+
+
+def streaming_majority_fft(
+    x: npt.ArrayLike,
+    m: int,
+    rows: int,
+    g: float,
+    rng: np.random.Generator,
+    *,
+    stable: bool = True,
+    dtype: np.dtype[Any] | type = np.complex128,
+) -> np.ndarray:
+    """O(N)-memory robust aggregation of independent chirp rows.
+
+    The per-component radius is tau = g*sqrt(2M/N)*||x||_2.  Three shifted
+    grids and Boyer--Moore cancellation replace exact coordinatewise medians.
+    """
+    x_arr = np.asarray(x, dtype=np.complex128)
+    n = int(x_arr.size)
+    if rows <= 0 or rows % 2 != 1:
+        raise ValueError("rows must be positive and odd")
+    if g <= math.sqrt(2.0):
+        raise ValueError("g must exceed sqrt(2) so the per-row bad probability is <1/2")
+    norm = float(np.linalg.norm(x_arr))
+    if norm == 0.0:
+        return np.zeros(n, dtype=np.complex128)
+    tau = g * math.sqrt(2.0 * m / n) * norm
+
+    real_state = MajorityGridState.zeros(n)
+    imag_state = MajorityGridState.zeros(n)
+    for _ in range(rows):
+        state = draw_state(n, rng)
+        if stable:
+            row = balanced_one_row_estimate(x_arr, m, state, dtype)
+        else:
+            row = sequential_one_row_estimate(x_arr, m, state)
+        majority_grid_update(real_state, row.real, tau)
+        majority_grid_update(imag_state, row.imag, tau)
+    real = majority_grid_finalize(real_state, tau)
+    imag = majority_grid_finalize(imag_state, tau)
+    return real + 1j * imag
+
+
+def bernoulli_half_kl(p: float) -> float:
+    """D(1/2 || p) for p in (0,1/2)."""
+    if not (0.0 < p < 0.5):
+        raise ValueError("p must lie in (0,1/2)")
+    return 0.5 * math.log(1.0 / (4.0 * p * (1.0 - p)))
+
+
+def majority_failure_bound(n: int, rows: int, g: float) -> float:
+    """Union bound for all real/imaginary coordinates."""
+    if rows <= 0:
+        raise ValueError("rows must be positive")
+    p = 1.0 / (g * g)
+    if p >= 0.5:
+        return 1.0
+    return min(1.0, 2.0 * n * math.exp(-rows * bernoulli_half_kl(p)))
+
+
+
+def fixed_rows_failure_bound(n: int, rows: int, g: float) -> float:
+    """Combinatorial all-coordinate bound useful when rows is fixed and g grows.
+
+    For rows=2s-1, one scalar coordinate fails only if at least s rows are
+    bad.  Since the upper half of the binomial coefficients sums to 2^(rows-1),
+    the union bound over 2N real/imaginary coordinates is
+
+        N * 2^rows * (1/g^2)^s.
+    """
+    if rows <= 0 or rows % 2 != 1:
+        raise ValueError("rows must be positive and odd")
+    if g <= 0.0:
+        raise ValueError("g must be positive")
+    s = (rows + 1) // 2
+    log_bound = math.log(float(n)) + rows * math.log(2.0) - 2.0 * s * math.log(g)
+    return 1.0 if log_bound >= 0.0 else math.exp(log_bound)
+
+
+def fixed_rows_required_g(n: int, rows: int, delta: float) -> float:
+    """Sufficient g for the fixed-row combinatorial failure bound."""
+    if rows <= 0 or rows % 2 != 1:
+        raise ValueError("rows must be positive and odd")
+    if not (0.0 < delta < 1.0):
+        raise ValueError("delta must lie in (0,1)")
+    s = (rows + 1) // 2
+    return math.exp((math.log(float(n) / delta) + rows * math.log(2.0)) / (2.0 * s))
+
+def majority_uniform_error_bound(x: npt.ArrayLike, m: int, g: float) -> float:
+    """Deterministic error radius conditional on strict good majorities."""
+    x_arr = np.asarray(x, dtype=np.complex128)
+    return 5.0 * g * math.sqrt(m / x_arr.size) * float(np.linalg.norm(x_arr))
+
+
+def required_rows(n: int, g: float, delta: float) -> int:
+    """Smallest odd row count certified by the Chernoff/KL union bound."""
+    if not (0.0 < delta < 1.0):
+        raise ValueError("delta must lie in (0,1)")
+    p = 1.0 / (g * g)
+    d = bernoulli_half_kl(p)
+    r = max(1, math.ceil(math.log(2.0 * n / delta) / d))
+    return r if r % 2 else r + 1
+
+
+def row_work_proxy(n: int, m: int) -> float:
+    k = n // m
+    return 6.0 * n + k * math.log2(max(2, k))
+
+
+def streaming_memory_words_proxy(n: int, m: int) -> int:
+    """Coarse peak-word count independent of the number of rows."""
+    k = n // m
+    # x, one row, scan work, output + 6 candidate IDs + 6 counters + summaries.
+    return 16 * n + 4 * k
+
+
+def make_cases(n: int, m: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
+    idx = np.arange(n, dtype=np.float64)
+    cases: dict[str, np.ndarray] = {
+        "flat": np.ones(n, dtype=np.complex128),
+        "random_phase": np.exp(2j * np.pi * rng.random(n)),
+        "gaussian": rng.normal(size=n) + 1j * rng.normal(size=n),
+        "global_chirp": np.exp(2j * np.pi * (5.0 * idx * idx + 7.0 * idx) / n),
+        "single_spike": np.eye(1, n, n // 3, dtype=np.complex128).reshape(-1),
+    }
+    if n // m >= 2 * m and m >= 2:
+        cases["worst_covariance_mode"] = worst_case_signal(n, m)
+    return cases
+
+
+def run_experiments(seed: int = 0) -> dict[str, Any]:
+    rng = np.random.default_rng(seed)
+    results: dict[str, Any] = {
+        "balanced_recurrence_equivalence": [],
+        "float32_stability": [],
+        "grid_majority_lemma": [],
+        "streaming_fft": [],
+        "asymptotic_tradeoff": [],
+        "fixed_row_tradeoff": [],
+    }
+
+    # Algebraic equivalence in double precision.
+    for n, m in [(64, 4), (256, 8), (1024, 16), (4096, 16)]:
+        for rep in range(3):
+            x = rng.normal(size=n) + 1j * rng.normal(size=n)
+            state = draw_state(n, rng)
+            ref = direct_row_estimate(x, m, state)
+            seq = sequential_one_row_estimate(x, m, state)
+            bal = balanced_one_row_estimate(x, m, state)
+            results["balanced_recurrence_equivalence"].append(
+                {
+                    "N": n,
+                    "M": m,
+                    "rep": rep,
+                    "sequential_max_error": float(np.max(np.abs(seq - ref))),
+                    "balanced_max_error": float(np.max(np.abs(bal - ref))),
+                    "balanced_vs_sequential": float(np.max(np.abs(bal - seq))),
+                }
+            )
+
+    # Low-precision stress: compare a casted sequential recurrence and balanced scan.
+    for n, m in [(1024, 16), (4096, 16), (16384, 32), (65536, 64), (262144, 128)]:
+        x = rng.normal(size=n) + 1j * rng.normal(size=n)
+        state = draw_state(n, rng)
+        d = compress_blocks(x, m, state)
+        ref = direct_row_estimate(x, m, state)
+        seq32 = decode_sequential_low_precision(d, n, m, state, np.complex64).astype(np.complex128)
+        gauged_seq32 = decode_sequential_gauged_scan(d, n, m, state, np.complex64).astype(np.complex128)
+        bal32 = balanced_one_row_estimate(x, m, state, np.complex64).astype(np.complex128)
+        bal64 = decode_balanced_scan(d, n, m, state, np.complex128)
+        results["float32_stability"].append(
+            {
+                "N": n,
+                "M": m,
+                "original_sequential32_max_error": float(np.max(np.abs(seq32 - ref))),
+                "gauged_sequential32_max_error": float(np.max(np.abs(gauged_seq32 - ref))),
+                "balanced32_max_error": float(np.max(np.abs(bal32 - ref))),
+                "balanced64_max_error": float(np.max(np.abs(bal64 - ref))),
+            }
+        )
+
+    # Deterministic shifted-grid lemma under adversarial outliers and orderings.
+    tau = 1.0
+    for trial in range(200):
+        mu = float(rng.normal() * 10.0)
+        rows = 21
+        good_count = 11 + int(rng.integers(0, 6))
+        good = mu + rng.uniform(-tau, tau, size=good_count)
+        bad = mu + rng.normal(scale=50.0, size=rows - good_count)
+        values = np.concatenate([good, bad])
+        rng.shuffle(values)
+        st = MajorityGridState.zeros(1)
+        for value in values:
+            majority_grid_update(st, np.array([value]), tau)
+        got = float(majority_grid_finalize(st, tau)[0])
+        results["grid_majority_lemma"].append(
+            {
+                "trial": trial,
+                "mu": mu,
+                "estimate": got,
+                "abs_error_over_tau": abs(got - mu) / tau,
+                "good_count": good_count,
+            }
+        )
+
+    n, m = 4096, 16
+    cases = make_cases(n, m, rng)
+    for name, x in cases.items():
+        exact = exact_unitary_dft(x)
+        for rows, g in [(9, 3.0), (17, 3.0), (33, 2.5), (65, 2.25)]:
+            local_rng = np.random.default_rng(seed + rows * 1009 + len(name))
+            got = streaming_majority_fft(x, m, rows, g, local_rng)
+            err = float(np.max(np.abs(got - exact)))
+            results["streaming_fft"].append(
+                {
+                    "case": name,
+                    "N": n,
+                    "M": m,
+                    "rows": rows,
+                    "g": g,
+                    "max_error": err,
+                    "normalized_by_l2": err / max(float(np.linalg.norm(x)), 1e-300),
+                    "theorem_error_bound": majority_uniform_error_bound(x, m, g),
+                    "failure_bound": majority_failure_bound(n, rows, g),
+                    "memory_words_proxy": streaming_memory_words_proxy(n, m),
+                }
+            )
+
+    # Fixed-row points: choose g from the direct binomial-majority bound.
+    delta_fixed = 0.1
+    for log2_n in [20, 40, 80, 160, 320]:
+        # Store logarithmic/asymptotic quantities without constructing N.
+        # The formulas below use n=2^log2_n through logarithms only.
+        for rows in [3, 5, 9]:
+            s_major = (rows + 1) // 2
+            log_g = ((log2_n + rows) * math.log(2.0) - math.log(delta_fixed)) / (2.0 * s_major)
+            g_fixed = math.exp(log_g) if log_g < 700 else float("inf")
+            # M proxy = log2 N.  Report the log2 of the normalized error factor
+            # 5*g*sqrt(M/N) to avoid overflow.
+            log2_error_factor = (
+                math.log2(5.0)
+                + log_g / math.log(2.0)
+                + 0.5 * math.log2(log2_n)
+                - 0.5 * log2_n
+            )
+            results["fixed_row_tradeoff"].append(
+                {
+                    "log2_N": log2_n,
+                    "rows": rows,
+                    "s": s_major,
+                    "delta": delta_fixed,
+                    "g": g_fixed,
+                    "log2_error_factor_over_l2": log2_error_factor,
+                }
+            )
+
+    # Symbolic/asymptotic parameter points for g=(log N)^eps.
+    eps = 0.25
+    a_fail = 1.0
+    for log2_n in [64, 128, 256, 512, 1024, 2048, 4096]:
+        ell = math.log2(log2_n)
+        f = max(1.0, math.sqrt(ell))
+        m_proxy = log2_n / f
+        g = log2_n ** eps
+        p = 1.0 / (g * g)
+        d = bernoulli_half_kl(p)
+        rows = math.ceil(((1.0 + a_fail) * log2_n * math.log(2.0)) / d)
+        time_ratio = rows * f / log2_n
+        error_factor = 5.0 * g * math.sqrt(m_proxy)
+        results["asymptotic_tradeoff"].append(
+            {
+                "log2_N": log2_n,
+                "f": f,
+                "M_proxy": m_proxy,
+                "g": g,
+                "rows_proxy": rows,
+                "time_over_Nlog2N_proxy": time_ratio,
+                "error_factor_over_l2_over_sqrtN": error_factor,
+            }
+        )
+    return results
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, default=Path("results.json"))
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
+    results = run_experiments(args.seed)
+    args.output.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    print(f"wrote {args.output}")
+
+
+if __name__ == "__main__":
+    main()

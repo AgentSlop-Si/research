@@ -1,0 +1,202 @@
+0001 """Independent bounded exact-field controls. No uploaded program is imported.
+0002 
+0003 This is an audit checker, not a fast Fourier implementation or search program.
+0004 """
+0005 import json
+0006 import random
+0007 from pathlib import Path
+0008 
+0009 P = 20161
+0010 
+0011 
+0012 def eye(n):
+0013     return [[int(i == j) for j in range(n)] for i in range(n)]
+0014 
+0015 
+0016 def mul(a, b):
+0017     n = len(a)
+0018     return [[sum(a[i][k] * b[k][j] for k in range(n)) % P
+0019              for j in range(n)] for i in range(n)]
+0020 
+0021 
+0022 def inv(a):
+0023     n = len(a)
+0024     c = [a[i][:] + eye(n)[i] for i in range(n)]
+0025     for k in range(n):
+0026         r = next((r for r in range(k, n) if c[r][k]), None)
+0027         if r is None:
+0028             raise ValueError("singular")
+0029         c[k], c[r] = c[r], c[k]
+0030         z = pow(c[k][k], -1, P)
+0031         c[k] = [(z * x) % P for x in c[k]]
+0032         for r in range(n):
+0033             if r != k and c[r][k]:
+0034                 z = c[r][k]
+0035                 c[r] = [(u - z * v) % P for u, v in zip(c[r], c[k])]
+0036     return [r[n:] for r in c]
+0037 
+0038 
+0039 def scale(a, c):
+0040     return [[x * c % P for x in r] for r in a]
+0041 
+0042 
+0043 def root(n):
+0044     for z in range(2, P):
+0045         w = pow(z, (P - 1) // n, P)
+0046         if pow(w, n, P) == 1 and all(pow(w, d, P) != 1
+0047                 for d in range(1, n) if n % d == 0):
+0048             return w
+0049     raise AssertionError("no primitive root")
+0050 
+0051 
+0052 def canonical(n):
+0053     w = root(n)
+0054     d = [[pow(w, i, P) if i == j else 0 for j in range(n)] for i in range(n)]
+0055     z = [[int(i == (j + 1) % n) for j in range(n)] for i in range(n)]
+0056     f = [[pow(w, i * j, P) for j in range(n)] for i in range(n)]
+0057     assert mul(f, z) == mul(d, f)
+0058     assert mul(f, d) == mul(inv(z), f)
+0059     return w, d, z, f
+0060 
+0061 
+0062 def powers(a):
+0063     out = [eye(len(a))]
+0064     for _ in range(1, len(a)):
+0065         out.append(mul(out[-1], a))
+0066     return out
+0067 
+0068 
+0069 def signatures(x, y):
+0070     n = len(x)
+0071     xx, yy = powers(x), powers(y)
+0072     return [tuple(sum(xx[a][i][k] * yy[b][k][i] for k in range(n)) % P
+0073                   for a in range(n) for b in range(n)) for i in range(n)]
+0074 
+0075 
+0076 def short_signatures(x, y):
+0077     words = [x, y, mul(x, x), mul(x, y), mul(y, x), mul(y, y)]
+0078     return [tuple(w[i][i] for w in words) for i in range(len(x))]
+0079 
+0080 
+0081 def recover_monomial(x, y, u, v):
+0082     n = len(x)
+0083     sx, su = signatures(x, y), signatures(u, v)
+0084     assert len(set(sx)) == n and len(set(su)) == n
+0085     lookup = {s: i for i, s in enumerate(su)}
+0086     if set(sx) != set(su):
+0087         return None, "full-fingerprint mismatch"
+0088     pi = [lookup[s] for s in sx]
+0089     uu = [[u[pi[i]][pi[j]] for j in range(n)] for i in range(n)]
+0090     vv = [[v[pi[i]][pi[j]] for j in range(n)] for i in range(n)]
+0091     edges = [[] for _ in range(n)]
+0092     for a, b in ((x, uu), (y, vv)):
+0093         for i in range(n):
+0094             for j in range(n):
+0095                 assert bool(a[i][j]) == bool(b[i][j])
+0096                 if a[i][j]:
+0097                     r = b[i][j] * pow(a[i][j], -1, P) % P
+0098                     edges[i].append((j, r))
+0099                     edges[j].append((i, pow(r, -1, P)))
+0100     q = [None] * n
+0101     q[0] = 1
+0102     queue = [0]
+0103     for i in queue:
+0104         for j, r in edges[i]:
+0105             value = q[i] * r % P
+0106             if q[j] is None:
+0107                 q[j] = value
+0108                 queue.append(j)
+0109             else:
+0110                 assert q[j] == value
+0111     assert len(queue) == n
+0112     c = [[q[i] if j == pi[i] else 0 for j in range(n)] for i in range(n)]
+0113     assert mul(x, c) == mul(c, u) and mul(y, c) == mul(c, v)
+0114     return c, "unique monomial up to scalar"
+0115 
+0116 
+0117 def random_invertible(n, rng):
+0118     while True:
+0119         a = [[rng.randrange(P) for _ in range(n)] for _ in range(n)]
+0120         try:
+0121             inv(a)
+0122             return a
+0123         except ValueError:
+0124             pass
+0125 
+0126 
+0127 def is_monomial(a):
+0128     n = len(a)
+0129     return (all(sum(x != 0 for x in r) == 1 for r in a)
+0130             and all(sum(a[i][j] != 0 for i in range(n)) == 1 for j in range(n)))
+0131 
+0132 
+0133 def main():
+0134     rng = random.Random(202610092020)
+0135     positive, negative, collision = [], [], []
+0136     for n in (2, 3, 4, 5, 6, 7, 8, 9, 10, 12):
+0137         w, d, z, f = canonical(n)
+0138         a = random_invertible(n, rng)
+0139         ai = inv(a)
+0140         pi = list(range(n))
+0141         rng.shuffle(pi)
+0142         q = [rng.randrange(1, P) for _ in range(n)]
+0143         c = [[q[i] if j == pi[i] else 0 for j in range(n)] for i in range(n)]
+0144         b = mul(mul(inv(c), ai), f)
+0145         bi = inv(b)
+0146         x, y = mul(mul(ai, d), a), mul(mul(ai, inv(z)), a)
+0147         u, v = mul(mul(b, z), bi), mul(mul(b, d), bi)
+0148         assert mul(x, y) == scale(mul(y, x), pow(w, -1, P))
+0149         found, status = recover_monomial(x, y, u, v)
+0150         assert found == scale(c, pow(q[0], -1, P))
+0151         m = mul(mul(a, found), b)
+0152         calibrated = scale(found, pow(m[0][0], -1, P))
+0153         assert mul(mul(a, calibrated), b) == f
+0154         positive.append({"N": n, "status": status, "all_entries_exact": True,
+0155                          "fingerprint_entries_per_pair": n ** 3})
+0156 
+0157         bn = random_invertible(n, rng)
+0158         bni = inv(bn)
+0159         un, vn = mul(mul(bn, z), bni), mul(mul(bn, d), bni)
+0160         truth = mul(mul(ai, f), bni)
+0161         cn, reason = recover_monomial(x, y, un, vn)
+0162         assert (cn is not None) == is_monomial(truth)
+0163         assert cn is None
+0164         negative.append({"N": n, "status": reason,
+0165                          "independent_dense_intertwiner_nonmonomial": True})
+0166 
+0167     for n in (5, 7, 9):
+0168         w, d, z, _ = canonical(n)
+0169         x, y = z, mul(d, z)
+0170         u, v = z, mul(d, mul(z, z))
+0171         assert mul(x, y) == scale(mul(y, x), pow(w, -1, P))
+0172         assert mul(u, v) == scale(mul(v, u), pow(w, -1, P))
+0173         for t in (x, y, u, v):
+0174             assert mul(powers(t)[-1], t) == eye(n)
+0175         assert short_signatures(x, y) == [(0,) * 6] * n
+0176         assert short_signatures(u, v) == [(0,) * 6] * n
+0177         sx, su = signatures(x, y), signatures(u, v)
+0178         assert len(set(sx)) == len(set(su)) == n
+0179         assert set(sx) != set(su)
+0180         extra_x, extra_u = mul(inv(x), y), mul(inv(u), v)
+0181         assert all(extra_x[i][i] for i in range(n))
+0182         assert all(extra_u[i][i] == 0 for i in range(n))
+0183         found, reason = recover_monomial(x, y, u, v)
+0184         assert found is None
+0185         collision.append({"N": n, "all_six_short_fingerprints_zero": True,
+0186                           "full_fingerprints_distinct": True,
+0187                           "inverse_word_rejects": True, "status": reason})
+0188 
+0189     result = {"field_prime": P, "seed": 202610092020,
+0190               "no_uploaded_code_executed": True,
+0191               "positive_fixed_factor_controls": positive,
+0192               "negative_fixed_factor_controls": negative,
+0193               "short_fingerprint_collision_controls": collision,
+0194               "scope": "Exact finite controls; general theorem has a separate proof."}
+0195     path = Path(__file__).with_name("CHECK_RESULTS.json")
+0196     path.write_text(json.dumps(result, indent=2) + "\n")
+0197     print(json.dumps({"positive": len(positive), "negative": len(negative),
+0198                       "collision": len(collision), "passed": True}))
+0199 
+0200 
+0201 if __name__ == "__main__":
+0202     main()

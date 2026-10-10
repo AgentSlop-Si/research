@@ -1,0 +1,111 @@
+   1 """Full-subset Fourier cut / quasiseparable boundary-rank obstruction.
+   2 
+   3 If B = M C[:,pi], C invertible, upper/lower QS rank ceilings for C/B,
+   4 then for any I subset of B-columns, J=pi(I),
+   5     rank(M[I^c,J]) <= budget_B(I) + budget_C(J)
+   6 where budget counts transitions of membership in an index set.
+   7 
+   8 Modular rank gives characteristic-zero lower bound (not necessarily equality).
+   9 """
+  10 from functools import lru_cache
+  11 from itertools import combinations,permutations
+  12 from collections import Counter
+  13 
+  14 
+  15 def boundaries(mask,n):
+  16     # descending membership 1->0 means J to left and J^c to right: lower-rank block
+  17     down=up=0
+  18     for k in range(1,n):
+  19         a=(mask>>(k-1))&1;b=(mask>>k)&1
+  20         if a and not b: down+=1
+  21         if not a and b: up+=1
+  22     return up, down
+  23 
+  24 
+  25 def budget(mask,n,up=1,down=1):
+  26     a,b=boundaries(mask,n)
+  27     return a*up+b*down
+  28 
+  29 
+  30 def modrank(arr,p):
+  31     if not arr:return 0
+  32     A=[[x%p for x in row] for row in arr]
+  33     nrows=len(A);ncols=len(A[0])
+  34     pivot=0
+  35     for j in range(ncols):
+  36         k=next((i for i in range(pivot,nrows) if A[i][j]),None)
+  37         if k is None:continue
+  38         A[pivot],A[k]=A[k],A[pivot]
+  39         z=pow(A[pivot][j],-1,p)
+  40         for q in range(j,ncols):A[pivot][q]=(A[pivot][q]*z)%p
+  41         for i in range(pivot+1,nrows):
+  42             f=A[i][j]
+  43             if f:
+  44                 for q in range(j,ncols):A[i][q]=(A[i][q]-f*A[pivot][q])%p
+  45         pivot+=1
+  46         if pivot==nrows:break
+  47     return pivot
+  48 
+  49 
+  50 def primitive_root(n,p):
+  51     assert (p-1)%n==0
+  52     for x in range(2,p):
+  53         z=pow(x,(p-1)//n,p)
+  54         if pow(z,n,p)==1 and (n==1 or pow(z,n//2,p)!=1):return z
+  55     raise RuntimeError('root not found')
+  56 
+  57 
+  58 def fourier_matrix(n,p=12289,in_order=None,out_order=None):
+  59     z=primitive_root(n,p)
+  60     ai=list(range(n)) if out_order is None else out_order
+  61     bj=list(range(n)) if in_order is None else in_order
+  62     return [[pow(z,ai[i]*bj[j],p) for j in range(n)] for i in range(n)]
+  63 
+  64 
+  65 def rank_table(M,p=12289):
+  66     n=len(M);size=1<<n
+  67     table={}
+  68     for t in range(1,n):
+  69         masks=[sum(1<<i for i in comb) for comb in combinations(range(n),t)]
+  70         for row_i in masks:
+  71             rows=[i for i in range(n) if not(row_i>>i)&1]
+  72             for col_j in masks:
+  73                 cols=[j for j in range(n) if (col_j>>j)&1]
+  74                 table[(row_i,col_j)]=modrank([[M[i][j] for j in cols] for i in rows],p)
+  75     return table
+  76 
+  77 
+  78 def apply_perm_mask(pi,mask):
+  79     return sum(1<<pi[k] for k in range(len(pi)) if (mask>>k)&1)
+  80 
+  81 
+  82 def subset_violations(pi,table,upC=1,downC=1,upB=1,downB=1):
+  83     n=len(pi);N=1<<n
+  84     costsB=[budget(mask,n,upB,downB) for mask in range(N)]
+  85     costsC=[budget(mask,n,upC,downC) for mask in range(N)]
+  86     for I in range(1,N-1):
+  87         J=apply_perm_mask(pi,I)
+  88         k=table[(I,J)]
+  89         cost=costsB[I]+costsC[J]
+  90         if k>cost:return {'I':I,'J':J,'rank':k,'budget':cost,'type':'subset'}
+  91     return None
+  92 
+  93 if __name__=='__main__':
+  94     from pathlib import Path
+  95     import sys,time,json
+  96     here=Path(__file__).parent
+  97     sys.path.insert(0,str(here.parent/'fft_window_rank_gate_2026-10-09'))
+  98     from window_gate import check_windows
+  99     import pickle
+ 100     for n in [8]:
+ 101         start=time.time();M=fourier_matrix(n)
+ 102         r=rank_table(M)
+ 103         print('rank_table',len(r),'seconds',round(time.time()-start,2))
+ 104         stats=Counter();witness=None
+ 105         for pi in permutations(range(n)):
+ 106             old=not check_windows(pi)
+ 107             new=subset_violations(pi,r) is None
+ 108             stats[(old,new)]+=1
+ 109             if old and not new and witness is None:
+ 110                 witness={'pi':pi,'violation':subset_violations(pi,r)}
+ 111         print('counts',dict(stats),'witness',witness,'seconds',round(time.time()-start,2))

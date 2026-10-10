@@ -1,0 +1,82 @@
+0001 import json
+0002 import math
+0003 import unittest
+0004 from pathlib import Path
+0005 
+0006 import numpy as np
+0007 
+0008 import prototype
+0009 
+0010 
+0011 ROOT = Path(__file__).resolve().parent
+0012 
+0013 
+0014 class CheckpointTests(unittest.TestCase):
+0015     @classmethod
+0016     def setUpClass(cls):
+0017         cls.results = json.loads((ROOT / "results.json").read_text(encoding="utf-8"))
+0018 
+0019     def test_packed_decoder_bounds(self):
+0020         rows = self.results["packed_correctness"]
+0021         self.assertEqual(len(rows), 20)
+0022         for row in rows:
+0023             self.assertLessEqual(
+0024                 row["decoder_error_normalized"],
+0025                 row["decoder_bound_normalized"] + 1e-12,
+0026             )
+0027 
+0028     def test_sampling_scaling_is_inverse_sqrt_k(self):
+0029         for case in ["flat", "random_phase", "gaussian", "spike_noise"]:
+0030             rows = [r for r in self.results["sampling_scaling"] if r["case"] == case]
+0031             xs = np.log([r["k"] for r in rows])
+0032             ys = np.log([r["median_normalized_sampling_error"] for r in rows])
+0033             slope = float(np.polyfit(xs, ys, 1)[0])
+0034             self.assertGreater(slope, -0.60)
+0035             self.assertLess(slope, -0.40)
+0036 
+0037     def test_linear_symbolic_cost_stays_constant_order(self):
+0038         rows = self.results["cost_model_linear"][-4:]
+0039         for row in rows:
+0040             self.assertLess(row["modeled_total_non_io_over_N"], 12.0)
+0041             self.assertLess(row["table_exponent_logN"], 0.73)
+0042         etas = [r["predicted_sampling_scale"] for r in rows]
+0043         self.assertTrue(all(b < a for a, b in zip(etas, etas[1:])))
+0044 
+0045     def test_subfft_symbolic_cost_matches_L_over_logL(self):
+0046         rows = self.results["cost_model_subfft"][-4:]
+0047         ratios = []
+0048         for row in rows:
+0049             L = float(row["log2N"])
+0050             ell = float(row["log2log2N"])
+0051             ratios.append(row["modeled_total_non_io_over_N"] / (L / ell))
+0052             self.assertLess(row["table_exponent_logN"], 0.73)
+0053         self.assertLess(max(ratios), 3.5)
+0054         self.assertGreater(min(ratios), 2.5)
+0055 
+0056     def test_energy_mixture_is_not_asymptotically_stronger(self):
+0057         rows = self.results["rejected_energy_mixture"]
+0058         # Cauchy gives L_box/sqrt(N) <= sqrt(2)||x||_2.
+0059         for row in rows:
+0060             self.assertLessEqual(
+0061                 row["ratio_Lbox_over_sqrtN_to_l2"], math.sqrt(2.0) + 1e-12
+0062             )
+0063         # On a single spike the old scale is smaller by exactly sqrt(N).
+0064         for row in rows:
+0065             if row["case"] == "single_spike":
+0066                 self.assertAlmostEqual(
+0067                     row["ratio_Lbox_over_sqrtN_to_l2"],
+0068                     1.0 / math.sqrt(row["N"]),
+0069                     places=12,
+0070                 )
+0071 
+0072     def test_hoeffding_sample_count_decreases_with_larger_tolerance(self):
+0073         N = 1 << 20
+0074         delta = N ** -1
+0075         k1 = prototype.concentration_k(N, 0.1, delta)
+0076         k2 = prototype.concentration_k(N, 0.2, delta)
+0077         self.assertGreater(k1, k2)
+0078         self.assertGreaterEqual(k1, 4 * k2 - 8)
+0079 
+0080 
+0081 if __name__ == "__main__":
+0082     unittest.main(verbosity=2)

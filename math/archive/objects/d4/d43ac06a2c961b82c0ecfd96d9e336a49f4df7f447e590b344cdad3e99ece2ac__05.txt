@@ -1,0 +1,248 @@
+0001 #!/usr/bin/env python3
+0002 """Fresh bounded exact seed gate. No uploaded source or numerical fitting."""
+0003 import json
+0004 from math import isqrt
+0005 from pathlib import Path
+0006 
+0007 HERE = Path(__file__).resolve().parent
+0008 PRIME = 998244353
+0009 LABELS = [(axis, c, sign) for axis in ("H", "V") for c in (0, 1) for sign in (-1, 1)]
+0010 
+0011 
+0012 def is_prime(p):
+0013     return p >= 2 and all(p % d for d in range(2, isqrt(p) + 1))
+0014 
+0015 
+0016 def cycles(n):
+0017     k = n.bit_length() - 1
+0018     b = 1 << (k // 2)
+0019     a = n // b
+0020     answer = []
+0021     for axis, c, sign in LABELS:
+0022         p = []
+0023         for v in range(n):
+0024             x, y = divmod(v, b)
+0025             if axis == "H":
+0026                 x = (x + sign * (2 * y + c)) % a
+0027             else:
+0028                 y = (y + sign * (2 * x + c)) % b
+0029             p.append(x * b + y)
+0030         seen = bytearray(n)
+0031         reps = []
+0032         for v in range(n):
+0033             if not seen[v]:
+0034                 reps.append(v)
+0035                 w = v
+0036                 while not seen[w]:
+0037                     seen[w] = 1
+0038                     w = p[w]
+0039                 assert w == v
+0040         q = p.copy()
+0041         for i, v in enumerate(reps):
+0042             q[v] = p[reps[(i + 1) % len(reps)]]
+0043         seen, v = set(), 0
+0044         for _ in range(n):
+0045             seen.add(v)
+0046             v = q[v]
+0047         assert len(seen) == n and v == 0
+0048         answer.append(q)
+0049     return answer
+0050 
+0051 
+0052 def green(p, denominator, prime=PRIME):
+0053     n = len(p)
+0054     tau = pow(denominator, -1, prime)
+0055     wrap = (1 - pow(tau, n, prime)) % prime
+0056     assert wrap
+0057     result = [[0] * n for _ in range(n)]
+0058     initial = pow(wrap, -1, prime)
+0059     for column in range(n):
+0060         row, coefficient = column, initial
+0061         for _ in range(n):
+0062             result[row][column] = coefficient
+0063             row = p[row]
+0064             coefficient = coefficient * tau % prime
+0065     return result
+0066 
+0067 
+0068 def multiply(a, b, prime=PRIME):
+0069     return [[sum(x * y for x, y in zip(row, column)) % prime
+0070              for column in zip(*b)] for row in a]
+0071 
+0072 
+0073 def layer(gs, coefficients, prime=PRIME):
+0074     n = len(gs[0])
+0075     return [[sum(coefficients[j][i] * gs[j][i][k] for j in range(8)) % prime
+0076              for k in range(n)] for i in range(n)]
+0077 
+0078 
+0079 def pivots(a, prime=PRIME):
+0080     mat = [row[:] for row in a]
+0081     rr, selected = 0, []
+0082     for cc in range(len(mat[0])):
+0083         pivot = next((i for i in range(rr, len(mat)) if mat[i][cc] % prime), None)
+0084         if pivot is None:
+0085             continue
+0086         mat[rr], mat[pivot] = mat[pivot], mat[rr]
+0087         inv = pow(mat[rr][cc], -1, prime)
+0088         mat[rr] = [v * inv % prime for v in mat[rr]]
+0089         for i in range(rr + 1, len(mat)):
+0090             factor = mat[i][cc]
+0091             mat[i] = [(u - factor * v) % prime for u, v in zip(mat[i], mat[rr])]
+0092         selected.append(cc)
+0093         rr += 1
+0094         if rr == len(mat):
+0095             break
+0096     return selected
+0097 
+0098 
+0099 def determinant(a, prime=PRIME):
+0100     mat = [row[:] for row in a]
+0101     answer = 1
+0102     for j in range(len(mat)):
+0103         pivot = next((i for i in range(j, len(mat)) if mat[i][j] % prime), None)
+0104         if pivot is None:
+0105             return 0
+0106         if pivot != j:
+0107             mat[j], mat[pivot] = mat[pivot], mat[j]
+0108             answer = -answer
+0109         factor = mat[j][j]
+0110         answer = answer * factor % prime
+0111         inverse = pow(factor, -1, prime)
+0112         for i in range(j + 1, len(mat)):
+0113             scale = mat[i][j] * inverse % prime
+0114             for k in range(j + 1, len(mat)):
+0115                 mat[i][k] = (mat[i][k] - scale * mat[j][k]) % prime
+0116     return answer % prime
+0117 
+0118 
+0119 def solve(a, rhs, prime=PRIME):
+0120     n = len(rhs)
+0121     mat = [row[:] + [v] for row, v in zip(a, rhs)]
+0122     for j in range(n):
+0123         pivot = next(i for i in range(j, n) if mat[i][j] % prime)
+0124         mat[j], mat[pivot] = mat[pivot], mat[j]
+0125         inv = pow(mat[j][j], -1, prime)
+0126         mat[j] = [v * inv % prime for v in mat[j]]
+0127         for i in range(n):
+0128             if i != j:
+0129                 scale = mat[i][j]
+0130                 mat[i] = [(u - scale * v) % prime for u, v in zip(mat[i], mat[j])]
+0131     return [row[-1] for row in mat]
+0132 
+0133 
+0134 def outer_gate(templates, target):
+0135     rows = []
+0136     for i, (t, wanted) in enumerate(zip(templates, target)):
+0137         selected = pivots(t)
+0138         assert len(selected) == 8
+0139         square = [[row[j] for j in selected] for row in t]
+0140         det = determinant(square)
+0141         assert det
+0142         a = solve([list(row) for row in zip(*square)], [wanted[j] for j in selected])
+0143         got = [sum(a[j] * t[j][v] for j in range(8)) % PRIME for v in range(16)]
+0144         bad = [v for v in range(16) if got[v] != wanted[v]]
+0145         rows.append({"row": i, "pivot_columns": selected, "pivot_determinant": det,
+0146                      "outer_coefficients": a, "nonzero_guard": all(a),
+0147                      "residual_failure_columns": bad,
+0148                      "residuals": [(got[v] - wanted[v]) % PRIME for v in range(16)]})
+0149     return rows
+0150 
+0151 
+0152 def covariance_seed(matrix, z):
+0153     n = len(matrix)
+0154     covariance = all(matrix[i][j + 1] == pow(z, i, PRIME) * matrix[i][j] % PRIME
+0155                      for i in range(n) for j in range(n - 1))
+0156     seed = all(row[0] == 1 for row in matrix)
+0157     return covariance, seed
+0158 
+0159 
+0160 def main():
+0161     assert is_prime(PRIME)
+0162     n, m = 16, 4
+0163     z = pow(3, (PRIME - 1) // n, PRIME)
+0164     assert pow(z, 8, PRIME) == PRIME - 1 and pow(z, 16, PRIME) == 1
+0165     ps = cycles(n)
+0166     gs = [green(p, j + 2) for j, p in enumerate(ps)]
+0167     b = [[0] * n for _ in range(n)]
+0168     for block in range(4):
+0169         for i in range(m):
+0170             for j in range(m):
+0171                 b[4 * block + i][4 * block + j] = (
+0172                     pow(z, 4 * i * j, PRIME) if block < 2 else int(i == j))
+0173     ones = [[1] * n for _ in range(8)]
+0174     h1 = h2 = layer(gs, ones)
+0175     prefix = multiply(multiply(h2, b), h1)
+0176     prefix_det = determinant(prefix)
+0177     assert prefix_det
+0178     transported = [multiply(g, prefix) for g in gs]
+0179     templates = [[transported[j][i] for j in range(8)] for i in range(n)]
+0180     target = [[pow(z, i * j, PRIME) for j in range(n)] for i in range(n)]
+0181     rows = outer_gate(templates, target)
+0182     assert all(len(pivots(t)) == 8 for t in templates)
+0183     certificates = []
+0184     for i, t in enumerate(templates):
+0185         augmented = t + [target[i]]
+0186         selected = pivots(augmented)
+0187         if len(selected) == 9:
+0188             minor = [[row[j] for j in selected] for row in augmented]
+0189             value = determinant(minor)
+0190             assert value
+0191             certificates.append({"row": i, "columns": selected,
+0192                                  "minor_mod_prime": minor,
+0193                                  "determinant_mod_prime": value})
+0194     assert certificates
+0195     supplied_outer = [[1 + 17 * j + 3 * i for i in range(n)] for j in range(8)]
+0196     positive = multiply(layer(gs, supplied_outer), prefix)
+0197     accepted = outer_gate(templates, positive)
+0198     assert all(not row["residual_failure_columns"] and row["nonzero_guard"] for row in accepted)
+0199     assert all(row["outer_coefficients"] == [supplied_outer[j][i] for j in range(8)]
+0200                for i, row in enumerate(accepted))
+0201     changed = None
+0202     for col in range(n):
+0203         candidate = [row[:] for row in positive]
+0204         candidate[0][col] = (candidate[0][col] + 1) % PRIME
+0205         rejected = outer_gate(templates, candidate)
+0206         if rejected[0]["residual_failure_columns"]:
+0207             changed = {"modified_row": 0, "modified_column": col,
+0208                        "failed_residual_columns": rejected[0]["residual_failure_columns"]}
+0209             break
+0210     assert changed is not None
+0211     assert covariance_seed(target, z) == (True, True)
+0212     double_target = [[2 * v % PRIME for v in row] for row in target]
+0213     assert covariance_seed(double_target, z) == (True, False)
+0214     template_diagnostics = []
+0215     for size in (4, 8, 16, 32, 64):
+0216         perms = cycles(size)
+0217         matrices = [green(p, j + 2) for j, p in enumerate(perms)]
+0218         ranks = [len(pivots([g[i] for g in matrices])) for i in range(size)]
+0219         assert ranks == [min(8, size)] * size
+0220         template_diagnostics.append({"N": size, "distinct_cycles": len({tuple(p) for p in perms}),
+0221                                      "row_template_ranks": ranks})
+0222     result = {
+0223         "status": "PASS: fixed inner prefix rejected; verifier controls pass",
+0224         "scope": "All256 inner left-endpoint entries fixed to1; all128 outer entries free. This does not reject other inner coefficients, the full384-variable model, or the general eight-cycle architecture.",
+0225         "field": {"prime": PRIME, "cyclotomic_root": z, "minimal_polynomial": "z^8+1",
+0226                   "prime_verified_by_trial_division": True},
+0227         "model": {"N": 16, "m": 4, "active_blocks": [0, 1], "product": "H3 H2 B H1",
+0228                   "pole_denominators": list(range(2, 10)), "label_order": LABELS,
+0229                   "green_occurrences": 24, "fixed_inner_endpoint_entries": 256,
+0230                   "free_outer_endpoint_entries": 128, "total_endpoint_entries": 384,
+0231                   "cycle_successors": ps},
+0232         "prefix_determinant_mod_prime": prefix_det,
+0233         "outer_elimination_rows": rows,
+0234         "augmented_rank_nine_witnesses": certificates,
+0235         "characteristic_zero_lift_of_negative_result": "The templates have entries in Q(z)/(z^8+1), all rational denominators survive modulo this prime, and a displayed9-by9minor specializes to a nonzero determinant. It is therefore nonzero in characteristic zero. Eight outer templates cannot span the Fourier row, even over any field extension.",
+0236         "positive_control": "All256 product entries pass for a generated admissible outer coefficient set, and all128 supplied outer coefficients are recovered exactly.",
+0237         "changed_entry_negative_control": changed,
+0238         "seed_control": "F16 passes covariance and seed;2F16 passes covariance and fails seed.",
+0239         "template_diagnostics": template_diagnostics,
+0240         "provenance": "Fresh standard-library formula checker, no uploaded code and no numerical optimization."}
+0241     (HERE / "N16_OUTER_GATE_RESULTS.json").write_text(json.dumps(result, indent=2) + "\n")
+0242     print(json.dumps({"status": result["status"], "rank_nine_witnesses": len(certificates),
+0243                       "first_row": certificates[0]["row"],
+0244                       "first_minor_determinant": certificates[0]["determinant_mod_prime"]}))
+0245 
+0246 
+0247 if __name__ == "__main__":
+0248     main()

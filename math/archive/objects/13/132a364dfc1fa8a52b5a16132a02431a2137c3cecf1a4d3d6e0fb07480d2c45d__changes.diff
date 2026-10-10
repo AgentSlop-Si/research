@@ -1,0 +1,304 @@
+--- original/cost_aware_fft.py
++++ patched/cost_aware_fft.py
+@@ -44,6 +44,14 @@
+     if n % 2 == 0:
+         z[-1] = complex(z[-1].real)
+     return z
++
++
++def _retained_array_bytes(array):
++    """Count an ndarray's retained backing allocation, including view padding."""
++    owner = array
++    while isinstance(owner.base, np.ndarray):
++        owner = owner.base
++    return owner.nbytes
+ 
+ 
+ class Base:
+@@ -145,6 +153,9 @@
+     max_cache_bytes limits strong references held for implicit exact lookup.
+     max_phase_bytes limits cached phase-vector bytes. Explicitly held states
+     and bases belong to the caller; they are separately reported as live bytes.
++    max_temp_bytes is a conservative pruned work-array eligibility budget,
++    not a hard allocator/RSS limit. Backend/runtime hidden allocations and
++    separately budgeted persistent phase-cache storage are excluded.
+ 
+     The conservative fallback avoids expensive data-driven relation searches.
+     Relation metadata (edit index/shift/basis coefficients) is passed explicitly.
+@@ -283,12 +294,13 @@
+         self.stats['phase_misses'] += 1
+         phase = phases_tiled(n, position, count=count)
+         phase.flags.writeable = False
+-        if phase.nbytes <= self.max_phase_bytes:
++        retained_bytes = _retained_array_bytes(phase)
++        if retained_bytes <= self.max_phase_bytes:
+             self._phase[key] = phase
+-            self._phase_bytes += phase.nbytes
++            self._phase_bytes += retained_bytes
+             while self._phase_bytes > self.max_phase_bytes:
+                 _, old = self._phase.popitem(last=False)
+-                self._phase_bytes -= old.nbytes
++                self._phase_bytes -= _retained_array_bytes(old)
+         return phase
+ 
+     @staticmethod
+@@ -307,7 +319,11 @@
+             return 'zero'
+         key = self._profile_key(state)
+         if key in self._profiles:
+-            return self._profiles[key].best_method
++            selected = self._profiles[key].best_method
++            # Budgets are mutable; a previously admissible calibrated method
++            # must not remain an automatic choice after its budget shrinks.
++            if selected != 'pruned' or self._pruned_required_bytes(state) <= self.max_temp_bytes:
++                return selected
+         # Deliberately conservative: SciPy is far faster than Python bookkeeping
+         # on modest arrays. Only inexpensive known relationships are preferred.
+         if n < self.small_native_cutoff:
+@@ -387,6 +403,27 @@
+             out += d*self._phase_vector(state.n,p,out.size)
+         return _validate_spectrum(out, state.n)
+ 
++    @staticmethod
++    def _pruned_required_bytes(state):
++        """Conservative visible-array estimate shared by dispatch and execution.
++
++        Charge six length-N complex buffers for rows, FFT output, transpose
++        copy, half-spectrum output/addition, phase/multiplication staging and
++        workspace reserve; also six length-m float buffers and 64 KiB for
++        tile padding/small allocations. This intentionally overestimates the
++        normal array peak. Unspecified FFT/runtime hidden allocations are
++        not bounded; this is not a hard process-memory guarantee.
++        """
++        n, k = state.n, state.distinct_edits
++        if not k:
++            return 0  # no sparse/pruned kernel is needed
++        if n & (n-1):
++            raise ValueError('pruned mode requires power-of-two length')
++        b = 1 << (k-1).bit_length()
++        if b > n:
++            raise ValueError('more edited coordinates than signal positions')
++        return 96*n + 48*(n//b) + 64*1024
++
+     def _pruned_spectrum(self,state):
+         """Residue-class decomposition for known sparse changes.
+ 
+@@ -404,8 +441,8 @@
+         if n & (n-1):
+             raise ValueError('pruned mode requires power-of-two length')
+         b=1 << (k-1).bit_length()
+-        if b > n or (16*n + 8*(n//b)) > self.max_temp_bytes:
+-            raise MemoryError('pruned method exceeds temporary memory budget')
++        if self._pruned_required_bytes(state) > self.max_temp_bytes:
++            raise MemoryError('pruned work-array estimate exceeds temporary budget')
+         m = n//b
+         rows = np.zeros((m,b),dtype=np.complex128)
+         q = np.arange(m,dtype=np.float64)
+@@ -422,6 +459,21 @@
+         self._check_state(state)
+         if method not in ('auto','reuse','zero','linear','direct','pruned','native'):
+             raise ValueError('unknown materialization strategy')
++        # A cached result must not change whether an explicitly requested
++        # strategy is valid for this state and the current work-array budget.
++        if method == 'reuse':
++            if state.distinct_edits != 0 or state.term_count != 1:
++                raise ValueError('reuse only valid for one unedited base')
++            ((base, shift), c), = state.terms.items()
++            if shift or c != 1.0:
++                raise ValueError('reuse requires unshifted unit coefficient')
++        elif method == 'zero' and (state.term_count or state.distinct_edits):
++            raise ValueError('zero strategy only for identically zero state')
++        elif method == 'linear' and state.distinct_edits:
++            raise ValueError('linear strategy requires no pending edits')
++        elif method == 'pruned' and state.distinct_edits:
++            if self._pruned_required_bytes(state) > self.max_temp_bytes:
++                raise MemoryError('pruned work-array estimate exceeds temporary budget')
+         if state._cached_output is not None:
+             self.last_method='stored_output'
+             out=state._cached_output.copy() if copy else state._cached_output.view()
+@@ -476,7 +528,8 @@
+         methods=['native']
+         if state.distinct_edits:
+             methods+=['direct']
+-            if include_pruned and state.n & (state.n-1)==0 and state.n*16 <= self.max_temp_bytes:
++            if (include_pruned and state.n & (state.n-1)==0
++                    and self._pruned_required_bytes(state) <= self.max_temp_bytes):
+                 methods+=['pruned']
+         else:
+             methods+=['linear']
+@@ -486,11 +539,21 @@
+             runs=[]
+             for run in range(repeats):
+                 t0=time.perf_counter_ns()
+-                out=self.materialize(state,method=method,cache_output=False)
++                try:
++                    out=self.materialize(state,method=method,cache_output=False)
++                except MemoryError:
++                    if method != 'pruned':
++                        raise
++                    # A backend allocation may fail despite the estimate.
++                    # Do not select a candidate that did not finish all trials.
++                    runs=[]
++                    self.stats['calibration_pruned_memory_skips'] += 1
++                    break
+                 elapsed=(time.perf_counter_ns()-t0)*1e-9
+                 np.testing.assert_allclose(out,reference,rtol=2e-8,atol=2e-7)
+                 runs.append(elapsed)
+-            benchmark[method] = float(np.median(runs))
++            if len(runs) == repeats:
++                benchmark[method] = float(np.median(runs))
+         best=min(benchmark,key=benchmark.get)
+         prof=Profile(state.n,state.distinct_edits,state.term_count,
+                      any(shift for (_,shift) in state.terms),benchmark,best)
+@@ -516,7 +579,12 @@
+ 
+ 
+ def sparse_from_known_changes(base_spectrum, n, changes, method='direct'):
+-    """Functional API: a real length-n reference rFFT plus known (position,delta)."""
++    """Reference rFFT plus known edits, with no stored time-domain reference.
++
++    'auto' conservatively means 'direct' in this spectrum-only interface.
++    Native recomputation cannot be used without reconstructing missing input;
++    no inverse FFT or other hidden reconstruction is performed.
++    """
+     e=RelationFFT(max_cache_bytes=0)
+     original=np.zeros(n)
+     spectrum=np.array(base_spectrum,dtype=np.complex128,copy=True)
+@@ -528,6 +596,8 @@
+         state.edit(p,d)
+     if method=='native':
+         raise ValueError('reference spectrum alone insufficient for native recompute')
++    if method=='auto':
++        method='direct'
+     return e.materialize(state,method=method)
+ 
+ class TrackedBins:
+--- original/persistent_chain.py
++++ patched/persistent_chain.py
+@@ -167,7 +167,11 @@
+         self.stats = Counter()
+ 
+     def seed(self, data):
+-        x = np.asarray(data, dtype=np.float64)
++        raw = np.asarray(data)
++        if (raw.ndim != 1 or not raw.size or np.iscomplexobj(raw)
++                or not np.issubdtype(raw.dtype, np.number)):
++            raise ValueError('seed must be a nonempty finite real vector')
++        x = np.asarray(raw, dtype=np.float64)
+         if x.ndim != 1 or not x.size or not np.all(np.isfinite(x)):
+             raise ValueError('seed must be a nonempty finite real vector')
+         x = x.copy()
+@@ -248,20 +252,33 @@
+                             tuple(f.seed.id for f in factors), frozenset(j for j,f in enumerate(factors) if not f.is_base()))
+ 
+     def _rewrite(self, node, index, new_factor):
+-        if node.factor is not None:
+-            assert index == 0
+-            return self._intern_node(factor=new_factor)
+-        if index < node.left.size:
+-            return self._intern_node(self._rewrite(node.left,index,new_factor),node.right)
+-        return self._intern_node(node.left,self._rewrite(node.right,index-node.left.size,new_factor))
++        # Composition can create a deep tree. Preserve its sharing without
++        # relying on Python recursion; this is still O(tree height).
++        path = []
++        while node.factor is None:
++            left = index < node.left.size
++            path.append((node, left))
++            if left:
++                node = node.left
++            else:
++                index -= node.left.size
++                node = node.right
++        assert index == 0
++        revised = self._intern_node(factor=new_factor)
++        for parent, left in reversed(path):
++            revised = (self._intern_node(revised, parent.right) if left else
++                       self._intern_node(parent.left, revised))
++        return revised
+ 
+     def _factor(self, node, index):
+-        if node.factor is not None:
+-            assert index == 0
+-            return node.factor
+-        if index < node.left.size:
+-            return self._factor(node.left,index)
+-        return self._factor(node.right,index-node.left.size)
++        while node.factor is None:
++            if index < node.left.size:
++                node = node.left
++            else:
++                index -= node.left.size
++                node = node.right
++        assert index == 0
++        return node.factor
+ 
+     def _all_factors(self, root):
+         stack = [root]
+@@ -304,12 +321,29 @@
+         return self._cache_bin(key,evaluate)
+ 
+     def _bin_value(self, node, k):
+-        key=('node',node.uid,k)
+-        def evaluate():
+-            if node.factor is not None:
+-                return node.factor.bin(k)
+-            return self._bin_value(node.left,k)*self._bin_value(node.right,k)
+-        return self._cache_bin(key,evaluate)
++        # Explicit postorder traversal is safe for unbalanced compositions.
++        # Local values also remain available if the LRU evicts a child while
++        # its sibling is being evaluated.
++        values = {}
++        stack = [(node, False)]
++        while stack:
++            current, expanded = stack.pop()
++            if current.uid in values:
++                continue
++            key = ('node', current.uid, k)
++            if key in self._bins:
++                values[current.uid] = self._cache_bin(key, lambda: None)
++            elif current.factor is not None:
++                values[current.uid] = self._cache_bin(
++                    key, lambda: current.factor.bin(k))
++            elif expanded:
++                values[current.uid] = self._cache_bin(
++                    key, lambda: values[current.left.uid]*values[current.right.uid])
++            else:
++                stack.append((current, True))
++                stack.append((current.right, False))
++                stack.append((current.left, False))
++        return values[node.uid]
+ 
+     def _base(self, root, seed_ids=None):
+         # This is a seed-only reference for the tree's factor positions.
+@@ -509,8 +543,11 @@
+             stack=[n]
+             while stack:
+                 x=stack.pop()
+-                if x.uid in nodes: continue
+-                nodes.add(x.uid)
++                # UIDs are engine-local, whereas this diagnostic promises
++                # object identity and may compare versions from two engines.
++                identity=id(x)
++                if identity in nodes: continue
++                nodes.add(identity)
+                 if x.factor is None:
+                     stack.extend((x.left,x.right))
+             return nodes
+--- original/relational_convolution.py
++++ patched/relational_convolution.py
+@@ -417,11 +417,13 @@
+         else:
+             raise ValueError("side must be 'left' or 'right'")
+         if d:
+-            samples=self._evaluate_other_at((self.indices-p)%self.n, other_terms, other_edits)
+-            self._values += d*samples
++            # Validate before changing the subscribed output. A rejected edit
++            # must leave the snapshot and incremental values in agreement.
+             total=target.get(p,0.)+d
+             if not math.isfinite(total):
+                 raise ValueError('edit overflow')
++            samples=self._evaluate_other_at((self.indices-p)%self.n, other_terms, other_edits)
++            self._values += d*samples
+             if total == 0.:
+                 target.pop(p,None)
+             else:

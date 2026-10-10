@@ -1,0 +1,145 @@
+# Exact FFT via bidirectional scans with shuffles: a sharp local-radix barrier
+
+**Date:** 2026-10-09  
+**Result:** The eight-point Fourier matrix has **exact quasiseparable order three under every pair of endpoint permutations**, while the four-point transform attains order one. An elementary dyadic three-character uncertainty proof explains the eight-point result. A working exact mixed-radix transform realizes one four-point FFT using a shared forward/backward scan stage, and an explicit arithmetic audit shows this does **not** improve O(N log N). A broader blockwise multi-channel macro-stage lower bound rejects growing-radix shortcuts *within that precisely restricted architecture*. **No new arbitrary-input O(N) DFT**, no proof of a general FFT lower bound, and no priority claim.
+
+## 1. Purpose and prior-work guard
+
+The user wants **all N outputs for every fresh arbitrary input**, without cached related inputs, output pruning, infinite tables, giant integer unit operations, multicore parallelism, or CrocSwap's integer-multiplication rank-certificate tuning. Earlier work already rejected ordinary scan composition without shuffles via inverse sparsity. The surviving proposal was a bidirectional *sum* of scans, with internal permutations allowed. That sum has a dense inverse, so the previous sparse-inverse proof does not apply.
+
+Our question: **can bidirectional global mixing combine a growing number of FFT butterfly levels with O(N) actual charged operations per macro stage?** The present work tests a stricter, exactly checkable subfamily: a single macro-stage implements a **complete small DFT block**, using multiple bidirectional scan channels and any endpoint reorderings. All radix-block work, root/twiddle preparation, data motion and explicit output creation are counted or bounded. Global *overlapping* stages with arbitrary permutations in between remain outside this result.
+
+## 2. Precise O(B)-work bidirectional primitive
+
+For one B-vector, a weighted forward scan has
+
+`f[0]=b[0]x[0]` and `f[i]=a[i] f[i-1]+b[i]x[i]`.
+
+A weighted backward scan is defined analogously in reverse order. The proposed bidirectional-sum stage is
+
+`y = f(x) + g(x) + D x`.
+
+A variant uses several **independent complete-length scan channels** in each direction and adds their outputs. Each channel costs O(B) ordinary scalar operations and O(B) state traffic. At any cut `[0:s) | [s:B)`, the strictly upper-right block of one backward scan has rank at most one, and the lower-left block of one forward scan has rank at most one. Diagonal scaling contributes neither.
+
+Thus if there are `r_upper` backward channels and `r_lower` forward channels, **every** cut satisfies
+
+`rank(S[0:s,s:B]) <= r_upper`, `rank(S[s:B,0:s]) <= r_lower`.
+
+This is exactly a quasiseparable rank constraint. Allow arbitrary *one-time input and output permutations* around the stage (and diagonal scalings): a cut then selects arbitrary equal-cardinality subsets of Fourier rows and columns. Permutations **between distinct stages** are allowed by the general research question but not covered by this one-stage cut bound.
+
+## 3. New scoped all-power-of-two lemma: three characters cannot be too sparse
+
+**Lemma.** Let N=2^m >=2 and let p(z) be a nonzero combination of at most **three distinct powers** `z^j` (indices taken modulo N), with coefficients in C. Among the Nth roots of unity, at most N/2 can be zeros of p.
+
+**Proof by induction on m.** For N=2, a nonzero polynomial with at most two distinct residue classes has at most one zero among `+1,-1` because the 2-by-2 Fourier matrix is invertible. Let N>=4. Split the at-most-three terms by exponent parity:
+
+- **Both parities present:** one parity group necessarily consists of a single nonzero monomial. Write `p(z)=E(z^2)+z O(z^2)`. For any pair of roots `z,-z` sharing the same square, both `p(z)=0` and `p(-z)=0` would force `E(z^2)=O(z^2)=0`; the singleton parity group cannot vanish. Thus at most one zero per one of N/2 pairs.
+- **All exponents have the same parity:** factor `p(z)=z^epsilon q(z^2)` with q supported on at most three distinct residue classes modulo N/2. Each root of q among the (N/2)th roots corresponds to two roots of p among Nth roots. By the induction hypothesis q has at most N/4 zeros, so p has at most N/2.
+
+The conclusion follows for every power of two. The same induction works over a field of odd characteristic containing the required roots. This is a small special case of classical Fourier uncertainty ideas; we do not assert priority.
+
+**Consequence at N=8:** For **any** three Fourier row indices R and **any** five Fourier column indices C, `rank(F_8[R,C])=3`: otherwise a nonzero linear combination of the three characters would vanish on five distinct 8th roots, contradicting the lemma. By transposition the symmetric 5-by-3 statement also holds.
+
+For *every pair of input/output orderings*, the cut after the first three coordinates therefore has **both** off-diagonal ranks 3. Consequently, **each direction of a single bidirectional-sum stage needs at least three independent rank-one channels** to represent a complete eight-point DFT, regardless of input/output permutations.
+
+**Sharpness:** Order both rows and columns by parity: `(0,2,4,6,1,3,5,7)`. For all cuts except the balanced cut s=4, off-diagonal rank is at most min(s,8-s) <=3. At s=4, each off-diagonal 4-by-4 Fourier block has rank 2 because odd column/row residues produce repeated column/row characters. Thus the maximum is exactly 3.
+
+An independent exact dynamic program over all nested prefix row/column subsets (12,869 nontrivial states, representing all pairs of permutations) also returned exactly 3; two independently computed modular 3-by-5 rank inventories each checked all C(8,3) C(8,5)=3,136 cases. Nonzero modular minors certify nonzero complex cyclotomic minors; the explicit parity upper witness is checked in `Z[z]/(z^4+1)` with exact zero 4-by-4 determinants. These are consistency checks, not substitutes for the all-size induction proof.
+
+## 4. Explicit one-channel bidirectional realization of a four-point FFT
+
+Let `i` denote a primitive fourth root of unity and reorder both rows and columns using `(0,2,1,3)`. The Fourier matrix becomes
+
+```
+S = [[1,  1,  1,  1],
+     [1,  1, -1, -1],
+     [1, -1,  i, -i],
+     [1, -1, -i,  i]].
+```
+
+Its strict lower and strict upper pieces each admit a **rank-one completion**:
+
+```
+D = diag(1,1,i,i)
+L_ij = p_i q_j  if i>j,  p=(0,1,1,1), q=(1,-1,-i,0)
+U_ij = u_i v_j  if i<j,  u=(1,-1,-i,0), v=(0,1,1,1).
+S = D+L+U.
+```
+
+Compute `Lx` from one weighted strict prefix sum and `Ux` from one weighted strict suffix sum, each O(4) ring operations. The code does so for any supported modular primitive fourth root. This is exact for arbitrary fresh inputs; there is no cached transform or lookup of complete answer rows.
+
+Using this 4-point primitive inside standard radix-4 decimation-in-time, plus a radix-2 stage if necessary, gives a correct **O(N log N)** transform at every supported power-of-two length. The mixed-digit-reversal permutation is **generated in O(N) indexing work** (prefix-expanded digit mapping), not by an uncharged per-index O(log N) digit loop. Root exponentiation, twiddles, and all N outputs are counted/bounded. This is a re-expression of classical mixed-radix Cooley–Tukey, NOT a new FFT asymptotic bound.
+
+## 5. All-length macro-block channel cost barrier (restricted theorem)
+
+For a B-by-B complex DFT with B divisible by four, the earlier unitary/Frobenius submatrix bound gives for arbitrary row and column sets R,C:
+
+`rank(F_B[R,C]) >= ceil(|R| |C|/B)`.
+
+Apply it to both balanced off-diagonal cuts after arbitrary endpoint row/column permutations, `|R|=|C|=B/2`. Then each direction needs at least
+
+`r >= B/4`
+
+independent complete-B-length scan channels in a **one-stage macro**. This costs **Omega(B^2) scan-position visits per block** when every channel is a separate explicit B-long pass. The special B=8 certificate sharpens the generic lower bound `r>=2` to `r>=3`.
+
+Now consider a radix-local algorithm with stages of radix B_1,...,B_t, product B_i=N, where each stage consists of independent B_i-point Fourier blocks (with legal twiddle diagonals, permutations, and independent scan channels for each block). Its stage-i scan work must be at least
+
+`(N/B_i) * Omega(B_i^2) = Omega(N B_i)`.
+
+Hence total scan work is
+
+`Omega(N * sum_i B_i) = Omega(N log N)`
+
+because `sum_i B_i >= 2 sum_i log_2(B_i) = 2 log_2 N` for powers-of-two B_i >=2 (up to an inessential constant if B_i=2), and analogous bounds hold for integer radices >=2. Indeed, letting a radix **grow** increases the required channel width sufficiently to erase the hoped-for saving.
+
+**Very important scope:** This is NOT a general FFT lower bound. It assumes every radix block is itself represented in *one* stage as a sum of independent full-length scalar scan channels, with work at least linear in channel count times block length. It does NOT cover overlapping global stages, arbitrary non-quasiseparable dense primitives, deeply shared work across channels, or strongly nonunitary multi-stage cancellations. Twiddle/permute work can only increase this architecture's cost.
+
+## 6. An additional stable-subclass guard (known theory)
+
+Suppose each whole-N bidirectional-sum stage happens to be **unitary** after normalization, and its strict upper and lower quasiseparable orders remain bounded by a fixed constant. Classical work on unitary rank-structured matrices supplies O(N) local 2-coordinate unitary/Givens factors for each such fixed-order stage (Delvaux & Van Barel, 2008). Arbitrary intermediate permutations and unit-modulus diagonal scalings remain unitary and do not raise Fourier mixing entropy.
+
+For a unitary matrix U define `H(U)=-sum_{ij} |U_ij|^2 log_2 |U_ij|^2` (zero terms omitted). `H(I)=0` and `H(F_N/sqrt N)=N log_2 N`. Applying any one 2-coordinate unitary gate changes H by at most 2, because it affects two rows of squared norm one and, for each column, binary splitting entropy changes by at most total paired mass. Thus any exact normalized Fourier circuit consisting of 2-coordinate unitaries needs at least `(N/2) log_2 N` such gates; this is classical unitary FFT lower-bound reasoning. Under the cited O(N)-Givens representation for each fixed-order unitary quasiseparable stage, **Omega(log N) stages are necessary** even with shuffles.
+
+An exact positive control in `unitary_control.py` constructs a chain of N-1 rational 3-4-5 Givens rotations: the resulting matrix is exactly unitary and 1-quasiseparable modulo 998244353, and the measured real-valued entropy changes per gate are at most 2. This checks the scoped reasoning but is not a decomposition of every unitary stage.
+
+This stable/unitary-subclass statement is an application of **existing results**, not a new breakthrough. It does not reject potentially ill-conditioned, nonunitary bidirectional-sum stages—the more difficult portion of the original proposal. Nor does it contradict OpenAI #130, whose exact-complex model permits unbounded coefficients and does not demand unitary intermediate gates.
+
+## 7. Reproducible experiments and negative results
+
+1. `ordering_dp.py`: exact full search over all independent row/column endpoint orders for N=4 and N=8. There are exactly `C(16,8)-1=12869` nonempty proper-and-final subset states for N=8, and optimum quasiseparable order 3. (N=4 optimum 1.) This is a full endpoint-order search, NOT a global multi-stage optimizer.
+2. `analytic_certificate.py`: an independent finite-field implementation enumerates every 3-by-5 submatrix for N=8 over each of two unrelated primes (3,136 each). Every matrix has rank 3. Exact cyclotomic 4-by-4 determinants verify the parity upper construction over C. Small 3-term uncertainty sanity tests included.
+3. `exact_scan_macro.py`: complete mixed-radix NTT via bidirectional-sum F4 codelets and one standard F2 codelet. A radix-4 plan applies to arbitrary fresh data; full output checks against direct O(N²) Fourier matrices and independent radix-2 NTT pass.
+4. `reference_ntt.py`: independent single-threaded Python radix-2 NTT for the same output and modulus.
+5. `benchmark.py`: charges each executed scalar + and * in the generic (unoptimized) scan loops, including twiddle updates; separately records upper bounds on the **count of modular multiplications needed for binary modular exponentiation**, full-array permutation/index preparation steps, and a *partial* tally of high-level moves. The latter is not an exhaustive byte-traffic counter. The built-in Python `pow` call is not treated as one free ring operation in the analysis.
+
+Benchmark snapshot, same single-threaded Python process, **13-run medians**, including per-call preparation:
+
+| N | scan macro NTT | plain radix-2 NTT | scan slowdown |
+|---:|---:|---:|---:|
+| 256 | 1.023 ms | 0.435 ms | 2.35x |
+| 1024 | 11.454 ms | 6.037 ms | 1.90x |
+| 4096 | 43.053 ms | 17.281 ms | 2.49x |
+| 16384 | 151.590 ms | 59.878 ms | 2.53x |
+
+At N=256, macro stages drop from 8 to 4 but **executed addition count rises from 2048 to 4096**. The general-scan path executes more multiplications and more data rearrangements. Its 4-point codelets are deliberately generated from general prefix/suffix scans, not hand-optimized FFT butterflies. So the benchmark supports a negative engineering result and a known asymptotic equivalence, not a new speedup.
+
+The fixed prime 998244353 supports power-of-two N up to 2^23; this finite limit is a property of the test environment, not a uniform asymptotic NTT claim. The complex-algebraic rank proofs and mixed-radix identity are not limited to that prime, but finite-precision/bit complexity of exact complex arithmetic is a separate issue.
+
+## 8. What remains genuinely open for our project
+
+**Not yet ruled out here:** a sequence of overlapping, **nonunitary** full-array bidirectional-sum stages with unrelated interleaved permutations and scalar weights, possibly temporarily ill-conditioned, that implements every N-output DFT in `o(log N)` stages at fully charged O(N) arithmetic per stage. Such a construction has not been found; the current proofs do not imply its existence.
+
+Future candidates must supply a uniform all-N factorization and exact proofs, count scalar preparation and memory movement, track coefficient/condition blowup, and demonstrate strict cost improvement over the best known exact FFT in the same model. A failed local optimization search or parameter count is not a nonexistence proof.
+
+Do not repeat the previously audited pathways: exact-subtree collision caches, lazy updates, complete-table oracles, giant-integer packing, short recurrence filters, Galois symbolic conjugation, chirp output recurrence, one-way scan-only composition, or the CrocSwap kappa constant race.
+
+## References and prior art
+
+- Pernet and Storjohann, *Time and space efficient generators for quasiseparable matrices*, 2017, https://arxiv.org/abs/1701.00396 — semiseparable order, exact structure/representation.
+- Delvaux and Van Barel, *Unitary rank structured matrices*, 2008, https://doi.org/10.1016/j.cam.2007.03.020 — Givens representations.
+- Ailon, FFT complexity with unitary/conditioned gates, https://arxiv.org/abs/1403.1307 — restricted gate lower bounds.
+- Cooley and Tukey mixed-radix FFT, FFTW documentation, https://fftw.org/fftw3_doc/Introduction.html — classical factorization.
+- OpenAI exact arithmetic FFT result #130, https://github.com/openai/math/blob/main/lean/docs/130.md — different unbounded exact-complex complexity model.
+- Previous project checkpoint, `fft_interleaved_scan_barrier/RESEARCH.md` — one-way scan inverse-sparsity bound and bidirectional-sum escape.
+
+**Final claim boundary:** The new verified result in *our research log* is the tight N=8 endpoint-order rank-three certificate plus the general radix-local channel-cost obstruction and its working FFT negative control. No universal linear-time FFT or independent asymptotic result over general FFT algorithms has been established.

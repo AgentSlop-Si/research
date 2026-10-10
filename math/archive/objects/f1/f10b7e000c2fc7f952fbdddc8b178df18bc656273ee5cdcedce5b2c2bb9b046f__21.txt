@@ -1,0 +1,47 @@
+   1 """Portable verification of this continuation; no old benchmark reruns."""
+   2 from concurrent.futures import ThreadPoolExecutor
+   3 import hashlib
+   4 import json
+   5 from pathlib import Path
+   6 import subprocess
+   7 import sys
+   8 import time
+   9 
+  10 ROOT=Path(__file__).resolve().parent
+  11 CHECKS=[
+  12     ('fft_rational_reuse_research','run_audit.py'),
+  13     ('fft_rational_reuse_research','audit_fourier.py'),
+  14     ('fft_rational_reuse_research','audit_defects.py'),
+  15     ('fft_rational_reuse_research','audit_detector.py'),
+  16     ('fft_tail_fusion_research','run_audit.py'),
+  17     ('fft_tail_fusion_research','run_orbit_audit.py'),
+  18     ('fft_multiparent_products_research','audit.py'),
+  19     ('fft_polynomial_feedback_research','run_audit.py'),
+  20     ('fft_crt_correction_research','run_audit.py'),
+  21     ('fft_exact_recovery_research','run_audit.py'),
+  22     ('fft_branch_fusion_research','run_audit.py'),
+  23 ]
+  24 
+  25 def run_one(item):
+  26     folder,script=item
+  27     start=time.monotonic()
+  28     result=subprocess.run([sys.executable,script],cwd=ROOT/folder,capture_output=True,text=True)
+  29     log=ROOT/'verification_logs'/f'{folder}__{Path(script).stem}.txt'
+  30     log.write_text(result.stdout+result.stderr)
+  31     return dict(component=folder,script=script,exit_code=result.returncode,
+  32                 elapsed_seconds=round(time.monotonic()-start,3),
+  33                 source_sha256=hashlib.sha256((ROOT/folder/script).read_bytes()).hexdigest(),
+  34                 log=str(log.relative_to(ROOT)))
+  35 
+  36 def main():
+  37     (ROOT/'verification_logs').mkdir(exist_ok=True)
+  38     with ThreadPoolExecutor(max_workers=2) as pool:
+  39         results=list(pool.map(run_one,CHECKS))
+  40     passed=all(x['exit_code']==0 for x in results)
+  41     report=dict(status='PASS' if passed else 'FAIL',checks=results,
+  42                 note='Correctness and portable integration only; elapsed times are not performance benchmarks.')
+  43     (ROOT/'verification_summary.json').write_text(json.dumps(report,indent=2)+'\n')
+  44     print(json.dumps(report,indent=2))
+  45     return 0 if passed else 1
+  46 
+  47 if __name__=='__main__':raise SystemExit(main())

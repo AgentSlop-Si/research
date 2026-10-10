@@ -1,0 +1,66 @@
+   1 """Adapter that merges known sparse-update metadata with existing AdaptiveFFT.
+   2 
+   3 These are floating-point tests of the decomposition, not a reproduction
+   4 of OpenAI's exact arithmetic algorithm #130.
+   5 """
+   6 from __future__ import annotations
+   7 import numpy as np
+   8 from adaptive_fft import AdaptiveFFT
+   9 from hybrid_sparse import sparse_dft, update_spectrum, low_rank_plus_sparse
+  10 from lazy_spectrum import LazySpectrum, BufferedSpectrum, PreparedBinView
+  11 
+  12 
+  13 class HybridAdaptiveFFT(AdaptiveFFT):
+  14     def fft_from_delta(self, base_spectrum, edits, *, algorithm='factorized'):
+  15         """Return full spectrum after edits, without rescanning original input.
+  16 
+  17         base_spectrum is a precomputed full complex DFT; edits is a list
+  18         of (index, delta) pairs. User supplies their validity.
+  19         """
+  20         if algorithm == 'factorized':
+  21             ans, plan=update_spectrum(base_spectrum, edits)
+  22             self.last_strategy='metadata_sparse_factorized'
+  23             return ans, plan
+  24         if algorithm == 'direct':
+  25             source=np.asarray(base_spectrum, dtype=np.complex128)
+  26             n=source.size
+  27             ks=np.arange(n)
+  28             result=source.copy()
+  29             for index,delta in edits:
+  30                 result += delta*np.exp(-2j*np.pi*(index % n)*ks/n)
+  31             self.last_strategy='metadata_sparse_direct'
+  32             return result, None
+  33         raise ValueError('algorithm must be factorized or direct')
+  34 
+  35     def rfft_from_delta(self, base_rfft, n, real_edits):
+  36         """Efficiently update compact spectrum for a real signal."""
+  37         compact=np.asarray(base_rfft,dtype=np.complex128)
+  38         if compact.ndim!=1 or compact.size!=n//2+1:
+  39             raise ValueError('incorrect compact spectrum length')
+  40         edits=list(real_edits)
+  41         if any(complex(v).imag!=0 for _,v in edits):
+  42             raise ValueError('rfft edits must be real')
+  43         delta,plan=sparse_dft(n,edits,return_plan=True)
+  44         self.last_strategy='metadata_rfft_sparse'
+  45         return compact + delta[:n//2+1],plan
+  46 
+  47     def fft_basis_plus_sparse(self, basis_spectra, coefficients, edits):
+  48         """Use known basis spectra plus a sparse residual."""
+  49         ans,plan=low_rank_plus_sparse(basis_spectra,coefficients,edits)
+  50         self.last_strategy='metadata_low_rank_plus_sparse'
+  51         return ans,plan
+  52     def lazy_spectrum(self, base_spectrum):
+  53         """Create a deferred metadata-aware spectrum state."""
+  54         self.last_strategy='metadata_lazy_state'
+  55         return LazySpectrum.from_spectrum(base_spectrum)
+  56 
+  57     def buffered_spectrum(self, base_spectrum, *, flush_threshold, flush_method='native'):
+  58         """Create a lazy state with threshold compaction for mixed workloads."""
+  59         self.last_strategy='metadata_buffered_state'
+  60         return BufferedSpectrum.from_spectrum(base_spectrum,flush_threshold=flush_threshold,flush_method=flush_method)
+  61 
+  62     def prepared_bin_view(self, base_spectrum, editable_positions, bins):
+  63         """Precompute only q*k phases for known support and selected bins."""
+  64         self.last_strategy='metadata_prepared_bin_view'
+  65         return PreparedBinView(base_spectrum,editable_positions,bins)
+  66 

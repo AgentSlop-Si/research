@@ -1,0 +1,80 @@
+# Independent incoming-family proof review, supplement v2
+
+10 October 2026. This supplement preserves `review/final_v2` and `review/supplement_v1` unchanged. The ledger and receipt distinguish mathematical acceptance, representation restrictions, implementation checks, and unresolved priority. Overlapping rows are not counts of separate research contributions.
+
+No supplied program was executed, imported, compiled, or AST-parsed. Supplied mathematical text and JSON certificates were read as data. The three reviewer control programs here were independently authored. They use directed path sums instead of the Phase41 owner's sparse inversion, and fresh modular elimination, cyclotomic coefficient reconstruction, and coordinate enumeration. Their complete results are separate JSON files.
+
+## 1. Phase41: unit-phase obstruction and finite local freedom
+
+**Accepted.** A unit-gain Hamiltonian-cycle Green inverse has constant nonzero entry modulus and at most two row-ratio values for any fixed row pair. The path-sum formula requires cycle holonomy H≠1. Independent unitary monomial decoration preserves both properties. General complex-amplitude branch decorations do not preserve them.
+
+For flat summands X,Y with row-signature counts q_X,q_Y, partition columns by their pair of signatures. In each class the output ratio is a fractional-linear function
+
+phi(z)=(A r_1+B r_2 z)/(A+Bz), |z|=1.
+
+External monomial Fourier equivalence supplies a row pair with N distinct nonzero ratios all of one modulus K. Unless phi is constant, |phi(z)|=K is a nontrivial real affine equation on the unit circle, with at most two solutions. It cannot vanish identically: that would force K=1 and r_1=r_2. Thus N≤2q_Xq_Y. The N>8 two-unit-cycle exclusion is valid with arbitrary complex scalar coefficients, independent unitary branch monomials, and arbitrary invertible external complex monomials. Singular denominators and zero target entries are not loopholes.
+
+The fixed-coefficient phase-only rank bound min(2k,k+2) is accepted on the stated window containing both selected row labels. Gauge conjugation leaves two holonomies and k remaining relative vertex phases. Allowing variable scalar coefficients changes the parameter count. The positive-weight resolvent identity G+G*=I and sigma_min(sum c_sG_s)≥sum c_s/2 are valid only for the stated undecorated unitary-resolvent sums and positive real coefficients.
+
+The reviewer rebuilt all 26 prime/family/size records, matched every full stored Jacobian, and matched every listed nonzero minor determinant. This covers 16 phase-only records at N=8,16,32,64, and ten arbitrary-amplitude records through N=128. The conjugate Q(i) reduction conjugates the derivative's factor i as well as the gains. Rational nonzero modular minors therefore lift to characteristic zero. Three-cycle real submersion and two-amplitude complex dominance are accepted at those explicit finite graph orders. Neither proves target membership or a full Fourier construction. The owner's numerical partial-fit evaluations are retained as diagnostics; this reviewer did not repeat the high-precision numerical fits.
+
+**Accepted inherited-theorem application.** The separate fixed-branch note correctly applies already accepted F018 with q=2 to Q_s=I−W_s. External monomials and 1/sqrt(N) normalization preserve permutation-contained branch endpoints. Consequently one-inverse-per-branch cycle sums need N≤2r9^r+2(3^r−1): r=2 gives 340, r=3 gives 4426, even for arbitrary complex edge amplitudes and branch endpoints. A free additive diagonal changes the ceilings to 1330 and 17602. These are structural sum-model bounds, not generic running-time bounds. The finite local witnesses cannot establish an all-N fixed-three-branch escape.
+
+## 2. HERO17 Phase18: exact growing-branch fusion
+
+**Accepted in the supplied-root exact-field model.** Let N=KM, char(F) not divide N, omega primitive of order N, q=omega^M, US=qSU, and Delta=(1−beta^K)^M−alpha^N≠0. The cyclic determinant gives det(I−alpha S−beta q^jU)=Delta and det D=Delta^K for D=(1−beta^K)I−alpha^KS^K. N=1 is checked directly, rather than by pretending its identity and shift permutations differ.
+
+Root-of-unity q-binomial cancellation gives W_j^K=alpha^KS^K+beta^KI. The phase average removes all positive U-degrees below K, yielding
+
+(1/K)sum_j(I−W_j)^−1 = D^−1 sum_(r=0)^(K−1)alpha^rS^r.
+
+The numerator's sliding window costs O(K+N). The denominator splits into K cyclic recurrences with total length N. If 1−beta^K=0, a guarded scaled shift solves it; otherwise one closure denominator and two passes per residue class suffice. Supplied-parameter powering costs O(log N); root validation can be charged within O(N) mixed exact-field/word operations. Root discovery, bit complexity, coefficient representation, bounded precision, stability, and practical speed are not established by this theorem.
+
+The exact average rank N or N−K+1 follows from the zeros of the geometric polynomial on the Nth roots. The Gaussian-binomial weighted-sector formula and fixed-ell O(N) evaluator are accepted. Emitting all K sectors costs NK outputs. The parity-dependent commutator rank and the odd-prime Weyl-line support bounds are accepted in their stated fields and sum grammars. Their product counterexample correctly prevents any inference from full Weyl support to general computation time.
+
+The reviewer independently checked 120 legal parameter cases, 408 weighted sectors, averaged ranks, cyclic solves, and commutator ranks over F97; singular cases and legal zero-diagonal cases are included. The owner's separately authored 65,536-vector/64-branch check and static 655,693 operation reconstruction are supporting independent evidence, not execution of the submitted program. No production-program or historical timing certification is claimed.
+
+**Accepted later refinements.** Choose between the ell+1 geometric windows and direct application of the K−ell-term numerator. Its Gaussian coefficients can be prepared successively by g_(r+1)=g_r(1−q^(r+ell+1))/(1−q^(r+1)); all required denominators are nonzero. The better bound is O(N min(ell+1,K−ell)), including coefficient setup. Sparse supplied character weights may share the final D inverse, but determining those weights and emitting requested outputs remain charged. The already accepted dyadic S2 recognizer composes legally: a recognized positive mode u maps to sector ell=−u modulo K. Its O(K log(t+2)+t²) cost is added once; for J inputs the application charge is JN times one plus the sum of sector costs s(ell). Only recognition transfers, not S2's different Fourier-sandwich application identity.
+
+Every weighted combination from this one magnetic orbit has Weyl support inside {(a,M ell): (a mod K)+ell≤K−1}, of size N(K+1)/2<N² for N>1. The denominator inverse has only S^(tK) powers, which proves this support assertion even in its degenerate legal cases. At every odd N, the Fourier quadratic Gauss coefficients are all nonzero: completing the square and the invertible change (j,l)↦(j−l,j+l) give G(−1)G(1)=N≠0. Thus no weights on this fixed orbit give Fourier at odd N≥3, including K=N; sums over different legal parameters with the same N,K,S,U retain the same obstruction. This improves the commutator gate without assuming prime N. Fresh reviewer tests cover all divisors at N=3,5,9,15. Other directions, products, or arbitrary diagonal gauges are outside the assertion.
+
+## 3. Weil v27: corrected covariance gate and cyclic obstruction
+
+**Accepted with explicit corrections.** Assume W≠0 (or allow multiplicity m=0), char(K) not divide N, and a supplied primitive Nth root. For X^N=Z^N=I and ZX=zeta XZ, select a basis of the eigenvalue-1 eigenspace of Z and transport by X. This gives X=S_N tensor I_m, Z=D_N tensor I_m. The Weyl monomials span M_N(K), so the commutant is I_N tensor M_m(K) and the common invariant subspaces are K^N tensor M.
+
+The exact swap equations force J=F_N tensor U, with U invertible. Covariant E,P have forms v↦v tensor a and v tensor w↦ell(w)v; hence PJE=ell(Ua)F_N. The scalar can be zero even when PE=I. It must be guarded nonzero before any normalization or Fourier claim. Multiplicity copies can be mixed by U, so an arbitrary chosen N-dimensional copy need not be J-invariant.
+
+This is similarity normal form, not automatically unitary normal form. If X,Z are unitary over C, a unitary intertwining basis exists. For unnormalized F_N and unitary J, U*U=I/N. Arbitrary dense similarity, preparation, E/P evaluation, and multiplicity work cannot be assigned O(N) cost just from existence of the normal form. The result gives no general runtime lower bound.
+
+For N≥2, the coordinate-character-table statement follows exactly from four-entry cross ratios. The pair u=x_1−x_0,v=y_1−y_0 obeys <u,v>=1 modulo N and splits V=Ru direct-sum ker<−,v>. Subtracting the i u and j v components leaves mutually orthogonal spectators. N=1 is trivial and needs separate notation. The reviewer independently re-enumerated all 254,016 ordered coordinate pairs at N=3, finding 9,720 Fourier embeddings, all satisfying the theorem; 7,776 have nontrivial spectators.
+
+The exponent restriction is essential: F_N embeds at rows Ni and columns j of F_(N²), but Z/N² has no direct Z/N summand for N≥2. This explicitly rejects the blanket extension to every larger additive character table. In normalized coordinates this extraction needs sqrt(N) scaling; its stability or computational cost is not free. More generally the exact exponent-dividing-N paired-group extension is valid.
+
+**Accepted new-to-project fusion, priority open.** Since F_N^4=N²I, J^4=N²I tensor U^4. Cayley–Hamilton for U^4 supplies an annihilator for J of degree at most 4m. A length-Nm weighted successor with every edge gain nonzero is cyclic, since one coordinate vector and its first Nm iterates form a basis. An invertible Green resolvent (I−W)^−1 has the same full minimal-polynomial degree Nm: the inverse Möbius transformation W=I−G^−1 preserves the generated algebra and invariant cyclic structure. Nonzero scalar multiples and affine changes aI+bG, b≠0, preserve it. Thus for N>4 such a single-cycle resolvent cannot be an ambient exact Weyl swap, even after arbitrary similarity. This does not cover sums/products, zero-weight degenerations, or operators that only match an extracted block without ambient swap covariance. Fresh N=3,5,9 controls check the annihilator and full resolvent Krylov rank.
+
+For a literal weighted permutation with c cycles, each block's degree equals its cycle length L_i. Since L_i≤4m and their lengths sum to Nm, c≥ceil(N/4). This is again an ambient-operator structural restriction. In canonical Weyl coordinates alone, the inverse of a swap has at least N nonzeros per row whereas I−W has at most two, giving the stronger N≥3 exclusion there. Arbitrary similarity destroys this latter support argument.
+
+## 4. HERO1 Phase30: projection rank and corrected circuit depth
+
+**Accepted over characteristic zero.** For a finite abelian A of order N and exponent m, K=Q(zeta_m), every Q-linear functional is L_a(z)=Tr(a z). Entrywise projection factors as L_a(F_A)=Q_aF_A, where Q_a is the Galois-unit permutation convolution. Extend scalars to a field E containing K and all characters of Gal(K/Q); simultaneous diagonalization gives the exact stated spectral rank. The trivial isotypic multiplicity equals the number c(A) of cyclic subgroups. Generic traceless rank is N−c(A), trace rank c(A), and generic unrestricted rank N. Independence of embeddings remains valid after scalar extension; the finite union of proper subspaces does not cover the rational parameter space.
+
+The input-side generic kernel is the rational span of unit-orbit indicators, whose Fourier images are rational character sums. The reviewer reconstructs all 22 cyclic rank triplets from integer cyclotomic coefficient vectors, through N=240, at two primes, and all 15 abelian triplets with fresh explicit functionals. Nonzero residues prove characteristic-zero nonzero minors; the mathematical upper bound supplies equality. The computational test is not a proof assistant verification.
+
+**Accepted extension; source's one-layer-only scope is unnecessarily restrictive.** In any finite scalar-linear straight-line circuit with s nonrational scalar multiplication gates, cut the output q_i of every such gate and regard it as a formal input. What remains is rational-linear, hence y=Rx+Bq with R,B rational. For the actual circuit q=Hx, over a finite-dimensional Q-span of its coefficients. Extend a Q-linear functional L vanishing on Q to this span. Then L(A)=B L(H), so rank L(A)≤s. This argument allows arbitrary depth and reuse. It does not allow input-dependent multiplication/division, free nonrational gates, or charging a vector gate as one scalar gate.
+
+Therefore ≥N−c(A) nonrational scalar gates are needed for F_A in that entire scalar-linear model. For an isolated diagonal layer, one functional nonzero on every nonrational diagonal entry gives the corresponding count, including 105(h−1) for the stated fifteen copies of the 8h twiddle layer. Cross-stage fusion can alter the target, and rational additions remain uncounted. This is only a linear scalar-gate bound, not an N log N total-operation lower bound.
+
+**Accepted nonzero-scalar extension.** For alpha≠0, rank L(alpha F_A) is generically at least N−c(A) among Q-linear L with L(1)=0. If alpha is outside K, Q intersects alpha K trivially and restriction to alpha K is unrestricted. If alpha lies in K, write b=a alpha; the condition is the one hyperplane Tr(b alpha^−1)=0 in the Galois-coordinate space. It can identically kill at most one distinct Fourier coordinate. Each character multiplicity is at most c(A), since each orbit contributes at most one. The exceptional coordinate condition is sigma_u(alpha^−1)=alpha^−1 eta(u); compatibility forces eta to be Q-valued. This makes the gate apply to a nonzero scalar extracted Weil core without a free normalization assumption.
+
+## 5. Primary comparisons and unresolved gates
+
+The following full primary text was directly inspected in this review:
+
+- [Stoyanovsky, Theorem 1 and equations (1)–(4)](https://arxiv.org/html/0812.4916v2): the q-binomial expansion is an exact antecedent for HERO17's algebraic ingredient. The note itself attributes earlier discovery to Schutzenberger. This does not establish priority of the particular resolvent-average executor.
+- [Gurevich–Hadani, Theorem 1.2.1 and §1.3 equation (1.1)](https://arxiv.org/html/0705.4556v4): finite Stone–von Neumann uniqueness and covariance-intertwiner construction are classical antecedents. Their finite-field setting is not silently identified with every all-N cyclic field contract in v27.
+- [Prasad, Theorem 3.1, Lemma 3.2, Example 3.4 and §5](https://arxiv.org/html/0903.1486): a closer all-finite-abelian-group predecessor directly supplies irreducible uniqueness, the full Weyl algebra, the Fourier intertwiner, and scalar uniqueness for covariance implementers over C. Arbitrary multiplicity is the standard matrix-module consequence; it is not a new representation mechanism.
+- [Tóth, cyclic-subgroup enumeration](https://arxiv.org/html/1203.6201): subgroup-counting background is classical. It is not an exact matched antecedent for every projected-rank or arbitrary-depth claim.
+
+Winograd's 1979 multiplicative-complexity paper and the 1986 multiplicative-character paper were located in primary bibliographic search results, but full publisher opens returned 403. They are unresolved detailed comparators. No denial was bypassed and no theorem identity was inferred from an abstract.
+
+Open: exact Fourier target fibers for the surviving small architectures, a new all-input fast Fourier algorithm, bit/precision/stability transfer, production implementation certification, and literature-wide priority. No item here proves a faster generic FFT or an unrestricted FFT lower bound. Rejected readings are listed explicitly in the ledger rather than silently promoted from structural bounds.

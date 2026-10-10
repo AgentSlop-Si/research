@@ -1,0 +1,66 @@
+0001 import json
+0002 import math
+0003 from pathlib import Path
+0004 import numpy as np
+0005 
+0006 
+0007 def normalized_dft(n):
+0008     j=np.arange(n)[:,None]
+0009     k=np.arange(n)[None,:]
+0010     return np.exp(-2j*np.pi*j*k/n)/math.sqrt(n)
+0011 
+0012 
+0013 def add_map(M):
+0014     """Matrix of (x,y)->(x,y+Mx)."""
+0015     n=M.shape[0]
+0016     I=np.eye(n,dtype=np.complex128)
+0017     Z=np.zeros_like(I)
+0018     return np.block([[I,Z],[M,I]])
+0019 
+0020 
+0021 def generalized_swap(U):
+0022     # A1: y += Ux
+0023     # A2: x += -U^{-1} y
+0024     # A3: y += Ux
+0025     A1=add_map(U)
+0026     # add_map acts source first -> target second. For x += M y, swap banks.
+0027     n=U.shape[0]
+0028     I=np.eye(n,dtype=np.complex128); Z=np.zeros_like(I)
+0029     Uinv=U.conj().T
+0030     A2=np.block([[I,-Uinv],[Z,I]])
+0031     A3=add_map(U)
+0032     return A3@A2@A1, [A1,A2,A3]
+0033 
+0034 
+0035 def expected_swap(U):
+0036     n=U.shape[0]
+0037     Z=np.zeros((n,n),complex)
+0038     return np.block([[Z,-U.conj().T],[U,Z]])
+0039 
+0040 
+0041 def shear_condition_bound(alpha):
+0042     # For E = I + alpha e_j e_i^T, ||E||_2 <= 1+|a| and
+0043     # ||E^-1||_2 <= 1+|a|, hence kappa <= (1+|a|)^2.
+0044     return (1+abs(alpha))**2
+0045 
+0046 
+0047 def main():
+0048     rows=[]
+0049     for B in (2,4,8,16):
+0050         U=normalized_dft(B)
+0051         W, factors=generalized_swap(U)
+0052         E=expected_swap(U)
+0053         rows.append({
+0054             'B':B,
+0055             'identity_error_fro':float(np.linalg.norm(W-E)),
+0056             'unitarity_error_fro':float(np.linalg.norm(W.conj().T@W-np.eye(2*B))),
+0057             'swap_condition':float(np.linalg.cond(W)),
+0058             'factor_conditions':[float(np.linalg.cond(A)) for A in factors],
+0059         })
+0060     p=Path(__file__).with_name('transparent_swap_results.json')
+0061     p.write_text(json.dumps(rows,indent=2))
+0062     for r in rows: print(r)
+0063     print('example single-shear upper bounds:')
+0064     for a in (0.1,1,10,1e3): print(a,shear_condition_bound(a))
+0065 
+0066 if __name__=='__main__': main()

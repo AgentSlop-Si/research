@@ -1,0 +1,18 @@
+from pathlib import Path
+import sys,time
+r=Path('fft_three_stage_bitrev_gate_2026-10-10');sys.path.insert(0,str(r));from research_gate import root,rank_mod
+p=65537
+for k in range(3,10):
+ n=2**k
+ # odd central bit, even choose equal middle bit pattern
+ if k%2:
+  m=k//2;A=[i for i in range(n) if not i>>m & 1]; B=[i for i in range(n) if i>>m & 1]
+  rule=f'central-bit-{m}'
+ else:
+  m=k//2;A=[i for i in range(n) if ((i>>m)&1)==((i>>(m-1))&1)];B=[i for i in range(n) if i not in set(A)]
+  rule='central-bit-equality'
+ w=root(n,p); st=time.time();W=[[pow(w,i*j,p) for j in B] for i in A]
+ if n>256:
+  print(n,rule,'submatrix_dim',len(A),'skip rank large',flush=True);continue
+ f=rank_mod(W,p)
+ print(n,rule,'A_blocks',1+sum(A[j]!=A[j-1]+1 for j in range(1,len(A))),'Fourier rank',f,'dim',len(A),'single_stage_cap',2*(1+sum(A[j]!=A[j-1]+1 for j in range(1,len(A)))),'time',time.time()-st,flush=True)

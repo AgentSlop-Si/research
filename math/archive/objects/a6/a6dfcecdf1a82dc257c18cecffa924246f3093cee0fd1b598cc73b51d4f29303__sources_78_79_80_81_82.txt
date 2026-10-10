@@ -1,0 +1,338 @@
+===== SOURCE 78 fft_phase10_aot/benchmark.py SHA256 216de5e744f5052c8f21955378fce1649bdcc18513bd0cd2a4d74d3d91155f4c =====
+   1 """Reproducible same-output benchmark of Phase10 against SciPy and hand C++.
+   2 
+   3 Cold totals: original seed FFTs + bivariate preparation + library loading +
+   4 all requested outputs, vs fixed-kernel preparation + fresh 2x FFT + inverse.
+   5 Offline g++ build time is printed separately by build_native.py.
+   6 All methods produce the *entire* length-N convolution output.
+   7 """
+   8 from pathlib import Path
+   9 import ctypes
+  10 import json
+  11 import gc
+  12 import time
+  13 import statistics
+  14 import numpy as np
+  15 from scipy import fft
+  16 from algebra_fft import AlgebraFFT
+  17 from two_edit_engine import prepare_two, _native_path
+  18 
+  19 
+  20 def sample_case(n,seed=888,versions=48):
+  21     rng=np.random.default_rng(seed+n)
+  22     sigs=[rng.normal(size=n)/np.sqrt(n) for _ in range(4)]
+  23     changes=[(int(rng.integers(n)),float(rng.normal(scale=.04)),
+  24               int(rng.integers(n)),float(rng.normal(scale=.04))) for _ in range(versions)]
+  25     return sigs,changes
+  26 
+  27 
+  28 def hand_compiled(libpath,plan):
+  29     lib=ctypes.CDLL(libpath)
+  30     fn=lib.fft10_hand_example
+  31     P=ctypes.c_void_p
+  32     fn.argtypes=[ctypes.c_int64,P,P,P,P,P,ctypes.c_int64,ctypes.c_double,
+  33                  ctypes.c_int64,ctypes.c_double,P]
+  34     fn.restype=ctypes.c_int
+  35     degrees=list(zip(map(int,plan.dense_a),map(int,plan.dense_b)))
+  36     expected=[(0,1),(1,0),(1,1),(2,0)]
+  37     if degrees!=expected:
+  38         raise AssertionError(f'unexpected correction ordering: {degrees}')
+  39     def run(pa,alpha,pb,beta):
+  40         out=np.empty(plan.n)
+  41         ptr=lambda x:ctypes.c_void_p(x.ctypes.data)
+  42         code=fn(plan.n,ptr(plan.base),*(ptr(plan.dense[i]) for i in range(4)),
+  43                 pa,alpha,pb,beta,ptr(out))
+  44         if code:raise RuntimeError(code)
+  45         return out
+  46     return run
+  47 
+  48 
+  49 def benchmark_one(n,versions=48,repeats=4):
+  50     sigs,changes=sample_case(n,versions=versions)
+  51     a,b,c,d=sigs
+  52     timings={key:[] for key in ['scipy_fresh','numpy_prepared','aot_native','aot_shape','hand_native']}
+  53     setup_times=[]
+  54     checks=[]
+  55     mem=0
+  56     for repetition in range(repeats):
+  57         gc.collect()
+  58         # Each repetition builds fresh engine, avoiding time-limited reused bases.
+  59         setup_start=time.perf_counter()
+  60         eng=AlgebraFFT(n)
+  61         A,B,C,D=[eng.signal(v) for v in sigs]
+  62         root=eng.add(eng.mul(A,A,B),eng.mul(A,B),eng.mul(B,B),eng.mul(C,D))
+  63         plan=prepare_two(eng,root,A,B,max_total_degree=5)
+  64         manual=hand_compiled(_native_path(),plan)
+  65         native_first=plan.update(*changes[0],backend='native') # load once per benchmark iteration
+  66         shape_first=plan.update(*changes[0],backend='aot_shape')
+  67         setup_times.append(time.perf_counter()-setup_start)
+  68         mem=plan.memory_bytes
+  69         # Check full-output correctness on several different versions.
+  70         fixed=fft.rfft(c)*fft.rfft(d)
+  71         for pa,alpha,pb,beta in (changes[0],changes[-1]):
+  72             ax=a.copy();bx=b.copy();ax[pa]+=alpha;bx[pb]+=beta
+  73             fa=fft.rfft(ax);fb=fft.rfft(bx)
+  74             ref=fft.irfft(fa*fa*fb+fa*fb+fb*fb+fixed,n=n)
+  75             for backend in ['numpy','native','aot_shape']:
+  76                 ans=plan.update(pa,alpha,pb,beta,backend=backend)
+  77                 checks.append(float(np.max(np.abs(ans-ref))))
+  78             checks.append(float(np.max(np.abs(manual(pa,alpha,pb,beta)-ref))))
+  79         def reference_batch():
+  80             # Prepared C*D spectrum reused by fresh-transform baseline.
+  81             fixed=fft.rfft(c)*fft.rfft(d)
+  82             for pa,alpha,pb,beta in changes:
+  83                 ax=a.copy();bx=b.copy()
+  84                 ax[pa]+=alpha;bx[pb]+=beta
+  85                 fa=fft.rfft(ax);fb=fft.rfft(bx)
+  86                 out=fft.irfft(fa*fa*fb+fa*fb+fb*fb+fixed,n=n)
+  87             return out
+  88         def run(method):
+  89             if method=='scipy_fresh':return reference_batch()
+  90             if method=='numpy_prepared':
+  91                 for args in changes:out=plan.update(*args,backend='numpy')
+  92                 return out
+  93             if method=='aot_native':
+  94                 for args in changes:out=plan.update(*args,backend='native')
+  95                 return out
+  96             if method=='aot_shape':
+  97                 for args in changes:out=plan.update(*args,backend='aot_shape')
+  98                 return out
+  99             for args in changes:out=manual(*args)
+ 100             return out
+ 101         # Rotate order to mitigate systematic first-run effects.
+ 102         order=list(timings)
+ 103         order=order[repetition%len(order):]+order[:repetition%len(order)]
+ 104         for key in order:
+ 105             t=time.perf_counter()
+ 106             output=run(key)
+ 107             timings[key].append((time.perf_counter()-t)*1000)
+ 108             if not np.all(np.isfinite(output)):
+ 109                 raise ArithmeticError('non-finite output')
+ 110     summary={x:round(statistics.median(vals),3) for x,vals in timings.items()}
+ 111     setup_median=statistics.median(setup_times)*1000
+ 112     summary.update({
+ 113         'phase10_setup_ms':round(setup_median,3),
+ 114         'aot_cold_total_ms':round(setup_median+statistics.median(timings['aot_native']),3),
+ 115         'aot_shape_cold_total_ms':round(setup_median+statistics.median(timings['aot_shape']),3),
+ 116         'scipy_cold_total_ms':summary['scipy_fresh'],
+ 117         'aot_vs_scipy_warm_ratio':round(summary['scipy_fresh']/summary['aot_native'],3),
+ 118         'aot_vs_scipy_cold_ratio':round(summary['scipy_fresh']/(setup_median+statistics.median(timings['aot_native'])),3),
+ 119         'aot_vs_hand_ratio':round(summary['hand_native']/summary['aot_native'],3),
+ 120         'aot_shape_vs_hand_ratio':round(summary['hand_native']/summary['aot_shape'],3),
+ 121         'aot_shape_vs_scipy_cold_ratio':round(summary['scipy_fresh']/(setup_median+statistics.median(timings['aot_shape'])),3),
+ 122     })
+ 123     return {'n':n,'versions':versions,'timings_ms':summary,
+ 124             'prepared_kernel_bytes':mem,'max_numerical_error':max(checks),
+ 125             'notes':'SciPy baseline fixed C*D spectrum prepared within each measured stream; AOT path charges all seed FFTs, symbolic prep and library first call. This cold comparison favors the baseline on setup cost.'}
+ 126 
+ 127 if __name__=='__main__':
+ 128     import argparse
+ 129     parser=argparse.ArgumentParser()
+ 130     parser.add_argument('--sizes',type=int,nargs='+',default=[4096,65536,262144])
+ 131     parser.add_argument('--repeats',type=int,default=4)
+ 132     parser.add_argument('--versions',type=int,default=48)
+ 133     args=parser.parse_args()
+ 134     rows=[]
+ 135     for n in args.sizes:
+ 136         row=benchmark_one(n,versions=args.versions,repeats=args.repeats)
+ 137         rows.append(row)
+ 138         print('N =',n,'versions =',args.versions,row['timings_ms'],'max_err =',row['max_numerical_error'],flush=True)
+ 139     output={'model':'float64 real circular convolution, two known impulse edits',
+ 140             'aot_native_is_prior_compiled':True,
+ 141             'offline_build_cost_is_separate':True,
+ 142             'benchmarks':rows}
+ 143     Path('benchmark_results.json').write_text(json.dumps(output,indent=2)+'\n')
+===== END SOURCE 78; 6827 bytes; 143 lines =====
+===== SOURCE 79 fft_phase10_aot/build_native.py SHA256 e85532829cc850e334a0bb8a96c5e899b1c6831dd2226bd2cf95be0afbadbc5c =====
+   1 """Build the AOT shared library *before running*, not during import/updates."""
+   2 from pathlib import Path
+   3 import subprocess
+   4 import sys
+   5 import time
+   6 
+   7 ROOT=Path(__file__).resolve().parent
+   8 
+   9 def build():
+  10     output=ROOT / ('libfft_phase10.dylib' if sys.platform=='darwin' else 'fft_phase10.dll' if sys.platform=='win32' else 'libfft_phase10.so')
+  11     compiler='g++'
+  12     if sys.platform=='win32':
+  13         raise RuntimeError('Windows: use WSL or adapt build command for your C++ compiler')
+  14     command=[compiler,'-O3','-std=c++17','-fPIC','-shared','-fno-fast-math','-o',str(output),str(ROOT/'native_kernel.cpp')]
+  15     t=time.perf_counter()
+  16     subprocess.run(command,check=True)
+  17     print(f'AOT build: {output.name}, {output.stat().st_size} bytes, {time.perf_counter()-t:.3f}s')
+  18     print('Command:', ' '.join(command))
+  19     return output
+  20 
+  21 if __name__=='__main__':build()
+===== END SOURCE 79; 862 bytes; 21 lines =====
+===== SOURCE 80 fft_phase10_aot/demo.py SHA256 c6f683add803090eb88c28399e170087e368e407f3a581340ec6c6d49e139193 =====
+   1 from algebra_fft import AlgebraFFT
+   2 from two_edit_engine import prepare_two
+   3 from scipy import fft
+   4 import numpy as np
+   5 
+   6 N=32768
+   7 rng=np.random.default_rng(42)
+   8 a,b,c,d=[rng.normal(size=N)/np.sqrt(N) for _ in range(4)]
+   9 e=AlgebraFFT(N)
+  10 A,B,C,D=[e.signal(x) for x in (a,b,c,d)]
+  11 y=e.add(e.mul(A,A,B),e.mul(A,B),e.mul(B,B),e.mul(C,D))
+  12 plan=prepare_two(e,y,A,B)
+  13 pa,alpha,pb,beta=123,.02,400,-.03
+  14 ans=plan.update(pa,alpha,pb,beta)
+  15 a2=a.copy();b2=b.copy();a2[pa]+=alpha;b2[pb]+=beta
+  16 fa,fb,fc,fd=[fft.rfft(x) for x in (a2,b2,c,d)]
+  17 ref=fft.irfft(fa*fa*fb+fa*fb+fb*fb+fc*fd,n=N)
+  18 print('Expression: A*A*B + A*B + B*B + C*D')
+  19 print('Symbolic jet degrees:',plan.symbolic_terms)
+  20 print('Dense correction kernels:',len(plan.dense_a),'Sparse point terms:',len(plan.sparse_a))
+  21 print('AOT shape matched:',plan.shape_available)
+  22 print('Precomputed memory bytes:',plan.memory_bytes)
+  23 print('Max difference from independent SciPy:',np.max(np.abs(ans-ref)))
+  24 print('Selected output coefficients:',plan.update(pa,alpha,pb,beta,indices=[0,1,N-1]))
+===== END SOURCE 80; 1014 bytes; 24 lines =====
+===== SOURCE 81 fft_phase10_aot/native_kernel.cpp SHA256 831643c41d378a498fc64d73f7d42c6f3437fb10e6f74bc714c5035eed9c1910 =====
+   1 // Phase 10: AOT generic double-variable impulse-update evaluator.
+   2 // Compiled OFFLINE before importing Python; no JIT, no Python embedded.
+   3 // All arrays float64; circular convolution coefficient indexing.
+   4 #include <cstdint>
+   5 #include <vector>
+   6 #include <cmath>
+   7 #include <cstddef>
+   8 
+   9 namespace {
+  10 inline int64_t mod_shift(int64_t a, int64_t b, int64_t n) {
+  11     // a,b originate from bounded nonnegative indices & degrees. Signed safe for
+  12     // practical array lengths; use __int128 for intermediate products.
+  13     __int128 z=static_cast<__int128>(a)+static_cast<__int128>(b);
+  14     int64_t r=static_cast<int64_t>(z % n);
+  15     return r<0?r+n:r;
+  16 }
+  17 inline double pow_int(double x, int32_t d) {
+  18     double v=1.;
+  19     for(int32_t i=0;i<d;++i) v*=x;
+  20     return v;
+  21 }
+  22 }
+  23 extern "C" {
+  24 int fft10_eval(
+  25     int64_t n, const double* base, const double* dense,
+  26     int64_t dense_count, const int32_t* d_a, const int32_t* d_b,
+  27     int64_t sparse_count, const int32_t* s_a, const int32_t* s_b,
+  28     const int64_t* sparse_positions, const double* sparse_weights,
+  29     int64_t position_a, double delta_a, int64_t position_b, double delta_b,
+  30     const int64_t* indices, int64_t output_count, double* output
+  31 ) {
+  32     if(n<2 || output_count<0 || dense_count<0 || sparse_count<0 || !base || !output
+  33        || position_a<0 || position_a>=n || position_b<0 || position_b>=n
+  34        || !std::isfinite(delta_a) || !std::isfinite(delta_b)) return 1;
+  35     if(dense_count && (!dense || !d_a || !d_b)) return 2;
+  36     if(sparse_count && (!s_a || !s_b || !sparse_positions || !sparse_weights)) return 3;
+  37     if(indices && output_count<0) return 4;
+  38     if(!indices && output_count!=n) return 5;
+  39     std::vector<int64_t> shifts(static_cast<size_t>(dense_count));
+  40     std::vector<double> scales(static_cast<size_t>(dense_count));
+  41     for(int64_t h=0;h<dense_count;++h) {
+  42         if(d_a[h]<0 || d_b[h]<0) return 6;
+  43         __int128 z = static_cast<__int128>(d_a[h])*position_a + static_cast<__int128>(d_b[h])*position_b;
+  44         shifts[h]=static_cast<int64_t>(z%n);
+  45         scales[h]=pow_int(delta_a,d_a[h])*pow_int(delta_b,d_b[h]);
+  46     }
+  47     for(int64_t r=0;r<output_count;++r) {
+  48         const int64_t q=indices ? indices[r] : r;
+  49         if(q<0 || q>=n) return 7;
+  50         double v=base[q];
+  51         for(int64_t h=0;h<dense_count;++h) {
+  52             const int64_t s=shifts[h];
+  53             int64_t j=q-s; if(j<0)j+=n;
+  54             v += scales[h]*dense[h*n+j];
+  55         }
+  56         output[r]=v;
+  57     }
+  58     for(int64_t h=0;h<sparse_count;++h) {
+  59         if(s_a[h]<0 || s_b[h]<0) return 8;
+  60         __int128 z=static_cast<__int128>(sparse_positions[h])+
+  61              static_cast<__int128>(s_a[h])*position_a+
+  62              static_cast<__int128>(s_b[h])*position_b;
+  63         int64_t q=static_cast<int64_t>(z%n); if(q<0)q+=n;
+  64         double inc=sparse_weights[h]*pow_int(delta_a,s_a[h])*pow_int(delta_b,s_b[h]);
+  65         if(!indices)output[q]+=inc;
+  66         else for(int64_t r=0;r<output_count;++r)if(indices[r]==q)output[r]+=inc;
+  67     }
+  68     return 0;
+  69 }
+  70 }
+  71 
+  72 // Independent manually specialized comparator ONLY for the expression
+  73 // F(A,B,C,D)=A*A*B + A*B + B*B + C*D.
+  74 // Kernel order: K01,K10,K11,K20; coefficient impulses K02=K21=e0.
+  75 extern "C" int fft10_hand_example(
+  76     int64_t n,const double *base,const double *k01,const double *k10,
+  77     const double *k11,const double *k20,
+  78     int64_t pa,double alpha,int64_t pb,double beta,double *out
+  79 ) {
+  80     if(n<2||!base||!k01||!k10||!k11||!k20||!out||
+  81        pa<0||pa>=n||pb<0||pb>=n)return 1;
+  82     const int64_t s01=pb;
+  83     const int64_t s10=pa;
+  84     const int64_t s11=static_cast<int64_t>((static_cast<__int128>(pa)+pb)%n);
+  85     const int64_t s20=static_cast<int64_t>((static_cast<__int128>(2)*pa)%n);
+  86     const double ab=alpha*beta;
+  87     const double aa=alpha*alpha;
+  88     for(int64_t q=0;q<n;++q) {
+  89         int64_t i01=q-s01;if(i01<0)i01+=n;
+  90         int64_t i10=q-s10;if(i10<0)i10+=n;
+  91         int64_t i11=q-s11;if(i11<0)i11+=n;
+  92         int64_t i20=q-s20;if(i20<0)i20+=n;
+  93         out[q]=base[q]+beta*k01[i01]+alpha*k10[i10]
+  94                +ab*k11[i11]+aa*k20[i20];
+  95     }
+  96     out[static_cast<int64_t>((static_cast<__int128>(2)*pb)%n)]+=beta*beta;
+  97     out[static_cast<int64_t>((static_cast<__int128>(2)*pa+pb)%n)]+=aa*beta;
+  98     return 0;
+  99 }
+===== END SOURCE 81; 4209 bytes; 99 lines =====
+===== SOURCE 82 fft_phase10_aot/native_shape_a2b.cpp SHA256 178dbfb75efd96fe2c84b912b962c0e34e5e0bf3dc316b67d9b5601a04532f15 =====
+   1 // Auto-generated OFFLINE from validated degree lists; no input values are embedded.
+   2 #include <cstdint>
+   3 #include <cmath>
+   4 extern "C" int fft10_shape_eval(
+   5   int64_t n, const double* base, const double* dense,
+   6   const int64_t* sparse_positions, const double* sparse_weights,
+   7   int64_t pa, double alpha, int64_t pb, double beta,
+   8   const int64_t* indices, int64_t q_count, double* out) {
+   9   if(n<2 || q_count<0 || !base || !out || pa<0 || pa>=n || pb<0 || pb>=n)
+  10     return 1;
+  11   if(!std::isfinite(alpha) || !std::isfinite(beta)) return 2;
+  12   if(!indices && q_count!=n) return 3;
+  13   if(!dense) return 4;
+  14   if(!sparse_positions || !sparse_weights) return 5;
+  15   const int64_t shift0=static_cast<int64_t>((static_cast<__int128>(0)*pa+static_cast<__int128>(1)*pb)%n);
+  16   const double scale0=beta;
+  17   const int64_t shift1=static_cast<int64_t>((static_cast<__int128>(1)*pa+static_cast<__int128>(0)*pb)%n);
+  18   const double scale1=alpha;
+  19   const int64_t shift2=static_cast<int64_t>((static_cast<__int128>(1)*pa+static_cast<__int128>(1)*pb)%n);
+  20   const double scale2=alpha*beta;
+  21   const int64_t shift3=static_cast<int64_t>((static_cast<__int128>(2)*pa+static_cast<__int128>(0)*pb)%n);
+  22   const double scale3=alpha*alpha;
+  23   for(int64_t r=0;r<q_count;++r) {
+  24     const int64_t q=indices?indices[r]:r;
+  25     if(q<0||q>=n)return 6;
+  26     int64_t j0=q-shift0; if(j0<0)j0+=n;
+  27     int64_t j1=q-shift1; if(j1<0)j1+=n;
+  28     int64_t j2=q-shift2; if(j2<0)j2+=n;
+  29     int64_t j3=q-shift3; if(j3<0)j3+=n;
+  30     out[r]=base[q]+scale0*dense[0*n+j0]+scale1*dense[1*n+j1]+scale2*dense[2*n+j2]+scale3*dense[3*n+j3];
+  31   }
+  32   const int64_t sp0=static_cast<int64_t>((static_cast<__int128>(sparse_positions[0])+static_cast<__int128>(0)*pa+static_cast<__int128>(2)*pb)%n);
+  33   const double sv0=sparse_weights[0]*(beta*beta);
+  34   if(!indices)out[sp0]+=sv0;
+  35   else for(int64_t r=0;r<q_count;++r)if(indices[r]==sp0)out[r]+=sv0;
+  36   const int64_t sp1=static_cast<int64_t>((static_cast<__int128>(sparse_positions[1])+static_cast<__int128>(2)*pa+static_cast<__int128>(1)*pb)%n);
+  37   const double sv1=sparse_weights[1]*(alpha*alpha*beta);
+  38   if(!indices)out[sp1]+=sv1;
+  39   else for(int64_t r=0;r<q_count;++r)if(indices[r]==sp1)out[r]+=sv1;
+  40   return 0;
+  41 }
+===== END SOURCE 82; 2180 bytes; 41 lines =====

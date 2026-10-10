@@ -1,0 +1,154 @@
+# Green fusion: an explicit condition-budget escape and a stronger gauge check
+
+9 October 2026. **We have not found an exact arbitrary-input Fourier transform below N log N.** The useful constructive addition is a uniform linear-work mixer that escapes both inverse sparsity and the uploaded Green package's constant-1-condition restriction. Its Fourier conjugate is also explicit for our affine-cycle graphs. This supplies a concrete candidate primitive; it does not supply the missing Fourier factorization.
+
+## 1. A fully specified surviving mixer
+
+Let M be a unit-modulus weighted permutation consisting of one N-cycle, with M^N=-I. Define
+
+\[
+K(M)=I+(I-M)^{-1}=(2I-M)(I-M)^{-1}.
+\]
+
+Both K and its inverse can be applied in O(N) exact field operations using one weighted-cycle solve and a vector addition/subtraction. Over C, both matrices have all N² entries nonzero. The same density assertion is not made over every finite field.
+
+Because M^N=-I,
+
+\[
+(I-M)^{-1}=\tfrac12\sum_{j=0}^{N-1}M^j,
+\qquad
+K^{-1}=I-(2I-M)^{-1},
+\]
+
+and
+
+\[
+(2I-M)^{-1}=\frac{\sum_{j=0}^{N-1}2^{N-1-j}M^j}{2^N+1}.
+\]
+
+Distinct powers of a full cycle occupy distinct positions in every row and column, and their nonzero entries have magnitude one. Therefore the following are exact, for every N>=1:
+
+\[
+\boxed{\|K\|_1=\frac{N+2}{2},\qquad
+\|K^{-1}\|_1=\frac{2^N}{2^N+1},\qquad
+\kappa_1(K)=\frac{(N+2)2^{N-1}}{2^N+1}.}
+\]
+
+For the inverse, the identity coefficient is (2^(N-1)+1)/(2^N+1); the other coefficients have magnitudes 2^(N-1-j)/(2^N+1). Summing these gives the displayed norm. All coefficients are nonzero over C. Thus kappa_1 grows as N/2 while both actions still use O(N) field gates. A constant bound on kappa_1 cannot reject this family. The universal product inequality still applies; this is an escape from its **constant-stage-condition hypothesis**, not a counterexample to that inequality.
+
+This is not a numerical-stability claim. Here even the spectral condition grows with N: for even N, the eigenphases of M give
+
+\[
+\kappa_2(K)^2=
+\frac{2+[4\sin^2(\pi/(2N))]^{-1}}
+     {2+[4\cos^2(\pi/(2N))]^{-1}}.
+\]
+
+It is 1 at N=2 and asymptotic to (2N/(3pi))². Scalar renormalization does not remove either condition number.
+
+## 2. Particularly cheap signed-cycle realization
+
+For the signed shift Cx=(x_1,...,x_(N-1),-x_0), write z=(I-C)^-1 x. Directly,
+
+\[
+z_0=\tfrac12\sum_{j=0}^{N-1}x_j,\qquad
+z_i=z_{i-1}-x_{i-1},\qquad Kx=x+z.
+\]
+
+`signed_cycle_forward` executes exactly **3N-1 application gates**, plus two gates to construct and invert 2: **3N+1 cold field gates**. It returns every output. This forward routine uses only the coefficient 1/2, including at N=1. There is no exponential-size table or 2^N coefficient in this direction.
+
+In cycle order, K has diagonal 3/2, upper entries 1/2 and lower entries -1/2. It is order-one quasiseparable and fits the preceding bidirectional-sandwich framework. Its inverse is dense. Accordingly, the bounded-component sandwich theorem is not enough to reject it; nor can one infer a Fourier factorization merely from its density. Arbitrary inter-stage permutations remain an essential part of the unresolved construction.
+
+## 3. Exact compatibility with our affine graph filters
+
+For dyadic N>=2, let q be a primitive Nth root and use supplied bounded-word descriptors a=1 mod4 and odd b,c:
+
+\[
+(Mx)_j=q^{bj}x_{aj+c\bmod N}.
+\]
+
+Both the source and Fourier-side permutations are full cycles, and M^N=-I. The earlier affine identity is
+
+\[
+FM=\widehat M F,\qquad
+(\widehat My)_k=q^{-c a^{-1}(k+b)}y_{a^{-1}(k+b)}.
+\]
+
+Inverting I-M in this identity gives the exact extension
+
+\[
+\boxed{F K(M)=K(\widehat M) F,\qquad
+F K(M)^{-1}=K(\widehat M)^{-1}F.}
+\]
+
+Hence these rational Green operators can be inserted into the existing ordered affine-filter word while preserving its exact source/target relation. No commutation of distinct graph operators is assumed. A shared root table and a shared half-root table supply both source and target coefficients; there is no second Fourier transform inside the stage.
+
+This compatibility alone does not make a sparse residual available for an arbitrary input. The composed affine fast path still requires verification of its input structure, and its unrestricted fallback remains O(N log N). This checkpoint implements the mixer and the intertwining identity, not an unproved universal sparse-residual discovery algorithm.
+
+For the generic affine implementation, exact charged counts are:
+
+| Work | Field gates |
+|---|---:|
+| Prepare both source/target directions and their inverses, including root validation | 2N+log2(N)+4 |
+| Apply prepared K, source or target | 5N+1 |
+| Apply prepared K^-1, source or target | 6N+1 |
+
+A cyclic solve costs 4N+1 in the literal implementation. Its closures are 1/2 for I-M and (1+2^-N)^-1 for I-M/2. The latter is obtained with log2(N) squarings, one addition, and one inversion. Every field call, including inversion, is counted. Graph traversal, coefficient indexing, copies, and all output writes require O(N) bounded-word indexing operations; arithmetic on the exact field elements is a separate cost model.
+
+**Bit-complexity limit:** log(N) field operations do not imply log(N) word operations for these scalars. The inverse of the signed stage can produce N entries with reduced denominators 2^N+1, each requiring Theta(N) bits. Materializing an exact rational inverse image can therefore require Omega(N²) output bits. This result is not a bounded-word linear-time exact inverse, integer-multiplication algorithm, or sub-N log N bit-complexity FFT.
+
+The affine implementation rejects N=1, which does not satisfy its root-based M^N=-I construction; the signed-cycle routine handles N=1 explicitly. N=2 is included in the affine audit. In finite characteristic, K can be singular when 2^N+1=0: the audit verifies rejection at (p,N)=(5,2),(17,4),(257,8),(65537,16). Characteristic two is excluded. Complex nonsingularity and complex density must not be transferred blindly to these finite-field examples.
+
+## 4. Independent audit of the uploaded Green bounds
+
+The original T=3I-A_path, U=T+I, S=T^-1+U^-1 identities are correct:
+
+\[
+S^{-1}=U(T+U)^{-1}T
+=\tfrac12T+\tfrac14I-\tfrac14(2T+I)^{-1}.
+\]
+
+Independent rational Gaussian elimination agrees with the uploaded norm computations at N=2,4,8,16. The claimed kappa_1(S)<=17/4 bound is valid. A small strengthening follows from the same sign information. Put G=(2T+I)^-1. For each column j,
+
+\[
+\sum_i|(S^{-1})_{ij}|
+=\tfrac12\sum_i|T_{ij}|+\tfrac14
+  +\tfrac14\sum_iG_{ij}-\tfrac12G_{jj}.
+\]
+
+The Neumann series gives sum_i G_ij<=1/3 and G_jj>=1/7. Thus
+
+\[
+\|S^{-1}\|_1\le58/21,\qquad
+\boxed{\kappa_1(S)\le29/7<17/4.}
+\]
+
+This only modestly strengthens that **specific bounded-condition family**. The constructive K family above leaves that hypothesis rather than contradicting its proof.
+
+## 5. Gauge verification and a concrete accounting correction
+
+The uploaded rank-one-dressed FFT stages do telescope to the ordinary Fourier transform. Independent exact basis checks confirm the complete outputs at N=4,8,16,32, and all supplied dressed stage matrices are dense at these lengths.
+
+One literal operation counter is inaccurate: `Gauge.action` starts its dot product at zero and executes N additions in that loop, followed by N output additions. It reports 2N-1 additions but executes **2N**. Consequently a full dressed transform underreports **2(log2(N)-1)** additions. An optimized circuit can attain the reported count by starting the dot product at its first product, but the uploaded implementation does not do that. The original source is preserved unchanged; our audit records both counters. The correction strengthens the already negative engineering result and does not change its asymptotic order.
+
+We also extend the known-baseline detector to stage-dependent rank-one gauges. With H_-1=I, reconstruct
+
+\[
+H_i=G_i H_{i-1} B_i^{-1}.
+\]
+
+Check that each intermediate H_i is invertible with rank(H_i-I)<=1 and that the final H is exactly I. Then G_i=H_i B_i H_(i-1)^-1 is certified at every layer. Examples at N=8,16,32 pass this extended detector while correctly failing the uploaded detector's more restrictive **single fixed H** hypothesis. Corrupted and singular examples are rejected.
+
+This is an offline dense audit costing O(tN³), not part of a fast evaluator and not a complete novelty test. Without a restriction on the complexity of H_i, gauge equivalence by itself says little: arbitrary factorizations of the same map admit changes of intermediate coordinates. The detector only recognizes a specified cheap rank-one dressing of supplied equal-length baseline stages.
+
+## 6. Reproduction and provenance
+
+Run `python3 run_audit.py` in this directory. Keep the original-material dependency at:
+
+`../fft_new_fusion_materials_20261009/green/fft_global_green_gauge`
+
+The runtime mixer uses only the local arithmetic helper; the audit imports the original gauge and norm implementations for comparison. `results.json` records all Python source hashes and the exact original dependency hashes. `exact_fields.py` is the unchanged previously audited field helper.
+
+Checks passed: 624 complete basis applications with outer field counters, 99 fresh round trips, 33 full Fourier intertwining matrix identities, 66 signed-cycle basis applications including N=1/2, seven rational norm/density cases, four singular finite-field rejections, seven invalid-input rejections, four original gauge audits, three varying-gauge audits, and six gauge corruption/singularity rejections. Finite tests accompany the algebraic proofs; they are not an asymptotic Fourier factorization.
+
+The next actionable exact question is whether a small, uniformly generated word of such growing-condition mixers and global permutations equals F_N with a fully charged cost advantage and survives gauge simplification. No such word is claimed here.

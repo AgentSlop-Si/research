@@ -1,0 +1,68 @@
+0001 #!/usr/bin/env python3
+0002 """Independent Boolean reachability and Fourier determinant checks."""
+0003 import pathlib,json,collections
+0004 R=pathlib.Path(__file__).resolve().parent
+0005 A={0,2,4,6,8,10,12,16,18,20,24,26,28};V={20,22,24,25,26,28,30}
+0006 def rev(i,n):return int(format(i,f'0{n.bit_length()-1}b')[::-1],2)
+0007 def make_cut(m):
+0008  c={(0,'l',13*m),(2,'l',19*m)}
+0009  for z in range(m):
+0010   c.update((1,'x',32*z+r) for r in [24,26,28]);c.add((1,'l',32*z+21))
+0011   if z<m-1:c.add((1,'u',32*z+31))
+0012  for b in V:c.update((2,'x',b*m+j) for j in range(m))
+0013  assert len(c)==12*m+1
+0014  return c
+0015 
+0016 def propagate(n,c):
+0017  m=n//32;x=[i<13*m for i in range(n)];records=[]
+0018  for s in range(3):
+0019   x=[v and(s,'x',i) not in c for i,v in enumerate(x)];lo=[False]*n;up=[False]*n
+0020   for i in range(1,n):lo[i]=(s,'l',i) not in c and(x[i-1] or lo[i-1])
+0021   for i in range(n-2,-1,-1):up[i]=(s,'u',i) not in c and(x[i+1] or up[i+1])
+0022   y=[(x[i] or lo[i] or up[i]) and(s,'y',i) not in c for i in range(n)];records.append({'stage':s,'input':{i for i,v in enumerate(x) if v},'output':{i for i,v in enumerate(y) if v}})
+0023   x=[y[rev(i,n)] for i in range(n)]
+0024  return records
+0025 
+0026 def bfs(n,c):
+0027  m=n//32;adj=collections.defaultdict(list)
+0028  for s in range(3):
+0029   for i in range(n):
+0030    adj[s,'x',i].append((s,'y',i))
+0031    if i<n-1:adj[s,'x',i].append((s,'l',i+1))
+0032    if i>0:adj[s,'x',i].append((s,'u',i-1))
+0033    if s<2:adj[s,'y',i].append((s+1,'x',rev(i,n)))
+0034   for i in range(1,n):
+0035    adj[s,'l',i].append((s,'y',i))
+0036    if i<n-1:adj[s,'l',i].append((s,'l',i+1))
+0037   for i in range(n-1):
+0038    adj[s,'u',i].append((s,'y',i))
+0039    if i:adj[s,'u',i].append((s,'u',i-1))
+0040  seen={(0,'x',j) for j in range(13*m)};q=collections.deque(seen)
+0041  while q:
+0042   for v in adj[q.popleft()]:
+0043    if v not in seen and v not in c:seen.add(v);q.append(v)
+0044  return {i for i in range(n) if(2,'y',i) in seen}
+0045 
+0046 cases=[]
+0047 for e in range(9):
+0048  m=1<<e;n=32*m;c=make_cut(m)
+0049  for s,k,i in c:assert 0<=s<3 and((k=='x' and 0<=i<n)or(k=='l' and 1<=i<n)or(k=='u' and 0<=i<n-1))
+0050  rec=propagate(n,c)
+0051  assert rec[0]['output']==set(range(13*m))
+0052  assert {rev(i,n)%32 for i in rec[0]['output']}==A
+0053  assert rec[1]['output']=={32*z+r for z in range(m) for r in range(21)}
+0054  assert {rev(i,n)//m for i in rec[1]['output'] if rev(i,n)>=19*m}==V
+0055  assert rec[2]['output']==set(range(19*m))
+0056  assert not rec[2]['output']&set(range(19*m,n))
+0057  assert propagate(n,set())[-1]['output']==set(range(n))
+0058  if n<=128:assert bfs(n,c)==rec[-1]['output']
+0059  cases.append({'N':n,'m':m,'cut_nodes':len(c),'source_width':13*m,'target_width':13*m,'gap':m-1,'reachable_target_count':0,'independent_BFS_crosscheck':n<=128})
+0060 dets=[];p=65537
+0061 for n in [64,128]:
+0062  w=pow(3,(p-1)//n,p);assert pow(w,n,p)==1 and pow(w,n//2,p)!=1;m=n//32;W=13*m
+0063  nodes=[pow(w,j,p) for j in range(W)];d=pow(w,19*m*sum(range(W)),p)
+0064  for j in range(W):
+0065   for i in range(j):d=d*(nodes[j]-nodes[i])%p
+0066  assert d;dets.append({'N':n,'field':p,'root':w,'rows':[19*m,n],'columns':[0,W],'rank':W,'determinant':d})
+0067 out={'uniform_cut_cases':cases,'fourier_determinants':dets,'source_credit':'The uniform12m+1 cut and N64 threshold originate in newly supplied bitrev no-go source; this is independent verification.','uploaded_code_executed':False}
+0068 (R/'INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))

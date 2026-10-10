@@ -1,0 +1,59 @@
+   1 """Stand-alone independent determinant checker, no project module imports."""
+   2 from itertools import combinations_with_replacement
+   3 from pathlib import Path
+   4 import json
+   5 
+   6 P=998244353
+   7 
+   8 def independent_root(n):
+   9     for b in range(2, P):
+  10         w=pow(b,(P-1)//n,P)
+  11         if pow(w,n,P)==1 and pow(w,n//2,P)!=1:
+  12             return w
+  13     raise RuntimeError
+  14 
+  15 def independently_rebuild_and_verify(data):
+  16     for key,cert in data['conjugate_pair_cubic_certificates'].items():
+  17         n=int(key)
+  18         w=independent_root(n)
+  19         sources=tuple(k for k in range(n) if k not in (1,n-1))
+  20         terms=[]
+  21         for degree in (1,2,3):
+  22             terms.extend(m for m in combinations_with_replacement(sources,degree) if sum(m)%n==1)
+  23         supports=[tuple(s) for s in cert['supports']]
+  24         if len(supports)!=len(terms)+1 or len(set(supports))!=len(supports):return False
+  25         rows=[]
+  26         for bits in supports:
+  27             if len(bits)>3 or any(j<0 or j>=n for j in bits):return False
+  28             freq={k:sum(pow(w,(k*j)%n,P) for j in bits)%P for k in sources}
+  29             row=[]
+  30             for mon in terms:
+  31                 v=1
+  32                 for k in mon:v=v*freq[k]%P
+  33                 row.append(v)
+  34             row.append(sum(pow(w,j%n,P) for j in bits)%P)
+  35             rows.append(row)
+  36         # Independent modular elimination: operate by rows; don't call graded_certificate.
+  37         det=1
+  38         width=len(rows)
+  39         for j in range(width):
+  40             pivot=next((t for t in range(j,width) if rows[t][j]),None)
+  41             if pivot is None:return False
+  42             if pivot !=j:
+  43                 rows[j],rows[pivot]=rows[pivot],rows[j]
+  44                 det=-det
+  45             a=rows[j][j]
+  46             det=det*a%P
+  47             inv=pow(a,P-2,P)
+  48             for t in range(j+1,width):
+  49                 ratio=rows[t][j]*inv%P
+  50                 if ratio:
+  51                     for col in range(j,width):rows[t][col]=(rows[t][col]-ratio*rows[j][col])%P
+  52         print(f"N={n}: independent determinant {det} (nonzero), monomials={len(terms)}, rows={len(supports)}")
+  53         if det!=cert['determinant_mod_998244353']:return False
+  54     return True
+  55 
+  56 if __name__=='__main__':
+  57     data=json.loads(Path(__file__).with_name('audit_results.json').read_text())
+  58     assert independently_rebuild_and_verify(data)
+  59     print('Independent certificate verification PASS')

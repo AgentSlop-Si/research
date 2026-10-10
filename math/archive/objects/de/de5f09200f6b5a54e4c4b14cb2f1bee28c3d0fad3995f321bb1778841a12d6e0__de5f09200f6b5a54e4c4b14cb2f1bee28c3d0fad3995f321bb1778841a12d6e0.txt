@@ -1,0 +1,180 @@
+"""Exact multi-shear orbit union: O_g(N) DFT on a recognized structured family.
+
+For N=Q*M, consider the raw signal
+    x[t+Q*u] = sum_{j=0}^{g-1} mu_j**t * b_j[(u-a_j*t) mod M].
+Each b_j is an ARBITRARY dense length-M vector; the shifts a_j and
+nonzero multipliers mu_j are UNKNOWN and recovered from the raw input.
+
+For each h, the row DFT sequence in t is a sum of g exponentials:
+    C_t[h] = sum_j B_j[h] * (mu_j*eta**(-a_j*h))**t.
+The first 2g rows determine the characteristic polynomial in temporal
+evolution. Its next-to-leading coefficient satisfies
+    s[h] = sum_j mu_j * eta**(-a_j*h).
+The M-point DFT of s[h] reveals each (a_j,mu_j) in O(M^2) work.
+
+Then O(g*M^2) operations recover all b_j, O(g*N) verify the ENTIRE raw
+input, and O(g*N) evaluate the entire length-N DFT via geometric sums.
+All stages are charged. Requires nondegenerate Hankel matrices at all h,
+distinct a_j, Q>=2g, a supplied exact primitive N-root over F_p.
+No universal arbitrary-input O(N) claim. No novelty-priority claim.
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Optional, Sequence
+import phase_union_general as phase
+from delta_graph import balanced_q,direct_row_dft
+from fast_vandermonde import solve_moments
+from shear_gauge_union import inverse_for_scaled_roots
+
+
+def solve_square(A:Sequence[Sequence[int]], rhs:Sequence[int], p:int):
+    """Simple charged Gaussian solve, O(g^3) field ops for g-by-g matrix."""
+    g=len(rhs)
+    aug=[[z%p for z in row]+[rhs[i]%p] for i,row in enumerate(A)]
+    for column in range(g):
+        pivot=next((row for row in range(column,g) if aug[row][column]),None)
+        if pivot is None:return None
+        aug[column],aug[pivot]=aug[pivot],aug[column]
+        inv=pow(aug[column][column],-1,p)
+        for j in range(column,g+1):aug[column][j]=aug[column][j]*inv%p
+        for row in range(column+1,g):
+            factor=aug[row][column]
+            if factor:
+                for j in range(column,g+1):
+                    aug[row][j]=(aug[row][j]-factor*aug[column][j])%p
+    x=[0]*g
+    for row in range(g-1,-1,-1):
+        x[row]=(aug[row][g]-sum(aug[row][j]*x[j] for j in range(row+1,g)))%p
+    return x
+
+
+@dataclass(frozen=True)
+class Orbit:
+    shift:int
+    scalar:int
+    spectrum:tuple[int,...]
+    base:tuple[int,...]
+
+
+@dataclass(frozen=True)
+class MultiShearCertificate:
+    n:int
+    q:int
+    m:int
+    p:int
+    omega:int
+    g:int
+    orbits:tuple[Orbit,...]
+    raw_checks:int
+    rank_nondegenerate_channels:int
+
+
+def recognize(x:Sequence[int],p:int,omega:int,g:int=2,
+              q:Optional[int]=None,balance_bound:int=4)->Optional[MultiShearCertificate]:
+    n=len(x)
+    q=balanced_q(n,balance_bound) if q is None else q
+    if (q is None or n%q or g<1 or q<2*g or n//q<g or
+        q*q>balance_bound*n or (n//q)**2>balance_bound*n):return None
+    m=n//q
+    roots=phase.phase_table(n,p,omega)
+    eta=roots[q%n]
+    subroots=phase.phase_table(m,p,eta)
+    rowspec=[]
+    for t in range(2*g):
+        row=[x[t+q*u]%p for u in range(m)]
+        rowspec.append(direct_row_dft(row,p,subroots))
+
+    trace=[0]*m
+    for h in range(m):
+        moments=[rowspec[t][h] for t in range(2*g)]
+        H=[[moments[i+j] for j in range(g)] for i in range(g)]
+        rhs=[-moments[i+g] for i in range(g)]
+        coeff=solve_square(H,rhs,p)
+        if coeff is None:return None
+        trace[h]=(-coeff[g-1])%p
+
+    # s[h] is g-sparse in the *h-direction*, despite every input row being dense.
+    trace_dft=direct_row_dft(trace,p,subroots)
+    inv_m=pow(m,-1,p)
+    # DFT of eta^(-a*h) has support ell=-a (mod M).
+    params=[]
+    for ell,S in enumerate(trace_dft):
+        if S%p:
+            params.append(((-ell)%m,S*inv_m%p))
+    if len(params)!=g or len({a for a,mu in params})!=g:return None
+
+    spectra=[[0]*m for _ in range(g)]
+    for h in range(m):
+        nodes=[mu*subroots[(-a*h)%m]%p for a,mu in params]
+        coeff=solve_moments(nodes,[rowspec[t][h] for t in range(g)],p)
+        if coeff is None:return None
+        for j,z in enumerate(coeff):spectra[j][h]=z
+
+    # Dense inverse M-DFTs once per orbit. This is O(g*M^2), not O(N*M).
+    baselines=[]
+    for spec in spectra:
+        base=[sum(spec[h]*subroots[(h*u)%m] for h in range(m))%p*inv_m%p
+              for u in range(m)]
+        baselines.append(base)
+
+    # Full-input deterministic certification, every raw position checked.
+    scalars=[1]*g
+    for t in range(q):
+        shifts=[(a*t)%m for a,mu in params]
+        for u in range(m):
+            value=sum(scalars[j]*baselines[j][(u-shifts[j])%m]
+                      for j in range(g))%p
+            if value!=x[t+q*u]%p:return None
+        for j,(a,mu) in enumerate(params):
+            scalars[j]=scalars[j]*mu%p
+
+    orbits=tuple(Orbit(a,mu,tuple(spectra[j]),tuple(baselines[j]))
+                 for j,(a,mu) in enumerate(params))
+    return MultiShearCertificate(n,q,m,p,omega,g,orbits,n,m)
+
+
+def transform_certified(cert:MultiShearCertificate,with_counters:bool=False):
+    n,q,m,p,g=cert.n,cert.q,cert.m,cert.p,cert.g
+    roots=phase.phase_table(n,p,cert.omega)
+    all_inverse=[inverse_for_scaled_roots(roots,o.scalar,p) for o in cert.orbits]
+    muQ=[pow(o.scalar,q,p) for o in cert.orbits] # g fixed => O(g log Q) word ops
+    out=[0]*n
+    for k in range(n):
+        h=k%m
+        result=0
+        for j,o in enumerate(cert.orbits):
+            ell=(k+q*o.shift*h)%n
+            z=o.scalar*roots[-ell%n]%p
+            zQ=muQ[j]*roots[(-ell*q)%n]%p
+            G=q if z==1 else (1-zQ)*all_inverse[j][ell]%p
+            result+=o.spectrum[h]*G
+        out[k]=result%p
+    if with_counters:
+        return out,{'n':n,'q':q,'m':m,'g':g,'raw_checked':cert.raw_checks,
+                    'first_row_direct_dft_ops':2*g*m*m,
+                    'trace_dft_ops':m*m,
+                    'inverse_baseline_dft_ops':g*m*m,
+                    'dense_orbit_validation_terms':g*n,
+                    'output_geometric_terms':g*n,
+                    'batch_inversions':g}
+    return out
+
+
+def transform_if_recognized(x,p,omega,g=2,q=None,balance_bound=4):
+    cert=recognize(x,p,omega,g,q,balance_bound)
+    return (None,None) if cert is None else (transform_certified(cert),cert)
+
+
+def synthesize_orbits(n,p,q,items):
+    """Only a fixture generator. Each item = (a, mu, base length M)."""
+    assert n%q==0
+    m=n//q
+    x=[0]*n
+    for a,mu,base in items:
+        assert len(base)==m
+        power=1
+        for t in range(q):
+            for u in range(m):
+                x[t+q*u]=(x[t+q*u]+power*base[(u-a*t)%m])%p
+            power=power*mu%p
+    return x

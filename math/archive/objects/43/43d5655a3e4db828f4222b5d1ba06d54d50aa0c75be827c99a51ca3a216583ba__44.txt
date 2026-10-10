@@ -1,0 +1,108 @@
+0001 #!/usr/bin/env python3
+0002 """New independent exact checks: inverse Gray crossing and full inverse system."""
+0003 import fractions,json,pathlib,random
+0004 ROOT=pathlib.Path(__file__).resolve().parent
+0005 P=1009; rng=random.Random(106092255)
+0006 def mm(a,b,p=P):
+0007  bt=list(zip(*b));return [[sum(x*y for x,y in zip(row,col))%p for col in bt] for row in a]
+0008 def ident(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+0009 def inv(a,p=P):
+0010  n=len(a);a=[row[:]+e for row,e in zip(a,ident(n))]
+0011  for j in range(n):
+0012   k=next((k for k in range(j,n) if a[k][j]%p),None)
+0013   if k is None:return None
+0014   a[j],a[k]=a[k],a[j];z=pow(a[j][j],-1,p);a[j]=[z*x%p for x in a[j]]
+0015   for k in range(n):
+0016    if k!=j:
+0017     z=a[k][j];a[k]=[(x-z*y)%p for x,y in zip(a[k],a[j])]
+0018  return [row[n:] for row in a]
+0019 def perm(q):return [[int(i==q[j]) for j in range(len(q))] for i in range(len(q))]
+0020 def transpose(a):return list(map(list,zip(*a)))
+0021 def rev(i,m):return int(format(i,f'0{m}b')[::-1],2)
+0022 def qs1(n):
+0023  while True:
+0024   a=[[0]*n for _ in range(n)]
+0025   for i in range(n):a[i][i]=rng.randrange(P)
+0026   l,r,u,v=[[rng.randrange(P) for _ in range(n)] for _ in range(4)]
+0027   t,s=[[rng.randrange(P) if rng.randrange(3) else 0 for _ in range(n)] for _ in range(2)]
+0028   for j in range(n):
+0029    state=r[j]
+0030    for i in range(j+1,n):a[i][j]=l[i]*state%P;state=state*t[i]%P
+0031    state=v[j]
+0032    for i in range(j-1,-1,-1):a[i][j]=u[i]*state%P;state=state*s[i]%P
+0033   ai=inv(a)
+0034   if ai is not None:return a,ai
+0035 def separated_minors(a):
+0036  n=len(a);count=0
+0037  for i in range(n):
+0038   for j in range(i+1,n):
+0039    for k in range(j+1,n):
+0040     for l in range(k+1,n):
+0041      assert (a[i][k]*a[j][l]-a[i][l]*a[j][k])%P==0
+0042      assert (a[k][i]*a[l][j]-a[k][j]*a[l][i])%P==0
+0043      count+=2
+0044  return count
+0045 
+0046 inverse_gray=[]
+0047 for m in range(1,19):
+0048  n=1<<m;q=[i^(i>>1) for i in range(n)];b=[0]*n
+0049  for i,j in enumerate(q):b[j]=i
+0050  d=[0]*(n+1)
+0051  for x,y in zip(b,b[1:]):
+0052   x,y=sorted((x,y));d[x+1]+=1;d[y+1]-=1
+0053  v=0;vlist=[]
+0054  for t in range(1,n):v+=d[t];vlist.append(v)
+0055  assert max(vlist)==m
+0056  t=(2*n+(-1)**m)//3;assert vlist[t-1]==m
+0057  if m>1:
+0058   h=n//2;prev=b[:h];assert b==prev+[2*h-1-x for x in prev]
+0059   for u in range(1,h):
+0060    old=sum((x<h-u)!=(y<h-u) for x,y in zip(prev,prev[1:])) if m<=10 else None
+0061    if old is not None:assert vlist[h+u-1]==old+1
+0062  inverse_gray.append({'m':m,'N':n,'inverse_gray_crossing_maximum':m,'maximizing_threshold':t})
+0063 
+0064 systems=[];minor_count=0
+0065 for m in [2,3,4]:
+0066  n=1<<m;r=perm([rev(i,m) for i in range(n)]);g=perm([i^(i>>1) for i in range(n)])
+0067  for case in range(12):
+0068   pairs=[qs1(n) for _ in range(4)];s=[x[0] for x in pairs];si=[x[1] for x in pairs]
+0069   if case==0:s[1]=ident(n);si[1]=ident(n)
+0070   f=mm(mm(mm(mm(mm(mm(s[3],r),s[2]),g),s[1]),r),s[0])
+0071   u,v,w=si[3],si[0],si[2]
+0072   z=mm(mm(mm(mm(mm(mm(transpose(g),w),r),u),f),v),r)
+0073   assert z==s[1]
+0074   recovered=mm(mm(mm(mm(mm(mm(inv(u),r),inv(w)),g),z),r),inv(v))
+0075   assert recovered==f
+0076   for a in [u,v,w,z]:minor_count+=separated_minors(a)
+0077   systems.append({'N':n,'case':case,'exact_recovery':True,'diagonal_middle_control':case==0})
+0078 
+0079 # Actual F4 over Gaussian integers. Gaussian pairs avoid numerical complex values.
+0080 def ga(a,b):return(a[0]+b[0],a[1]+b[1])
+0081 def gm(a,b):return(a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0])
+0082 def gmat(a,b):
+0083  bt=list(zip(*b));out=[]
+0084  for row in a:
+0085   outrow=[]
+0086   for col in bt:
+0087    z=(0,0)
+0088    for x,y in zip(row,col):z=ga(z,gm(x,y))
+0089    outrow.append(z)
+0090   out.append(outrow)
+0091  return out
+0092 def lift(a):return [[(x,0) for x in row] for row in a]
+0093 r=lift(perm([0,2,1,3]));g=lift(perm([0,1,3,2]));b=lift([[1,1,0,0],[1,-1,0,0],[0,0,1,1],[0,0,1,-1]])
+0094 d=lift(ident(4));d[3][3]=(0,1)
+0095 s1=lift(ident(4));s2=gmat(g,b);s3=d;s4=gmat(r,b)
+0096 product=s4
+0097 for factor in [r,s3,g,s2,r,s1]:product=gmat(product,factor)
+0098 roots=[(1,0),(0,1),(-1,0),(0,-1)]
+0099 assert product==[[roots[(i*j)%4] for j in range(4)] for i in range(4)]
+0100 for a in [s1,s2,s3,s4]:
+0101  assert gm(a[0][2],a[1][3])==gm(a[0][3],a[1][2])
+0102  assert gm(a[2][0],a[3][1])==gm(a[2][1],a[3][0])
+0103 assert s4[0][1]!=(0,0) and s4[1][2]!=(0,0) and s4[0][2]==(0,0)
+0104 
+0105 out={'inverse_gray_checks':inverse_gray,'exact_modular_system_checks':systems,'separated_minor_equalities_checked':minor_count,
+0106  'gaussian_integer_F4_R_G_R_identity':True,'F4_last_stage_outside_transition_free_separated_chart':True,
+0107  'zero_transitions_and_diagonal_middle_included':True,'uploaded_code_executed':False}
+0108 (ROOT/'EXACT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))

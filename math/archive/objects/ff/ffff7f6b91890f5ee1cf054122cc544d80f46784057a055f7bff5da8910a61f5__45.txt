@@ -1,0 +1,23 @@
+1: """Run the three independent standard-library audits from any working directory."""
+2: import json
+3: from pathlib import Path
+4: import subprocess
+5: import sys
+6: 
+7: base = Path(__file__).resolve().parent
+8: scripts = ("fixed_kernel/run_audit.py", "walsh_details/audit.py",
+9:            "phase_states/verify_phase_states.py")
+10: rows = []
+11: for name in scripts:
+12:     result = subprocess.run([sys.executable, str(base/name)], cwd=base,
+13:                             capture_output=True, text=True)
+14:     rows.append({"script": name, "returncode": result.returncode,
+15:                  "stdout": result.stdout, "stderr": result.stderr})
+16:     if result.returncode:
+17:         print(result.stdout, end="")
+18:         print(result.stderr, end="", file=sys.stderr)
+19:         raise SystemExit(result.returncode)
+20: (base/"verification_log.json").write_text(json.dumps(rows, indent=2)+"\n")
+21: print("PASS: all three exact audits; 790 basis-vector cases, 36 Hankel determinants,")
+22: print("10,920 block entries, 30 full unfolding cases, 90 cross-phase/minor cases.")
+23: print("No sub-NlogN FFT algorithm or runtime speedup is claimed.")

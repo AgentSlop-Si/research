@@ -1,0 +1,79 @@
+"""Exact three upper-row polynomial resultant gates over Z[z]/(z^4+1)."""
+from __future__ import annotations
+import json, hashlib
+from pathlib import Path
+from inverse_quartic import (ZERO,ONE,cadd,cpowroot,poly_constant,poly_var,padd,pscale,pmul,sum_polys,poly_eval)
+from upper_minor import generate
+from dual_support import primitive_root
+
+def sub(a,b):return padd(a,b,-1)
+def ztimes(a,k):return pscale(a,cpowroot(k))
+def mul3(a,b,c):return pmul(pmul(a,b),c)
+def det3(M):
+    a,b,c=M[0];d,e,f=M[1];g,h,i=M[2]
+    return padd(padd(pmul(a,sub(pmul(e,i),pmul(f,h))),pmul(b,sub(pmul(d,i),pmul(f,g))),-1),pmul(c,sub(pmul(d,h),pmul(e,g))))
+
+def build():
+    t,h0,h1,h2,hl,beta,g1,g2=[poly_var(i) for i in range(8)]
+    one=poly_constant();minusone=(-1,0,0,0)
+    c1=cadd(cadd(one[()],cpowroot(-1)),cpowroot(-2))
+    c2=cadd(cadd(cpowroot(-1),cpowroot(-2)),cpowroot(-3))
+    c3=cpowroot(-3)
+    hs=[h0,h1,h2]
+    for k in range(4):hs.append(padd(sub(pscale(hs[k+2],c1),pscale(hs[k+1],c2)),pscale(hs[k],c3)))
+    H=hs[:6]+[hl]
+    zm1=cadd(cpowroot(1),minusone)
+    bnum=padd(sub(t,one),pmul(beta,sub(h0,one)))
+    LH=[{}]
+    for k in range(1,7):
+        v=pscale(sub(one,pmul(beta,h0)),zm1)
+        v=padd(v,pscale(bnum,cadd(cpowroot(-k),minusone)))
+        v=padd(v,pscale(pmul(beta,H[k]),zm1))
+        LH.append(v)
+    LH.append(pscale(t,zm1))
+    def row(a,k,g):
+        def q(r):return sub(poly_constant(cpowroot(a*r)),g)
+        return [sum_polys([pmul(q(r),H[r]) for r in range(k)]),
+                sum_polys([pmul(q(r),LH[r]) for r in range(k+1,8)]),q(k)]
+    zero={}
+    ks=(4,1,2,5)
+    D={}
+    for k in ks:
+        r1=row(1,k,g1);r2=row(2,k,g2)
+        A=det3([r1,r2,row(3,k,zero)])
+        B=det3([r1,r2,[sum_polys(H[:k]),sum_polys(LH[k+1:]),one]])
+        D[k]=(A,B)
+    R={}
+    for k in ks[1:]:
+        R[k]=sub(pmul(D[ks[0]][0],D[k][1]),pmul(D[k][0],D[ks[0]][1]))
+    return D,R
+
+def export():
+    D,R=build()
+    assert all(R.values())
+    assert all(max(len(mon) for mon in poly)<=7 for poly in R.values())
+    for p in (12289,65537):
+        zz=primitive_root(p,8)
+        for w in (zz,pow(zz,3,p)):
+            ring,actual=generate(p,w)
+            for k in D:
+                for exact,got in zip(D[k],actual[k]):
+                    z={mon:sum(c[i]*pow(w,i,p) for i in range(4))%p for mon,c in exact.items()}
+                    y={tuple(j for j in range(8) for _ in range(m[j])):int(v)%p for m,v in got.terms()}
+                    assert {k:v for k,v in z.items() if v}!={}
+                    assert {k:v for k,v in z.items() if v}==y,(p,w,k,len(z),len(y))
+    def record(P):return [[list(m),list(c)] for m,c in sorted(P.items(),key=lambda kv:(len(kv[0]),kv[0]))]
+    doc=dict(coefficient_field='Z[z]/(z^4+1)',variable_order=['t','h0','h1','h2','hl','beta','gamma1','gamma2'],
+        permutation=[7,0,6,3,4,1,2,5],
+        statement='For upper row 3, D_k(gamma3)=A_k-gamma3*B_k must vanish for k=4,1,2,5. Hence each R_4k=A_4 B_k-A_k B_4 must vanish. Necessary only.',
+        component_counts={str(k):[len(d[0]),len(d[1])] for k,d in D.items()},
+        resultants={str(k):dict(degree=max(len(m) for m in eq),num_terms=len(eq),terms=record(eq)) for k,eq in R.items()},
+        denominators='None: generator tail column multiplied by t*(z-1) rather than divided by it.',
+        exceptions='Valid as necessary equations without invertibility of S1 or Delta; endpoint/generator chart assumptions remain.'
+    )
+    path=Path(__file__).with_name('exact_upper_resultants.json')
+    path.write_text(json.dumps(doc,indent=2)+'\n')
+    print('exact upper resultants',[(k,len(v),max(map(len,v))) for k,v in R.items()])
+    print('sha256',hashlib.sha256(path.read_bytes()).hexdigest())
+    return doc
+if __name__=='__main__':export()

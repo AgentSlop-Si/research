@@ -1,0 +1,30 @@
+"""Repeat generic finite-field Jacobian ranks across primes and shuffle variants."""
+import json
+import random
+from pathlib import Path
+import jacobian_gate as j
+from milp_superconcentrator import lift
+HERE=Path(__file__).resolve().parent
+
+def run():
+    prime=[]
+    for p in (12289,65537):
+        j.MOD=p
+        for perm_seed in (919,920,921):
+            s=list(range(16));random.Random(perm_seed).shuffle(s)
+            out,*_=j.study(16,2,s,1011)
+            prime.append({'modulus':p,'shuffle_seed':perm_seed,'rank':out['jacobian_rank']})
+            assert out['jacobian_rank']==232
+            print('field',p,'shuffle_seed',perm_seed,'rank',out['jacobian_rank'],flush=True)
+    j.MOD=12289
+    lift_results=[]
+    for r in (1,2,3,4):
+        n=8*r
+        out,*_=j.study(n,r,lift(r),1011)
+        upper=n+4*r*(2*n-2*r-1)
+        lift_results.append({'n':n,'r':r,'modulus':12289,'rank':out['jacobian_rank'],
+            'universal_two_stage_chart_dimension_upper':upper,'codimension_lower_bound':n*n-upper})
+        print('lift',n,r,'jacobian_rank',out['jacobian_rank'],'upper',upper,flush=True)
+    (HERE/'prime_and_lift_results.json').write_text(json.dumps({'prime_stress':prime,'lifted_shuffles':lift_results},indent=2)+'\n')
+    return True
+if __name__=='__main__':run()

@@ -1,0 +1,52 @@
+1: """Exact fresh-input executor for the certified generic scan-stage networks.
+2: This is a cost and correctness control, not an FFT algorithm or speedup.
+3: """
+4: from pathlib import Path
+5: import json,random
+6: import numpy as np
+7: from independent_verifier import find_product_and_jacobian
+8: HERE=Path(__file__).resolve().parent
+9: 
+10: def one_stage(par,x,p):
+11:     n=len(x);x=[int(v)%p for v in x]
+12:     L=np.asarray(par['L'],dtype=np.int64).reshape(n)
+13:     V=np.asarray(par['V'],dtype=np.int64).reshape(n)
+14:     U=np.asarray(par['U'],dtype=np.int64).reshape(n)
+15:     W=np.asarray(par['W'],dtype=np.int64).reshape(n)
+16:     d=np.asarray(par['d'],dtype=np.int64)
+17:     y=[0]*n
+18:     right=0; upper=[0]*n
+19:     for i in range(n-1,-1,-1):
+20:         upper[i]=int(U[i])*right%p
+21:         right=(right+int(W[i])*x[i])%p
+22:     left=0
+23:     for i in range(n):
+24:         low=int(L[i])*left%p
+25:         y[i]=(low+upper[i]+int(d[i])*x[i])%p
+26:         left=(left+int(V[i])*x[i])%p
+27:     return y
+28: 
+29: def audit(n,p=12289,seed=8112):
+30:     t=n//4+1
+31:     w=json.loads((HERE/f'WITNESS_N{n}_T{t}.json').read_text())
+32:     M,_,_=find_product_and_jacobian(w,p)
+33:     rng=random.Random(seed+n*17+p)
+34:     for _ in range(14):
+35:         x=[rng.randrange(p) for _ in range(n)]
+36:         y=x[:]
+37:         for k,par in enumerate(w['stages']):
+38:             if k:y=[y[i] for i in w['permutation']]
+39:             y=one_stage(par,y,p)
+40:         expected=list(map(int,(M@np.array(x,dtype=np.int64))%p))
+41:         assert y==expected
+42:     return {'n':n,'stages':t,'p':p,'fresh_input_vectors':14,
+43:             'counted_scalar_multiplications':5*n*t,
+44:             'counted_scalar_additions':4*n*t,
+45:             'counted_scalar_total':9*n*t,
+46:             'permutation_reads_upper_bound':(t-1)*n,
+47:             'exact_results':'passed'}
+48: 
+49: if __name__=='__main__':
+50:     out=[audit(n,p) for n in (8,16,32) for p in (12289,65537)]
+51:     for item in out:print(item)
+52:     (HERE/'COST_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')

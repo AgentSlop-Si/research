@@ -1,0 +1,63 @@
+"""Uniformly spectrally-conditioned banded inverse => bounded induced l1 norm.
+
+Proof is in THEOREM.md. This audit deliberately uses non-diagonally-dominant
+complex tridiagonal matrices B = I + i*alpha*T, with alpha>1/2.
+"""
+from __future__ import annotations
+import numpy as np
+
+
+def spectral_l1_constant(a:float,b:float,w:int):
+    assert 0<a<=b and w>=0
+    return b/(a*a)*(1+2*w*(b/a)**2)
+
+
+def complex_nonnormal_control(n:int,alpha=0.75):
+    # Normal, complex, non-diagonally-dominant, with uniform singular values.
+    # T is real symmetric path adjacency: eigenvalues in [-2,2].
+    T=np.zeros((n,n),dtype=np.complex128)
+    for j in range(n-1):T[j,j+1]=T[j+1,j]=1
+    B=np.eye(n,dtype=np.complex128)+1j*alpha*T
+    # Interior row diagonal dominance fails: 1<2*alpha.
+    assert 2*alpha>1
+    a=1.;b=float(np.sqrt(1+4*alpha**2));C=spectral_l1_constant(a,b,1)
+    singular=np.linalg.svd(B,compute_uv=False)
+    actual=float(np.linalg.norm(np.linalg.inv(B),ord=1))
+    assert singular.min()>=a-1e-10 and singular.max()<=b+1e-10
+    assert actual<=C+1e-10
+    # strong independent direct Neumann-band approximate certificate in operator norm
+    rho=(b*b-a*a)/(b*b+a*a)
+    E=np.eye(n,dtype=np.complex128)-(2/(b*b+a*a))*(B.conj().T@B)
+    assert np.linalg.norm(E,2)<=rho+1e-10
+    return {'n':n,'alpha':alpha,'column_diagonal_dominance_fails':True,
+            'singular_min':float(singular.min()),'singular_max':float(singular.max()),
+            'spectral_lower_a':a,'spectral_upper_b':b,
+            'actual_inverse_l1':actual,'uniform_proved_upper_l1':float(C),
+            'neumann_contraction_rho':float(rho)}
+
+def complex_nonnormal_nondominant_control(n:int,alpha=0.75,beta=0.2):
+    """A *nonnormal*, non-DD, uniform-singular-gap tridiagonal example."""
+    assert n>=4 and 0<beta<1
+    T=np.zeros((n,n),dtype=np.complex128)
+    U=np.zeros((n,n),dtype=np.complex128)
+    for j in range(n-1):
+        T[j,j+1]=T[j+1,j]=1
+        U[j,j+1]=1
+    B=np.eye(n,dtype=np.complex128)+1j*alpha*T+beta*U
+    a=1-beta
+    b=float(np.sqrt(1+4*alpha**2)+beta)
+    vals=np.linalg.svd(B,compute_uv=False)
+    is_nonnormal=np.linalg.norm(B.conj().T@B-B@B.conj().T,'fro')>1e-6
+    non_dd=any(abs(B[j,j])<sum(abs(B[k,j]) for k in range(n) if k!=j)
+               for j in range(n))
+    actual=float(np.linalg.norm(np.linalg.inv(B),ord=1))
+    ceiling=float(spectral_l1_constant(a,b,1))
+    assert is_nonnormal and non_dd
+    assert vals.min()>=a-1e-9 and vals.max()<=b+1e-9 and actual<=ceiling+1e-9
+    return {'n':n,'nonnormal':True,'not_column_diagonally_dominant':True,
+            'actual_inverse_l1':actual,'proved_N_independent_upper_l1':ceiling,
+            'lower_singular_bound':a,'upper_singular_bound':b}
+
+if __name__=='__main__':
+    import json
+    print(json.dumps({'normal_non_DD':[complex_nonnormal_control(n) for n in (8,16,32,64,128,256)],'nonnormal_non_DD':[complex_nonnormal_nondominant_control(n) for n in (8,16,32,64,128,256)]},indent=2))

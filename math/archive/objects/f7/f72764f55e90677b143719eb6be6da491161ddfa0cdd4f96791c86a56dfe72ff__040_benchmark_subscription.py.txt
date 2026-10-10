@@ -1,0 +1,55 @@
+"""Same-scope Q output comparisons for convolution subscriptions."""
+import json
+import numpy as np
+from scipy import fft
+from time import perf_counter_ns
+from relational_convolution import RelationalConvolver, subscribe_convolution
+from cost_aware_fft import RelationFFT
+
+rng=np.random.default_rng(123490)
+n=65536
+Q=4
+M=320
+base_a=rng.standard_normal(n)
+base_b=rng.standard_normal(n)
+positions=rng.choice(n,size=Q,replace=False)
+events=[('left' if rng.integers(2) else 'right',int(rng.integers(n)),float(rng.standard_normal())) for _ in range(M)]
+idx=np.arange(n,dtype=np.int64)
+
+def baseline():
+    a=base_a.copy();b=base_b.copy(); checksum=0.
+    for side,t,d in events:
+        if side=='left': a[t]+=d
+        else:b[t]+=d
+        # Q explicit requested coefficients, not an FFT of all N outputs.
+        for q in positions:
+            checksum+=np.dot(a,b[(int(q)-idx)%n])
+    return checksum
+
+def tracked():
+    fft_engine=RelationFFT()
+    a=fft_engine.register(base_a)
+    b=fft_engine.register(base_b)
+    co=RelationalConvolver(max_core_bytes=n*8)
+    sub=subscribe_convolution(co.product(a,b),positions)
+    checksum=0.
+    for side,t,d in events:
+        sub.edit(side,t,d)
+        checksum+=sum(sub.values())
+    # Dense consistency at the end of the event stream.
+    final=sub.snapshot_view().full('native')
+    np.testing.assert_allclose(sub.values(),final[positions],atol=1e-7,rtol=1e-8)
+    return checksum
+
+checks=[]
+for fn in (baseline,tracked):
+    start=perf_counter_ns(); v=fn(); ms=(perf_counter_ns()-start)/1e6
+    checks.append((ms,float(v)))
+np.testing.assert_allclose(checks[0][1],checks[1][1],atol=1e-2,rtol=1e-7)
+print('selected time-domain coefficients', 'n',n,'q',Q,'events',M)
+print('direct per output',round(checks[0][0],3),'ms','tracked initialization+updates',round(checks[1][0],3),'ms','speedup',round(checks[0][0]/checks[1][0],2),'x')
+with open('subscription_results.json','w') as f:
+    json.dump({'n':n,'q':Q,'events':M,'baseline_partial_direct_ms':checks[0][0],
+               'tracked_including_initial_core_ms':checks[1][0],
+               'speedup':checks[0][0]/checks[1][0],
+               'scope':'both only output Q time coefficients after every event; tracked also checks one full native convolution at end'},f,indent=2)

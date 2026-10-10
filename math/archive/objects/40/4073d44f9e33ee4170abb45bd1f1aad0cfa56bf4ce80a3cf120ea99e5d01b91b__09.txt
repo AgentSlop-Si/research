@@ -1,0 +1,344 @@
+0001 #!/usr/bin/env python3
+0002 """Independently authored standard-library audit. Never loads uploaded code.
+0003 Direct transforms/convolutions are correctness oracles, not fast-path claims.
+0004 """
+0005 from itertools import product
+0006 from math import comb,isqrt
+0007 from pathlib import Path
+0008 import argparse, hashlib, json, random, time
+0009 RNG=random.Random(202610092025)
+0010 COUNTS={}
+0011 def add(k,v=1):COUNTS[k]=COUNTS.get(k,0)+v
+0012 
+0013 def prime(p):
+0014  return p>=2 and all(p%d for d in range(2,isqrt(p)+1))
+0015 def field(n):
+0016  p=n+1
+0017  while not prime(p):p+=n
+0018  for w in range(1,p):
+0019   if pow(w,n,p)==1 and all(pow(w,n//d,p)!=1 for d in range(2,n+1) if n%d==0 and prime(d)):
+0020    return p,w
+0021  raise AssertionError(n)
+0022 def table(n,w,p):
+0023  a=[1]
+0024  for _ in range(1,n):a.append(a[-1]*w%p)
+0025  assert len(set(a))==n and a[-1]*w%p==1
+0026  return a
+0027 def dft(x,w,p):
+0028  n=len(x); a=table(n,w,p)
+0029  return [sum(x[j]*a[-j*k%n] for j in range(n))%p for k in range(n)]
+0030 def expand(c,w,p):
+0031  a=table(len(c),w,p)
+0032  return [sum(v*a[h*u%len(c)] for h,v in enumerate(c))%p for u in range(len(c))]
+0033 def modes_direct(x,roots,p):
+0034  m=len(x); iv=pow(m,-1,p)
+0035  return [(h,sum(x[u]*roots[-h*u%m] for u in range(m))*iv%p) for h in range(m) if sum(x[u]*roots[-h*u%m] for u in range(m))%p]
+0036 def bm(y,p,cap,meter):
+0037  # Dynamic connection polynomial; inverse of reference discrepancy is cached.
+0038  C=[1];B=[1];L=0;age=1;inv_b=1
+0039  for pos,v in enumerate(y):
+0040   err=(v+sum(C[j]*y[pos-j] for j in range(1,L+1)))%p
+0041   if not err:age+=1;continue
+0042   newL=pos+1-L if 2*L<=pos else L
+0043   if newL>cap:return None
+0044   old=C[:];scale=err*inv_b%p
+0045   C += [0]*max(0,len(B)+age-len(C))
+0046   for j,b in enumerate(B):C[j+age]=(C[j+age]-scale*b)%p
+0047   if newL>L:
+0048    B=old;L=newL;inv_b=pow(err,-1,p);meter['inversions']+=1;age=1
+0049   else:age+=1
+0050   C += [0]*max(0,L+1-len(C))
+0051  return C[:L+1]
+0052 def weights(nodes,y,p,meter):
+0053  poly=[1]
+0054  for z in nodes:
+0055   nxt=[0]*(len(poly)+1)
+0056   for j,v in enumerate(poly):nxt[j]=(nxt[j]-z*v)%p;nxt[j+1]=(nxt[j+1]+v)%p
+0057   poly=nxt
+0058  out=[];r=len(nodes)
+0059  for z in nodes:
+0060   q=[0]*r;q[-1]=1
+0061   for j in range(r-2,-1,-1):q[j]=(poly[j+1]+z*q[j+1])%p
+0062   den=0
+0063   for j in range(r,0,-1):den=(den*z+j*poly[j])%p
+0064   out.append(sum(a*b for a,b in zip(q,y))*pow(den,-1,p)%p);meter['inversions']+=1
+0065  return out
+0066 
+0067 def cap_modes(y,roots,p,cap,meter):
+0068  c=bm(y,p,cap,meter)
+0069  if c is None:return None
+0070  r=len(c)-1
+0071  if not r:return [] if not any(y) else None
+0072  nodes=[]
+0073  for h,z in enumerate(roots):
+0074   v=0
+0075   for coefficient in c:v=(v*z+coefficient)%p
+0076   if v==0:nodes.append((h,z))
+0077  if len(nodes)!=r:return None
+0078  amplitudes=weights([v for h,v in nodes],y,p,meter)
+0079  if not all(amplitudes):return None
+0080  state=[1]*r
+0081  for value in y:
+0082   if sum(v*a for v,a in zip(state,amplitudes))%p!=value:return None
+0083   state=[v*z%p for v,(h,z) in zip(state,nodes)]
+0084  return [(h,a) for (h,z),a in zip(nodes,amplitudes)]
+0085 
+0086 def discover(y,roots,p,budget):
+0087  # Same mathematical doubling route, independently written.
+0088  meter={'inversions':0,'caps':[],'dense':False,'sample_count':len(y)}
+0089  if not any(y):return [],meter
+0090  if budget==0:return None,meter
+0091  m=len(y)
+0092  if m>=3:
+0093   limit=min(m//3,budget);cap=1
+0094   while True:
+0095    cap=min(cap,limit);meter['caps'].append(cap)
+0096    ans=cap_modes(y,roots,p,cap,meter)
+0097    if ans is not None:return ans,meter
+0098    if cap==limit:break
+0099    cap*=2
+0100   if budget<m//3:return None,meter
+0101  meter['dense']=True;meter['inversions']+=1
+0102  ans=modes_direct(y,roots,p)
+0103  return (ans if len(ans)<=budget else None),meter
+0104 
+0105 def interleave(rows):
+0106  q=len(rows);m=len(rows[0]);return [rows[t][u] for u in range(m) for t in range(q)]
+0107 def unweave(x,q):return [x[t::q] for t in range(q)]
+0108 def differences(rows,d,p):
+0109  return [[sum((-1)**j*comb(d,j)*rows[t-j][u] for j in range(d+1))%p for u in range(len(rows[0]))] for t in range(d,len(rows))]
+0110 def raw_newton(x,q,d,budget,w,p):
+0111  rows=unweave(x,q);m=len(rows[0]);roots=table(m,pow(w,q,p),p);events=[];left=budget;inversions=0
+0112  for t,diff in enumerate(differences(rows,d,p),d):
+0113   found,meter=discover(diff,roots,p,left);inversions+=meter['inversions']
+0114   if found is None:return None,{'inversions':inversions,'rows_scanned':t-d+1}
+0115   left-=len(found);events += [(t,h,c) for h,c in found]
+0116  return ([dft(r,pow(w,q,p),p) for r in rows[:d]],events),{'inversions':inversions,'rows_scanned':q-d}
+0117 def batch_inv(a,p):
+0118  if not a:return []
+0119  prefix=[1]
+0120  for x in a:prefix.append(prefix[-1]*x%p)
+0121  cur=pow(prefix[-1],-1,p);out=[0]*len(a)
+0122  for i in range(len(a)-1,-1,-1):out[i]=cur*prefix[i]%p;cur=cur*a[i]%p
+0123  return out
+0124 
+0125 def kernel(z,L,d,p,zinv,zL):
+0126  if L==0:return 0
+0127  if z==1:return comb(L+d-1,d)%p
+0128  u=(1-z)%p;s=0;term=1
+0129  for j in range(d):s=(s+comb(L+j-1,j)*term)%p;term=term*u%p
+0130  return (1-zL*s)*pow(zinv,d,p)%p
+0131 
+0132 def eval_newton(base,events,q,m,w,p):
+0133  n=q*m;d=len(base);pw=table(n,w,p);invs=[0]+batch_inv([(1-pw[-k])%p for k in range(1,n)],p)
+0134  forward=[[sum((-1)**(j-i)*comb(j,i)*base[i][h] for i in range(j+1))%p for h in range(m)] for j in range(d)]
+0135  out=[];by_h=[[] for _ in range(m)]
+0136  for t,h,c in events:by_h[h].append((t,c))
+0137  for k in range(n):
+0138   z=pw[-k%n];h=k%m
+0139   value=sum(forward[j][h]*pw[-k*j%n]*kernel(z,q-j,j+1,p,invs[k],pw[-k*(q-j)%n]) for j in range(d))
+0140   for t,c in by_h[h]:value+=m*c*pw[-k*t%n]*kernel(z,q-t,d,p,invs[k],pw[-k*(q-t)%n])
+0141   out.append(value%p)
+0142  return out
+0143 
+0144 def build_rows(q,m,d,initial,spectral_events,eta,p):
+0145  rows=[r[:] for r in initial]
+0146  for t in range(d,q):
+0147   force=expand(spectral_events[t],eta,p)
+0148   rows.append([(force[u]+sum((-1)**(j+1)*comb(d,j)*rows[t-j][u] for j in range(1,d+1)))%p for u in range(m)])
+0149  return rows
+0150 
+0151 def rank(A,p):
+0152  a=[r[:] for r in A];r=0
+0153  for h in range(len(a[0])):
+0154   t=next((t for t in range(r,len(a)) if a[t][h]),None)
+0155   if t is None:continue
+0156   a[r],a[t]=a[t],a[r];iv=pow(a[r][h],-1,p);a[r]=[v*iv%p for v in a[r]]
+0157   for t in range(r+1,len(a)):
+0158    scale=a[t][h];a[t]=[(x-scale*y)%p for x,y in zip(a[t],a[r])]
+0159   r+=1
+0160   if r==len(a):break
+0161  return r
+0162 
+0163 def graph(A,B,q,m,eta,p):
+0164  C=[[0]*m for _ in range(q)];edges=0
+0165  for a in range(q):
+0166   for b in range(q):
+0167    for h in range(m):
+0168     if A[a][h] and B[b][h]:
+0169      edges+=1;C[(a+b)%q][h]=(C[(a+b)%q][h]+m*A[a][h]*B[b][h]*pow(eta,(-h*((a+b)//q))%m,p))%p
+0170  return C,edges
+0171 
+0172 def reconstruct_differences(C,d,eta,p):
+0173  q=len(C);m=len(C[0]);roots=table(m,eta,p)
+0174  def sparse_expand(row):
+0175   support=[(h,c) for h,c in enumerate(row) if c]
+0176   return [sum(c*roots[h*u%m] for h,c in support)%p for u in range(m)]
+0177  out=[sparse_expand(r) for r in C[:d]]
+0178  delta=differences(C,d,p)
+0179  for t,row in enumerate(delta,d):
+0180   force=sparse_expand(row)
+0181   out.append([(force[u]+sum((-1)**(j+1)*comb(d,j)*out[t-j][u] for j in range(1,d+1)))%p for u in range(m)])
+0182  return interleave(out)
+0183 def conv(x,y,p):
+0184  n=len(x);return [sum(x[j]*y[(k-j)%n] for j in range(n))%p for k in range(n)]
+0185 def counts(C,p,d=1):
+0186  return {'S':sum(v!=0 for r in C for v in r),'H':sum(any(row[h] for row in C) for h in range(len(C[0]))),'rank':rank(C,p),'V':sum(v!=0 for row in differences(C,d,p) for v in row),'root':sum(v!=0 for r in C[:d] for v in r)}
+0187 
+0188 def greedy_resets(supports,R,B):
+0189  spent=0;anchors=1;reset=[]
+0190  for t,k in enumerate(supports,1):
+0191   if k+spent<=R:spent+=k
+0192   elif anchors<B:anchors+=1;reset.append(t)
+0193   else:return False,reset,spent
+0194  return True,reset,spent
+0195 
+0196 def exact_resets(supports,R,B):
+0197  removed=sorted(range(len(supports)),key=lambda i:(-supports[i],i))[:B-1]
+0198  return sum(k for i,k in enumerate(supports) if i not in removed)<=R,[i+1 for i in removed]
+0199 
+0200 def run():
+0201  start=time.time();details={}
+0202  # All short binomial kernels, including zero length and singular z=1.
+0203  for p in [7,17,31]:
+0204   for z in range(p):
+0205    for d in range(1,7):
+0206     for L in range(20):
+0207      got=kernel(z,L,d,p,pow((1-z)%p,-1,p) if z!=1 else 0,pow(z,L,p))
+0208      want=sum(comb(v+d-1,d-1)*pow(z,v,p) for v in range(L))%p
+0209      assert got==want,(p,z,d,L);add('kernel_identities')
+0210  # Exhaustive budget membership; no uploaded recognizer is called.
+0211  for m,p,w in [(3,7,2),(4,5,2)]:
+0212   roots=table(m,w,p)
+0213   for y in product(range(p),repeat=m):
+0214    truth=modes_direct(y,roots,p)
+0215    for b in range(m+1):
+0216     ans,meter=discover(y,roots,p,b)
+0217     assert (ans is not None)==(len(truth)<=b)
+0218     if ans is not None:assert ans==truth
+0219     assert meter['inversions']<=8*b+1
+0220     add('exhaustive_budget_tests')
+0221  for m in [6,7,8,9,12,16,25]:
+0222   p,w=field(m);roots=table(m,w,p)
+0223   for trial in range(100):
+0224    if trial<50:
+0225     c=[0]*m
+0226     for h in RNG.sample(range(m),RNG.randrange(m+1)):c[h]=RNG.randrange(1,p)
+0227     y=expand(c,w,p)
+0228    else:y=[RNG.randrange(p) for _ in range(m)]
+0229    truth=modes_direct(y,roots,p)
+0230    for b in sorted(set([0,1,m//3,max(0,len(truth)-1),len(truth),m])):
+0231     ans,meter=discover(y,roots,p,b)
+0232     assert (ans is not None)==(len(truth)<=b)
+0233     if ans is not None:assert ans==truth
+0234     assert meter['inversions']<=8*b+1
+0235     add('random_budget_tests')
+0236  # Exact full-vector Newton outputs including nonsquare/odd sizes and d=q.
+0237  for q,m in [(2,3),(3,3),(3,4),(4,3),(4,4),(5,5),(5,7),(6,4),(6,6),(7,5),(8,8),(9,6)]:
+0238   n=q*m;p,w=field(n);eta=pow(w,q,p)
+0239   for d in range(1,min(4,q)+1):
+0240    for trial in range(12):
+0241     initial=[[RNG.randrange(p) for _ in range(m)] for _ in range(d)];ev=[[0]*m for _ in range(q)];left=q
+0242     for t in range(d,q):
+0243      for h in RNG.sample(range(m),RNG.randrange(min(m,left)+1)):
+0244       ev[t][h]=RNG.randrange(1,p);left-=1
+0245     rows=build_rows(q,m,d,initial,ev,eta,p);x=interleave(rows)
+0246     cert,meter=raw_newton(x,q,d,q,w,p);assert cert is not None
+0247     assert meter['rows_scanned']==q-d and meter['inversions']<=8*q+1
+0248     got=eval_newton(*cert,q,m,w,p);assert got==dft(x,w,p)
+0249     add('newton_full_vectors');add('newton_full_bins',n)
+0250     if left<q:
+0251      failed,_=raw_newton(x,q,d,q-left-1,w,p);assert failed is None;add('newton_tight_budget_rejections')
+0252    for trial in range(8):
+0253     x=[RNG.randrange(p) for _ in range(n)];rows=unweave(x,q)
+0254     truth=sum(len(modes_direct(diff,table(m,eta,p),p)) for diff in differences(rows,d,p))
+0255     cert,meter=raw_newton(x,q,d,q,w,p)
+0256     assert (cert is not None)==(truth<=q);assert meter['inversions']<=8*q+1
+0257     add('arbitrary_newton_membership_controls')
+0258  # Old graph adversary: its rank grows, so new delta gate complements fixed rank.
+0259  graph_results=[]
+0260  for s,m in [(2,4),(3,9),(4,16),(5,25),(2,32),(3,81)]:
+0261   q=s*s;n=q*m;p,w=field(n);eta=pow(w,q,p)
+0262   A=[[int(h==t%s) for h in range(m)] for t in range(q)]
+0263   B=[[int(h==t//s) for h in range(m)] for t in range(q)]
+0264   C,edges=graph(A,B,q,m,eta,p);stats=counts(C,p)
+0265   assert stats['S']==s*q and stats['V']==s-1 and stats['root']==s and stats['rank']==s
+0266   # h-column carry flips exactly at t=h(s+1).
+0267   for h in range(s):
+0268    for t in range(q):assert C[t][h]==m*pow(eta,-h if t<h*(s+1) else 0,p)%p
+0269   x=interleave([expand(r,eta,p) for r in A]);y=interleave([expand(r,eta,p) for r in B])
+0270   out=reconstruct_differences(C,1,eta,p);assert out==conv(x,y,p)
+0271   assert out==reconstruct_differences(C,2,eta,p)
+0272   graph_results.append(dict(s=s,q=q,m=m,n=n,p=p,edges=edges,**stats));add('graph_full_vectors');add('graph_full_bins',n)
+0273  details['graph_adversary']=graph_results
+0274  # Rank-one graph inputs with high temporal variation: rank gate saves cases
+0275  # that both literal state and first-difference gates reject.
+0276  rank_examples=[]
+0277  for s in [3,4,5]:
+0278   q=m=s*s;n=q*m;p,w=field(n);eta=pow(w,q,p)
+0279   A=[[0]*m for _ in range(q)];B=[[0]*m for _ in range(q)]
+0280   # Label h at x-row h+s*v; y intervals overlap at most twice.
+0281   # Carry cancellation leaves a common repeating nonconstant row factor.
+0282   for h in range(s):
+0283    for v in range(s):A[h+s*v][h]=pow(eta,h*((h+v)//s),p)
+0284    for z in range(s):B[(s-1)*h+z][h]=1+z%2
+0285   C,edges=graph(A,B,q,m,eta,p);stats=counts(C,p)
+0286   assert stats['rank']==1 and stats['S']>2*q and stats['root']+stats['V']>2*q
+0287   expected=[[m*(1+(t%s)%2)%p if h<s else 0 for h in range(m)] for t in range(q)]
+0288   assert C==expected
+0289   x=interleave([expand(r,eta,p) for r in A]);y=interleave([expand(r,eta,p) for r in B])
+0290   out=reconstruct_differences(C,1,eta,p)
+0291   assert out==conv(x,y,p)
+0292   add('rank_high_variation_full_vectors');add('rank_high_variation_full_bins',n)
+0293   rank_examples.append(dict(q=q,m=m,edges=edges,**stats))
+0294  details['rank_high_variation_graph_controls']=rank_examples
+0295  # General higher-difference output reconstruction on arbitrary coefficient
+0296  # matrices, without presuming every matrix arises from sparse-input graph.
+0297  for q,m in [(4,16),(7,5),(9,27)]:
+0298   p,w=field(q*m);eta=pow(w,q,p)
+0299   for d in range(1,min(4,q)+1):
+0300    for _ in range(10):
+0301     C=[[RNG.randrange(p) for _ in range(m)] for _ in range(q)]
+0302     assert reconstruct_differences(C,d,eta,p)==interleave([expand(r,eta,p) for r in C]);add('higher_difference_matrix_checks')
+0303  # Exact optional reset counterexample.
+0304  p=17;w=3;q=m=4;rows=[[0]*4,[4,0,0,0],[5,1,1,1],[6,2,2,2]]
+0305  x=interleave(rows);support=[len(modes_direct(v,table(m,pow(w,q,p),p),p)) for v in differences(rows,1,p)]
+0306  assert support==[4,1,1] and greedy_resets(support,4,2)[0] is False and exact_resets(support,4,2)[0] is True
+0307  details['reset_counterexample']={'q':q,'m':m,'p':p,'omega':w,'raw':x,'transition_supports':support,'greedy':greedy_resets(support,4,2),'optimal':exact_resets(support,4,2),'spectrum':dft(x,w,p)}
+0308  # Exhaustive reset optimization against all subsets.
+0309  from itertools import combinations
+0310  for length in range(1,6):
+0311   for support in product(range(5),repeat=length):
+0312    for B in [1,2,3]:
+0313     for R in [0,1,4,7]:
+0314      oracle=any(sum(v for i,v in enumerate(support) if i not in rem)<=R for k in range(min(B-1,length)+1) for rem in combinations(range(length),k))
+0315      assert exact_resets(support,R,B)[0]==oracle;add('reset_optimizer_checks')
+0316  # A chosen-divisor witness for first differences with c=1.
+0317  q0=2;q1=3;n=12;p=13;w=2;m=6;eta=pow(w,q0,p)
+0318  for attempt in range(100):
+0319   base=[RNG.randrange(p) for _ in range(m)];ev=[RNG.randrange(1,p) if h<2 else 0 for h in range(m)]
+0320   rows=[base,[(a+b)%p for a,b in zip(base,expand(ev,eta,p))]];x=interleave(rows)
+0321   c0,_=raw_newton(x,q0,1,q0,w,p);c1,_=raw_newton(x,q1,1,q1,w,p)
+0322   if c0 is not None and c1 is None:
+0323    details['default_divisor_counterexample']={'n':n,'p':p,'omega':w,'raw':x,'accepted_q':q0,'default_rejected_q':q1,'accepted_events':len(c0[1]),'default_difference_supports':[len(modes_direct(v,table(4,pow(w,3,p),p),p)) for v in differences(unweave(x,3),1,p)]};break
+0324  else:raise AssertionError('no selector witness')
+0325  # Full-rank dense-spectral rows: a dense baseline plus distinct new modes.
+0326  p=257;q=m=8;n=64;w=next(w for w in range(2,p) if pow(w,n,p)==1 and pow(w,n//2,p)!=1);eta=pow(w,q,p)
+0327  coeff=[[1]*m]
+0328  for t in range(1,q):r=coeff[-1][:];r[t]+=1;coeff.append(r)
+0329  rows=[expand(r,eta,p) for r in coeff];x=interleave(rows)
+0330  assert rank(rows,p)==q and all(all(r) for r in coeff)
+0331  cert,_=raw_newton(x,q,1,q,w,p);assert len(cert[1])==q-1 and eval_newton(*cert,q,m,w,p)==dft(x,w,p)
+0332  details['dense_full_rank']={'q':q,'m':m,'rank':q,'spectral_nonzeros':q*m,'events':q-1};add('dense_full_rank_full_vectors')
+0333  # Exhaustive family-count identity via invertible difference coordinates.
+0334  q=m=2;p=5;w=2;seen={};roots=table(m,pow(w,q,p),p)
+0335  for x in product(range(p),repeat=q*m):
+0336   r=len(modes_direct(differences(unweave(x,q),1,p)[0],roots,p));seen[r]=seen.get(r,0)+1
+0337  assert seen=={e:p**m*comb((q-1)*m,e)*(p-1)**e for e in range(m+1)}
+0338  details['exact_family_count_control']=seen
+0339  return {'status':'PASS','method':'Independent mathematical mechanisms and direct oracles; no uploaded code execution','counts':COUNTS,'details':details,'elapsed_seconds':round(time.time()-start,3)}
+0340 
+0341 if __name__=='__main__':
+0342  parser=argparse.ArgumentParser();parser.add_argument('--output');args=parser.parse_args();result=run();txt=json.dumps(result,indent=2,sort_keys=True)+'\n'
+0343  if args.output:Path(args.output).write_text(txt)
+0344  print(txt)

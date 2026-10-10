@@ -1,0 +1,133 @@
+"""Constructive small-register unitary compiler for Phase-13 Haar Green stage.
+
+Path Cayley C=(I+i alpha A)(I-i alpha A)^{-1} has a strict lower
+semiseparable rank-one generator, so it factors with <=2N-3 Givens.
+Haar is a tree of m-1 Hadamard gates.  The Haar involution factor
+V_H is Haar* x m commuting swaps x Haar^-1, altogether 3m-2 gates.
+Thus each entire S_H stage has <= (11/2)N-8 2-coordinate unitary gates.
+
+Dense matrix work here verifies these factorizations, and is NOT claimed
+as an O(N) coefficient-precomputation implementation.
+"""
+from math import sqrt
+import json
+import numpy as np
+from green_givens_compiler import path_cayley_matrix, compile_semiseparable_unitary, apply_compiled
+import sys,os
+sys.path.insert(0,os.path.join(os.path.dirname(__file__),'compat'))
+from haar_adapter import haar_synthesis, haar_analysis, HaarEscapeMixer
+
+
+def haar_gate_schedule(m):
+    assert m>=2 and m&(m-1)==0
+    gates=[]; ordered=[]
+    def rec(node, holder, lo, hi):
+        if hi-lo==1:
+            ordered.append(holder)
+            return
+        # pair the parent's amplitude register with its wavelet register
+        gates.append((holder,node))
+        middle=(lo+hi)//2
+        rec(2*node,holder,lo,middle)
+        rec(2*node+1,node,middle,hi)
+    rec(1,0,0,m)
+    assert len(gates)==m-1
+    assert sorted(ordered)==list(range(m))
+    return gates,ordered
+
+
+def haar_compiled(x,inverse=False):
+    v=np.array(x,dtype=complex)
+    m=len(v)
+    if m==1:return v
+    gates,order=haar_gate_schedule(m)
+    if not inverse:
+        for p,q in gates:
+            a,b=v[p],v[q]
+            v[p]=(a+b)/sqrt(2)
+            v[q]=(a-b)/sqrt(2)
+        return v[order]
+    tmp=v.copy()
+    v[order]=tmp
+    for p,q in reversed(gates):
+        a,b=v[p],v[q]
+        v[p]=(a+b)/sqrt(2)
+        v[q]=(a-b)/sqrt(2)
+    return v
+
+
+def path_order(parents):
+    n=len(parents)
+    children={i:[] for i in range(n)}
+    roots=[]
+    for j,p in enumerate(parents):
+        if p<0:roots.append(j)
+        else:children[p].append(j)
+    assert len(roots)==1
+    order=[];cur=roots[0]
+    while True:
+        order.append(cur)
+        ch=children[cur]
+        if not ch:break
+        assert len(ch)==1
+        cur=ch[0]
+    assert sorted(order)==list(range(n))
+    return order
+
+
+def apply_path_compiled(x, moves,diag,order):
+    x=np.asarray(x,dtype=complex)
+    y=x.copy()
+    y[order]=apply_compiled(moves,diag,x[order])
+    return y
+
+
+def apply_haar_involution_compiled(x,eps):
+    x=np.asarray(x,dtype=complex)
+    n=len(x);m=n//2
+    # W^* on left half, W=diag(H,I)
+    r=x.copy()
+    r[:m]=haar_compiled(r[:m],inverse=True)
+    a=r[:m].copy();b=r[m:].copy()
+    r[:m]=(a+1j*eps*b)/sqrt(1+eps*eps)
+    r[m:]=(1j*eps*a+b)/sqrt(1+eps*eps)
+    # W on left half
+    r[:m]=haar_compiled(r[:m],inverse=False)
+    return r
+
+
+def validate(n,alpha=1/32,eps=1/512,seed=20261009):
+    mixer=HaarEscapeMixer(n,seed=seed+n)
+    assert abs(mixer.eps-eps)<1e-10 and abs(mixer.path1.alpha-alpha)<1e-10
+    C=path_cayley_matrix(n,alpha)
+    moves,diag,info=compile_semiseparable_unitary(C)
+    order1=path_order(mixer.path1.parents)
+    order2=path_order(mixer.path2.parents)
+    rng=np.random.default_rng(seed+n)
+    x=rng.normal(size=n)+1j*rng.normal(size=n)
+    y=apply_path_compiled(x,moves,diag,order2)
+    y=apply_path_compiled(y,moves,diag,order1)
+    path_error=float(np.max(np.abs(y-np.array(mixer.apply_path(x)))))
+    z=apply_haar_involution_compiled(y,eps)
+    V_error=float(np.max(np.abs(z-np.array(mixer.apply_V(y)))))
+    full_error=float(np.max(np.abs(z-np.array(mixer.apply(x)))))
+    n_unitary_gates=2*info['givens']+3*(n//2)-2
+    cap=11*n//2-8
+    assert n_unitary_gates==cap
+    assert full_error<1e-9 and V_error<1e-9 and path_error<1e-9
+    assert cap < n*n/2
+    return dict(N=n, canonical_path_givens=info['givens'],
+                pair_unitary_gates_entire_Haar_Green_stage=n_unitary_gates,
+                analytical_upper_bound=cap,path_error=path_error,
+                Haar_rotation_error=V_error,whole_stage_error=full_error)
+
+
+if __name__=='__main__':
+    for m in [2,4,8,16,32,64,128]:
+        rng=np.random.default_rng(100+m)
+        x=rng.normal(size=m)+1j*rng.normal(size=m)
+        assert np.max(np.abs(haar_compiled(x)-haar_synthesis(x)))<1e-12
+        assert np.max(np.abs(haar_compiled(x,True)-haar_analysis(x)))<1e-12
+        assert np.max(np.abs(haar_compiled(haar_compiled(x),True)-x))<1e-12
+    for n in [16,32,64,128]:
+        print(json.dumps(validate(n)))

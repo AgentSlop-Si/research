@@ -1,0 +1,118 @@
+   1 """Independent exact arithmetic audit of the sum-product/Taylor-jet identity.
+   2 All calculations are in the TIME DOMAIN over Z/97Z, independent of scipy.fft.
+   3 """
+   4 from __future__ import annotations
+   5 import itertools
+   6 from collections import defaultdict
+   7 import numpy as np
+   8 from algebra_fft import AlgebraFFT
+   9 
+  10 MOD=97
+  11 
+  12 def conv(a,b):
+  13     n=len(a)
+  14     out=[0]*n
+  15     for j in range(n):
+  16         for k in range(n):
+  17             out[(j+k)%n]=(out[(j+k)%n]+a[j]*b[k])%MOD
+  18     return out
+  19 
+  20 def delta(n,index=0,coeff=1):
+  21     arr=[0]*n
+  22     arr[index%n]=coeff%MOD
+  23     return arr
+  24 
+  25 def add(*arrays):
+  26     if not arrays:return []
+  27     n=len(arrays[0]);return [sum(a[j] for a in arrays)%MOD for j in range(n)]
+  28 
+  29 def scale(a,c):return [(x*int(c))%MOD for x in a]
+  30 
+  31 def direct(engine,root,overrides):
+  32     memo={}; n=engine.n
+  33     for uid in engine._topological(root):
+  34         nd=engine.nodes[uid]
+  35         if nd.op=='seed':v=overrides.get(uid,list(map(int,engine._seeds[uid])))
+  36         elif nd.op=='const':v=delta(n,coeff=int(nd.scalar))
+  37         elif nd.op=='impulse':v=delta(n,nd.index,int(nd.scalar))
+  38         elif nd.op=='scale':v=scale(memo[nd.args[0]],nd.scalar)
+  39         elif nd.op=='sum':v=add(*(scale(memo[u],w) for u,w in zip(nd.args,nd.weights)))
+  40         else:
+  41             v=delta(n,coeff=int(nd.scalar))
+  42             for ch in nd.args:v=conv(v,memo[ch])
+  43         memo[uid]=v
+  44     return memo[root]
+  45 
+  46 def jet(engine,root,target):
+  47     memo={};n=engine.n
+  48     for uid in engine._topological(root):
+  49         nd=engine.nodes[uid]
+  50         if nd.op=='seed':
+  51             v=list(map(int,engine._seeds[uid]))
+  52             memo[uid]=[v,delta(n)] if uid==target else [v]
+  53         elif nd.op=='const':memo[uid]=[delta(n,coeff=int(nd.scalar))]
+  54         elif nd.op=='impulse':memo[uid]=[delta(n,nd.index,int(nd.scalar))]
+  55         elif nd.op=='scale':memo[uid]=[scale(a,nd.scalar) for a in memo[nd.args[0]]]
+  56         elif nd.op=='sum':
+  57             dim=max(len(memo[u]) for u in nd.args)
+  58             v=[delta(n,coeff=0) for _ in range(dim)]
+  59             for u,w in zip(nd.args,nd.weights):
+  60                 for j,a in enumerate(memo[u]):v[j]=add(v[j],scale(a,w))
+  61             memo[uid]=v
+  62         else:
+  63             v=[delta(n,coeff=int(nd.scalar))]
+  64             for u in nd.args:
+  65                 nxt=[delta(n,coeff=0) for _ in range(len(v)+len(memo[u])-1)]
+  66                 for j,a in enumerate(v):
+  67                     for k,b in enumerate(memo[u]):nxt[j+k]=add(nxt[j+k],conv(a,b))
+  68                 v=nxt
+  69             memo[uid]=v
+  70     return memo[root]
+  71 
+  72 def check(seed=20261009, trials=240):
+  73     rng=np.random.default_rng(seed)
+  74     n=8
+  75     engine=AlgebraFFT(n)
+  76     A=engine.signal(rng.integers(0,10,n),'A')
+  77     B=engine.signal(rng.integers(0,10,n),'B')
+  78     C=engine.signal(rng.integers(0,10,n),'C')
+  79     D=engine.signal(rng.integers(0,10,n),'D')
+  80     # Many repeated variables and DAG subexpressions.
+  81     shared=engine.add(engine.mul(A,B),engine.mul(C,D))
+  82     formulas=[engine.add(shared,engine.mul(A,A),engine.mul(A,B,C)),
+  83               engine.mul(engine.add(A,B),engine.add(A,C)),
+  84               engine.add(engine.mul(A,A,A),engine.mul(shared,shared),engine.scale(A,-2)),
+  85               engine.add(engine.mul(A,B),engine.mul(A,B),engine.mul(C,D))]
+  86     counted=0
+  87     for root in formulas:
+  88         jets=jet(engine,root,A)
+  89         assert len(jets)==engine.degree_in(root,A)+1
+  90         original=direct(engine,root,{})
+  91         assert jets[0]==original
+  92         for _ in range(trials//len(formulas)):
+  93             t=int(rng.integers(0,n)); dv=int(rng.integers(-8,9))
+  94             a=list(map(int,engine._seeds[A]));a[t]=(a[t]+dv)%MOD
+  95             expected=direct(engine,root,{A:a})
+  96             updated=original[:]
+  97             for h in range(1,len(jets)):
+  98                 correction=scale(jets[h],dv**h)
+  99                 updated=add(updated,correction[-(h*t)%n:]+correction[:-(h*t)%n] if (h*t)%n else correction)
+ 100             assert updated==expected, f'single-edited mismatch {root=} {t=} {dv=}'
+ 101             # Multi-edit corrections, including all nonlinear cross terms.
+ 102             edits={int(rng.integers(0,n)):int(rng.integers(-3,4)) for _ in range(3)}
+ 103             edited=list(map(int,engine._seeds[A]));u=delta(n,coeff=0)
+ 104             for pos,value in edits.items():
+ 105                 edited[pos]=(edited[pos]+value)%MOD
+ 106                 u[pos]=value%MOD
+ 107             expected=direct(engine,root,{A:edited})
+ 108             correction=delta(n,coeff=1)
+ 109             total=jets[0][:]
+ 110             for h in range(1,len(jets)):
+ 111                 correction=conv(correction,u)
+ 112                 total=add(total,conv(jets[h],correction))
+ 113             assert total==expected, f'multi-edited mismatch {root=}'
+ 114             counted+=2
+ 115     print(f'EXACT MODULAR AUDIT PASSED: {counted} independent update comparisons over F_{MOD}; 4 expressions; degrees 1–4')
+ 116     return counted
+ 117 
+ 118 if __name__=='__main__':check()

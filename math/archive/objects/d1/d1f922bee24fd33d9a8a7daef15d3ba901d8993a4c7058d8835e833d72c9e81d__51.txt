@@ -1,0 +1,169 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh reviewer implementation; no uploaded modules or data are imported."""
+   3 import random,json,math
+   4 from pathlib import Path
+   5 from collections import Counter
+   6 rng=random.Random(3818);counts=Counter();profiles=[]
+   7 class Field:
+   8  def __init__(self,p,N):
+   9   self.p=p;self.N=N;self.w=pow(3,(p-1)//N,p);assert pow(self.w,N,p)==1 and pow(self.w,N//2,p)!=1
+  10   self.roots=[1]
+  11   for j in range(1,N):self.roots.append(self.roots[-1]*self.w%p)
+  12  def fft(self,x,inverse=False):
+  13   n=len(x);a=list(x);j=0;p=self.p
+  14   for i in range(1,n):
+  15    bit=n//2
+  16    while j&bit:j^=bit;bit//=2
+  17    j^=bit
+  18    if i<j:a[i],a[j]=a[j],a[i]
+  19   m=2
+  20   while m<=n:
+  21    for start in range(0,n,m):
+  22     for k in range(m//2):
+  23      t=a[start+k+m//2]*self.roots[((-1 if inverse else 1)*self.N//m*k)%self.N]%p
+  24      u=a[start+k];a[start+k]=(u+t)%p;a[start+k+m//2]=(u-t)%p
+  25    m*=2
+  26   return a
+  27  def pruned(self,n,items,inverse=False):
+  28   stat=Counter();items={j:v%self.p for j,v in items.items() if v%self.p};s=len(items)
+  29   def rec(L,rows):
+  30    stat['allocated']+=L
+  31    if not rows:return [0]*L
+  32    if L==1:return [rows[0][1]]
+  33    even=[];odd=[]
+  34    for j,v in rows:(odd if j&1 else even).append((j//2,v));stat['partition']+=1
+  35    a=rec(L//2,even);b=rec(L//2,odd);out=[0]*L
+  36    for k in range(L//2):
+  37     t=b[k]*self.roots[((-1 if inverse else 1)*self.N//L*k)%self.N]%self.p
+  38     out[k]=(a[k]+t)%self.p;out[k+L//2]=(a[k]-t)%self.p;stat['field']+=3
+  39    return out
+  40   ans=rec(n,list(items.items()));scale=n*(1+math.ceil(math.log2(s+1)))
+  41   assert stat['field']<=6*scale and stat['allocated']<=6*scale and stat['partition']<=4*scale
+  42   counts['pruned_calls']+=1;return ans
+  43 
+  44 def bm(seq,p):
+  45  C=[1];B=[1];L=0;m=1;b=1
+  46  for n,s in enumerate(seq):
+  47   d=(s+sum(C[j]*seq[n-j] for j in range(1,len(C))))%p
+  48   if not d:m+=1;continue
+  49   T=C[:];coef=d*pow(b,-1,p)%p;C += [0]*max(0,len(B)+m-len(C))
+  50   for j,x in enumerate(B):C[j+m]=(C[j+m]-coef*x)%p
+  51   if 2*L<=n:L=n+1-L;B=T;b=d;m=1
+  52   else:m+=1
+  53  return L,C+[0]*max(0,L+1-len(C))
+  54 def horner(a,x,p):
+  55  v=0
+  56  for c in reversed(a):v=(v*x+c)%p
+  57  return v
+  58 def recover(y,b,f):
+  59  M=len(y);p=f.p;L,C=bm(y[:2*b],p)
+  60  if L>b:return None
+  61  if L==0:return {} if not any(y) else None
+  62  if not C[L]:return None
+  63  vals=f.pruned(M,{i:v for i,v in enumerate(C)});H=[i for i,v in enumerate(vals) if not v]
+  64  if len(H)!=L:return None
+  65  A=[sum(C[j]*y[u-j] for j in range(u+1))%p for u in range(L)]
+  66  der=[(j*C[j])%p for j in range(1,L+1)];amps={}
+  67  for h in H:
+  68   zh=f.roots[h*f.N//M];lam=f.roots[(-h*f.N//M)%f.N];den=horner(der,zh,p)
+  69   if not den:return None
+  70   amp=-lam*horner(A,zh,p)*pow(den,-1,p)%p
+  71   if not amp:return None
+  72   amps[h]=amp
+  73  if f.pruned(M,amps,True)!=y:return None
+  74  return amps
+  75 def synth(modes,Q,M,f):
+  76  byh=[{} for h in range(M)]
+  77  for t,amps in enumerate(modes):
+  78   for h,a in amps.items():byh[h][t]=a*f.roots[h*t%f.N]%f.p
+  79  out=[0]*f.N
+  80  for h,entries in enumerate(byh):
+  81   for v,x in enumerate(f.pruned(Q,entries)):out[h+M*v]=M*x%f.p
+  82  return out
+  83 def run(x,f,b=None,K0=None):
+  84  N=f.N;Q=1<<((N.bit_length()-1)//2);M=N//Q;modes=[];total=0;heavy=0
+  85  B=b if K0 is None else min(M//2,max(1,(K0+Q-1)//Q)*(M.bit_length()-1))
+  86  for t in range(Q):
+  87   y=x[t::Q];a=recover(y,B,f)
+  88   if a is None:
+  89    if K0 is None:return None,{'heavy':0,'discovered':total}
+  90    heavy+=1;vals=f.fft(y);a={h:v*pow(M,-1,f.p)%f.p for h,v in enumerate(vals) if v};assert len(a)>B
+  91   modes.append(a);total+=len(a)
+  92   if K0 is not None and total>K0:
+  93    assert heavy<=K0//(B+1)+1
+  94    return None,{'heavy':heavy,'discovered':total,'B':B}
+  95  if K0 is not None:assert heavy<=K0//(B+1)
+  96  return synth(modes,Q,M,f),{'heavy':heavy,'discovered':total,'B':B}
+  97 def from_modes(modes,Q,M,f):
+  98  x=[0]*f.N
+  99  for t,a in enumerate(modes):
+ 100   for u in range(M):x[t+Q*u]=sum(v*f.roots[(-h*u*f.N//M)%f.N] for h,v in a.items())%f.p
+ 101  return x
+ 102 def support(x,f):
+ 103  Q=1<<((f.N.bit_length()-1)//2)
+ 104  return [sum(v!=0 for v in f.fft(x[t::Q])) for t in range(Q)]
+ 105 def check(x,f,b=None,K0=None):
+ 106  out,meta=run(x,f,b,K0);r=support(x,f);expected=max(r)<=b if K0 is None else sum(r)<=K0
+ 107  assert (out is not None)==expected
+ 108  if out is not None:assert out==f.fft(x);counts['accepted']+=1;counts['output_entries']+=f.N
+ 109  else:counts['rejected']+=1
+ 110  counts['recognition_cases']+=1;counts['heavy_fallbacks']+=meta['heavy'];return out,meta
+ 111 for p in [65537,998244353]:
+ 112  for N in [4,8,16,32,64,128]:
+ 113   f=Field(p,N)
+ 114   for trial in range(10):
+ 115    n=1<<rng.randrange(0,N.bit_length());s=rng.randrange(n+1);a={j:rng.randrange(1,p) for j in rng.sample(range(n),s)};x=[a.get(j,0) for j in range(n)]
+ 116    for inv in [False,True]:
+ 117     y=f.pruned(n,a,inv);assert y==f.fft(x,inv)
+ 118     direct=[sum(x[j]*f.roots[((-1 if inv else 1)*j*k*f.N//n)%f.N] for j in range(n))%p for k in range(n)]
+ 119     assert y==direct;counts['pruning_direct_cases']+=1
+ 120 for p in [65537,998244353]:
+ 121  for N in [4,8,16,32,64]:
+ 122   f=Field(p,N);Q=1<<((N.bit_length()-1)//2);M=N//Q
+ 123   for j in range(N):
+ 124    x=[int(i==j) for i in range(N)];check(x,f,b=max(1,M//4));check(x,f,K0=M);check(x,f,K0=M-1)
+ 125   for b in sorted(set([1,M//4 or 1,M//2])):
+ 126    for trial in range(6):
+ 127     modes=[{h:rng.randrange(1,p) for h in rng.sample(range(M),rng.randrange(b+1))} for t in range(Q)]
+ 128     x=from_modes(modes,Q,M,f);out,_=check(x,f,b=b);assert out is not None;k=sum(map(len,modes));check(x,f,K0=k)
+ 129     if k:check(x,f,K0=k-1)
+ 130     if 2*b<M:x[-1]=(x[-1]+1)%p;check(x,f,b=b);counts['late_corruption']+=1
+ 131   check([0]*N,f,K0=0);check([rng.randrange(p) for _ in range(N)],f,b=M//2);check([rng.randrange(p) for _ in range(N)],f,K0=Q)
+ 132 def rank(A,p):
+ 133  A=[r[:] for r in A];j=0
+ 134  for c in range(len(A[0])):
+ 135   k=next((k for k in range(j,len(A)) if A[k][c]),None)
+ 136   if k is None:continue
+ 137   A[j],A[k]=A[k],A[j];z=pow(A[j][c],-1,p);A[j]=[v*z%p for v in A[j]]
+ 138   for k in range(j+1,len(A)):
+ 139    z=A[k][c];A[k]=[(a-z*b)%p for a,b in zip(A[k],A[j])]
+ 140   j+=1
+ 141  return j
+ 142 for N in [256,512,1024,2048,4096,16384]:
+ 143  f=Field(65537,N);Q=1<<((N.bit_length()-1)//2);M=N//Q
+ 144  for b in sorted(set([2,min(M//2,N.bit_length()),M//2])):
+ 145   modes=[{h:rng.randrange(1,f.p) for h in rng.sample(range(M),b)} for t in range(Q)];x=from_modes(modes,Q,M,f);check(x,f,b=b);check(x,f,K0=Q*b)
+ 146  modes=[{h:rng.randrange(1,f.p) for h in (range(M) if t==0 else [t%M,(t+1)%M])} for t in range(Q)]
+ 147  x=from_modes(modes,Q,M,f);K=sum(map(len,modes));_,meta=check(x,f,K0=K);check(x,f,K0=K-1);check(x,f,K0=0);profiles.append({'N':N,'K0':K,**meta})
+ 148  if Q==M:
+ 149   b=min(7,M-1);modes=[{(t+j)%M:(2*b if j==0 else 1) for j in range(b)} for t in range(Q)];x=from_modes(modes,Q,M,f);y,_=check(x,f,b=b)
+ 150   if all(x) and all(y):assert rank([x[t::Q] for t in range(Q)],f.p)==M;counts['dense_full_rank_controls']+=1
+ 151 f=Field(65537,16)
+ 152 for diagonal in [4,5]:
+ 153  modes=[{t:diagonal,(t+1)%4:1} for t in range(4)];x=from_modes(modes,4,4,f);y,_=check(x,f,b=2);assert all(y)==(diagonal==5)
+ 154 def cyclic_solve(x,diag,beta,p):
+ 155  inv=[pow(v,-1,p) for v in diag];a=[-beta*v%p for v in inv];b=[xj*v%p for xj,v in zip(x,inv)];aa=1;bb=0
+ 156  for aj,bj in zip(a,b):aa=aj*aa%p;bb=(aj*bb+bj)%p
+ 157  assert (1-aa)%p
+ 158  prev=bb*pow(1-aa,-1,p)%p;out=[]
+ 159  for aj,bj in zip(a,b):prev=(aj*prev+bj)%p;out.append(prev)
+ 160  return out
+ 161 for N in [8,16,32,64,128,256,512]:
+ 162  f=Field(65537,N);Q=1<<((N.bit_length()-1)//2);M=N//Q;modes=[{h:rng.randrange(1,f.p) for h in rng.sample(range(M),2)} for t in range(Q)]
+ 163  residual=from_modes(modes,Q,M,f);pd=[(7+2*f.roots[-j%N])%f.p for j in range(N)];ld=[(7+f.roots[j])%f.p for j in range(N)]
+ 164  try:x=cyclic_solve(residual,pd,1,f.p)
+ 165  except (ValueError,AssertionError):counts['guard_rejection']+=1;continue
+ 166  assert [(pd[j]*x[j]+x[j-1])%f.p for j in range(N)]==residual
+ 167  out,_=check(residual,f,b=2);y=cyclic_solve(out,ld,2,f.p);assert y==f.fft(x);counts['green_cases']+=1;counts['green_output_entries']+=N
+ 168 Path('INDEPENDENT_RESULTS.json').write_text(json.dumps({'status':'PASS','counts':dict(counts),'aggregate_profiles':profiles,'execution':'reviewer-authored only','source_performance_counts_reproduced':False},indent=2,sort_keys=True)+'\n')
+ 169 print(json.dumps(dict(counts),sort_keys=True))

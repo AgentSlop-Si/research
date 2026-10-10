@@ -1,0 +1,192 @@
+   1 #!/usr/bin/env python3
+   2 """Independent Weyl monomial normal-form and paid recovery controls.
+   3 Auditor-authored standard-library code; no uploaded or constructor code imported.
+   4 Dense matrices are used only to generate and verify exact small controls.
+   5 """
+   6 import argparse,itertools as it,json,math,random
+   7 from pathlib import Path
+   8 
+   9 def rank(A, p):
+  10     B=[list(map(lambda x:x%p,row)) for row in A]
+  11     if not B:return 0
+  12     h=0
+  13     for j in range(len(B[0])):
+  14         z=next((z for z in range(h,len(B)) if B[z][j]),None)
+  15         if z is None:continue
+  16         B[z],B[h]=B[h],B[z]
+  17         u=pow(B[h][j],-1,p)
+  18         B[h]=[x*u%p for x in B[h]]
+  19         for z in range(h+1,len(B)):
+  20             u=B[z][j]
+  21             if u:B[z]=[(x-u*y)%p for x,y in zip(B[z],B[h])]
+  22         h+=1
+  23         if h==len(B):break
+  24     return h
+  25 
+  26 
+  27 def inv(A,p):
+  28     n=len(A);B=[[(x%p) for x in row]+[int(i==j) for j in range(n)] for i,row in enumerate(A)]
+  29     for j in range(n):
+  30         z=next((z for z in range(j,n) if B[z][j]),None)
+  31         assert z is not None
+  32         B[z],B[j]=B[j],B[z]
+  33         u=pow(B[j][j],-1,p);B[j]=[x*u%p for x in B[j]]
+  34         for i in range(n):
+  35             if i!=j and B[i][j]:
+  36                 u=B[i][j];B[i]=[(x-u*y)%p for x,y in zip(B[i],B[j])]
+  37     return [row[n:] for row in B]
+  38 
+  39 
+  40 def ident(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+  41 def sub(A,X,Y):return [[A[i][j] for j in Y] for i in X]
+  42 def product(A,B,p):return [[sum(x*y for x,y in zip(row,col))%p for col in zip(*B)] for row in A]
+  43 
+  44 
+  45 def transpose(A):return list(map(list,zip(*A)))
+  46 def scale(t,A,p):return [[t*x%p for x in row] for row in A]
+  47 def plus(A,B,p):return [[(x+y)%p for x,y in zip(a,b)] for a,b in zip(A,B)]
+  48 def primality(x):return x>=2 and all(x%d for d in range(2,math.isqrt(x)+1))
+  49 def roots(n):
+  50     k=20
+  51     while not primality(2*n*k+1):k+=1
+  52     p=2*n*k+1;factors=[q for q in range(2,2*n+1) if 2*n%q==0 and primality(q)]
+  53     for a in range(2,p):
+  54         tau=pow(a,k,p)
+  55         if all(pow(tau,2*n//q,p)!=1 for q in factors):return p,tau*tau%p,tau
+  56     raise AssertionError
+  57 
+  58 def weyl(n,w,p):
+  59     return ([[int(i==(j+1)%n) for j in range(n)] for i in range(n)],[[pow(w,j,p)*int(i==j)%p for j in range(n)] for i in range(n)])
+  60 def fourier(n,w,p):return [[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+  61 def base(n,d,w,p):
+  62     c=n//d;H=[[0]*n for _ in range(n)]
+  63     for r in range(c):
+  64         for k in range(d):
+  65             for ell in range(d):H[r*d+k][r+c*ell]=pow(w,(-c*k*ell)%n,p)
+  66     return H
+  67 
+  68 def left_monomial(H,p,rng):
+  69     rows=list(range(len(H)));rng.shuffle(rows)
+  70     return [scale(rng.randrange(1,p),[H[i]],p)[0] for i in rows]
+  71 def mono(A,p):
+  72     n=len(A);perm=[];weights=[]
+  73     for j in range(n):
+  74         ix=[i for i in range(n) if A[i][j]%p]
+  75         if len(ix)!=1:return None
+  76         perm.append(ix[0]);weights.append(A[ix[0]][j]%p)
+  77     if len(set(perm))!=n:return None
+  78     return perm,weights
+  79 
+  80 def cycles(perm):
+  81     seen=[False]*len(perm);out=[]
+  82     for start in range(len(perm)):
+  83         if seen[start]:continue
+  84         z=start;C=[]
+  85         while not seen[z]:seen[z]=True;C.append(z);z=perm[z]
+  86         assert z==start;out.append(C)
+  87     return out
+  88 
+  89 def recover(U,V,w,p,seed_oracle):
+  90     n=len(U[0]);a,uw=U;b,vw=V
+  91     assert all(uw) and all(vw)
+  92     for perm in [a,b]:
+  93         seen=[False]*n
+  94         for j in perm:assert 0<=j<n and not seen[j];seen[j]=True
+  95     powers=[1]
+  96     for i in range(1,n+1):
+  97         powers.append(powers[-1]*w%p);assert powers[-1]!=1 or i==n
+  98     assert powers[-1]==1
+  99     C=cycles(b);d=len(C[0]);assert all(len(x)==d for x in C);c=len(C)
+ 100     products=[math.prod(vw[i] for i in x)%p for x in C]
+ 101     z=[j for j,x in enumerate(products) if x==1];assert len(z)==1
+ 102     which={x:j for j,Cj in enumerate(C) for x in Cj};order=[];j=z[0];visited=[False]*c
+ 103     for r in range(c):
+ 104         assert not visited[j];visited[j]=True;order.append(j);j=which[a[C[j][0]]]
+ 105     assert j==order[0];C=[C[j] for j in order]
+ 106     assert all(math.prod(vw[i] for i in Cr)%p==powers[(r*d)%n] for r,Cr in enumerate(C))
+ 107     loc={i:(r,k) for r,Cr in enumerate(C) for k,i in enumerate(Cr)};pref=[]
+ 108     for Cr in C:
+ 109         h=[1]
+ 110         for i in Cr[:-1]:h.append(h[-1]*vw[i]%p)
+ 111         pref.append(h)
+ 112     ainv=[0]*n
+ 113     for i,j in enumerate(a):ainv[j]=i
+ 114     seed=seed_oracle(C[0][0],0);assert seed!=0;gamma=[seed]
+ 115     for j in range(n-1):
+ 116         u=ainv[C[(j+1)%c][0]];r,k=loc[u];assert r==j%c
+ 117         gamma.append(uw[u]*gamma[-1]*pref[r][k]*powers[(-j*k)%n]%p)
+ 118     H=[[0]*n for _ in range(n)]
+ 119     for j in range(n):
+ 120         r=j%c
+ 121         for k,i in enumerate(C[r]):H[i][j]=gamma[j]*pref[r][k]*powers[(-j*k)%n]%p
+ 122     return H,{'d':d,'c':c,'seed_row':C[0][0],'seed_queries':1,'gamma_entries':n,'prefix_entries':n,
+ 123               'root_table_multiplications':n,'gamma_multiplications':3*(n-1),'cycle_product_multiplications':n,
+ 124               'prefix_multiplications':n-c,'dense_emission_entries':n*d}
+ 125 
+ 126 def controls():
+ 127     rng=random.Random(43621);out=[]
+ 128     for n in list(range(1,17))+[18,20,24,27,32,36]:
+ 129         p,w,tau=roots(n);S,D=weyl(n,w,p);F=fourier(n,w,p)
+ 130         for d in [d for d in range(1,n+1) if n%d==0]:
+ 131             for twist in range(3):
+ 132                 H=base(n,d,w,p)
+ 133                 if twist:
+ 134                     chirp=[pow(w,j*(j-1)//2,p) if n%2 else pow(tau,j*j,p) for j in range(n)]
+ 135                     C=[[chirp[j]*int(i==j)%p for j in range(n)] for i in range(n)];H=product(H,C,p)
+ 136                     if twist==2:H=product(H,F,p)
+ 137                 H=left_monomial(H,p,rng);HI=inv(H,p)
+ 138                 U=mono(product(product(H,S,p),HI,p),p);V=mono(product(product(H,D,p),HI,p),p);assert U and V
+ 139                 calls=[]
+ 140                 def oracle(i,j):calls.append((i,j));return H[i][j]
+ 141                 R,stats=recover(U,V,w,p,oracle);assert R==H and len(calls)==1
+ 142                 assert {sum(x!=0 for x in row) for row in H}=={sum(x!=0 for x in col) for col in zip(*H)}=={stats['d']}
+ 143                 for j in range(n):
+ 144                     for i in range(n):assert H[U[0][i]][(j+1)%n]==U[1][i]*H[i][j]%p
+ 145                 R2,_=recover(U,V,w,p,lambda i,j:2*H[i][j]%p);assert R2==scale(2,H,p)
+ 146                 out.append({'N':n,'field':p,'original_block':d,'twist':twist,'recovered':stats})
+ 147     return out
+ 148 
+ 149 def interface_tests():
+ 150     out=[];sharp=[]
+ 151     for n in [3,4,6,8,9,12,16,25]:
+ 152         p,w,tau=roots(n);F=fourier(n,w,p);S,D=weyl(n,w,p);Si=transpose(S);ds=[d for d in range(1,n+1) if n%d==0]
+ 153         for dp in ds:
+ 154             P=transpose(base(n,dp,w,p));Pi=inv(P,p)
+ 155             A1=product(product(Pi,D,p),P,p);A2=product(product(Pi,Si,p),P,p)
+ 156             assert mono(transpose(A2),p) and mono(transpose(A1),p)
+ 157             calls=[]
+ 158             def p_seed(i,j):assert j==0;calls.append(i);return P[0][i]
+ 159             RP,st=recover(mono(transpose(A2),p),mono(transpose(A1),p),w,p,p_seed)
+ 160             assert RP==transpose(P) and st['d']==dp and len(calls)==1
+ 161             B=product(Pi,F,p);m=max(sum(x!=0 for x in row) for row in B);assert m*dp==n
+ 162             sharp.append({'N':n,'dP':dp,'dQ':1,'m':m})
+ 163             for dq in ds:
+ 164                 Q=base(n,dq,w,p);Qi=inv(Q,p);T1=product(product(Q,S,p),Qi,p);T2=product(product(Q,D,p),Qi,p)
+ 165                 assert mono(T1,p) and mono(T2,p)
+ 166                 RQ,sq=recover(mono(T1,p),mono(T2,p),w,p,lambda i,j:Q[i][j]);assert RQ==Q
+ 167                 B=product(product(Pi,F,p),Qi,p);m=max(sum(x!=0 for x in row) for row in B)
+ 168                 assert product(B,T1,p)==product(A1,B,p) and product(B,T2,p)==product(A2,B,p) and m*dp*dq>=n
+ 169                 out.append({'N':n,'dP':dp,'dQ':dq,'m':m,'bound_product':m*dp*dq})
+ 170     return {'cases':out,'sharp_Q_identity_cases':sharp}
+ 171 
+ 172 def negative_tests():
+ 173     p=13;n=4;S,D=weyl(n,12,p);H=plus(ident(n),scale(2,product(S,S,p),p),p);HI=inv(H,p)
+ 174     U=product(product(H,S,p),HI,p);V=product(product(H,D,p),HI,p)
+ 175     assert mono(U,p) and mono(V,p) and all(sum(x!=0 for x in row)==2 for row in H)
+ 176     assert all(len(c)==1 for c in cycles(mono(V,p)[0]))
+ 177     p,w,_=roots(4);S,D=weyl(4,w,p);H=[[1,0,1,0],[1,0,p-1,0],[0,1,0,0],[0,0,0,1]];HI=inv(H,p)
+ 178     U=mono(product(product(H,S,p),HI,p),p);V=mono(product(product(H,D,p),HI,p),p)
+ 179     assert U is None and V and sorted(map(len,cycles(V[0])))==[1,1,2]
+ 180     p=13;w=3;n=3;S,D=weyl(n,w,p);F=fourier(n,w,p)
+ 181     H=[[F[i][j]*[1,1,2][j]%p for j in range(n)] for i in range(n)];HI=inv(H,p)
+ 182     assert mono(product(product(H,D,p),HI,p),p) and mono(product(product(H,S,p),HI,p),p) is None
+ 183     return {'nonprimitive_root_counterexample':{'N':4,'field':13,'omega':12,'H':'I+2S^2','H_row_support':2,'V_cycle_length':1},
+ 184             'single_conjugate_counterexample':{'N':4,'cycle_lengths':[1,1,2]},
+ 185             'unrestricted_converse_rejected':{'N':3,'field':13,'H':'F_3 diag(1,1,2)'}}
+ 186 
+ 187 def main():
+ 188     ap=argparse.ArgumentParser();ap.add_argument('--output',default='INDEPENDENT_RESULTS.json');args=ap.parse_args()
+ 189     r={'status':'PASS','constructor_or_uploaded_code_executed':False,'recovery_cases':controls(),'interfaces':interface_tests(),'negative_controls':negative_tests()}
+ 190     Path(args.output).write_text(json.dumps(r,indent=2,sort_keys=True)+'\n')
+ 191     print('PASS recovery',len(r['recovery_cases']),'interface',len(r['interfaces']['cases']),'sharp',len(r['interfaces']['sharp_Q_identity_cases']))
+ 192 if __name__=='__main__':main()

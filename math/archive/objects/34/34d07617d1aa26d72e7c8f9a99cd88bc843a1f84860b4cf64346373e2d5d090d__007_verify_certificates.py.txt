@@ -1,0 +1,29 @@
+"""Replay exported JSON certificates without invoking candidate synthesis."""
+import json
+from fractions import Fraction
+from pathlib import Path
+from exact_graphs import CyclotomicField,PrimeField,Skeleton,LinearGraph
+
+
+def verify(path):
+    data=json.loads(Path(path).read_text()); c=data['factorization']
+    f=PrimeField(c['field']['prime']) if 'prime' in c['field'] else CyclotomicField(c['field']['cyclotomic_order'])
+    def decode(x):
+        if isinstance(f,PrimeField): return int(x)%f.p
+        if len(x)!=f.d: raise ValueError('coefficient dimension')
+        return tuple(Fraction(s) for s in x)
+    matrices=[[[decode(x) for x in row] for row in c[key]] for key in ('U','V','E')]
+    p=Skeleton(f,c['n'],c['rows'],c['cols'],*matrices)
+    assert p.verify(), 'F != UV + E'
+    g=LinearGraph(f,c['n']); g.outputs=data['graph']['outputs']
+    for node in data['graph']['operations']:
+        g.ops.append((node['op'],node['a'],decode(node['b']) if node['op']=='scale' else node['b']))
+    assert len(g.ops)==c['cost']['arithmetic']==p.cost()['arithmetic']
+    assert g.verify_all_inputs(), 'graph fails a basis vector'
+    return dict(path=str(path),n=c['n'],scalar_gates=len(g.ops),exact_all_input_identity=True)
+
+
+if __name__=='__main__':
+    paths=sorted(Path('results').glob('cyclotomic_certificate_n*.json'))
+    if not paths: raise SystemExit('Run experiment.py first')
+    for path in paths: print(json.dumps(verify(path)))

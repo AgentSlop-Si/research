@@ -1,0 +1,24 @@
+"""Additional exact all-bin comparisons; no cached transforms or floating point."""
+from pathlib import Path
+import random,sys,json
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'structured_dft'))
+from structured_dft import structured_dft
+
+def ref(a,p,w):
+    return [sum(v*pow(w,k*j,p) for j,v in enumerate(a))%p for k in range(len(a))]
+rng=random.Random(202610082253)
+cases=0; singular_cases=0
+for p in [17,97,193,257]:
+    for n in [1,2,3,4,6,8,12,16,24,32,48,64,96]:
+        if (p-1)%n:continue
+        w=next(z for z in range(1,p) if pow(z,n,p)==1 and len({pow(z,k,p) for k in range(n)})==n)
+        for trial in range(20):
+            a=[rng.randrange(p) for _ in range(n)]
+            q=[1]+[rng.randrange(p) for _ in range(rng.randrange(9))]
+            if trial==0:a=[7]*n;q=[1,-1]
+            if trial==1:a=[3*i+2 for i in range(n)];q=[1,-2,1]
+            if trial==2:a=[pow(w,i,p) for i in range(n)];q=[1,-w]
+            got,facts=structured_dft(a,q,p,w)
+            assert got==ref(a,p,w),(p,n,trial)
+            cases+=1;singular_cases+=bool(facts['singular_bins'])
+print(json.dumps({'exact_all_bin_cases':cases,'cases_with_singular_bins':singular_cases,'primes':[17,97,193,257],'maximum_length':96,'status':'passed'},indent=2))

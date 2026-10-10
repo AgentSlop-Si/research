@@ -1,0 +1,459 @@
+"""Phase 17: exact Green-sum rank obstruction certificates.
+
+No floating point is used in the certificates. A single finite-field
+nonzero determinant demonstrates a nonzero complex cyclotomic determinant;
+the bundled symbolic minor calculation proves nonvanishing directly.
+"""
+from __future__ import annotations
+
+import itertools
+import json
+import random
+from collections import defaultdict
+from typing import Sequence
+
+
+def is_prime(n: int) -> bool:
+    if n < 2:
+        return False
+    if n % 2 == 0:
+        return n == 2
+    d = 3
+    while d*d <= n:
+        if n % d == 0:
+            return False
+        d += 2
+    return True
+
+
+def field_for_root(order: int, at_least: int = 100_000) -> tuple[int, int]:
+    """An F_ell and primitive root of given order, using no CAS."""
+    k = max(1, (at_least-1)//order)
+    while True:
+        ell = k*order + 1
+        if is_prime(ell):
+            # element of exact order order
+            for trial in range(2, 300):
+                w = pow(trial, (ell-1)//order, ell)
+                if w == 1:
+                    continue
+                x = order
+                good = True
+                d = 2
+                factors = set()
+                while d*d <= x:
+                    while x%d == 0:
+                        factors.add(d)
+                        x//=d
+                    d += 1
+                if x>1:
+                    factors.add(x)
+                for factor in factors:
+                    if pow(w, order//factor, ell) == 1:
+                        good = False
+                        break
+                if good:
+                    return ell, w
+            raise RuntimeError('Root not found')
+        k += 1
+
+
+def rank_mod(matrix: Sequence[Sequence[int]], prime: int) -> int:
+    if not matrix:
+        return 0
+    a = [[int(v)%prime for v in row] for row in matrix]
+    n, m = len(a), len(a[0])
+    assert all(len(row)==m for row in a)
+    r = 0
+    for c in range(m):
+        pivot = next((i for i in range(r,n) if a[i][c]%prime),None)
+        if pivot is None:
+            continue
+        a[r],a[pivot]=a[pivot],a[r]
+        inv = pow(a[r][c],-1,prime)
+        for j in range(c,m):
+            a[r][j] = (a[r][j]*inv)%prime
+        for i in range(r+1,n):
+            t = a[i][c]
+            if t:
+                for j in range(c,m):
+                    a[i][j]=(a[i][j]-t*a[r][j])%prime
+        r += 1
+        if r==n:
+            break
+    return r
+
+
+def lis_or_lds(sequence: Sequence[int]) -> list[int]:
+    """One monotone subsequence of length >= ceil(sqrt(len(sequence)))."""
+    n=len(sequence)
+    if n==0:
+        return []
+    solutions=[]
+    for direction in (1,-1):
+        length=[1]*n
+        previous=[-1]*n
+        for i in range(n):
+            for j in range(i):
+                if direction*sequence[j] < direction*sequence[i] and length[j]+1>length[i]:
+                    length[i]=length[j]+1
+                    previous[i]=j
+        k=max(range(n),key=lambda i:length[i])
+        ans=[]
+        while k>=0:
+            ans.append(k)
+            k=previous[k]
+        solutions.append(ans[::-1])
+    return max(solutions,key=len)
+
+
+def common_monotone_subseq(orders: Sequence[Sequence[int]]) -> list[int]:
+    """Labels monotone (in either direction) in every supplied path order."""
+    assert len(orders)>0
+    n=len(orders[0])
+    assert all(sorted(order)==list(range(n)) for order in orders)
+    chain=list(orders[0])
+    for order in orders[1:]:
+        pos={x:i for i,x in enumerate(order)}
+        indices=lis_or_lds([pos[x] for x in chain])
+        chain=[chain[i] for i in indices]
+    return chain
+
+
+def make_tridiagonal(n: int, ell: int, rng: random.Random):
+    """Draw diagonally-dominant integer tridiagonal then check mod-ell pivots."""
+    for _ in range(30):
+        diag=[rng.randint(6,12) for _ in range(n)]
+        upper=[rng.randint(1,2) for _ in range(n-1)]
+        lower=[rng.randint(1,2) for _ in range(n-1)]
+        pivots=[diag[0] % ell]
+        for i in range(1,n):
+            pivot=(diag[i]-(lower[i-1]*upper[i-1]*pow(pivots[-1],-1,ell)))%ell
+            if pivot==0:
+                break
+            pivots.append(pivot)
+        if len(pivots)==n:
+            return diag, lower, upper
+    raise RuntimeError('No modular invertible tridiagonal')
+
+
+def solve_tridiagonal_mod(diag,lower,upper,rhs,ell):
+    """O(n) exact modular tridiagonal solve (all pivots nonzero)."""
+    n=len(diag)
+    d=list(diag)
+    b=[x%ell for x in rhs]
+    for i in range(1,n):
+        fac=(lower[i-1]*pow(d[i-1],-1,ell))%ell
+        d[i]=(d[i]-fac*upper[i-1])%ell
+        if d[i]==0:
+            raise ZeroDivisionError('zero pivot')
+        b[i]=(b[i]-fac*b[i-1])%ell
+    x=[0]*n
+    x[-1]=(b[-1]*pow(d[-1],-1,ell))%ell
+    for i in range(n-2,-1,-1):
+        x[i]=(b[i]-upper[i]*x[i+1])*pow(d[i],-1,ell)%ell
+    return x
+
+
+def green_submatrix(ordered_labels, diag, lower, upper, rows, cols, ell,
+                    left_gauge=None,right_gauge=None):
+    n=len(ordered_labels)
+    position={x:i for i,x in enumerate(ordered_labels)}
+    left_gauge=left_gauge or [1]*n
+    right_gauge=right_gauge or [1]*n
+    matrix=[[0]*len(cols) for _ in rows]
+    for j,col in enumerate(cols):
+        rhs=[0]*n
+        rhs[position[col]]=1
+        solution=solve_tridiagonal_mod(diag,lower,upper,rhs,ell)
+        for i,row in enumerate(rows):
+            matrix[i][j]=left_gauge[row]*solution[position[row]]*right_gauge[col]%ell
+    return matrix
+
+
+def add_matrices(a,b,ell):
+    return [[(x+y)%ell for x,y in zip(row1,row2)] for row1,row2 in zip(a,b)]
+
+
+def fourier_minor(rows,cols,root,ell,n):
+    return [[pow(root,(i*j)%n,ell) for j in cols] for i in rows]
+
+
+def determinant_polynomial_coefficients(rows,cols,n):
+    """Integer polynomial det(X^(row*col mod n)), reduced modulo X^n-1."""
+    assert len(rows)==len(cols)
+    coefficients=defaultdict(int)
+    for perm in itertools.permutations(range(len(cols))):
+        exponent=sum(rows[i]*cols[perm[i]] for i in range(len(rows)))%n
+        inversions=sum(perm[i]>perm[j] for i in range(len(perm)) for j in range(i+1,len(perm)))
+        coefficients[exponent]+= -1 if inversions%2 else 1
+    return {k:v for k,v in sorted(coefficients.items()) if v}
+
+
+def power_of_two_fourier_minor_polynomial(rows,cols,n):
+    """Reduce determinant polynomial modulo cyclotomic Phi_(2^k)=X^(n/2)+1.
+
+    Any nonzero reduced coefficient is an EXACT certificate that the complex
+    Fourier minor is nonzero. Conversely a zero reduction proves a vanishing
+    Fourier minor, with no floating point or finite-field assumptions.
+    """
+    assert n>1 and n&(n-1)==0
+    coeff=determinant_polynomial_coefficients(rows,cols,n)
+    out=defaultdict(int)
+    half=n//2
+    for e,v in coeff.items():
+        out[e%half]+=v if e<half else -v
+    return {k:v for k,v in sorted(out.items()) if v}
+
+
+def determinant_polynomial_prime_fourier(rows,cols,n):
+    """Exact signed coefficient polynomial for det(X^(ij)) modulo X^n-1.
+
+    If n is prime, all determinant terms sum to zero at X=1, so
+    the polynomial vanishes at primitive nth root iff it is identically zero.
+    """
+    assert is_prime(n) and len(rows)==len(cols)
+    return determinant_polynomial_coefficients(rows,cols,n)
+
+
+def audit_prime_fourier_sum(n=41,q=2,seed=1709,full_density=False):
+    assert is_prime(n)
+    rng=random.Random(seed)
+    orders=[list(range(n))]
+    for _ in range(q-1):
+        order=list(range(n))
+        rng.shuffle(order)
+        orders.append(order)
+    chain=common_monotone_subseq(orders)
+    width=q # each path tridiagonal inverse has width-1 cut rank
+    m=width+1
+    if len(chain)<2*m:
+        raise RuntimeError(f'No guaranteed witness for N={n} q={q}; common monotone length {len(chain)}')
+    rows=chain[:m]
+    cols=chain[-m:]
+    ell, root=field_for_root(n)
+    total=[[0]*m for _ in range(m)]
+    term_ranks=[]
+    green_specs=[]
+    for order in orders:
+        diag,lower,upper=make_tridiagonal(n,ell,rng)
+        left=[rng.randrange(1,ell) for _ in range(n)]
+        right=[rng.randrange(1,ell) for _ in range(n)]
+        component=green_submatrix(order,diag,lower,upper,rows,cols,ell,left,right)
+        term_ranks.append(rank_mod(component,ell))
+        total=add_matrices(total,component,ell)
+        green_specs.append((order,diag,lower,upper,left,right))
+    fmat=fourier_minor(rows,cols,root,ell,n)
+    f_rank=rank_mod(fmat,ell)
+    green_rank=rank_mod(total,ell)
+    exact_poly=determinant_polynomial_prime_fourier(rows,cols,n)
+    assert len(exact_poly)>0
+    assert max(term_ranks)<=1
+    assert green_rank<=q and f_rank==m
+    result={
+        'n':n,'number_of_noncommuting_path_orders':q,'field_prime':ell,
+        'primitive_nth_root':root,'common_monotone_chain_length':len(chain),
+        'common_monotone_chain':chain,
+        'rows':rows,'columns':cols,'term_ranks':term_ranks,
+        'sum_cross_minor_rank':green_rank,'fourier_cross_minor_rank':f_rank,
+        'fourier_determinant_polynomial':exact_poly,
+        'Fourier_minor_nonzero_in_Q_zeta':True,
+        'certificate':'rank(sum Green cuts)<=q<q+1=rank(Fourier cut)'
+    }
+    if full_density:
+        matrix=[[0]*n for _ in range(n)]
+        for order,d,lo,up,left,right in green_specs:
+            component=green_submatrix(order,d,lo,up,list(range(n)),list(range(n)),ell,left,right)
+            matrix=add_matrices(matrix,component,ell)
+        nonzero=sum(x!=0 for row in matrix for x in row)
+        result['full_green_sum_density']=[nonzero,n*n]
+        assert all(len(row)==n for row in matrix)
+        assert nonzero>int(0.95*n*n)
+    return result
+
+
+def demo():
+    checks=[audit_prime_fourier_sum(41,2,seed=1709,full_density=True),
+            audit_prime_fourier_sum(67,2,seed=1710,full_density=True),
+            audit_prime_fourier_sum(103,2,seed=1711,full_density=False)]
+    print(json.dumps(checks,indent=2))
+    return checks
+
+
+if __name__=='__main__':
+    demo()
+
+
+def audit_power_two_fourier_sum(n=64,q=2,seed=1709):
+    """Exact INSTANCE-SPECIFIC Fourier-minor obstruction for 2^k lengths.
+
+    No claim is made that the selected witness always exists for arbitrary
+    path permutations: Fourier matrices of composite length are not full spark.
+    """
+    assert n >= 8 and n&(n-1)==0
+    rng=random.Random(seed)
+    orders=[list(range(n))]
+    for _ in range(q-1):
+        order=list(range(n));rng.shuffle(order);orders.append(order)
+    chain=common_monotone_subseq(orders)
+    m=q+1
+    if len(chain)<2*m:
+        raise RuntimeError('Common chain insufficient for witness')
+    rows=chain[:m];cols=chain[-m:]
+    poly=power_of_two_fourier_minor_polynomial(rows,cols,n)
+    if not poly:
+        raise RuntimeError('Chosen minor vanishes; may select another chain or rectangle')
+    at_least=100_000
+    for _ in range(8):
+        ell,root=field_for_root(n,at_least)
+        F=fourier_minor(rows,cols,root,ell,n)
+        if rank_mod(F,ell)==m:
+            break
+        at_least=ell+n
+    else:
+        raise RuntimeError('No modular witness with chosen prime')
+    total=[[0]*m for _ in range(m)]
+    terms=[]
+    for order in orders:
+        diag,lo,up=make_tridiagonal(n,ell,rng)
+        left=[rng.randrange(1,ell) for _ in range(n)]
+        right=[rng.randrange(1,ell) for _ in range(n)]
+        component=green_submatrix(order,diag,lo,up,rows,cols,ell,left,right)
+        terms.append(rank_mod(component,ell))
+        total=add_matrices(total,component,ell)
+    sumrank=rank_mod(total,ell)
+    assert all(r<=1 for r in terms)
+    assert sumrank<=q and rank_mod(F,ell)==m
+    return {
+        'n':n,'q':q,'seed':seed,'common_monotone_length':len(chain),
+        'rows':rows,'cols':cols,'cyclotomic_minor_polynomial':poly,
+        'exact_complex_Fourier_minor_nonzero':True,
+        'field_prime':ell,'primitive_n_root':root,
+        'term_ranks':terms,'Green_sum_minor_rank':sumrank,'Fourier_minor_rank':m,
+        'limitation':'valid for these concrete orders; not a universal composite-N theorem'
+    }
+
+
+def noncommuting_witness(n=41,seed=1709):
+    """Exact check [G1,G2]x != 0 for independent path orders / gauges."""
+    rng=random.Random(seed)
+    order1=list(range(n));order2=list(range(n));rng.shuffle(order2)
+    ell,_=field_for_root(n)
+    specs=[]
+    for order in (order1,order2):
+        d,lo,up=make_tridiagonal(n,ell,rng)
+        left=[rng.randrange(1,ell) for _ in range(n)]
+        right=[rng.randrange(1,ell) for _ in range(n)]
+        specs.append((order,d,lo,up,left,right))
+    def apply(spec,v):
+        order,d,lo,up,left,right=spec
+        rhs=[right[j]*v[j]%ell for j in order]
+        out=solve_tridiagonal_mod(d,lo,up,rhs,ell)
+        result=[0]*n
+        for i,j in enumerate(order):
+            result[j]=left[j]*out[i]%ell
+        return result
+    x=[rng.randrange(ell) for _ in range(n)]
+    a=apply(specs[0],apply(specs[1],x))
+    b=apply(specs[1],apply(specs[0],x))
+    nonzero=sum((u-v)%ell!=0 for u,v in zip(a,b))
+    assert nonzero>0
+    return {'n':n,'nonzero_commutator_vector_entries':nonzero,'modulus':ell}
+
+
+def balanced_separation_witness(orders: Sequence[Sequence[int]]) -> tuple[list[int],list[int]]:
+    """Linear-sized separated R,C in ALL supplied arbitrary path orders.
+
+    If there are q orders on N labels, |R|=|C|>= floor(N/2**q).
+    No Erdos-Szekeres theorem is needed: after each new order, split the
+    2m surviving labels at the median, keep the larger opposite-color pair.
+    """
+    assert orders
+    n=len(orders[0])
+    assert all(sorted(order)==list(range(n)) for order in orders)
+    m=n//2
+    R=list(orders[0][:m]); C=list(orders[0][-m:])
+    for order in orders[1:]:
+        pos={x:i for i,x in enumerate(order)}
+        merged=sorted(R+C,key=pos.__getitem__)
+        left=set(merged[:m]);right=set(merged[m:])
+        A_left=[v for v in R if v in left]
+        B_right=[v for v in C if v in right]
+        A_right=[v for v in R if v in right]
+        B_left=[v for v in C if v in left]
+        assert len(A_left)==len(B_right) and len(A_right)==len(B_left)
+        if len(A_left)>=len(A_right):
+            R,C=A_left,B_right
+        else:
+            R,C=A_right,B_left
+        m=len(R)
+    assert len(R)==len(C) and len(R)>=n//(2**len(orders))
+    for order in orders:
+        pos={x:i for i,x in enumerate(order)}
+        assert max(pos[v] for v in R)<min(pos[v] for v in C) or max(pos[v] for v in C)<min(pos[v] for v in R)
+    return R,C
+
+
+def audit_balanced_green_sum(n=64,q=2,seed=1709,compute_green=True):
+    """Exact field certificates for *ALL-SIZE* balanced-cut theorem.
+
+    compute_green can be disabled for large n: the structural rank bound is
+    theorem-wide, so direct numerical inversion is only a regression check.
+    """
+    rng=random.Random(seed)
+    orders=[list(range(n))]
+    for _ in range(q-1):
+        o=list(range(n));rng.shuffle(o);orders.append(o)
+    R,C=balanced_separation_witness(orders)
+    m=len(R)
+    theoretical_f_rank_floor=m*m/n
+    assert m*m > q*n, (n,q,m,theoretical_f_rank_floor)
+    ell,root=field_for_root(n,at_least=1_000_000)
+    F=fourier_minor(R,C,root,ell,n)
+    f_rank=rank_mod(F,ell)
+    assert f_rank>q
+    report={
+        'n':n,'q':q,'seed':seed,'balanced_R_size':m,'balanced_C_size':m,
+        'absolute_Fourier_rank_lower_bound':m*m/n,
+        'exact_modular_Fourier_rank':f_rank,'green_sum_rank_upper_bound':q,
+        'root_modulus':ell,'primitive_root':root,
+        'rows':R,'columns':C,
+        'separated_in_every_order':True,
+        'conclusion':'No sum of q diagonal-gauged inverse-tridiagonal matrices in these orders equals F.'
+    }
+    if compute_green:
+        total=[[0]*m for _ in R]
+        component_ranks=[]
+        for order in orders:
+            diag,lo,up=make_tridiagonal(n,ell,rng)
+            left=[rng.randrange(1,ell) for _ in range(n)]
+            right=[rng.randrange(1,ell) for _ in range(n)]
+            component=green_submatrix(order,diag,lo,up,R,C,ell,left,right)
+            component_ranks.append(rank_mod(component,ell))
+            total=add_matrices(total,component,ell)
+        report['term_ranks']=component_ranks
+        report['green_sum_modular_rank']=rank_mod(total,ell)
+        assert max(component_ranks)<=1 and report['green_sum_modular_rank']<=q
+    return report
+
+
+def balanced_interleaving_adversarial_orders(n:int,q:int):
+    """Construct orders attaining the bisection bound m=N/2^q (2^q|N).
+
+    This is an adversarial CONTROL for the combinatorial lemma, not a proposed
+    Fourier architecture or a claim about all algorithms.
+    """
+    assert n>0 and q>0 and n%(2**q)==0
+    orders=[list(range(n))]
+    for stage in range(1,q):
+        R,C=balanced_separation_witness(orders)
+        assert len(R)==len(C)
+        new=[]
+        for r,c in zip(R,C):
+            new.extend([r,c])
+        already=set(new)
+        new.extend(x for x in range(n) if x not in already)
+        orders.append(new)
+    R,C=balanced_separation_witness(orders)
+    assert len(R)==len(C)==n//2**q
+    return orders

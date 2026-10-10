@@ -1,0 +1,83 @@
+# What We Actually Achieved — FFT Research Audit
+
+**Date:** 9 October 2026  
+**Sources:** conversation history; saved `fft_packed_dag_findings.md`; `fft_structural_research/RESEARCH.md`, `RECOVERY_AUDIT_2026-10-09.md`; `adaptive_fft_engine/README.md`, `RESEARCH_NOTES.md`; Library `THEORY_UPDATE_2026-10-09.md`, `CPP_FINDINGS.md`, and `fft_lookup_research_note.md`.  
+**Status:** Verified implementations and mathematically derived restricted-class bounds. **No new uniform sub-\(N\log N\) algorithm for arbitrary fresh complex FFTs or exact arbitrary integer multiplication was established by this project.**
+
+## Executive verdict
+
+The most useful contribution of the project is **a relation-aware FFT architecture**: rather than always recomputing a complete transform, it uses knowledge about an input's relationship to cached data. This yields exact algebraic descriptions of sub-\(N\log N\) update costs in special cases, tested implementations, and a clear identification of when collision-based reuse fails. Separate input-independent split-radix and finite-field table experiments reproduced existing published techniques, with explicit accounting of arithmetic and lookup costs.
+
+### Results and originality audit
+
+| Result | Complexity/measurement | Our status | Is the underlying algorithm new? |
+| --- | --- | --- | --- |
+| Reuse a single cached spectrum after one known changed sample | \(\Theta(N)\) arithmetic to emit full spectrum | Implemented/tested, compared to reference FFTs | No: linearity/dynamic DFT techniques known |
+| Update after \(k\) known sparse changes | \(O(N(1+\log(k+1)))\) with input-pruned radix-2 FFT | Derived and prototype-counted; some C++ results recorded | No: sparse/pruned FFT principle known |
+| Reconstruct many low-rank related spectra | \(O(rN\log N+MrN)\) total for \(M\) signals with \(r\) supplied bases | Implemented, tests/benchmarks | No: transform linearity |
+| Low-rank plus sparse residual \(x=Bc+e\) | \(O(N(r+1+\log(k+1)))\) *per spectrum* with cached basis FFTs and known sparse residual | Derived theorem-form statement; integrated end-to-end benchmark still pending | Combination of existing identities, no validated novelty claim |
+| Pack two unrelated real input arrays into one complex FFT | One complex FFT + \(O(N)\) decoding | Implemented and correctness tested | Classical |
+| Pack convolution \(a*b\) via imaginary part of \(\mathrm{IFFT}(\mathrm{FFT}(a+ib)^2)\) | One forward and one inverse complex FFT; proper padding needed | Implemented and tested, including 1234×5678 | Classical |
+| Canonical shared FFT DAG | For period-\(p\) inputs, <\(pN\) butterfly operations (fixed \(p\)) | Implemented/tested; often beaten by native FFTs in wall time | Memoization technique known; our implementation engineering |
+| Split-radix fixed arithmetic graph | 12,744 vs. 18,434 nontrivial twiddle multiplies at \(N=4096\) (30.9% fewer); still \(\Theta(N\log N)\) total | Implemented; 18 structural tests pass | Classical split radix |
+| Compact split-radix execution template | \(O(N)\) cached twiddle storage rather than materializing \(\Theta(N\log N)\) graph nodes; execution stays \(O(N\log N)\) | Implemented/tested | Standard kind of implicit circuit compilation |
+| Fixed-field Walsh–Hadamard lookup-batching | \(O(N\log N/\log\log N)\) online, table building \(o(N)\) for the stated scalable choice on word-RAM/finite alphabet | Derivation/implementation tests pass; **truly sub-\(N\log N\) in this restricted model** | **Previously published by Josh Alman (SOSA 2023)** |
+| Finite-field NTT direct-table transfer | Modulus \(q\ge N+1\) for length-\(N\) prime-field NTT makes full input-pair tables \(\ge(N+1)^2\) entries; explicit output \(\Omega(N\log N)\) bits | Negative audit and tests | Model-specific obstruction, not a universal lower bound |
+| Rank-one-plus-sparse WHT factorization | Simple count 7 vs. 8 at size 4, but 29 vs. 24 at 8 and 111 vs. 64 at 16 | Tested restricted family, no scalable improvement | Negative result only for that family |
+
+## Core mathematical insight: cost conditioned on *relationship* to cache
+
+Let \(F_N\) be the DFT and let \(X=F_N(x)\) already be cached. If a new signal is \(x'=x+e\) and \(e\) has \(k\) known nonzero positions, then
+
+\[F_N(x')=X+F_N(e).\]
+
+A pruned radix-2 algorithm needs at most \(\min(2^d,k)\) active subtrees at recursion depth \(d\), each of size \(N/2^d\). Summing all butterfly work gives \(O(N(1+\log(k+1)))\) arithmetic. Thus one edit takes \(\Theta(N)\), and \(k=(\log N)^c\) yields \(O(N\log\log N)\), for explicit dense outputs and known change locations. This is **a dynamic problem**; the first fresh dense transform still costs \(O(N\log N)\) with the baseline backend.
+
+If \(x=Bc+e\), with \(r\) known basis columns of \(B\), cached basis spectra, and a known \(k\)-sparse residual, the same reasoning gives \(O(N(r+1+\log(k+1)))\) for a dense output. This is little-o of \(N\log N\) if \(r+\log(k+1)=o(\log N)\). The cost of **discovering** \(B,c,e\) must be included unless a producer supplies them as trusted metadata.
+
+A promising API is therefore `fft_from_delta(base_id, [(index, delta),...])`, `fft_from_shift(base_id, shift)`, `fft_from_basis(basis_ids, coefficients, sparse_residual)` and lazy materialization of spectra. A planner should compare this against native `rfft/fft` on every request.
+
+## Engineering results and obstacle
+
+The available Python projects have **18 structural** and **14 adaptive** unit tests passing as re-run on 9 October 2026. The saved C++/FFTW benchmark report (its C++ implementation is not available in the active container for independent re-run) records ~1.76–1.89× speedup for exact repeated inputs of sizes 65,536 and 262,144. By contrast, scanning for cyclic shifts made the C++ prototype slower (0.38–0.56× baseline); single-edit reuse was near break-even at 262,144 even after porting from Python. A 128-signal rank-2 batch with **explicit** dense outputs was only ~1.02× baseline at length 65,536, because writing the outputs is expensive. Numbers are hardware-specific exploratory benchmarks, not mathematical theorems.
+
+**Crucial engineering conclusion:** removing Python interpreter overhead does *not* remove the dominant cost of discovering a relation by scanning \(N\) values, materializing \(N\) outputs, and moving data through memory. The highest-value next experiment is **upstream relation metadata plus lazy spectrum views**, with end-to-end timing and memory-bandwidth measurements. This is distinct from simply running another CrocSwap-style rank-weighted circuit search.
+
+## What caching alone cannot prove
+
+Repeated small binary input blocks are guaranteed, but a length-\(m\) independent binary block matches another with probability \(2^{-m}\). For large \(m\), exact collisions are rare, and only the bottom \(O(\log\log N)\) radix-2 recursion levels have abundant repetitions at typical sizes. That does not remove a growing *fraction* of all \(\log N\) stages. Counting saved butterflies alone omits hashing, verification, intermediate storage and output writes. Allowing an uncharged oracle storing every possible answer makes linear lookup trivial for *any* finite-input function and is not a uniform complexity proof.
+
+The finite-field tabulation result is different: it uses a *bounded state alphabet* at **every** grouped layer, and reuses the same complete small-block table throughout the transform. For fixed \(\mathbb F_p\), a block of \(b=2^t\) values has \(p^b\) possible inputs, with \(\Theta(bp^b)\) total table cells. Choose \(b\asymp c\log_pN\), \(0<c<1\), then preprocessing is \(O(N^c\log N)=o(N)\), while online passes require \(O(N\log N/\log b)=O(N\log N/\log\log N)\). The initial 2023 result belongs to Alman, not to this project.
+
+For complex FFT, even binary initial values don't guarantee a small intermediate alphabet: at a primitive \(2^t\)-th root \(\omega\), one selected DFT coefficient on binary vectors assumes exactly \(3^{2^{t-1}}\) possible exact values, by linear independence of the first \(2^{t-1}\) powers of \(\omega\) over \(\mathbb Q\). For an exact prime-field NTT, the necessary modulus \(q\ge N+1\) makes exhaustive lookup expensive. These are specific obstacles, not proofs that no different method works.
+
+## Important external-result correction
+
+As of October 2026, the OpenAI math repository also describes **result #130, exact Fourier transforms below \(n\log n\)**: a uniform algorithm with bound \(O(n(\log n)^{1-10^{-13}})\) for exact DFT/convolution in an unrestricted exact complex-arithmetic and logarithmic-word-indexing model, with a supplied root of unity. Its Lean documentation describes the scope of selected formalized statements. **This is an independent external claim, not a breakthrough made in these chats**, and it should not be confused with stable floating-point FFT, bounded-coefficient linear lower bounds, or integer-multiplication bit complexity. Source: https://github.com/openai/math/blob/main/lean/docs/130.md
+
+The CrocSwap repository improves an integer-multiplication asymptotic exponent in the specific fixed-tape framework of OpenAI result #109; its shared circuit construction is **algebraically input-independent**, not a cache of repeated numerical FFT inputs. These claims remain distinct from our engine.
+
+## What would count as the project's *next* genuine contribution?
+
+A reproducible adaptive engine in which the producer supplies certified relationship metadata and a cost-aware dispatcher chooses between:
+
+- existing/cached spectra and views;
+- O(N) shift/single-edit update;
+- pruned FFT for a known \(k\)-sparse residual;
+- a cached low-rank basis and sparse residual;
+- packed real FFT or optimized native `rfft/fft` fallback.
+
+The output representation should be explicit: **dense numeric array** or **lazy basis-plus-delta representation**. Measure metadata cost, initialization, table planning, validation, cache memory, peak allocations, and output materialization. Publish parameterized complexity and honest break-even maps rather than claiming a new worst-case arbitrary-input FFT result.
+
+## Verification boundary / citations
+
+- Available `fft_structural_research` regression suite: **18 tests passed** on the current runtime.
+- Available `adaptive_fft_engine` regression suite: **14 tests passed** on the current runtime.
+- No independently reviewed new uniform FFT or multiplication theorem from the project was located.
+- Refer to the full source logs for exact benchmark seeds and cost models.
+
+**Primary literature:**
+- Alman, *Faster Walsh-Hadamard Transform and Matrix Multiplication over Finite Fields using Lookup Tables*, https://arxiv.org/abs/2211.04643
+- Alman & Rao, *Faster Walsh-Hadamard and Discrete Fourier Transforms From Matrix Non-Rigidity*, https://arxiv.org/abs/2211.06459
+- OpenAI, exact Fourier result #130 Lean scope, https://github.com/openai/math/blob/main/lean/docs/130.md
+- CrocSwap shared-sum history, https://github.com/CrocSwap/integer-mult-bounds/blob/main/docs/research/shared-computation.md

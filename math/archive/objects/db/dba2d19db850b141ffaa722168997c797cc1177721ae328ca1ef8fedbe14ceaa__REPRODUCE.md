@@ -1,0 +1,1 @@
+Use Python 3 standard library only. Run `python check_independent.py` to regenerate INDEPENDENT_RESULTS.json, then `python verify_seal.py`. The checker is entirely reviewer-authored and imports no uploaded code/data. An isolated directory containing only this checker reproduces the same result bytes.

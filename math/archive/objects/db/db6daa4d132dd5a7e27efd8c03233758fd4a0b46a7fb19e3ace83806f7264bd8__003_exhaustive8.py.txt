@@ -1,0 +1,16 @@
+import sys,time,itertools,collections
+from pathlib import Path
+p=Path('fft_three_stage_bitrev_gate_2026-10-10');sys.path[:0]=[str(p),str(p/'fft_scan_network_gate_2026-10-09')]
+from fast_mincut import ScanFlowOracle
+from research_gate import bitrev
+n=8;P=bitrev(n)
+for t in (2,3,4):
+ s=time.time();oracle=ScanFlowOracle(n,[1]*t,[P]*(t-1)); counter=collections.Counter();min_g=0;minimums=[]
+ subsets=[tuple(i for i in range(n) if mask>>i&1) for mask in range(1,1<<n)]
+ for a in subsets:
+  for b in subsets:
+   k=min(len(a),len(b));cap=oracle.bound(a,b)
+   if cap<k:
+    counter[(len(a),len(b))]+=1
+    if len(minimums)<5:minimums.append((a,b,cap))
+ print('t',t,'pairs',len(subsets)**2,'fail',sum(counter.values()),'hist',counter.most_common(10),'examples',minimums,'s',round(time.time()-s,2),flush=True)

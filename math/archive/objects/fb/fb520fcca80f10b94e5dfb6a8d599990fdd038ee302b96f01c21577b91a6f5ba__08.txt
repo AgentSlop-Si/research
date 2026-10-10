@@ -1,0 +1,189 @@
+1: """Bounded matched-q benchmark. No downloads, installs, or shipped binaries.
+2: 
+3: Run with OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python benchmark.py.
+4: All timed engines receive identical already-generated updates, projection and
+5: prepared phase values. Common preparation is timed and charged to each total.
+6: The original class is unchanged; compact() runs after EVERY timed query.
+7: """
+8: from __future__ import annotations
+9: import json
+10: import os
+11: from pathlib import Path
+12: import platform
+13: import statistics
+14: import time
+15: import numpy as np
+16: 
+17: from coalesced_projected import CoalescedProjectedFourier, AlwaysRebuild, EagerProjected, modular_phase
+18: from vendor.projected_fourier import ProjectedFourierState
+19: 
+20: METHODS = {
+21:     "original_replay_compact": ProjectedFourierState,
+22:     "always_rebuild": AlwaysRebuild,
+23:     "eager_projected": EagerProjected,
+24:     "coalesced_snapshot": CoalescedProjectedFourier,
+25: }
+26: 
+27: 
+28: def fixture(name, q, r, k, batches, edits, mode, seed):
+29:     rng = np.random.default_rng(seed)
+30:     n = 4096 if mode == "delete" else 2048
+31:     basis = rng.normal(size=(r, n)) + 1j*rng.normal(size=(r, n))
+32:     bins = rng.choice(n, q, replace=False)
+33:     coefficients = (rng.normal(size=r) + 1j*rng.normal(size=r)) * 0.1
+34:     sparse = [(j, complex(0.5, -0.25)) for j in range(k)]
+35:     events = []
+36:     for batch in range(batches):
+37:         updates = []
+38:         for i in range(edits):
+39:             if mode == "repeat":
+40:                 kind, key = ("c", 0) if i % 2 == 0 else ("p", 0)
+41:                 delta = complex(1/128, -1/256)
+42:             elif mode == "cancel":
+43:                 kind, key = "p", (i//2) % max(1, k)
+44:                 delta = complex(1/128, -1/256) * (1 if i % 2 == 0 else -1)
+45:             elif mode == "delete":
+46:                 kind, key, delta = "p", i, -sparse[i][1]
+47:             elif mode == "distinct":
+48:                 kind, key = "p", i
+49:                 delta = complex(1/128, -1/256)
+50:             else:
+51:                 kind, key = (("c", batch % r) if r and batch % 2 == 0 else ("p", batch % max(1, k)))
+52:                 delta = complex(1/128, -1/256)
+53:             updates.append((kind, key, delta))
+54:         events.append(updates)
+55:     positions = sorted({j for j, _ in sparse} | {key for updates in events for kind, key, _ in updates if kind == "p"})
+56:     return dict(name=name, n=n, q=q, r=r, k=k, basis=basis, bins=bins,
+57:                 coefficients=coefficients, sparse=sparse, batches=events, positions=positions, mode=mode)
+58: 
+59: 
+60: def prepare(f):
+61:     # The shared producer-projection setup uses a full NumPy FFT of the basis.
+62:     # Its cost is included; this experiment makes no faster-registration claim.
+63:     start = time.perf_counter_ns()
+64:     projection = np.fft.fft(f["basis"], axis=1)[:, f["bins"]].copy()
+65:     phase = np.asarray([modular_phase(f["n"], f["bins"], j) for j in f["positions"]], dtype=complex).reshape(len(f["positions"]), f["q"])
+66:     rows = {j: i for i, j in enumerate(f["positions"])}
+67:     return projection, phase, rows, time.perf_counter_ns() - start
+68: 
+69: 
+70: def construct(method, f, prepared):
+71:     projection, phase, rows, _ = prepared
+72:     state = METHODS[method](f["n"], f["bins"], projection, f["coefficients"])
+73:     # Configure the existing preparation fields equally for all four engines.
+74:     # The original engine code is not patched or monkey-patched. Each engine
+75:     # owns a copy of the phase table; projection copying remains per its API.
+76:     state._prepared_phase = phase.copy()
+77:     state._prepared_row = rows.copy()
+78:     # Populate the same already-normalized residual in each engine, then use
+79:     # the same prepared phases. This avoids accidentally charging each engine
+80:     # a second, differently implemented phase-generation pass at construction.
+81:     state.sparse = dict(f["sparse"])
+82:     state.cached = state._rebuild_value()
+83:     return state
+84: 
+85: 
+86: def execute(method, f, prepared):
+87:     start = time.perf_counter_ns()
+88:     state = construct(method, f, prepared)
+89:     construction = time.perf_counter_ns() - start
+90:     update_ns = query_ns = 0
+91:     answers = []
+92:     # No garbage is parked for untimed disposal: pending.clear and compact
+93:     # both execute within the query timer. Answers are retained equally.
+94:     loop_start = time.perf_counter_ns()
+95:     for updates in f["batches"]:
+96:         t = time.perf_counter_ns()
+97:         for kind, key, delta in updates:
+98:             if kind == "c":
+99:                 state.add_coefficient(key, delta)
+100:             else:
+101:                 state.add_point(key, delta)
+102:         update_ns += time.perf_counter_ns() - t
+103:         t = time.perf_counter_ns()
+104:         answer = state.query()
+105:         if method == "original_replay_compact":
+106:             state.compact()
+107:         query_ns += time.perf_counter_ns() - t
+108:         answers.append(answer)
+109:     stream_ns = time.perf_counter_ns() - loop_start
+110:     # Sum includes the complete stream loop, constructor and measured common
+111:     # projection/phase preparation, but excludes input RNG and oracle checks.
+112:     total = prepared[3] + construction + stream_ns
+113:     return dict(prepare_ns=prepared[3], construction_ns=construction,
+114:                 update_ns=update_ns, query_and_compaction_ns=query_ns,
+115:                 stream_ns=stream_ns, end_to_end_ns=total), answers, state
+116: 
+117: 
+118: def oracle(f):
+119:     c = f["coefficients"].copy()
+120:     sparse = dict(f["sparse"])
+121:     answers = []
+122:     for updates in f["batches"]:
+123:         for kind, key, delta in updates:
+124:             if kind == "c":
+125:                 c[key] += delta
+126:             else:
+127:                 value = sparse.get(key, 0j) + delta
+128:                 if value == 0j:
+129:                     sparse.pop(key, None)
+130:                 else:
+131:                     sparse[key] = value
+132:         dense = c @ f["basis"]
+133:         for key, value in sparse.items():
+134:             dense[key] += value
+135:         answers.append(np.fft.fft(dense)[f["bins"]])
+136:     return answers
+137: 
+138: 
+139: def main():
+140:     specs = [
+141:         ("repeat_wide", 128, 16, 64, 40, 200, "repeat"),
+142:         ("repeat_narrow", 1, 4, 4, 100, 50, "repeat"),
+143:         ("one_edit_per_query", 16, 4, 8, 1000, 1, "few"),
+144:         ("distinct_keys", 64, 8, 0, 40, 128, "distinct"),
+145:         ("cancel_pairs", 64, 4, 8, 50, 128, "cancel"),
+146:         ("delete_support", 1, 0, 2048, 1, 2048, "delete"),
+147:         ("query_only", 32, 8, 16, 1000, 0, "none"),
+148:         ("long_compacted_history", 1, 2, 2, 4000, 1, "few"),
+149:     ]
+150:     repetitions = 7
+151:     result = {"schema_version": 1, "python": platform.python_version(),
+152:               "numpy": np.__version__, "platform": platform.platform(),
+153:               "threads": {k: os.environ.get(k) for k in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")},
+154:               "repetitions": repetitions, "statistic": "median of seven matched trials, randomized method order",
+155:               "setup": "Common full NumPy basis FFT, selected projection and modular phase table are charged to each method; input generation and correctness checks excluded.",
+156:               "workloads": []}
+157:     rng_order = np.random.default_rng(9959)
+158:     for i, spec in enumerate(specs):
+159:         f = fixture(*spec, seed=500+i)
+160:         expected = oracle(f)
+161:         prepared = prepare(f)
+162:         errors = {}
+163:         for method in METHODS:
+164:             _, answers, state = execute(method, f, prepared)
+165:             errors[method] = max(float(np.max(np.abs(a-e))) for a, e in zip(answers, expected))
+166:             for a, e in zip(answers, expected):
+167:                 np.testing.assert_allclose(a, e, rtol=3e-10, atol=3e-9)
+168:         trials = {method: [] for method in METHODS}
+169:         for trial in range(repetitions):
+170:             prepared = prepare(f)
+171:             for method in rng_order.permutation(list(METHODS)):
+172:                 timing, _, _ = execute(method, f, prepared)
+173:                 trials[method].append(timing)
+174:         medians = {method: {key: statistics.median(t[key] for t in rows) for key in rows[0]} for method, rows in trials.items()}
+175:         coalesced = medians["coalesced_snapshot"]["end_to_end_ns"]
+176:         speedups = {method: medians[method]["end_to_end_ns"] / coalesced for method in METHODS if method != "coalesced_snapshot"}
+177:         row = dict(name=f["name"], n=f["n"], q=f["q"], r=f["r"], initial_k=f["k"],
+178:                    queries=len(f["batches"]), edits=sum(map(len, f["batches"])),
+179:                    prepared_positions=len(f["positions"]), medians=medians,
+180:                    comparator_over_coalesced=speedups, max_abs_error=errors, raw_trials=trials)
+181:         result["workloads"].append(row)
+182:         print(f["name"], {m: round(v["end_to_end_ns"]/1e6, 4) for m, v in medians.items()}, "ratios", {m: round(v, 3) for m, v in speedups.items()}, flush=True)
+183:     output = Path("results/benchmark_results.json")
+184:     output.write_text(json.dumps(result, indent=2)+"\n")
+185:     print(output)
+186: 
+187: 
+188: if __name__ == "__main__":
+189:     main()

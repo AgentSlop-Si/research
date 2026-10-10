@@ -1,0 +1,38 @@
+   1	"""Reuse-friendly Fourier phase construction for a selected input position.
+   2	
+   3	Build e^(-2*pi*i*position*q/N) for q=0..N//2 using a compact tiled
+   4	pattern, with a single small local power table and one base phase per tile.
+   5	Does not change O(N) asymptotic work. Avoids a separate trig evaluation
+   6	for every frequency and controls recurrence error with block restarts.
+   7	"""
+   8	from __future__ import annotations
+   9	import cmath
+  10	import math
+  11	import numpy as np
+  12	
+  13	
+  14	def phases_tiled(n:int, position:int, tile:int=1024, count:int|None=None) -> np.ndarray:
+  15	    if n<=0 or not(0<=position<n) or tile<=0:
+  16	        raise ValueError('invalid argument')
+  17	    if count is None:
+  18	        count=n//2+1
+  19	    if count<0 or count>n:
+  20	        raise ValueError('invalid output count')
+  21	    if count==0: return np.empty(0,dtype=np.complex128)
+  22	    tile=min(int(tile),int(count))
+  23	    local=np.empty(tile, dtype=np.complex128)
+  24	    local[0]=1+0j
+  25	    size=1
+  26	    power=cmath.exp((-2j*math.pi*position)/n)
+  27	    while size<tile:
+  28	        to_write=min(size,tile-size)
+  29	        local[size:size+to_write] = local[:to_write] * power
+  30	        # The power for the next doubled stride:
+  31	        power *= power
+  32	        size += to_write
+  33	    blocks=(count+tile-1)//tile
+  34	    offsets=(np.arange(blocks, dtype=np.int64) * tile * position) % n
+  35	    roots=np.exp((-2j*np.pi/n)*offsets)
+  36	    packed=np.empty((blocks,tile),dtype=np.complex128)
+  37	    np.multiply(roots[:,None],local[None,:],out=packed)
+  38	    return packed.ravel()[:count]

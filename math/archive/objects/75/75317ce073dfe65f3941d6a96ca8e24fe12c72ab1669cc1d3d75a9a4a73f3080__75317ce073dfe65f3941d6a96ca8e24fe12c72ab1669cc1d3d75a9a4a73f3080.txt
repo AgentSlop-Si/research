@@ -1,0 +1,21 @@
+"""Falsification control using the Fourier shift/modulation identity."""
+import json
+from math import sqrt
+from unitary_mixer import UnitaryGreenMixer
+
+def audit(n):
+    import numpy as np
+    S=np.array(UnitaryGreenMixer(n,seed=20261009+n).dense())
+    # Z e_j = e_(j+1 mod n), D_kk = e^(-2pi i k/n).
+    Z=np.roll(np.eye(n),1,axis=0)
+    D=np.exp(-2j*np.pi*np.arange(n)/n)
+    F=np.fft.fft(np.eye(n))/sqrt(n)
+    def residual(A):return float(np.linalg.norm(A@Z-D[:,None]*A,'fro')/sqrt(n))
+    e0=np.zeros(n);e0[0]=1
+    return dict(n=n,Fourier_covariance_residual=residual(F),
+        Green_unitary_stage_covariance_residual=residual(S),
+        Fourier_e0_error=float(np.max(np.abs(F@e0-1/sqrt(n)))),
+        stage_e0_error=float(np.max(np.abs(S@e0-1/sqrt(n)))))
+
+if __name__=='__main__':
+    print(json.dumps([audit(n) for n in (32,64,128)],indent=2))

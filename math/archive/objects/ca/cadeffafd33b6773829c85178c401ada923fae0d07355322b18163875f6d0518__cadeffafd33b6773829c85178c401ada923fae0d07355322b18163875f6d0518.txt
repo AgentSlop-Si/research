@@ -1,0 +1,40 @@
+"""Create a chain-safe Phase 17 archive including full Phase 16 provenance."""
+from pathlib import Path
+import hashlib, zipfile, json
+
+ROOT=Path('/mnt/data')
+CURRENT=ROOT/'fft_green_phase17_nonunitary_sum'
+OUTPUT=ROOT/'fft_green_research_phase17_2026-10-09.zip'
+PREVIOUS=ROOT/'fft_green_research_phase16_2026-10-09.zip'
+START=ROOT/'FFT_RESEARCH_START_HERE_PHASE17.md'
+
+if not PREVIOUS.exists() or not START.exists():
+    raise FileNotFoundError('Full ancestor checkpoint or start-here missing')
+
+files=[p for p in sorted(CURRENT.rglob('*')) if p.is_file() and '__pycache__' not in p.parts]
+files=[p for p in files if p.name not in ('SHA256SUMS.txt','validation.log')]
+manifest=[]
+for source in [START,*files,PREVIOUS]:
+    arcname=(str(source.relative_to(ROOT)) if source!=PREVIOUS else 'previous_full_phase16_checkpoint.zip')
+    content=source.read_bytes()
+    manifest.append(f'{hashlib.sha256(content).hexdigest()}  {arcname}')
+sha=(CURRENT/'SHA256SUMS.txt')
+sha.write_text('\n'.join(manifest)+'\n')
+
+with zipfile.ZipFile(OUTPUT,'w',zipfile.ZIP_DEFLATED,compresslevel=8) as z:
+    z.write(START,START.relative_to(ROOT))
+    for source in files:
+        z.write(source,source.relative_to(ROOT))
+    z.write(sha,sha.relative_to(ROOT))
+    z.write(PREVIOUS,'previous_full_phase16_checkpoint.zip')
+
+with zipfile.ZipFile(OUTPUT,'r') as z:
+    corrupt=z.testzip()
+    assert corrupt is None
+    assert 'previous_full_phase16_checkpoint.zip' in z.namelist()
+    assert 'fft_green_phase17_nonunitary_sum/THEOREM.md' in z.namelist()
+    assert 'fft_green_phase17_nonunitary_sum/tests/test_phase17.py' in z.namelist()
+    assert len(z.namelist())==len(set(z.namelist()))
+    print(json.dumps({'path':str(OUTPUT),'size_bytes':OUTPUT.stat().st_size,
+        'entries':len(z.namelist()),'corrupt':corrupt,
+        'previous_chain_sha256':hashlib.sha256(PREVIOUS.read_bytes()).hexdigest()},indent=2))

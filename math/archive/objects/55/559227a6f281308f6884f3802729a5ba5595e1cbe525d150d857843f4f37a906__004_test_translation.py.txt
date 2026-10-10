@@ -1,0 +1,57 @@
+import random
+import unittest
+from translation_multiply import (naf_terms,signed_shift_multiply,weight_table,
+                                  select_translation,adaptive_multiply,translated_signed_cost)
+
+
+class TranslationTests(unittest.TestCase):
+    def test_signed_digits_reconstruct_and_are_nonadjacent(self):
+        for n in range(-1024,1025):
+            terms=naf_terms(n)
+            self.assertEqual(n,sum(d*(1<<j) for j,d in terms))
+            self.assertTrue(all(b-a>=2 for (a,_),(b,_) in zip(terms,terms[1:])))
+
+    def test_minimum_weight_dp_and_subadditivity(self):
+        w=weight_table(1024)
+        for a in range(513):
+            self.assertEqual(w[a],len(naf_terms(a)))
+            for k in range(-32,33):
+                self.assertLessEqual(w[a],w[abs(a-k)]+w[abs(k)])
+
+    def test_dense_hard_example_survives_small_offsets(self):
+        a=int('10'*32,2)
+        self.assertEqual(len(naf_terms(a)),32)
+        self.assertEqual(min(translated_signed_cost(a,k) for k in range(-256,257)),32)
+
+    def test_near_powers_both_signs_and_operands(self):
+        rng=random.Random(939)
+        for n in (1,8,64,513,4096):
+            b=rng.getrandbits(n)
+            for k in (-255,-1,0,1,13,255):
+                a=(1<<n)+k
+                for aa,bb in ((a,b),(b,a),(-a,b),(a,-b),(-a,-b)):
+                    self.assertEqual(adaptive_multiply(aa,bb),aa*bb)
+
+    def test_arbitrary_inputs_and_flat_multiply(self):
+        rng=random.Random(901)
+        for _ in range(240):
+            a=rng.randrange(-(1<<127),1<<127);b=rng.randrange(-(1<<129),1<<129)
+            self.assertEqual(adaptive_multiply(a,b),a*b)
+            self.assertEqual(signed_shift_multiply(a,b),a*b)
+
+    def test_zero_and_invalid_budget(self):
+        self.assertEqual(adaptive_multiply(0,1<<600),0)
+        self.assertEqual(adaptive_multiply(-(1<<600),0),0)
+        for budget in (-1,256,1.5):
+            with self.assertRaises(ValueError): select_translation(3,7,budget)
+
+    def test_prefix_borrow_identity(self):
+        rng=random.Random(882)
+        for _ in range(300):
+            t=rng.randrange(1,32);a=rng.getrandbits(90);k=rng.randrange(1<<t)
+            high,low=divmod(a,1<<t)
+            borrow=int(low<k)
+            self.assertEqual(a-k,((high-borrow)<<t)+((low-k)%(1<<t)))
+
+
+if __name__=='__main__':unittest.main()

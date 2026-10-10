@@ -1,0 +1,118 @@
+1: import random
+2: import unittest
+3: from chirp_exact import (P, make_chirp, dft_direct, dft_ntt,
+4:     cyclic_convolution, chirp_dft_direct, chirp_convolution_from_ntt,
+5:     variable_filter, modular_rank, matrix_c_h, matrix_lc_h, moment,
+6:     moment_matrix, cyclic_hankel, predicted_full_spectral_probability)
+7: 
+8: 
+9: class ExactGlobalReuseAudit(unittest.TestCase):
+10:     def test_invalid_roots(self):
+11:         for n in (0,1,3,6,10,1<<23):
+12:             with self.assertRaises(ValueError):make_chirp(n)
+13: 
+14:     def test_ntt_independent_reference_and_round_trip(self):
+15:         r=random.Random(8120)
+16:         for n in (2,4,8,16,32,64,128):
+17:             c=make_chirp(n)
+18:             for _ in range(8):
+19:                 x=[r.randrange(P) for _ in range(n)]
+20:                 self.assertEqual(dft_ntt(x,c.omega),dft_direct(x,c.omega))
+21:                 self.assertEqual(dft_ntt(dft_ntt(x,c.omega),c.omega,True),x)
+22: 
+23:     def test_full_chirp_dft_factorization_fresh_inputs(self):
+24:         r=random.Random(2026)
+25:         for n in (2,4,8,16,32,64):
+26:             c=make_chirp(n)
+27:             for _ in range(8):
+28:                 x=[r.randrange(P) for _ in range(n)]
+29:                 self.assertEqual(chirp_dft_direct(x,c),dft_direct(x,c.omega))
+30: 
+31:     def test_chirp_convolution_is_an_fft_in_disguise(self):
+32:         r=random.Random(12024)
+33:         for n in (2,4,8,16,32,64):
+34:             c=make_chirp(n)
+35:             for _ in range(6):
+36:                 x=[r.randrange(P) for _ in range(n)]
+37:                 self.assertEqual(cyclic_convolution(x,c.h),chirp_convolution_from_ntt(x,c))
+38: 
+39:     def test_gauss_chirp_spectrum_nonzero(self):
+40:         for n in (2,4,8,16,32,64,128):
+41:             c=make_chirp(n)
+42:             g=sum(c.h)%P
+43:             self.assertNotEqual(g,0)
+44:             self.assertEqual(dft_ntt(c.h,c.omega),[g*v%P for v in c.d])
+45: 
+46:     def test_kernel_first_order_variable_recurrence(self):
+47:         for n in (2,4,8,16,32,64):
+48:             c=make_chirp(n)
+49:             self.assertEqual(variable_filter(c.h,c),[0]*n)
+50:             # Wrong-sign recurrence must fail for N > 2.
+51:             if n>=4:
+52:                 wrong=[(c.h[(k+1)%n]-pow(c.g[k],P-2,P)*c.h[k])%P
+53:                        for k in range(n)]
+54:                 self.assertNotEqual(wrong,[0]*n)
+55: 
+56:     def test_variable_annihilator_does_not_sparsify_convolution(self):
+57:         r=random.Random(995)
+58:         for n in (4,8,16,32,64):
+59:             c=make_chirp(n)
+60:             LCh=matrix_lc_h(c)
+61:             self.assertEqual(modular_rank(matrix_c_h(c)),n)
+62:             self.assertEqual(modular_rank(LCh),n-1)
+63:             for _ in range(6):
+64:                 x=[r.randrange(P) for _ in range(n)]
+65:                 out=cyclic_convolution(x,c.h)
+66:                 actual=variable_filter(out,c)
+67:                 expected=[sum(LCh[k][j]*x[j] for j in range(n))%P
+68:                           for k in range(n)]
+69:                 self.assertEqual(actual,expected)
+70:                 self.assertEqual(sum(v!=0 for v in actual),n)
+71: 
+72:     def test_moment_ladder_and_independence(self):
+73:         r=random.Random(357)
+74:         for n in (4,8,16,32):
+75:             c=make_chirp(n)
+76:             x=[r.randrange(P) for _ in range(n)]
+77:             self.assertEqual(modular_rank(moment_matrix(c)),n)
+78:             for k in range(n):
+79:                 for s in range(n):
+80:                     lhs=moment(x,c,s,(k+1)%n)
+81:                     rhs=c.g[k]*moment(x,c,(s+1)%n,k)%P
+82:                     self.assertEqual(lhs,rhs)
+83: 
+84:     def test_periodic_minimal_recurrence_order_equals_spectral_support(self):
+85:         r=random.Random(9876)
+86:         for n in (4,8,16,32):
+87:             c=make_chirp(n)
+88:             for _ in range(3):
+89:                 x=[r.randrange(P) for _ in range(n)]
+90:                 y=cyclic_convolution(x,c.h)
+91:                 support=sum(v!=0 for v in dft_ntt(x,c.omega))
+92:                 self.assertEqual(modular_rank(cyclic_hankel(y)),support)
+93:                 self.assertEqual(support,n)
+94:             # A deliberately sparse frequency-domain input is a positive control.
+95:             for s in (1,2,3):
+96:                 freq=[0]*n
+97:                 for j in range(s): freq[(3*j)%n]=j+1
+98:                 x=dft_ntt(freq,c.omega,True)
+99:                 y=cyclic_convolution(x,c.h)
+100:                 self.assertEqual(modular_rank(cyclic_hankel(y)),s)
+101: 
+102:     def test_all_chirp_shifts_are_independent_and_have_exact_inverse(self):
+103:         for n in (2,4,8,16,32,64):
+104:             c=make_chirp(n)
+105:             inv_h=[pow(v,P-2,P) for v in c.h]
+106:             # h * h_inverse = n * e_0, the exact CAZAC identity.
+107:             impulse=cyclic_convolution(c.h,inv_h)
+108:             self.assertEqual(impulse,[n]+[0]*(n-1))
+109:             self.assertEqual(modular_rank(matrix_c_h(c)),n)
+110: 
+111:     def test_probability_and_work_lower_scope(self):
+112:         for n in (8,64,4096):
+113:             pr=predicted_full_spectral_probability(n)
+114:             self.assertGreaterEqual(pr,1-n/P-1e-11)
+115:             self.assertLessEqual(pr,1)
+116: 
+117: 
+118: if __name__=='__main__':unittest.main()

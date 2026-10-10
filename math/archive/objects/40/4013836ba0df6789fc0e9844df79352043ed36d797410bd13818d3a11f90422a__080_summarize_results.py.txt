@@ -1,0 +1,67 @@
+"""Regenerate the top-level report from this package's raw result files."""
+import json
+from pathlib import Path
+
+ROOT=Path(__file__).resolve().parent
+def read(name):return json.loads((ROOT/'results'/name).read_text())
+def table(headers,rows):
+    return '\n'.join(['| '+' | '.join(headers)+' |','|'+'|'.join(['---']*len(headers))+'|']+
+                     ['| '+' | '.join(map(str,row))+' |' for row in rows])
+def f(x):return f'{x:.3f}'
+
+b=read('benchmark_phase8.json');r=read('benchmark_range.json');i=read('benchmark_integrations.json')
+v=read('verification.json');memory=read('memory.json')
+parts=['# Phase 9 — measured results',
+       'All times are local wall-clock medians, not universal speedups. Five repetitions per measured case; circuit, range, jet, and organizer method order is randomized. Every requested complex or real output is compared outside the timed region. Output generation and retention are charged; input generation is excluded equally. Setup, registration, planning and index construction are included unless the row explicitly says otherwise.',
+       'Environment: '+', '.join(f'{k}={value}' for k,value in b['environment'].items())+'. SciPy default single-worker transforms; OMP_NUM_THREADS=1. Range measurements were rerun without concurrent test workloads.',
+       '## 1. General projected persistent graph',
+       'Native real-FFT seed registration is charged. The Phase 7 comparator keeps full seeds/spectra; the new graph retains projections. Vectorized projected multiplication is a strong simple control. A single-fixed-factor workload also has an analytic leave-one-out control. All rows request frequency bins.']
+rows=[]
+for x in b['circuits']:
+    s=x['summary']
+    rows.append([x['n'],x['m'],x['q'],x['changed_factors'],x['versions'],f(s['phase7']['cold_ms']),f(s['phase8']['cold_ms']),f(s['vectorized_product']['cold_ms']),
+                 f(s['analytic_one_factor']['cold_ms']) if 'analytic_one_factor' in s else '—'])
+parts.append(table(['N','Factors','Bins','Changed factors','Versions','Phase 7 ms','Projected graph ms','Vector product ms','Analytic ms'],rows))
+parts.append('The generic graph improves substantially over scalar per-bin Phase 7 execution for large queries, but loses to the specialized vector controls in these cases. For q=4 it also loses to Phase 7. This graph is justified by persistent mixed expressions and shared subgraphs, not by claiming to beat every product kernel.')
+parts.append('## 2. Frozen-chain interval reuse')
+parts.append('All dense seed registrations and index builds are charged. The segment control is a hand-written static interval evaluator without the persistent-row API. The production segment engine includes validation, immutable edits and its fixed auto heuristic. The disjoint table costs more storage and construction work.')
+parts.append(table(['N','Factors','Bins','Edits','Versions','Vector ms','Segment control ms','Segment API ms','Disjoint API ms'],[
+    [x['n'],x['m'],x['q'],x['p'],x['versions'],*[f(x['summary'][m]['cold_ms']) for m in ('vector','segment','segment_engine','range')]] for x in r]))
+best=r[1]['summary']
+parts.append(f"For the 4,096-factor case, the segment API is {best['vector']['cold_ms']/best['segment_engine']['cold_ms']:.2f}× faster than vector recomputation with setup charged. The specialized segment control is still faster than the API. Small chains and many-edit workloads lose. No optimality or asymptotic priority is claimed.")
+parts.append(table(['4,096-factor method','Numeric bytes present at query'],[[name,int(best[name]['numeric_bytes_at_query'])] for name in ('vector','segment','segment_engine','range')]))
+parts.append('The benchmark deliberately still holds the original projected matrix alongside the index copy, so the API memory column includes both. These payload figures exclude seed inputs, Python objects and temporary build arrays; process peaks appear below.')
+parts.append('## 3. Repeated-leaf polynomial jets, selected frequencies')
+parts.append('Expression A*A*A + 2A*B + C*D*E; degree 3; 48 one-point variants; 64 arbitrary bins. All five seed transforms and preparation are charged. Dense jet uses the uploaded Phase 8 single-frequency API; projected jet builds only requested coefficient projections. The analytic projected formula is the strongest specialized control.')
+parts.append(table(['N','Fresh changed FFT ms','Dense jet ms','Projected jet ms','Analytic projected ms','Dense prepared bytes','Projected coefficient bytes'],[
+    [x['n'],*[f(x['summary'][m]['cold_ms']) for m in ('fresh_changed_fft','dense_jet','projected_jet','analytic_projected')],
+     int(x['summary']['dense_jet']['prepared_numeric_bytes']),int(x['summary']['projected_jet']['prepared_numeric_bytes'])] for x in i['jets']]))
+last=i['jets'][-1]['summary']
+parts.append(f"At N=262,144, projected jet is {last['fresh_changed_fft']['cold_ms']/last['projected_jet']['cold_ms']:.2f}× faster than fresh changed-factor FFTs and {last['dense_jet']['cold_ms']/last['projected_jet']['cold_ms']:.2f}× faster than the original dense-jet frequency-query path. The hand-specialized projected formula remains faster. Kernel payloads exclude upstream seed arrays/spectra, still held during this benchmark; the returned projected jet itself retains no source-engine reference. At N=4,096 the projected compiler loses to fresh changed FFTs.")
+parts.append('## 4. V3 consumer organizer')
+parts.append('8 consumers, 32 bins each, r=256, 4,096 metadata updates. Precomputed basis projection is supplied; dense basis registration is excluded equally. Store creation, phase preparation, updates, output copies and online planning are timed. The original organizer is run atop the repaired shared store, isolating organizer changes. All returned values are checked, extending the uploaded scalar-checksum validation.')
+parts.append(table(['Scenario','Sequential fixed ms','Original organizer ms','Repaired organizer ms','Repaired / no group cache ms'],[
+    [x['scenario'],*[f(x['median_ms'][m]) for m in ('sequential_fixed','original_organizer_fixed_store','repaired_organizer','repaired_zero_budget')]] for x in i['organizers']]))
+parts.append('Synchronized consumers and two clusters benefit. Asynchronous and regime-shift cases are near parity; these must not be advertised as robust wins. Zero budget bounds group payload but retains planner overhead and can be slower. The greedy partition is not a globally optimal budgeted view selector.')
+parts.append('## 5. Full time-domain outputs retained from Phase 7')
+parts.append('Eight factors, 24 one-point variants, all N time samples per variant retained. Initial transforms and base/complement preparation charged. Every output sample is checked, extending the original benchmark\'s three-sample checks.')
+parts.append(table(['N','Prepared FFT ms','Phase 7 sparse ms','Hand-specialized sparse ms'],[
+    [x['n'],*[f(x['cold_ms'][m]) for m in ('prepared_fft','phase7_sparse','analytic_sparse')]] for x in b['full_output']]))
+parts.append('This is the full-output path; the selected-frequency wins above do not substitute for it. The known leave-one-out formula explains the savings, and its hand-written control exposes generic dispatch overhead.')
+parts.append('## 6. Retained-history regression')
+parts.append('100 one-update/hot-view-query iterations, eight bins, one dormant consumer. Old-log creation excluded. The manual-compaction control queries the dormant consumer before compacting, so it has additional output work and is not an identical hot-only workload.')
+parts.append(table(['Initial retained events','Old shared replay ms','Fixed replay ms','Old query-all + compact ms'],[
+    [x['retained_events'],f(x['old_ms']),f(x['fixed_ms']),f(x['old_query_all_and_compact_ms'])] for x in b['history']]))
+parts.append('This speedup removes accidental history scans; it is not an FFT speedup. Unit tests separately count exactly one visited record for one unread event after 10,000 old records, including group replay, and preserve chronological cancellation behavior.')
+parts.append('## 7. Memory and correctness')
+parts.append(table(['Fresh process','N','Factors','Bins','Peak RSS MiB'],[
+    [x['kind'],x['n'],x['m'],x['q'],f(x['peak_rss_bytes']/1024**2)] for x in memory]))
+parts.append('RSS includes interpreter, imported libraries, inputs, objects, caches, outputs, and temporary peaks. It is a whole-process measurement, not an allocation decomposition; only rows with matching N/m/q are directly comparable.')
+parts.append(table(['Suite','Test executions','Passed'],[[x['suite'],x['unittest_count'],x['passed']] for x in v]))
+parts.append(f"Total unittest executions: {sum(x['unittest_count'] for x in v)}; overlapping legacy/repaired tests are intentionally counted as separate executions, not unique discoveries. The new integrated suite contains 30 tests, including 200 exact exported-schedule checks over four fields, 73 signed integer products, and negative controls. Separate legacy programs pass 1,600 Phase 7 and 480 Phase 8 exact modular cases. No external kappa/Lean certificate suite was run.")
+errors=[x['max_abs_error'] for x in b['circuits']+b['full_output']+r+i['jets']+i['organizers']]
+parts.append(f"Largest observed absolute error across the timed workload checks: {max(errors):.6g}. Relative/absolute tolerances are stated in benchmark source. This is empirical validation, not a general floating-point error theorem.")
+parts.append('## 8. Scope of the external bridge')
+parts.append('The exact modular schedule and CRT/carry demo work on their finite test instances. They use a quadratic direct DFT and make no performance claim. `INTEGER_MULT_BRIDGE.md` pins the linked research and separates algebraic compatibility from the missing uniformity, precision, rank-certificate, and finite-tape accounting requirements. No new kappa is inferred from these measurements.')
+(ROOT/'RESULTS.md').write_text('\n\n'.join(parts)+'\n')
+print('Generated RESULTS.md from raw results.')

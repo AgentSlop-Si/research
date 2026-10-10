@@ -1,0 +1,58 @@
+"""Reproduce the exact N64 witness the old interval bound misses.
+
+Searches deterministically over the recorded permutation. Search is not the
+proof; verify_certificate.py checks the fixed cut + determinant instead.
+"""
+import json,random
+from pathlib import Path
+from fast_mincut import ScanFlowOracle
+from cut_rank_gate import bitrev,rank_np
+from two_stage_ct import root,P
+HERE=Path(__file__).resolve().parent
+
+def search(trials=200):
+    n=64;r=1
+    p=next(x['optimized_shuffle'] for x in json.loads((HERE/'rank_profiles_results.json').read_text())
+           if x['n']==n and x['endpoints']=='bitrev_both')
+    order=bitrev(n);powers=[pow(root(n),i,P) for i in range(n)]
+    graph=ScanFlowOracle(n,[r,r],[p])
+    rng=random.Random(20261009+5)
+    for j in range(trials):
+        kind=j%4
+        if kind==0:
+            R=sorted(rng.sample(range(n),rng.randrange(5,55)))
+            C=sorted(rng.sample(range(n),rng.randrange(5,55)))
+        elif kind==1:
+            a=rng.randrange(n-1);b=rng.randrange(a+1,n+1)
+            d=rng.randrange(n-1);e=rng.randrange(d+1,n+1)
+            R=list(range(a,b));C=list(range(d,e))
+        elif kind==2:
+            def two():
+                a,b=sorted(rng.sample(range(1,n//2-1),2))
+                c,d=sorted(rng.sample(range(n//2,n),2))
+                return list(range(a,b+1))+list(range(c,d+1))
+            R=two();C=two()
+        else:
+            def holes():
+                a=rng.randrange(n-1);b=rng.randrange(a+1,n+1)
+                S=set(range(a,b))
+                for _ in range(rng.randrange(7)):
+                    S.discard(rng.randrange(a,b))
+                return sorted(S)
+            R=holes();C=holes()
+        flow=graph.bound(R,C)
+        if flow>=min(len(R),len(C)):continue
+        rank=rank_np([order[i] for i in R],[order[k] for k in C],powers)
+        if rank<=flow:continue
+        sR=set(R);sC=set(C)
+        br=sum((z in sR)!=(z+1 in sR) for z in range(n-1))
+        bc=sum((z in sC)!=(z+1 in sC) for z in range(n-1))
+        free=len({p[z] for z in R}&sC)
+        old=min(len(R),len(C),free+r*(br+bc))
+        if old>=rank:
+            result={'trial':j,'R':R,'C':C,'rank':rank,'flow':flow,'old':old,'free':free,'br':br,'bc':bc}
+            assert result==json.loads((HERE/'new_gate_witness_n64_r1.json').read_text())
+            print('FOUND SAME NEW GATE WITNESS',{'trial':j,'fft_rank':rank,'network_bound':flow,'old_bound':old})
+            return result
+    raise RuntimeError('No witness in specified search budget')
+if __name__=='__main__':search()

@@ -1,0 +1,60 @@
+   1 """Phase17 independent exhaustive basis-vector audit.
+   2 
+   3 Comparison target is direct Vandermonde evaluation (no NTT, Green, fractions).
+   4 Two bases are tested: e_j (usual input basis) and P^-1 e_j
+   5 (dense structured Green-response basis). Results count full output entries.
+   6 """
+   7 from rational_forcing import AllLengthGreen,direct_dft_any,P0,G0
+   8 import json,random
+   9 from pathlib import Path
+  10 
+  11 SIZES=[(7,998244353,3),(17,998244353,3),(30,P0,G0),
+  12        (60,P0,G0),(119,998244353,3),(128,P0,G0),(256,P0,G0)]
+  13 
+  14 
+  15 def run():
+  16     rows=[];count=0;impulses=0; max_ntt_len=0
+  17     for n,p,g in SIZES:
+  18         eng=AllLengthGreen(n,p,g)
+  19         checks=0
+  20         for j in range(n):
+  21             standard=[0]*n;standard[j]=1
+  22             yi,_=eng.transform(standard,method='rational')
+  23             assert yi==direct_dft_any(standard,eng.omega,p),(n,j,'ordinary')
+  24             checks+=n
+  25             dense=eng.structured_dense({j:1})
+  26             assert all(dense),(n,j,'not dense')
+  27             yd,meta=eng.transform(dense,method='rational')
+  28             assert meta['K']==1,(n,j,'not sparse residual')
+  29             assert meta['stats'].max_ntt_length==0
+  30             assert yd==direct_dft_any(dense,eng.omega,p),(n,j,'green impulse')
+  31             checks+=n;impulses+=1
+  32         rows.append({'N':n,'prime':p,'primitive_generator':g,
+  33                      'input_basis_vectors':n,'dense_green_impulses':n,
+  34                      'checked_Fourier_output_entries':checks})
+  35         count+=checks
+  36         print('basis',n,checks,flush=True)
+  37 
+  38     # Exact noncommuting intertwining for every column and every row over 2 fields.
+  39     intertwines=0
+  40     for n,p,g in [(17,998244353,3),(60,P0,G0),(128,P0,G0)]:
+  41         eng=AllLengthGreen(n,p,g)
+  42         for j in range(n):
+  43             col=[pow(eng.omega,k*j,p) for k in range(n)]
+  44             left=eng.L.apply(col)
+  45             basis=[0]*n;basis[j]=1
+  46             right=direct_dft_any(eng.P.apply(basis),eng.omega,p)
+  47             assert left==right,(n,j,'intertwining')
+  48             intertwines+=n
+  49     result={'project':'FFT Hero1 Phase17',
+  50             'finite_field_basis_checks':count,'intertwining_matrix_entries':intertwines,
+  51             'total_field_entries_checked':count+intertwines,
+  52             'dense_impulses_verified':impulses,
+  53             'rows':rows,'passed':True,
+  54             'scope':'Exact finite-field tests for selected N, not all-size numerical proof'}
+  55     path=Path(__file__).with_name('FIELD_BASIS_RESULTS.json')
+  56     path.write_text(json.dumps(result,indent=2)+'\n')
+  57     print(json.dumps(result,indent=2))
+  58     return result
+  59 
+  60 if __name__=='__main__':run()

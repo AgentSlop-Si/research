@@ -1,0 +1,101 @@
+"""Reproducible first-order compatibility certificate, *only* for tested cuts.
+
+Proof object has: exact parameter seed, permutation, selected nontrivial cut
+rectangles, and sparse direction delta. The verifier reconstructs the modular
+Jacobian and recomputes all graph minimum cuts and tangent rank identities.
+"""
+import json
+import random
+from pathlib import Path
+import numpy as np
+from jacobian_gate import MOD, basis, rank_mod, basis_null, row_col_constraints
+from mincut_tangent import ScanFlowOracle, sample_sets
+
+HERE=Path(__file__).resolve().parent
+
+def construct(queries=20000):
+    n=16;r=2;perm=list(range(n));random.Random(919+n).shuffle(perm)
+    M,J,_,_=basis(n,r,perm,1011)
+    Jrank=rank_mod(J)
+    oracle=ScanFlowOracle(n,[r,r],[perm]);rectangles=[];G=[]
+    count=0
+    for R,C in sample_sets(n,2442,queries):
+        count+=1
+        if min(len(R),len(C))<2:continue
+        c=oracle.bound(R,C)
+        if c>=min(len(R),len(C)):continue
+        assert rank_mod(M[np.ix_(R,C)]) == c
+        rectangles.append({'R':R,'C':C,'bound':c})
+        for g in row_col_constraints(M,R,C):
+            assert not np.any((g@J)%MOD)
+            G.append(g)
+    G=np.array(G,dtype=np.int64)
+    Grank=rank_mod(G)
+    # A normal-to-image q with q.J = 0 identifies a generator-incompatible first-order direction.
+    normals=basis_null(J.T)
+    assert len(normals)==n*n-Jrank
+    # Prefer an elementary direction with NONZERO overlap with at least one
+    # cut tangent constraint (avoid a vacuous, unmonitored coordinate).
+    # Find a sparse dependence between columns of G that is not killed by q.
+    cols=[tuple(G[:,i]%MOD) for i in range(n*n)]
+    best=None
+    for i in range(n*n):
+        if not any(cols[i]):continue
+        for j in range(i+1,n*n):
+            if not any(cols[j]):continue
+            a=np.array(cols[i]);b=np.array(cols[j]);idx=np.flatnonzero(a)
+            if not len(idx):continue
+            k=int(idx[0]);t=int(b[k])*pow(int(a[k]),-1,MOD)%MOD
+            if not t or not np.array_equal(b,(t*a)%MOD):continue
+            if any((int(q[j])-t*int(q[i]))%MOD for q in normals):
+                best=(i,j,t);break
+        if best:break
+    if best:
+        i,j,t=best
+        d={str(i):int((-t)%MOD),str(j):1}
+    else:
+        # Find unmonitored E_ij that the stage Jacobian cannot realize.
+        i=next((k for k in range(n*n) if not any(cols[k]) and any(q[k] for q in normals)),None)
+        assert i is not None
+        d={str(i):1}
+    D=np.zeros(n*n,dtype=np.int64)
+    for k,v in d.items():D[int(k)]=v
+    assert not np.any((G@D)%MOD)
+    norm=next(q for q in normals if np.dot(q,D)%MOD)
+    return {'modulus':MOD,'n':n,'rank_per_stage':r,'generator_seed':1011,
+       'shuffle_seed':919+n,'shuffle':perm,'subset_generator_seed':2442,
+       'cut_queries':queries,'unique_nontrivial_cut_rectangles':rectangles,
+       'scanned_unique_pairs':count,'generator_jacobian_rank':Jrank,
+       'linearized_cut_constraint_rank':Grank,'number_cut_tangent_rows':len(G),
+       'delta_sparse_flattened':d,'delta_is_sparse_pair':best is not None,
+       'normal_vector_flattened':[int(x) for x in norm],
+       'normal_delta_pairing':int(np.dot(norm,D)%MOD)}
+
+def verify(z):
+    n=z['n'];r=z['rank_per_stage'];p=z['shuffle'];P=z['modulus']
+    M,J,_,_=basis(n,r,p,z['generator_seed'])
+    oracle=ScanFlowOracle(n,[r,r],[p]);g=[]
+    for entry in z['unique_nontrivial_cut_rectangles']:
+        R,C,b=entry['R'],entry['C'],entry['bound']
+        assert oracle.bound(R,C)==b
+        assert rank_mod(M[np.ix_(R,C)])==b
+        g.extend(row_col_constraints(M,R,C))
+    G=np.array(g,dtype=np.int64)
+    D=np.zeros(n*n,dtype=np.int64)
+    for k,v in z['delta_sparse_flattened'].items():D[int(k)]=v
+    q=np.array(z['normal_vector_flattened'],dtype=np.int64)
+    assert rank_mod(J)==z['generator_jacobian_rank']
+    assert rank_mod(G)==z['linearized_cut_constraint_rank']
+    assert not np.any((G@J)%MOD)
+    assert not np.any((G@D)%MOD)
+    assert not np.any((q@J)%MOD)
+    assert int(q@D%P)==z['normal_delta_pairing'] and z['normal_delta_pairing']!=0
+    return f"PASS exact certificate: rank J={rank_mod(J)}, rank sampled-cut tangent={rank_mod(G)}, sparse delta support={len(z['delta_sparse_flattened'])}, q·delta={z['normal_delta_pairing']} mod {P}"
+
+if __name__=='__main__':
+    f=HERE/'nonlinear_tangent_certificate_N16.json'
+    z=construct()
+    f.write_text(json.dumps(z,indent=2)+'\n')
+    print('nontrivial rectangles:',len(z['unique_nontrivial_cut_rectangles']))
+    print('delta:',z['delta_sparse_flattened'])
+    print(verify(json.loads(f.read_text())))

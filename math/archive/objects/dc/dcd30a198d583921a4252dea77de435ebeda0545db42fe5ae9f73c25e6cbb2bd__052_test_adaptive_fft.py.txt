@@ -1,0 +1,171 @@
+"""Regression tests for the adaptive FFT reuse engine. Run: python -m unittest -v."""
+import unittest
+import numpy as np
+from adaptive_fft import AdaptiveFFT, CanonicalFFTGraph, two_real_ffts_packed
+
+
+class AdaptiveFFTTests(unittest.TestCase):
+    def setUp(self):
+        self.rng = np.random.default_rng(20261008)
+
+    def test_random_fft_and_rfft_numpy_and_scipy(self):
+        for backend in ('numpy', 'scipy'):
+            engine = AdaptiveFFT(backend=backend, mode='aggressive')
+            for n in (1, 2, 3, 4, 7, 8, 11, 32, 63, 64, 127, 256):
+                for _ in range(3):
+                    x = self.rng.normal(size=n)
+                    expected = np.fft.fft(x)
+                    np.testing.assert_allclose(engine.fft(x), expected, rtol=2e-12, atol=2e-12)
+                    np.testing.assert_allclose(engine.rfft(x), np.fft.rfft(x), rtol=2e-12, atol=2e-12)
+
+    def test_exact_dedup_and_copy_isolation(self):
+        x = self.rng.normal(size=2048)
+        engine = AdaptiveFFT(mode='aggressive')
+        a = engine.rfft(x)
+        a[3] = 50.0  # returned arrays must NOT modify internal cache
+        x2 = x.copy()
+        b = engine.rfft(x2)
+        self.assertEqual(engine.last_strategy, 'exact')
+        np.testing.assert_allclose(b, np.fft.rfft(x))
+        self.assertGreaterEqual(engine.stats['exact_hits'], 1)
+        x[0] += 8  # mutated user's original must not mutate cached reference
+        np.testing.assert_allclose(engine.rfft(x2), np.fft.rfft(x2))
+
+    def test_all_shifts_odd_and_even(self):
+        for n in (1, 2, 5, 11, 32, 255, 2048):
+            x = self.rng.integers(0, 100000, size=n).astype(float)
+            eng = AdaptiveFFT(mode='aggressive', max_references=3, max_sparse_edits=0)
+            eng.rfft(x)
+            for s in (1, 2, n//2, n-1):
+                y = np.roll(x, s)
+                actual = eng.rfft(y)
+                np.testing.assert_allclose(actual, np.fft.rfft(y), atol=1e-6, rtol=1e-9)
+                self.assertIn(eng.last_strategy, {'shift', 'exact'})
+
+    def test_sparse_updates(self):
+        for n in (1, 2, 7, 32, 127, 2048):
+            x = self.rng.normal(size=n)
+            eng = AdaptiveFFT(mode='aggressive', max_sparse_edits=2, max_references=4)
+            eng.rfft(x)
+            for indexes in ([0], [n-1], [0, n//2] if n>2 else [0]):
+                y = x.copy()
+                for pos in set(indexes):
+                    y[pos] += 2.5
+                actual = eng.rfft(y)
+                np.testing.assert_allclose(actual, np.fft.rfft(y), atol=1e-7, rtol=1e-11)
+                self.assertIn(eng.last_strategy, {'sparse', 'exact'})
+
+    def test_low_rank_batch(self):
+        for n in (13, 1024, 8192):
+            a = self.rng.normal(size=n)
+            b = self.rng.normal(size=n)
+            coefficients = self.rng.integers(-3,4, (24,2))
+            x = coefficients[:,0,None]*a + coefficients[:,1,None]*b
+            eng = AdaptiveFFT(mode='aggressive', max_cache_bytes=50_000_000)
+            out, info = eng.fft_batch(x, return_info=True)
+            np.testing.assert_allclose(out, np.fft.rfft(x,axis=1), atol=1e-7, rtol=1e-10)
+            self.assertEqual(info['rank'], 2)
+            self.assertIn('rank2', info['strategies'])
+            self.assertEqual(eng.summary()['models'], 1)
+            # Cross-batch span reuse: different linear combination
+            y = 7*a-4*b
+            result = eng.rfft(y)
+            np.testing.assert_allclose(result, np.fft.rfft(y), atol=1e-7, rtol=1e-10)
+            self.assertEqual(eng.last_strategy, 'span')
+
+    def test_known_family_fast_api(self):
+        for r in (1, 2, 4):
+            n = 8192
+            base = self.rng.normal(size=(r,n))
+            coefficients = self.rng.integers(-4,5,size=(40,r)).astype(float)
+            engine = AdaptiveFFT()
+            outcome = engine.fft_family(base, coefficients)
+            expected = np.fft.rfft(coefficients @ base,axis=1)
+            np.testing.assert_allclose(outcome,expected,atol=1e-8,rtol=1e-10)
+        one = AdaptiveFFT(mode='aggressive')
+        base = self.rng.normal(size=(2,8192))
+        self.assertEqual(one.register_basis(base),2)
+        y=4*base[0]-3*base[1]
+        np.testing.assert_allclose(one.rfft(y),np.fft.rfft(y),atol=1e-8)
+        self.assertEqual(one.last_strategy,'span')
+
+    def test_rank_one_and_zeros(self):
+        n=8192
+        a = self.rng.normal(size=n)
+        batch = np.stack([a*2, a*-1, np.zeros_like(a), a*9, a*0.3] * 4)
+        eng = AdaptiveFFT(mode='aggressive')
+        out, info = eng.fft_batch(batch, return_info=True)
+        np.testing.assert_allclose(out, np.fft.rfft(batch, axis=1), atol=1e-7, rtol=1e-10)
+        self.assertEqual(info['rank'], 1)
+        z = np.zeros((4, n))
+        actual, info = eng.fft_batch(z, return_info=True)
+        self.assertEqual(info['rank'], 0)
+        np.testing.assert_array_equal(actual, np.zeros((4,n//2+1)))
+
+    def test_dense_random_fallback(self):
+        n=4096
+        eng=AdaptiveFFT(mode='auto')
+        x=self.rng.normal(size=(32,n))
+        actual, info = eng.fft_batch(x, return_info=True)
+        np.testing.assert_allclose(actual, np.fft.rfft(x,axis=1),rtol=1e-12,atol=1e-9)
+        self.assertEqual(info['rank'], None)
+        self.assertIn('fft_batch', info['strategies'])
+
+    def test_batch_cache_reuse(self):
+        eng=AdaptiveFFT(mode='auto')
+        x=self.rng.normal(size=(6,4096))
+        a=eng.fft_batch(x)
+        b, info=eng.fft_batch(x[-3:],return_info=True)
+        np.testing.assert_allclose(a[-3:], b)
+        self.assertEqual(info['strategies'], {'exact': 3})
+
+    def test_eviction_and_clear(self):
+        n=256
+        eng=AdaptiveFFT(mode='aggressive',max_cache_bytes=256*(8+16+8)*2,max_references=2)
+        for _ in range(10):
+            eng.rfft(self.rng.normal(size=n))
+        self.assertLessEqual(eng.cache_bytes, eng.max_cache_bytes)
+        self.assertGreater(eng.stats['evictions'], 0)
+        eng.clear()
+        self.assertEqual(eng.cache_bytes, 0)
+        self.assertEqual(len(eng.cache), 0)
+
+    def test_packing(self):
+        for n in (1,3,8,33,128):
+            a=self.rng.normal(size=n)
+            b=self.rng.normal(size=n)
+            fa,fb=two_real_ffts_packed(a,b)
+            np.testing.assert_allclose(fa,np.fft.fft(a),atol=1e-11)
+            np.testing.assert_allclose(fb,np.fft.fft(b),atol=1e-11)
+
+    def test_convolution_and_digits(self):
+        eng=AdaptiveFFT(mode='aggressive')
+        for n,m in ((1,1),(2,1),(4,4),(17,31),(128,91)):
+            a=self.rng.integers(-4,5,n)
+            b=self.rng.integers(-4,5,m)
+            np.testing.assert_allclose(eng.convolution(a,b),np.convolve(a,b),atol=1e-8)
+        digits=np.rint(eng.convolution([4,3,2,1],[8,7,6,5])).astype(int)
+        self.assertEqual(int(sum(int(x)*(10**j) for j,x in enumerate(digits))),7006652)
+
+    def test_dag_shared(self):
+        graph = CanonicalFFTGraph()
+        for n in (2,4,8,16,64):
+            a = self.rng.integers(0,2,size=n)
+            b = a.copy()
+            k1 = graph.add(a)
+            k2 = graph.add(b)
+            self.assertEqual(k1,k2)
+            np.testing.assert_allclose(graph.evaluate(k1),np.fft.fft(a),atol=1e-12)
+
+    def test_invalids(self):
+        eng=AdaptiveFFT()
+        for x in ([],[[1,2]], [1+1j], [np.nan], [np.inf]):
+            with self.assertRaises(ValueError):
+                eng.rfft(x)
+        with self.assertRaises(ValueError):
+            eng.fft_batch([1,2,3])
+        with self.assertRaises(ValueError):
+            eng.convolution([1],[])
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

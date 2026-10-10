@@ -1,0 +1,181 @@
+# A growing stage-count obstruction for the fixed-strength phase-12 family
+
+Independent proof check, 9 October 2026. This is a scoped factorization
+obstruction, not a general Fourier-algorithm lower bound or a priority claim.
+
+## Result and scope
+
+Let a word contain t phase-12 stages S=V C_a(A1) C_a(A2), or their
+inverses, interleaved with arbitrary unitary monomial matrices. The two path
+orders and the tree placement may change at every stage. Use the attachment's
+fixed strengths a=1/32 and e=1/512; the tree Cayley has strength 2. If this word
+equals a flat N-by-N unitary (including normalized Fourier), then
+
+    t >= log(15 N / 16) / [log(6144) + 604 log(20)].
+
+For N>1, t=0 is impossible. Thus t=Omega(log N). The displayed constant is
+deliberately very loose. Unlike the attachment's five-stage gate, this bound
+grows with N. It needs neither random expansion nor bounded induced 1-norm.
+
+If each full-array stage is executed separately and charged Theta(N), this
+implies Omega(N log N) work for that execution architecture. It does NOT
+exclude algebraic fusion of an entire word, N-dependent unbounded strengths,
+different nonlocal primitives, general circuits, arbitrary diagonal gains,
+or an approximation task instead of exact Fourier.
+
+## 1. Uniform absolutely convergent sparse expansion
+
+For any Hermitian adjacency A in this construction, each row has at most
+3 nonzeros and ||A||2<=3. Signed block copies of the tree adjacency obey the
+same bounds. For |a|<=2 set
+
+    E = I - (I+a^2 A^2)/37,
+    H = (2/37)(I+i a A),
+    rho = 36/37.
+
+All eigenvalues of E lie in [0,rho], hence ||E||2<=rho. E has at most
+10 nonzeros per row; H has at most 4. Since
+
+    (I-i a A)^-1 = (I+i a A)(I+a^2 A^2)^-1,
+
+the Cayley transform has the exact operator-norm convergent expansion
+
+    C_a(A) = -I + sum_(k>=0) H E^k.                    (1)
+
+The identity also holds for a replaced by -a, covering inverse Cayleys.
+Use z=73/72>1. Then rho*z=73/74 and ||H||2<=14/37, so the sum of the
+weighted norms of the listed terms is at most
+
+    1 + sum_(k>=0) ||H||2 rho^k z^k <= 1+28 = 29.    (2)
+
+The weight of the term -I is one; the weight of H E^k is z^k. We do not
+assume the terms commute across different factors.
+
+## 2. The apparently dense rotation also has this expansion
+
+Write J for the permutation swapping the two halves and
+
+    Abar = diag(-A_T, A_T),
+    R = J C_2(Abar) = [[0,B],[B*,0]],
+    V = c I + i s R,
+    c = 1/sqrt(1+e^2),  s = e/sqrt(1+e^2), e=1/512.
+
+Inserting (1), V has precisely three branch types: cI; -i s J; and
+i s J H E^k, k>=0. Its weighted absolute norm sum is at most
+
+    c+s*29 <= 1+29/512.
+
+V^-1 changes the sign of s and has the same bound. A complete S or S^-1
+therefore has weighted absolute norm sum at most
+
+    K = 29^2(1+29/512) < 1024.                       (3)
+
+The order of factors in S^-1 is reversed but this argument is unchanged.
+Intervening unitary monomials have norm one and one nonzero per row.
+
+## 3. Global total-degree truncation controls the error without log t
+
+Expand the entire t-stage word using (1). Each term chooses one of at most
+12 branch patterns per stage (2 path branches times 2 path branches times
+3 rotation branches). It contains at most 3t geometric indices. Its degree
+is the SUM of those indices; identity branches have degree zero.
+
+Absolute convergence and norm submultiplicativity give
+
+    sum_terms z^degree ||term||2 <= K^t < 1024^t.
+
+Let G_L be the sum of all terms of total degree at most L. Then
+
+    ||word-G_L||2 <= 1024^t z^(-L).                 (4)
+
+This truncates the WHOLE expansion by total degree, rather than assigning
+error 1/t to every stage. This distinction avoids an unnecessary log t loss.
+For t>=1 choose L=604t. Directly, 1024*(72/73)^604<1/4, so (4) is <1/4.
+
+## 4. The union of supports is still only exponential in t
+
+For a fixed branch pattern, the number of nonnegative tuples of at most
+3t indices with sum<=L is at most binom(L+3t,3t)<=2^(L+3t).
+Zero-padding the unused indices makes this inequality valid even when some
+branches are identities. There are at most 12^t branch patterns.
+
+One term has at most 3t factors H, each with row support at most 4, and
+total L or fewer factors E, each with row support at most 10. Monomials do
+not increase the maximum row support. Multiplication multiplies the maximum
+row-support bound. Summing all terms only unions their supports. Thus every
+row of G_L has at most
+
+    12^t * 2^(L+3t) * 4^(3t) * 10^L
+      = 6144^t * 20^L
+      = [6144 * 20^604]^t                            (5)
+
+nonzero positions. The bound can exceed N; that is harmless. This explicitly
+counts the supports of ALL retained terms, not only one selected term.
+
+## 5. Fourier flatness forces almost full support
+
+If F is a flat unitary and a row of G has at most s nonzeros, then on at
+least N-s coordinates that row of F-G has squared magnitude 1/N. Therefore
+
+    ||F-G||2 >= ||e_i^*(F-G)||2 >= sqrt(1-s/N)
+
+whenever s<=N. Hence ||F-G||2<1/4 requires s>15N/16 for every row. Combining
+this with (4)-(5) gives the stated stage-count inequality. A scalar multiple
+of a flat unitary is covered when its modulus is one, as necessarily holds
+for a product of the allowed unitary factors. A separate overall nonzero
+normalization can be divided out first.
+
+## Why this does not contradict the attachment
+
+The phase-12 stage may simultaneously be exactly unitary, have robust
+Omega(N) balanced-cut singular values in every order, have an O(N) inverse,
+and have polynomially growing induced 1-condition. Those properties do not
+make it Fourier-flat. This proof controls spectral-norm approximation by
+row-sparse matrices, a property not captured by those earlier proxies.
+
+The argument uses classical sparse polynomial/resolvent expansion and
+submultiplicativity. No claim about novelty in the literature is made.
+
+## 6. Fusion with the earlier rank-one Householder obstruction
+
+The bound survives adding B unitary factors of the form I+u v* (in
+particular Householders), at arbitrary positions in the word. Replacing
+those B factors by I changes the product by a matrix R of rank at most B,
+by telescoping one factor at a time. The remaining product W is unitary and
+contains only t phase-12 stages and monomials. Thus F=W+R.
+
+Let G be the sparse approximation to W above, with error delta<1/4 and
+maximum row support d=[6144*20^604]^t. If B<N, choose k=B+1 rows I. Let
+J exclude the union of G's support on those rows; at most d*k columns are
+excluded. On I-by-J, G is zero, hence
+
+    F[I,J] = R[I,J] + (W-G)[I,J].                    (6)
+
+The first term has rank at most k-1 and the second has norm at most delta.
+On the other hand, flatness and orthonormality of the selected rows give
+
+    F[I,J] F[I,J]* = I_k - F[I,J^c] F[I,J^c]*,
+    ||F[I,J^c]||2^2 <= ||F[I,J^c]||F^2 <= d*k^2/N.
+
+Consequently the k-th singular value of F[I,J] is at least
+sqrt(1-d*k^2/N) when the expression is positive. Equation (6), or the
+best rank-(k-1) approximation bound, makes that singular value at most
+delta. Therefore
+
+    d*(B+1)^2 >= (1-delta^2)*N > 15N/16.             (7)
+
+If d*k^2/N>=1, (7) is already automatic. This also covers any dimensional
+edge case where J has fewer than k columns. If B>=N the desired overall
+factor-count consequence is immediate. For t=0 the remaining product is
+itself a monomial, so take d=1, delta=0 without approximation.
+
+Taking logs of (7) and using log(B+1)<=B yields, for N large enough,
+
+    t+B >= log(15N/16) / [log(6144)+604 log(20)]
+         = Omega(log N).
+
+This is an approximate-sparse-plus-low-rank bridge to the earlier
+Householder gate. It does not charge a sparse rank-one update as a full
+array pass automatically; an Omega(N log N) execution statement requires
+that each counted phase-12/Householder factor is actually evaluated as a
+separately charged Theta(N)-work pass. Algebraic fusion remains outside.

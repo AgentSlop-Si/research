@@ -1,0 +1,42 @@
+"""Stable noncommuting Green-product obstruction: numerical controls.
+
+The theorem is analytic, not numerical: if each B^{-1} has bounded induced
+l1 norm, the 1-norm budget of products of sums cannot match normalized DFT.
+"""
+from __future__ import annotations
+import numpy as np
+
+
+def example(n:int,q=2,t=2,seed=1901,diag=2.6,off=0.7):
+    assert n>=4
+    rng=np.random.default_rng(seed+n)
+    F=np.fft.fft(np.eye(n, dtype=np.complex128),axis=0,norm='ortho')
+    M=np.eye(n,dtype=np.complex128)
+    # |diag|-sum adjacent magnitudes >= 2.6 - 1.4 = 1.2
+    delta=diag-2*off
+    assert delta>0
+    per_stage=[]
+    for _ in range(t):
+        S=np.zeros((n,n),dtype=np.complex128)
+        for _ in range(q):
+            T=np.eye(n,dtype=np.complex128)*diag
+            for i in range(n-1):
+                T[i,i+1]=off*np.exp(1j*rng.uniform(-np.pi,np.pi))
+                T[i+1,i]=off*np.exp(1j*rng.uniform(-np.pi,np.pi))
+            perm=rng.permutation(n)
+            phases_l=np.exp(1j*rng.uniform(-np.pi,np.pi,size=n))
+            phases_r=np.exp(1j*rng.uniform(-np.pi,np.pi,size=n))
+            G=np.linalg.inv(T)
+            S[np.ix_(perm,perm)]+=phases_l[:,None]*G*phases_r[None,:]
+        per_stage.append(float(np.linalg.norm(S,ord=1)))
+        M=S@M
+    budget=(q/delta)**t
+    m1=float(np.linalg.norm(M,ord=1))
+    error=float(np.linalg.norm(F-M,ord=2))
+    floor=max(0.,1.-budget/np.sqrt(n))
+    assert m1<=budget+1e-9
+    assert error+1e-8>=floor
+    return {'n':n,'q':q,'t':t,'column_diagonal_dominance_margin':delta,
+            'stage_l1_norms':per_stage,'product_l1_norm':m1,
+            'rigorous_product_l1_budget':budget,
+            'rigorous_spectral_error_floor':floor,'actual_spectral_error':error}

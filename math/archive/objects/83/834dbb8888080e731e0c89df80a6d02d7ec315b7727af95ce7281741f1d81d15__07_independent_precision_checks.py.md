@@ -1,0 +1,37 @@
+# Full-source review 07: independent_precision_checks.py
+
+- SHA-256: dd56291f8365fca6db37199e80f244f07fc9ec053af06ec6106dc3b884b8ee22
+- Exact bytes: 8971; complete lines read: 1–186
+- Assigned batch: 02_addition_1906_centered_01.json
+- Representative path: additions/1906_centered/precision_audit/independent_precision_checks.py
+- Snapshot: ../source_snapshots/07_independent_precision_checks.py.txt
+- Method: complete first-to-last inert reading, dependency-context inspection, and stored-evidence reconciliation. No supplied execution/import/compilation/syntax parse.
+- Findings: F01, F07
+- New exact-hash full-review credit: yes, subject to final concurrent deduplication check.
+
+## Verdict and material finding
+Full static read complete. **F01: concrete source/report/result version mismatch.** Exact source dd56291f… cannot emit the exact saved CHECK_RESULTS.json ddd6a933… on any successful ordinary execution: line 110 unconditionally inserts source_centered_envelope, absent from the saved object; line 111 assigns centered_envelope=2 exp(pi/4)−1≈3.3865601014760305, while the saved result and log report 4.248775573118824. At H=0, lines 160–165 similarly use tighter factorial majorants with mass tending to 3.3865601; the saved mass is 4.24877557. The difference is far larger than truncation/rounding. This is a version-binding defect; it is not evidence of fabricated output, a failure of either safe envelope, or a demonstrated error in the saved FFT implementation.
+
+## Complete control-flow audit
+- Lines 1–11: imports mpmath and sets global 110-decimal precision; explicitly disclaims interval certification. Loads an inert summary relative to __file__.
+- Lines 13–36: exact-integer nearest-grid construction; factorial Bessel-tail majorant with infinity when the geometric bound denominator is unsafe; old/new rank search through r=299; finite parameter optimization over R=1,…,49 and H=0,…,11. Tie selection is the first strict-minimum proxy, not proof of a globally optimal algorithm. K=q//M assumes positive valid divisibility; saved configurations satisfy it. rank may exhaust and choose may return None outside the fixed inputs, but neither is a current failing call.
+- Lines 38–62: binary-significand nearest rounding of real and imaginary components; explicit four rounded real products/two additions; Taylor term generation and rounded accumulation. Exponent range is unbounded, with no IEEE underflow/overflow model. Global high precision is a reference mechanism, not directed rounding.
+- Lines 64–85: exact residuals, bounded-angle anchors and two transition roots, reanchoring every B terms with p+guard-bit arithmetic. Ratios follow r[k+1]−r[k]=q−d*n for d in {1,2}; this is the correct carrier sign. Pi is taken from mpmath and the code expressly isolates certified pi construction, so it does not implement the report's complete outward-rounded pi contract. The diagnostic max error uses mpmath exp, not interval containment.
+- Lines 87–91: factorial Bessel series uses successive terms −z²/[4j(m+j)] and the leading (z/2)^m/m!; handles negative/zero/tiny real z by integer parity and zero powers correctly.
+- Lines 93–111: compares 24 saved rank choices and 28 proxy choices against high-precision formulas, then emits both the looser source envelope and sharper centered envelope. The copied SOURCE_RESULT_SUMMARY.json exactly matches the retained extracted original. This comparison is a finite reproducibility check, not an implementation benchmark.
+- Lines 112–123: exact small grids and 32,896 carrier transition relations; code records the largest high-precision discrepancy but does not assert a numerical tolerance on max_phase. The underlying identity is algebraic, as above; the stored tiny discrepancy remains numerical support, not a hard test gate.
+- Lines 124–137: twelve allowed-error product-model controls showing accumulation proportional to k rather than tree depth. They model coherent local/leaf perturbations, not an actual recorded IEEE execution or a proof SciPy makes these errors.
+- Lines 138–142: twelve explicitly rounded reanchored controls at p=24,53,80 and four n values. Each asserts error below the target against the high-precision reference. No certificate covers all p,N or primitive implementations.
+- Lines 143–155: 287 Bessel controls at orders 0,…,40 and seven signed/zero/tiny arguments; truncated-series tail comparisons are numerical checks around an analytic sufficient bound.
+- Lines 156–168: four symmetric factorial-envelope convolutions. Truncation at r=99 omits a tiny positive tail; it is correctly checked as near equality, not literally finite exact equality. The computed convolution mass differs materially from the saved old-envelope data (F01).
+- Lines 169–181: three forward-order recurrence seed-amplification examples. They concern a proposed recurrence substitute; the retained v12 code evaluates Bessel functions separately, so this is not an observed v12 runtime failure.
+- Lines 182–186: writes CHECK_RESULTS.json and prints summary only after preceding assertions in an unoptimized run. Current output necessarily has the new envelope field/value.
+
+## Envelope correctness and precise impact
+Both the tighter and looser majorants are mathematically safe in the stated **real-argument** domain. Poisson's integral for integer m≥0 gives |J_m(z)|≤(|z|/2)^m/m!, because |cos(zt)|≤1 and the beta integral normalizes to 1/m!. Integer-order parity covers negative z and negative orders. With |z|≤pi/2, the symmetric majorant mass is 1+2 sum(m≥1)(pi/4)^m/m!=2 exp(pi/4)−1. The report's extra exp(pi²/32) factor and corresponding positive local factors are ≥1, so they remain looser safe bounds. This implication is derived here from [NIST DLMF 10.9.4](https://dlmf.nist.gov/10.9.E4); it must not be extended to arbitrary complex z. Thus F01 withdraws exact-run attribution of the saved envelope/convolution receipt to dd56291f…, not the validity of either envelope or all unrelated analytical results.
+
+## Search for the generating version
+PRECISION_VARIANT_SEARCH.json records the bounded search: frozen code-byte corpus marker search plus all standalone independent_precision_checks.py and named centered-independent-supplement ZIP occurrences under shared storage. All 25 located occurrences use dd56291f…. No exact older checker was recovered. Saved results match the looser formula in the preserved report at the formula level; that is not enough to invent an older source hash or execution history. The archive's manifests successfully seal the current source, old-envelope report, and old-envelope result together; checksums do not establish that one generated the other.
+
+## Cost, guards, and next step
+The checker uses bounded finite searches and many high-precision reference transcendental calls. Reanchored carrier construction has O(N+B+L_gamma) scalar-work form for its simulator, but all reference exp calls, precision-dependent costs, source-grid search, factorial/Bessel checks, and output storage are additional audit work. N-sized lists consume O(N) reference-number storage. There is no uniform runtime proof over arbitrary precision. Assertions disappear under -O; installed mpmath is unpinned and the global reference precision is fixed. Safe next step is to retain all sealed originals, mark the mismatched receipt as historical/unbound to this source, and produce a separately authorized new receipt or recover a genuine older source. No such source execution or original rewrite was performed here.

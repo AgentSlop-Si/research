@@ -1,0 +1,272 @@
+   1 #!/usr/bin/env python3
+   2 """Independent exact controls for the sparse-prefix/additive-tail theorem.
+   3 Authored for this audit. Does not read, import, or execute uploaded programs.
+   4 Only the standard library is used. The tests do not establish asymptotic novelty.
+   5 """
+   6 import argparse, itertools as it, json, math, random
+   7 from pathlib import Path
+   8 
+   9 
+  10 def rank(A, p):
+  11     B=[list(map(lambda x:x%p,row)) for row in A]
+  12     if not B:return 0
+  13     h=0
+  14     for j in range(len(B[0])):
+  15         z=next((z for z in range(h,len(B)) if B[z][j]),None)
+  16         if z is None:continue
+  17         B[z],B[h]=B[h],B[z]
+  18         u=pow(B[h][j],-1,p)
+  19         B[h]=[x*u%p for x in B[h]]
+  20         for z in range(h+1,len(B)):
+  21             u=B[z][j]
+  22             if u:B[z]=[(x-u*y)%p for x,y in zip(B[z],B[h])]
+  23         h+=1
+  24         if h==len(B):break
+  25     return h
+  26 
+  27 
+  28 def inv(A,p):
+  29     n=len(A);B=[[(x%p) for x in row]+[int(i==j) for j in range(n)] for i,row in enumerate(A)]
+  30     for j in range(n):
+  31         z=next((z for z in range(j,n) if B[z][j]),None)
+  32         assert z is not None
+  33         B[z],B[j]=B[j],B[z]
+  34         u=pow(B[j][j],-1,p);B[j]=[x*u%p for x in B[j]]
+  35         for i in range(n):
+  36             if i!=j and B[i][j]:
+  37                 u=B[i][j];B[i]=[(x-u*y)%p for x,y in zip(B[i],B[j])]
+  38     return [row[n:] for row in B]
+  39 
+  40 
+  41 def ident(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+  42 def sub(A,X,Y):return [[A[i][j] for j in Y] for i in X]
+  43 def product(A,B,p):return [[sum(x*y for x,y in zip(row,col))%p for col in zip(*B)] for row in A]
+  44 
+  45 
+  46 def separated(X,Y,a,b):
+  47     return not X or not Y or max(a[i] for i in X)<min(b[j] for j in Y) or max(b[j] for j in Y)<min(a[i] for i in X)
+  48 
+  49 
+  50 def select_by_threshold(X,Y,a,b):
+  51     """Search all cuts, unlike the source's four-extreme-sets procedure."""
+  52     h,k=len(X)//2,len(Y)//2
+  53     if not h or not k:return X[:h],Y[:k]
+  54     labels=sorted(set(a[i] for i in X)|set(b[j] for j in Y))
+  55     for cut in labels:
+  56         xl=[i for i in X if a[i]<=cut];xr=[i for i in X if a[i]>cut]
+  57         yl=[j for j in Y if b[j]<=cut];yr=[j for j in Y if b[j]>cut]
+  58         if len(xl)>=h and len(yr)>=k:return xl[:h],yr[:k]
+  59         if len(xr)>=h and len(yl)>=k:return xr[:h],yl[:k]
+  60     raise AssertionError('No separating cut')
+  61 
+  62 
+  63 def selection_tests():
+  64     c=0
+  65     # Each pair of position subsets includes all possible relative order/tie types.
+  66     for n in range(2,9):
+  67         sets=[z for k in range(2,n+1) for z in it.combinations(range(n),k)]
+  68         for X in sets:
+  69             for Y in sets:
+  70                 R,C=select_by_threshold(list(X),list(Y),range(n),range(n))
+  71                 assert len(R)==len(X)//2 and len(C)==len(Y)//2
+  72                 assert separated(R,C,range(n),range(n));c+=1
+  73     rng=random.Random(7193);multi=0;vacuous=0
+  74     for n in range(1,66):
+  75         for s in [1,2,3,4,7,70]:
+  76             for d in range(1,7):
+  77                 orders=[]
+  78                 for _ in range(d):
+  79                     a=list(range(n));b=list(range(n));rng.shuffle(a);rng.shuffle(b);orders.append((a,b))
+  80                 X=list(range(n//s));Y=list(range(n))
+  81                 for a,b in orders:X,Y=select_by_threshold(X,Y,a,b)
+  82                 m=n//(s*2**d)
+  83                 assert len(X)==m and len(Y)==n//2**d and len(Y)>=s*m
+  84                 assert all(separated(X,Y,a,b) for a,b in orders)
+  85                 multi+=1;vacuous+=not m
+  86     return {'exhaustive_relative_position_cases':c,'iterated_cases':multi,'vacuous_m_zero_cases':vacuous}
+  87 
+  88 
+  89 def prime_fourier_minors():
+  90     out=[]
+  91     for n in [2,3,5,7]:
+  92         total=0;terms=0
+  93         for k in range(1,n+1):
+  94             permutations=[]
+  95             for pi in it.permutations(range(k)):
+  96                 parity=sum(pi[i]>pi[j] for i in range(k) for j in range(i+1,k))%2
+  97                 permutations.append((pi,(-1)**parity))
+  98             for X in it.combinations(range(n),k):
+  99                 for Y in it.combinations(range(n),k):
+ 100                     c=[0]*n
+ 101                     for pi,sgn in permutations:
+ 102                         c[sum(X[i]*Y[pi[i]] for i in range(k))%n]+=sgn
+ 103                     # In Q[z]/Phi_n, Phi_n=1+...+z^(n-1): zero iff c is constant.
+ 104                     assert len(set(c))>1
+ 105                     total+=1;terms+=len(permutations)
+ 106         out.append({'N':n,'nonempty_square_minors':total,'signed_determinant_terms':terms})
+ 107     return out
+ 108 
+ 109 
+ 110 def cauchy(n,p):return [[pow(i+n+j+1,-1,p) for j in range(n)] for i in range(n)]
+ 111 
+ 112 
+ 113 def cauchy_and_mixing():
+ 114     p=101;n=7;T=cauchy(n,p);minors=0
+ 115     for k in range(1,n+1):
+ 116         for X in it.combinations(range(n),k):
+ 117             for Y in it.combinations(range(n),k):assert rank(sub(T,X,Y),p)==k;minors+=1
+ 118     rng=random.Random(99653);checks=0
+ 119     for s in [1,2,3,4]:
+ 120         for rep in range(3):
+ 121             # Invertible upper triangular matrices with exactly bounded row support.
+ 122             P=ident(n)
+ 123             for i in range(n):
+ 124                 J=list(range(i+1,n));rng.shuffle(J)
+ 125                 for j in J[:s-1]:P[i][j]=rng.randrange(1,p)
+ 126             PT=product(P,T,p)
+ 127             for m in range(1,n//s+1):
+ 128                 for X in it.combinations(range(n),m):
+ 129                     for Y in it.combinations(range(n),s*m):
+ 130                         assert rank(sub(PT,X,Y),p)==m;checks+=1
+ 131     # Failure when |Y|<s*m, despite invertible row-two-sparse P and full-spark T.
+ 132     P=ident(n);P[0][0]=T[1][0];P[0][1]=-T[0][0]%p
+ 133     assert rank(P,p)==n and product(P,T,p)[0][0]==0
+ 134     # Failure without independence of selected preconditioner rows.
+ 135     Z=ident(n);Z[1]=Z[0][:]
+ 136     assert rank(sub(product(Z,T,p),[0,1],[0,1]),p)==1
+ 137     # Composite Fourier control: omega=4 in GF(17), rows/columns 0,2.
+ 138     F=[[pow(4,i*j,17) for j in range(4)] for i in range(4)]
+ 139     assert rank(sub(F,[0,2],[0,2]),17)==1
+ 140     return {'cauchy_all_minors':minors,'sparse_mixing_rectangles':checks,
+ 141             'insufficient_column_control':{'N':n,'p':p,'s':2,'m':1,'columns':[0],'rank':0,'P_first_row':P[0]},
+ 142             'singular_preconditioner_control_rank':1,'composite_fourier_2_by_2_control_rank':1}
+ 143 
+ 144 
+ 145 def cycle(n,rng):
+ 146     order=list(range(n));rng.shuffle(order);succ=[0]*n;pos=[0]*n
+ 147     for k,i in enumerate(order):succ[i]=order[(k+1)%n];pos[i]=k
+ 148     return succ,pos
+ 149 
+ 150 
+ 151 def weights(n,p,rng,zero):
+ 152     w=[rng.randrange(1,p) for _ in range(n)]
+ 153     if zero:w[rng.randrange(n)]=0
+ 154     if math.prod(w)%p==1:w[0]=0
+ 155     return w
+ 156 
+ 157 
+ 158 def difference(n,p,rng,zero):
+ 159     succ,pos=cycle(n,rng);w=weights(n,p,rng,zero);A=ident(n)
+ 160     for i in range(n):A[i][succ[i]]=(A[i][succ[i]]-w[i])%p
+ 161     return A,succ,pos,w
+ 162 
+ 163 
+ 164 def green_branch(n,p,rng,zero,order_template=None):
+ 165     A,succ,pos,w=difference(n,p,rng,zero)
+ 166     # Ordinary Gauss-Jordan, independently avoids the uploaded path-product formula.
+ 167     G=inv(A,p)
+ 168     assert all((G[i][j]-w[i]*G[succ[i]][j])%p==int(i==j) for i in range(n) for j in range(n))
+ 169     if order_template is None:
+ 170         a=list(range(n));b=list(range(n));rng.shuffle(a);rng.shuffle(b)
+ 171     else:a,b=order_template
+ 172     labels_by_pos=[pos.index(i) for i in range(n)]
+ 173     rm=[labels_by_pos[x] for x in a];cm=[labels_by_pos[x] for x in b]
+ 174     ls=[rng.randrange(1,p) for _ in range(n)];rs=[rng.randrange(1,p) for _ in range(n)]
+ 175     H=[[ls[i]*G[rm[i]][cm[j]]*rs[j]%p for j in range(n)] for i in range(n)]
+ 176     return H,a[:],b[:]
+ 177 
+ 178 
+ 179 def green_rank_tests():
+ 180     rng=random.Random(716153);rectangles=0;branches=0
+ 181     for n in [3,5,8,13,29]:
+ 182         for zero in [False,True]:
+ 183             H,a,b=green_branch(n,1009,rng,zero);branches+=1
+ 184             for cut in range(n-1):
+ 185                 X=[i for i in range(n) if a[i]<=cut];Y=[j for j in range(n) if b[j]>cut]
+ 186                 U=[i for i in range(n) if a[i]>cut];V=[j for j in range(n) if b[j]<=cut]
+ 187                 assert rank(sub(H,X,Y),1009)<=1 and rank(sub(H,U,V),1009)<=1
+ 188                 rectangles+=2
+ 189     return {'independently_inverted_branches':branches,'maximal_strict_rectangles':rectangles,'zero_edge_cases':branches//2}
+ 190 
+ 191 
+ 192 def primality(x):
+ 193     if x<2:return False
+ 194     return all(x%k for k in range(2,math.isqrt(x)+1))
+ 195 
+ 196 
+ 197 def root_and_field(n):
+ 198     k=1000
+ 199     while not primality(n*k+1):k+=1
+ 200     p=n*k+1
+ 201     for x in range(2,p):
+ 202         w=pow(x,k,p)
+ 203         if w!=1:return p,w
+ 204     raise AssertionError
+ 205 
+ 206 
+ 207 def prefix(n,p,t,rng):
+ 208     P=ident(n)
+ 209     for layer in range(t):
+ 210         shuffle=list(range(n));rng.shuffle(shuffle)
+ 211         scales=[rng.randrange(1,p) for _ in range(n)]
+ 212         M=[[scales[i]*v%p for v in P[shuffle[i]]] for i in range(n)]
+ 213         _,succ,_,w=difference(n,p,rng,layer%2==1)
+ 214         P=[[(x-w[i]*y)%p for x,y in zip(M[i],M[succ[i]])] for i in range(n)]
+ 215     assert max(sum(x!=0 for x in row) for row in P)<=2**t
+ 216     return P
+ 217 
+ 218 
+ 219 def architecture_tests():
+ 220     rng=random.Random(919177);out=[]
+ 221     for n,t,Q in [(13,0,2),(29,1,2),(53,2,2),(101,1,3),(131,2,3),(257,3,3)]:
+ 222         p,w=root_and_field(n)
+ 223         for rep in range(2):
+ 224             # Explicit d refinement on second trial: last branch reuses first order pair.
+ 225             B=[]
+ 226             for j in range(Q):
+ 227                 template=(B[0][1],B[0][2]) if rep and j==Q-1 else None
+ 228                 B.append(green_branch(n,p,rng,j%2==1,template))
+ 229             orders=[]
+ 230             for _,a,b in B:
+ 231                 if (a,b) not in orders:orders.append((a,b))
+ 232             d=len(orders);s=2**t;P=prefix(n,p,t,rng)
+ 233             initial=list(range(n));rng.shuffle(initial);X=initial[:n//s];Y=list(range(n))
+ 234             for a,b in orders:X,Y=select_by_threshold(X,Y,a,b)
+ 235             m=n//(s*2**d)
+ 236             assert len(X)==m and len(Y)==n//2**d and len(Y)>=s*m and m>Q
+ 237             S=[k for k in range(n) if any(P[i][k] for i in X)]
+ 238             Fourier=[[pow(w,k*j,p) for j in Y] for k in S]
+ 239             R=rank(Fourier,p);assert R==len(S)
+ 240             A=[[sum(P[i][k]*pow(w,k*j,p) for k in S)%p for j in Y] for i in X]
+ 241             terms=[sub(H,X,Y) for H,_,_ in B]
+ 242             ranks=[rank(Z,p) for Z in terms]
+ 243             H=[[sum(Z[i][j] for Z in terms)%p for j in range(len(Y))] for i in range(m)]
+ 244             assert all(r<=1 for r in ranks) and rank(H,p)<=Q and rank(A,p)==m
+ 245             out.append({'N':n,'field':p,'root':w,'t':t,'Q':Q,'d':d,'s':s,'m':m,'columns':len(Y),
+ 246                         'support_union':len(S),'support_fourier_rank':R,'PT_rank':rank(A,p),
+ 247                         'tail_rank':rank(H,p),'branch_ranks':ranks})
+ 248     return out
+ 249 
+ 250 
+ 251 def integer_boundaries():
+ 252     cases=0
+ 253     for n in range(1,500):
+ 254         for s in [1,2,3,4,8]:
+ 255             for d in range(1,5):
+ 256                 for R in range(6):
+ 257                     assert (n//(s*2**d)<=R)==(n<s*2**d*(R+1));cases+=1
+ 258     assert 23<24 and not 29<24 and 47<48 and not 53<48
+ 259     return {'integer_equivalence_cases':cases,'first_excluded_primes_t1_Q2':29,'first_excluded_primes_t2_Q2':53}
+ 260 
+ 261 
+ 262 def main():
+ 263     ap=argparse.ArgumentParser();ap.add_argument('--output',default='INDEPENDENT_RESULTS.json');args=ap.parse_args()
+ 264     result={'status':'PASS','uploaded_code_executed':False,'scope':'sparse inverse prefix plus one additive tail only',
+ 265             'selection':selection_tests(),'cyclotomic_prime_minors':prime_fourier_minors(),
+ 266             'full_spark_mixing':cauchy_and_mixing(),'Green_rank':green_rank_tests(),
+ 267             'architectures':architecture_tests(),'boundaries':integer_boundaries()}
+ 268     Path(args.output).write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 269     print('PASS independent sparse-prefix/additive-tail controls')
+ 270     print(json.dumps({k:result[k] for k in ['selection','cyclotomic_prime_minors','full_spark_mixing','Green_rank','boundaries']},sort_keys=True))
+ 271     print('Architecture witnesses:',len(result['architectures']))
+ 272 if __name__=='__main__':main()

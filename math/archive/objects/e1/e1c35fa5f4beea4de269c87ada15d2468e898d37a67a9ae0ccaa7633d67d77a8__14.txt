@@ -1,0 +1,165 @@
+   1 """Independent audit derived from mathematical definitions, not uploaded code.
+   2 Only this script, standard-library modules, and NumPy are executed.
+   3 """
+   4 from pathlib import Path
+   5 import cmath, hashlib, json, math, random
+   6 import numpy as np
+   7 
+   8 P = 998244353
+   9 PRIMITIVE = 3
+  10 
+  11 def fft(a, inverse=False):
+  12     n=len(a); out=list(a); j=0
+  13     for i in range(1,n):
+  14         bit=n>>1
+  15         while j&bit: j^=bit; bit>>=1
+  16         j^=bit
+  17         if i<j: out[i],out[j]=out[j],out[i]
+  18     size=2
+  19     while size<=n:
+  20         w=pow(PRIMITIVE,(P-1)//size,P)
+  21         if inverse:w=pow(w,-1,P)
+  22         for start in range(0,n,size):
+  23             phase=1
+  24             for k in range(size//2):
+  25                 u=out[start+k];v=out[start+k+size//2]*phase%P
+  26                 out[start+k]=(u+v)%P;out[start+k+size//2]=(u-v)%P
+  27                 phase=phase*w%P
+  28         size*=2
+  29     if inverse:out=[v*pow(n,-1,P)%P for v in out]
+  30     return out
+  31 
+  32 def cycles(n,b):
+  33     seen=set(); result=[]
+  34     for k in range(n):
+  35         if k in seen:continue
+  36         cyc=[];j=k
+  37         while j not in seen:
+  38             seen.add(j);cyc.append(j);j=j*(1+b)%n
+  39         assert j==k
+  40         result.append(cyc)
+  41     return result
+  42 
+  43 def geometry(n,b):
+  44     l=n//b;records=[]
+  45     for cyc in cycles(n,b):
+  46         d=len(cyc);g=l//d;k=cyc[0]
+  47         assert k%g==0
+  48         u=k//g;assert 0<=u<b
+  49         if d>1:assert u%2
+  50         for e in range(d):
+  51             a=(pow(u,-1,d)*e)%d if d>1 else 0
+  52             c=(u*a-e)//d
+  53             records.append((cyc,e,d,g,u,a,c))
+  54     assert len(records)==n
+  55     return records
+  56 
+  57 def fold_spectra(top,n,b):
+  58     l=n//b;levels={l:[list(v) for v in top]};d=l
+  59     wb=pow(PRIMITIVE,(P-1)//b,P);count=0
+  60     while d>1:
+  61         prev=levels[d];now=[[0]*b for _ in range(d//2)]
+  62         for a in range(d//2):
+  63             for q in range(b//2):
+  64                 u=prev[a][2*q];v=pow(wb,q,P)*prev[a+d//2][2*q]%P
+  65                 now[a][q]=(u+v)%P;now[a][q+b//2]=(u-v)%P;count+=1
+  66         levels[d//2]=now;d//=2
+  67     assert count==(n-b)//2
+  68     return levels
+  69 
+  70 def extract(levels,n,b):
+  71     wb=pow(PRIMITIVE,(P-1)//b,P)
+  72     return [pow(wb,c%(b),P)*levels[d][a][u]%P for cyc,e,d,g,u,a,c in geometry(n,b)]
+  73 
+  74 def unfold(values,n,b):
+  75     l=n//b;wb=pow(PRIMITIVE,(P-1)//b,P)
+  76     levels={d:[[None]*b for _ in range(d)] for d in [1<<t for t in range(l.bit_length())]}
+  77     for val,(cyc,e,d,g,u,a,c) in zip(values,geometry(n,b)):
+  78         assert levels[d][a][u] is None
+  79         levels[d][a][u]=val*pow(wb,(-c)%b,P)%P
+  80     d=2;inv2=pow(2,-1,P);count=0
+  81     while d<=l:
+  82         low=levels[d//2];high=levels[d]
+  83         for a in range(d//2):
+  84             for q in range(b//2):
+  85                 u=low[a][q];v=low[a][q+b//2]
+  86                 assert u is not None and v is not None
+  87                 high[a][2*q]=(u+v)*inv2%P
+  88                 high[a+d//2][2*q]=(u-v)*inv2*pow(wb,-q,P)%P;count+=1
+  89         d*=2
+  90     assert count==(n-b)//2 and all(v is not None for row in levels[l] for v in row)
+  91     return levels[l]
+  92 
+  93 def direct_residual(x,n,b):
+  94     l=n//b;wb=pow(PRIMITIVE,(P-1)//b,P);ans=[]
+  95     for cyc,e,d,g,u,a,c in geometry(n,b):
+  96         k=cyc[0];r=g*e
+  97         ans.append(sum(x[j]*pow(wb,((k*j-r)//l)%b,P) for j in range(n) if (k*j-r)%l==0)%P)
+  98     return ans
+  99 
+ 100 def full_output(ax,n,b):
+ 101     wn=pow(PRIMITIVE,(P-1)//n,P);out=[None]*n;index=0
+ 102     for cyc in cycles(n,b):
+ 103         d=len(cyc);g=(n//b)//d
+ 104         row=[ax[index+e]*pow(wn,g*e,P)%P for e in range(d)]
+ 105         index+=d
+ 106         for k,v in zip(cyc,fft(row)):out[k]=v
+ 107     assert all(v is not None for v in out)
+ 108     return out
+ 109 
+ 110 def numerical_r(n,b):
+ 111     l=n//b;wb=cmath.exp(2j*math.pi/b)
+ 112     levels={l:np.eye(n,dtype=complex).reshape((l,b,n))};d=l
+ 113     while d>1:
+ 114         old=levels[d];new=np.zeros((d//2,b,n),dtype=complex)
+ 115         for a in range(d//2):
+ 116             for q in range(b//2):
+ 117                 v=wb**q*old[a+d//2,2*q]
+ 118                 new[a,q]=old[a,2*q]+v;new[a,q+b//2]=old[a,2*q]-v
+ 119         levels[d//2]=new;d//=2
+ 120     records=geometry(n,b)
+ 121     r=np.array([wb**c*levels[d][a,u] for cyc,e,d,g,u,a,c in records])
+ 122     g=np.array([v[3] for v in records])
+ 123     rhat=r/np.sqrt(g[:,None]);gram=rhat@rhat.conj().T
+ 124     assert np.max(np.abs(gram-np.eye(n)))<2e-12
+ 125     support=np.count_nonzero(np.abs(r)>1e-9,axis=1)
+ 126     assert np.array_equal(support,g)
+ 127     h=l.bit_length()-1
+ 128     assert int(support.sum())==n+n*h//2
+ 129     probs=abs(rhat)**2
+ 130     entropy=-sum(float(p)*math.log2(float(p)) for p in probs.flat if p>1e-15)
+ 131     assert abs(entropy-(n-b))<1e-9
+ 132     return {'N':n,'B':b,'gram_error':float(np.max(abs(gram-np.eye(n)))),'nnz_R':int(support.sum()),'entropy_R':entropy,'predicted_entropy_R':n-b}
+ 133 
+ 134 def main():
+ 135     rng=random.Random(1450);rows=[]
+ 136     for n,b in [(16,8),(32,8),(64,8),(128,16),(256,16),(256,128),(512,32),(1024,32),(2048,64),(4096,64)]:
+ 137         l=n//b
+ 138         x=[rng.randrange(P) for _ in range(n)]
+ 139         top=[fft(x[a::l]) for a in range(l)]
+ 140         levels=fold_spectra(top,n,b);ax=extract(levels,n,b)
+ 141         assert unfold(ax,n,b)==top
+ 142         restored=[0]*n
+ 143         for a,row in enumerate(unfold(ax,n,b)):
+ 144             restored[a::l]=fft(row,inverse=True)
+ 145         assert restored==x
+ 146         assert full_output(ax,n,b)==fft(x)
+ 147         if n<=1024:assert ax==direct_residual(x,n,b)
+ 148         hist={}
+ 149         for cyc in cycles(n,b):hist[len(cyc)]=hist.get(len(cyc),0)+1
+ 150         expected={1:b,**{1<<t:b//2 for t in range(1,l.bit_length())}}
+ 151         assert hist==expected
+ 152         base=n*(b.bit_length()-1)//2;fold=(n-b)//2
+ 153         orbit=sum(len(cyc)*(len(cyc).bit_length()-1)//2 for cyc in cycles(n,b))
+ 154         assert base+fold+orbit==n*(n.bit_length()-1)//2
+ 155         # Entropies of all three normalized factors, in bits.
+ 156         ebase=n*math.log2(b);efold=n-b;eorbit=n*(math.log2(l)-1)+b
+ 157         assert ebase+efold+eorbit==n*math.log2(n)
+ 158         assert (ebase,efold,eorbit)==(2*base,2*fold,2*orbit)
+ 159         rows.append({'N':n,'B':b,'L':l,'full_modular_equality':True,'direct_residual_checked':n<=1024,'inverse_round_trip':True,'butterflies':{'base':base,'fold':fold,'orbit':orbit,'total':base+fold+orbit},'entropy_bits':{'base':ebase,'fold':efold,'orbit':eorbit}})
+ 160     result={'scope':'Independent script; no uploaded code executed. Symbolic proofs separately audited.','modulus':P,'modular_cases':rows,'complex_cases':[numerical_r(n,b) for n,b in [(16,8),(32,8),(64,8),(128,16),(256,16)]],'all_passed':True}
+ 161     here=Path(__file__).parent
+ 162     (here/'independent_phase15_results.json').write_text(json.dumps(result,indent=2)+'\n')
+ 163     print(json.dumps(result,indent=2))
+ 164 
+ 165 if __name__=='__main__':main()

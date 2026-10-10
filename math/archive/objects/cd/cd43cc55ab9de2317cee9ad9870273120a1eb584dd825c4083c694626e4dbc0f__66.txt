@@ -1,0 +1,102 @@
+   1 """Independent audit: no imports from the factorization/search code.
+   2 
+   3 Checks exact Fourier Vandermonde ranks and Green-stage structural ranks.
+   4 This does not constitute a new FFT implementation or an all-length formal proof.
+   5 """
+   6 from __future__ import annotations
+   7 import json
+   8 from pathlib import Path
+   9 
+  10 
+  11 def echelon_rank(a, mod):
+  12     a=[list(map(lambda z:z%mod,row)) for row in a]
+  13     if not a:return 0
+  14     m=len(a);cols=len(a[0]);pivot=0
+  15     for col in range(cols):
+  16         k=pivot
+  17         while k<m and a[k][col]==0:k+=1
+  18         if k==m:continue
+  19         a[k],a[pivot]=a[pivot],a[k]
+  20         inv=pow(a[pivot][col],-1,mod)
+  21         for j in range(col,cols):a[pivot][j]=a[pivot][j]*inv%mod
+  22         for k in range(pivot+1,m):
+  23             mult=a[k][col]
+  24             if mult:
+  25                 for j in range(col,cols):
+  26                     a[k][j]=(a[k][j]-mult*a[pivot][j])%mod
+  27         pivot+=1
+  28         if pivot==m:break
+  29     return pivot
+  30 
+  31 
+  32 def modular_inverse(x,mod):
+  33     n=len(x)
+  34     a=[[(v%mod) for v in row]+[int(j==i) for j in range(n)] for i,row in enumerate(x)]
+  35     for i in range(n):
+  36         k=next((k for k in range(i,n) if a[k][i]),None)
+  37         if k is None:raise ValueError('not invertible')
+  38         a[i],a[k]=a[k],a[i]
+  39         fac=pow(a[i][i],-1,mod)
+  40         a[i]=[v*fac%mod for v in a[i]]
+  41         for k in range(n):
+  42             if k!=i:
+  43                 fac=a[k][i]
+  44                 if fac:
+  45                     a[k]=[(u-fac*v)%mod for u,v in zip(a[k],a[i])]
+  46     return [row[n:] for row in a]
+  47 
+  48 
+  49 def fourier_matrix(n,mod,gen):
+  50     root=pow(gen,(mod-1)//n,mod)
+  51     return [[pow(root,i*j,mod) for j in range(n)] for i in range(n)]
+  52 
+  53 
+  54 def qsrank_independent(a,mod):
+  55     n=len(a);v=0
+  56     for j in range(1,n):
+  57         v=max(v,echelon_rank([row[j:] for row in a[:j]],mod))
+  58         v=max(v,echelon_rank([row[:j] for row in a[j:]],mod))
+  59     return v
+  60 
+  61 
+  62 def green(n,mod):
+  63     def get(t):
+  64         mat=[[0]*n for _ in range(n)]
+  65         for i in range(n):
+  66             mat[i][i]=t
+  67             if i:
+  68                 mat[i][i-1]=-1
+  69                 mat[i-1][i]=-1
+  70         return modular_inverse(mat,mod)
+  71     a=get(3);b=get(4)
+  72     return [[(a[i][j]+b[i][j])%mod for j in range(n)] for i in range(n)]
+  73 
+  74 
+  75 def run():
+  76     checked=[]
+  77     for p, gen in ((998244353,3),(2013265921,31)):
+  78         for n in (8,16,32,64,128):
+  79             if (p-1)%n:continue
+  80             F=fourier_matrix(n,p,gen);m=n//2
+  81             # The analytic proof is Vandermonde, even if these rank tests pass.
+  82             half_ranks=[echelon_rank([F[i][j:j+m] for i in range(m)],p) for j in (0,m)]
+  83             assert half_ranks==[m,m]
+  84             odds=list(range(1,n,2)); evens=list(range(0,n,2))
+  85             # With only one external permutation the rank stays m.
+  86             assert echelon_rank([[F[i][j] for j in evens] for i in range(m)],p)==m
+  87             assert echelon_rank([[F[i][j] for j in odds] for i in range(m)],p)==m
+  88             assert echelon_rank([F[i][:m] for i in evens],p)==m
+  89             assert echelon_rank([F[i][m:] for i in evens],p)==m
+  90             if n <=32:
+  91                 S=green(n,p); qr=qsrank_independent(S,p)
+  92                 assert qr<=2,(n,p,qr)
+  93             else: qr=None
+  94             checked.append({'prime':p,'n':n,'full_rank_quadrants':half_ranks,
+  95                             'separate_green_sum_qsrank':qr,'two_r2_stages_ruled_out_by_bound':n>16})
+  96     Path(__file__).with_name('independent_results.json').write_text(json.dumps(checked,indent=2)+'\n')
+  97     print(f'PASS independent: {len(checked)} finite-field Fourier checks')
+  98     print(f'PASS independent: {sum(x["separate_green_sum_qsrank"] is not None for x in checked)} two-Green rank controls')
+  99     print('PASS independent: Vandermonde half-ranks hold in both primes')
+ 100     return checked
+ 101 
+ 102 if __name__=='__main__':run()

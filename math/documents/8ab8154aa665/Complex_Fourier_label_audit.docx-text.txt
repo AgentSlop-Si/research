@@ -1,0 +1,61 @@
+Complex Fourier network label compression
+
+Bounded exact certificate experiment, 8 October 2026
+
+Result
+
+A structural change to the pinned round-six complex network improves its certified recurrence saving from 0.000073861113 to 0.000073910830, a relative increase of 0.06731147%. The experiment shrinks 1,968 intermediate binary subspace labels by one dimension while preserving every tested local residual condition. Parameters, circuit, retained centres, role count and total residual rank stay fixed. This is a child-rank-distribution improvement. Because W, m and s are unchanged, the single-direction recurrence has no exponent improvement. Transfer to the earlier exact-DFT paper has not been proved; our earlier exact-DFT exponent is not improved by this certificate.
+
+The result does not improve the repository's integer-multiplication kappa: its bit-side certificate is the bottleneck. It is not a proved improvement to the earlier exact-DFT construction, a practical runtime claim, a Lean formalization, or a literature-wide novelty claim.
+
+Pinned input and exact counts
+
+Source: Swapnil-jain/integer-mult-kappa, commit f2176bc1124821bf17eb63725bd366d7bdc020a3. All bundled upstream files match their pinned Git blob hashes.
+
+  h = 24; v = C(24,3) = 2,024; m = h^2 = 576  Active producer nodes = 30,968  Auxiliary slots per invocation R = 49,208  Physical roles W = 207,387,136  Total residual rank s = 119,453,132,304  Rank deficit Wm-s = 1,858,032  Maximum child rank = 552, below m-1 = 575
+
+Both the original and modified networks have these counts. The baseline histogram agrees entry for entry with upstream lean/round6-histograms.json. The original Lean-side round-six saving uses the slightly smaller rational 36926111/(5*10^11). This comparison instead uses the same tighter cert.py moment method for both networks, avoiding a certificate-method advantage.
+
+The bounded change
+
+Each producer node is a sum of weight-three indicator inputs. Let S_n be their exact linear span over F_2. Upstream generally labels the node by its full coordinate cover, with a tighter rule for inputs and common-pair sums.
+
+For each node in topological order, candidates are S_n and S_n plus one coordinate unit from its cover, retaining only dimensions strictly below the original label. Candidates are sorted by dimension and canonical binary basis; the first legal one is accepted. This bounded greedy family tests 25,828 candidates. It is not an optimization over all subspaces.
+
+A candidate must remain nondegenerate and nonalternating, have a valid full space complement, contain its current argument labels with valid residuals, sit below its current user labels with valid residuals, and remain below every target triple's perpendicular space with valid residuals. Every final condition is checked again after all replacements. Retained total labels are required to remain exactly unchanged.
+
+Accepted dimension changes:  1,320 nodes: 5 to 4    600 nodes: 7 to 6     48 nodes: 11 to 10
+
+For a nested edge U <= V, the residual is V intersect U-perp. Validity means that a nonzero residual has nonsingular Gram matrix and at least one odd-weight vector. Those conditions permit an orthonormal basis over F_2. Using smaller support spans without checking these conditions is invalid.
+
+Validation and negative control
+
+The independent binary-form analyzer and an upstream-checker cross-checkboth pass all 140,064 local checks:  30,968 labels, 30,968 full-space complements,  57,888 producer edges, 20,240 output-piece edges.
+
+The wholesale support-span replacement is a failed negative control:  10,962 invalid labels and 10,962 invalid complements;  25,126 invalid producer edges and 792 invalid piece edges.Thus rank reduction alone does not justify the result.
+
+An independent ten-operation event replay rebuilds the complete child-rank histogram. A second check using the original hist.build schedule, with only the label dimensions substituted, matches every modified histogram entry. The two histograms have identical total rank and identical largest child.
+
+For child multiplicities n_r, the recurrence moment is
+
+  M(a) = sum_r [r*n_r/(W*m)] * (m/r)^a.
+
+The exact rational certificate proves M(a) < 1 at a = 7391083/100000000000. Its conservative gap is about 4.85653e-15. A separate Fraction-only implementation, using 50-term atanh logarithm bounds and a 12-term exponential expansion with an exact tail bound, also proves the inequality and proves M(a + 10^-12) > 1. The baseline's same-grid boundary is 73861113/10^12. The absolute certified gain is 49717/10^12. These rational checks use no floating-point acceptance test.
+
+What this establishes
+
+The scalar producer and arbitrary-scratch algebra are unchanged. Each mix still occurs at one common frame; all new frame transitions satisfy the same local admissibility checks. Copied retained centres, data endpoints and correction children retain their original interfaces and charges. Under the upstream whole-residual recursion and compiler assumptions, the modified histogram therefore supplies the improved complex certificate.
+
+This is a finite, reproducible certificate modification with a mathematical reduction to the upstream interface. It does not independently formalize that interface or its asymptotic transfer. No complete Fourier transform, tape implementation, finite-precision analysis, Lean build or benchmark was run. No external repository was edited, submitted to, or published.
+
+Reproduction
+
+Python 3.12, standard library only. From the extracted bundle directory:  python3 audit_reductions.py 24  python3 verify_independently.py
+
+The first command writes reduction_results.json, including all 1,968 concrete old/new bases and both complete histograms. The second writes independent_verification.json. REPORT.txt explains scope; upstream/manifest.json records source hashes; upstream/LICENSE and NOTICE preserve attribution.
+
+Falsification targets are a failed exact residual condition, a mismatch in any histogram entry or endpoint/copy charge, a failed rational moment inequality, or an invalid upstream compiler/interface transfer. A larger unsearched label family could give a different result; no optimality is claimed. The bounded experiment stops here.
+
+Primary sources
+
+Producer and labels  |  Baseline histogram  |  Copied centre interface  |  Attribution

@@ -1,0 +1,215 @@
+0001 #!/usr/bin/env python3
+0002 """Independent source-review controls. Never imports or executes uploaded code."""
+0003 from pathlib import Path
+0004 from itertools import product,combinations
+0005 from fractions import Fraction
+0006 from collections import Counter
+0007 import json,random,math,hashlib,zipfile
+0008 import sympy as sp
+0009 import numpy as np
+0010 HERE=Path(__file__).resolve().parent;rng=random.Random(22572306)
+0011 def field(n):
+0012     k=20
+0013     while not sp.isprime(k*n+1):k+=1
+0014     p=k*n+1;w=pow(int(sp.primitive_root(p)),k,p)
+0015     assert pow(w,n,p)==1 and all(pow(w,n//r,p)!=1 for r in sp.factorint(n))
+0016     return p,w
+0017 
+0018 def mm(A,B,p):return [[sum(a*b for a,b in zip(row,col))%p for col in zip(*B)] for row in A]
+0019 def rank(A,p):
+0020     a=[[v%p for v in r] for r in A];row=0
+0021     for col in range(len(a[0])):
+0022         pivot=next((i for i in range(row,len(a)) if a[i][col]),None)
+0023         if pivot is None:continue
+0024         a[row],a[pivot]=a[pivot],a[row];iv=pow(a[row][col],-1,p);a[row]=[iv*v%p for v in a[row]]
+0025         for i in range(row+1,len(a)):
+0026             c=a[i][col]
+0027             if c:a[i]=[(u-c*v)%p for u,v in zip(a[i],a[row])]
+0028         row+=1
+0029         if row==len(a):break
+0030     return row
+0031 
+0032 def inverse(A,p):
+0033     n=len(A);a=[[v%p for v in r]+[int(i==j) for j in range(n)] for i,r in enumerate(A)]
+0034     for j in range(n):
+0035         pivot=next((i for i in range(j,n) if a[i][j]),None)
+0036         if pivot is None:return None
+0037         a[j],a[pivot]=a[pivot],a[j];iv=pow(a[j][j],-1,p);a[j]=[iv*v%p for v in a[j]]
+0038         for i in range(n):
+0039             if i!=j and a[i][j]:
+0040                 c=a[i][j];a[i]=[(u-c*v)%p for u,v in zip(a[i],a[j])]
+0041     return [r[n:] for r in a]
+0042 
+0043 def F(n,w,p,sgn=-1):return [[pow(w,sgn*i*j,p) for j in range(n)] for i in range(n)]
+0044 def dft(v,w,p,sgn=-1):return [sum(x*pow(w,sgn*i*j,p) for j,x in enumerate(v))%p for i in range(len(v))]
+0045 def gl(n,p):
+0046     A=[[int(i==j) for j in range(n)] for i in range(n)]
+0047     for _ in range(5*n):
+0048         i,j=rng.sample(range(n),2);a=rng.randrange(p);A[i]=[(u+a*v)%p for u,v in zip(A[i],A[j])]
+0049     assert inverse(A,p) is not None
+0050     return A
+0051 
+0052 # Hero17: all three exact flattenings and endpoint gauges.
+0053 tensor=[];tensor_entries=0;gauge_entries=0;spectrum=[]
+0054 for Q,M in [(2,2),(2,4),(4,2),(3,4),(4,3),(3,5),(5,3),(4,4),(4,8),(8,4),(8,8)]:
+0055     N=Q*M;p,w=field(N);xi=pow(w,M,p);eta=pow(w,Q,p)
+0056     def t(s,h,t,u):return pow(w,-(h+M*s)*(t+Q*u),p)
+0057     for ss,hh,tt,uu in product(range(Q),range(M),range(Q),range(M)):
+0058         assert t(ss,hh,tt,uu)==pow(w,-hh*tt,p)*pow(xi,-ss*tt,p)*pow(eta,-hh*uu,p)%p
+0059         tensor_entries+=1
+0060     cuts=[[[t(ss,hh,tt,uu) for tt,uu in product(range(Q),range(M))] for ss,hh in product(range(Q),range(M))],
+0061           [[t(ss,hh,tt,uu) for hh,uu in product(range(M),repeat=2)] for ss,tt in product(range(Q),repeat=2)],
+0062           [[t(ss,hh,tt,uu) for hh,tt in product(range(M),range(Q))] for ss,uu in product(range(Q),range(M))]]
+0063     ranks=[rank(A,p) for A in cuts];assert ranks==[N,min(Q,M),N]
+0064     FQ=F(Q,xi,p);FM=F(M,eta,p)
+0065     gauges=[('identity',[[int(i==j) for j in range(Q)] for i in range(Q)],[[int(i==j) for j in range(M)] for i in range(M)]),
+0066             ('inverse_fourier',inverse(FQ,p),list(map(list,zip(*inverse(FM,p))))),('random_GL',gl(Q,p),gl(M,p))]
+0067     gc=[]
+0068     for label,A,B in gauges:
+0069         P=mm(A,FQ,p);R=mm(FM,list(map(list,zip(*B))),p);nnz=0
+0070         for a,h,tt,b in product(range(Q),range(M),range(Q),range(M)):
+0071             direct=sum(A[a][ss]*t(ss,h,tt,uu)*B[b][uu] for ss,uu in product(range(Q),range(M)))%p
+0072             pred=P[a][tt]*pow(w,-h*tt,p)*R[h][b]%p
+0073             assert direct==pred;gauge_entries+=1;nnz+=direct!=0
+0074         assert nnz==sum(v!=0 for r in P for v in r)*sum(v!=0 for r in R for v in r)>=N
+0075         if label=='inverse_fourier':assert nnz==N
+0076         gc.append({'gauge':label,'nonzeros':nnz})
+0077     tensor.append({'Q':Q,'M':M,'p':p,'ranks':ranks,'gauges':gc})
+0078     z=np.exp(-2j*np.pi/N)
+0079     cross=np.array([[z**((hh+M*ss)*(tt+Q*uu))/np.sqrt(N) for hh,uu in product(range(M),repeat=2)] for ss,tt in product(range(Q),repeat=2)])
+0080     V=np.array([[z**(h*t0) for h in range(M)] for t0 in range(Q)])
+0081     sv=np.linalg.svd(cross,compute_uv=False);vv=np.linalg.svd(V,compute_uv=False)
+0082     error=float(np.max(np.abs(sv[:min(Q,M)]-vv)))
+0083     assert error<1e-11 and np.max(sv[min(Q,M):],initial=0)<1e-11
+0084     spectrum.append({'Q':Q,'M':M,'max_singular_value_error':error})
+0085 counts=Counter()
+0086 for vals in product(range(5),repeat=4):
+0087     A=[list(vals[:2]),list(vals[2:])]
+0088     if inverse(A,5) is not None:counts[sum(v!=0 for r in mm(A,[[1,1],[1,4]],5) for v in r)]+=1
+0089 assert sum(counts.values())==480 and counts[2]**2==1024
+0090 
+0091 # Hero0: arbitrary-input forced recurrence, singular branches, and dual sparse probes.
+0092 forced=[];entries=singular=0
+0093 for K,M in [(4,4),(8,4),(8,8),(16,4)]:
+0094     N=K*M;p,w=field(N);wk=pow(w,M,p)
+0095     for trial in range(3):
+0096         x=[rng.randrange(p) for _ in range(N)];cols=[[x[b*M+t] for b in range(K)] for t in range(M)]
+0097         ft=[dft(v,wk,p) for v in cols]
+0098         lam=[rng.randrange(p) for _ in range(K)]
+0099         lam[trial%K]=pow(w,trial%K,p) # force denominator zero for j=0
+0100         e=[[(ft[t+1][ell]-lam[ell]*ft[t][ell])%p for ell in range(K)] for t in range(M-1)]
+0101         expected=dft(x,w,p);got=[0]*N;sc=0
+0102         for ell in range(K):
+0103             B=sum(e[t][ell]*pow(lam[ell],M-1-t,p) for t in range(M-1))%p
+0104             assert B==(lam[ell]*ft[-1][ell]-pow(lam[ell],M,p)*ft[0][ell])%p
+0105             for j in range(M):
+0106                 k=ell+j*K;z=pow(w,-k,p);r=lam[ell]*z%p
+0107                 finite=(ft[0][ell]*sum(pow(r,v,p) for v in range(M))+sum(e[t][ell]*pow(z,t+1,p)*sum(pow(r,v,p) for v in range(M-1-t)) for t in range(M-1)))%p
+0108                 if r==1:
+0109                     val=(M*ft[0][ell]+sum(e[t][ell]*pow(z,t+1,p)*(M-1-t) for t in range(M-1)))%p;sc+=1
+0110                 else:
+0111                     H=sum(e[t][ell]*pow(z,t,p) for t in range(M-1))%p
+0112                     val=(ft[0][ell]*(1-pow(r,M,p))+z*H-pow(z,M,p)*B)*pow((1-r)%p,-1,p)%p
+0113                 assert val==finite==expected[k];got[k]=val;entries+=1
+0114         singular+=sc;forced.append({'K':K,'M':M,'trial':trial,'full_outputs':N,'singular_denominators':sc})
+0115 # Exact sparse uniqueness and hidden dense aliases at K=8.
+0116 p,w=field(8);K=8;A=F(K,w,p)
+0117 for size in range(1,5):
+0118     for subset in combinations(range(K),size):assert rank([[A[i][j] for j in subset] for i in range(4)],p)==size
+0119 invA=inverse(A,p);hidden_spectrum=[0]*8;hidden_spectrum[4]=1
+0120 hidden_position=[r[4] for r in invA];assert all(v!=0 for v in hidden_position)
+0121 assert dft(hidden_position,w,p)==hidden_spectrum
+0122 hidden_time=[0]*8;hidden_time[4]=1;assert all(v!=0 for v in dft(hidden_time,w,p))
+0123 # Sparse single-event decoder in both domains, all nonzero amplitudes at all sites.
+0124 dual_cases=0
+0125 for b in range(K):
+0126     for a in [1,2,p-1]:
+0127         v=[0]*K;v[b]=a;spec=dft(v,w,p)
+0128         node=spec[1]*pow(spec[0],-1,p)%p
+0129         assert next(j for j in range(K) if pow(w,-j,p)==node)==b
+0130         ev=[0]*K;ev[b]=a;time=[a*row[b]%p for row in invA]
+0131         node=time[1]*pow(time[0],-1,p)%p
+0132         assert next(j for j in range(K) if pow(w,j,p)==node)==b
+0133         dual_cases+=2
+0134 # Exact Freivalds annihilator counting for two distinct ranks.
+0135 freivalds=[]
+0136 for R in [[[1,2],[2,4],[3,1]],[[1,0],[0,1],[1,1]],[[0,0],[0,0],[0,0]]]:
+0137     rr=rank(R,5);accepted=sum(all(sum(wv[i]*R[i][j] for i in range(3))%5==0 for j in range(2)) for wv in product(range(5),repeat=3))
+0138     assert accepted==5**(3-rr);freivalds.append({'rank':rr,'accepted':accepted,'trials':125})
+0139 
+0140 # Theory: cyclic solves including zero and singular weights, recurrences, sparse rank gate.
+0141 cycle_cases=[];p=65537
+0142 for n in [2,3,4,8,16,32]:
+0143     for mode in ['generic','one_zero','all_zero','singular_product_one']:
+0144         order=list(range(n));rng.shuffle(order);weights=[rng.randrange(1,p) for _ in range(n)]
+0145         if mode=='one_zero':weights[order[n//2]]=0
+0146         if mode=='all_zero':weights=[0]*n
+0147         if mode=='singular_product_one':weights[order[-1]]=pow(math.prod(weights[order[k]] for k in range(n-1))%p,-1,p)
+0148         A=[[int(i==j) for j in range(n)] for i in range(n)]
+0149         for t,i in enumerate(order):A[i][order[(t+1)%n]]=(A[i][order[(t+1)%n]]-weights[i])%p
+0150         den=(1-math.prod(weights))%p
+0151         if den==0:
+0152             assert inverse(A,p) is None;cycle_cases.append({'n':n,'mode':mode,'singular_correctly_guarded':True});continue
+0153         u=[rng.randrange(p) for _ in range(n)];prefix=1;num=0
+0154         for i in order:num=(num+prefix*u[i])%p;prefix=prefix*weights[i]%p
+0155         y=[0]*n;y[order[0]]=num*pow(den,-1,p)%p
+0156         for t in range(n-1,0,-1):i=order[t];y[i]=(u[i]+weights[i]*y[order[(t+1)%n]])%p
+0157         assert [sum(A[i][j]*y[j] for j in range(n))%p for i in range(n)]==u
+0158         dense=mm(inverse(A,p),[[v] for v in u],p);assert y==[v[0] for v in dense]
+0159         cycle_cases.append({'n':n,'mode':mode,'exact_equations':True})
+0160 recurrence=[]
+0161 for rho in [Fraction(0),Fraction(1,2),Fraction(1),Fraction(3,2),Fraction(2)]:
+0162     a=Fraction(1)
+0163     for h in range(1,41):
+0164         a=max(a,rho*a+1)
+0165         if rho<1:assert a<=max(Fraction(1),1/(1-rho))
+0166         elif rho==1:assert a==1+h
+0167         else:assert a==rho**h+(rho**h-1)/(rho-1)
+0168     recurrence.append({'rho':str(rho),'h':40,'exact_envelope':str(a)})
+0169 a=Fraction(1);u=Fraction(1,2)
+0170 for h in range(2,101):
+0171     a=2*Fraction(h-1,h)*a+1;v=h*a/Fraction(2**h)
+0172     assert v-u==Fraction(h,2**h);u=v
+0173 rankgates=[]
+0174 for n in [4,8,16,32]:
+0175     p,w=field(n);FF=F(n,w,p)
+0176     for d in [0,1,2,3]:
+0177         for trial in range(3):
+0178             S=[[0]*n for _ in range(n)]
+0179             for i in range(n):
+0180                 for j in rng.sample(range(n),min(d,n)):S[i][j]=rng.randrange(1,p)
+0181             R=rank([[(FF[i][j]-S[i][j])%p for j in range(n)] for i in range(n)],p)
+0182             bound=n//(d+1);assert R>=bound
+0183             r=bound;untouched=[j for j in range(n) if all(S[i][j]==0 for i in range(r))]
+0184             assert len(untouched)>=r and (r==0 or rank([[FF[i][j] for j in untouched[:r]] for i in range(r)],p)==r)
+0185             rankgates.append({'N':n,'d':d,'rank':R,'bound':bound})
+0186 
+0187 # Integrity, including exact inherited bundle/source equality.
+0188 hero17=HERE/'fft_hero17_phase6_tensor_cut_rigidity_2026-10-10/hero17_phase6_tensor_rigidity'
+0189 hero0=HERE/'fft_hero0_phase9_dense_cycle_2026-10-10/fft_hero0_phase9_dense_cycle_2026-10-10'
+0190 mass=HERE/'mass_contraction_bundle/fft_mass_contraction_theory'
+0191 verified=[]
+0192 for base in [hero17,mass]:
+0193     for line in (base/'SHA256SUMS.txt').read_text().splitlines():
+0194         if not line.strip():continue
+0195         digest,path=line.split(maxsplit=1);path=path.lstrip('* ')
+0196         assert hashlib.sha256((base/path).read_bytes()).hexdigest()==digest
+0197         verified.append(str((base/path).relative_to(HERE)))
+0198 for path,meta in json.loads((hero0/'SHA256SUMS.json').read_text()).items():
+0199     b=(hero0/path).read_bytes();assert len(b)==meta['size_bytes'] and hashlib.sha256(b).hexdigest()==meta['sha256'];verified.append(str((hero0/path).relative_to(HERE)))
+0200 prior=HERE/'inherited_reference'
+0201 pairs=[(hero0/'prior_phase8_bundle.zip',prior/'source/fft_hero0_phase8_weyl_cycle_2026-10-10.zip'),(hero0/'phase8_weyl_cycle.py',prior/'extracted/phase8_weyl_cycle.py'),(hero0/'phase6_exact.py',prior/'extracted/phase6_exact.py')]
+0202 assert all(a.read_bytes()==b.read_bytes() for a,b in pairs)
+0203 assert (mass/'THEORY.md').read_bytes()==(HERE/'THEORY.md').read_bytes()
+0204 result={'hero17':{'tensor_entries':tensor_entries,'gauged_entries':gauge_entries,'cases':tensor,'complex_spectrum_controls':spectrum,
+0205                   'GL2_F5_support_histogram':dict(counts),'GL2_F5_pairs_accounted':480**2,'minimum_support_pairs':counts[2]**2},
+0206         'hero0':{'forced_identity_cases':forced,'full_outputs_checked':entries,'singular_denominators':singular,
+0207                  'dual_single_event_decodes':dual_cases,'sparse_uniqueness_all_subsets_up_to_four_K8':True,
+0208                  'both_dense_probe_alias_controls':True,'freivalds_exact_counts':freivalds},
+0209         'mass_theory':{'cyclic_cases':cycle_cases,'constant_recurrences':recurrence,'harmonic_telescope_verified_through_height':100,
+0210                        'row_sparse_rank_controls':rankgates,'contracting_factorization_supplied':False},
+0211         'integrity':{'manifest_files_verified':len(verified),'verified_paths':verified,
+0212                      'inherited_phase8_bundle_and_two_sources_byte_identical':True,'standalone_theory_matches_bundle':True},
+0213         'scope':'Independent exact controls and proof review; no uploaded code run and no new uniform Fourier algorithm.'}
+0214 (HERE/'INDEPENDENT_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+0215 print(json.dumps({'tensor_entries':tensor_entries,'gauged_entries':gauge_entries,'forced_output_entries':entries,'singular_denominators':singular,'verified_manifest_files':len(verified)},indent=2))

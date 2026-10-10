@@ -1,0 +1,49 @@
+"""Generate finite no-go witnesses for 4 scans at n=128,256.
+Requires networkx for optimization; verification is separately dependency-free.
+"""
+import json,sys
+from pathlib import Path
+import networkx as nx
+here=Path(__file__).resolve().parent
+prev=Path('fft_three_stage_bitrev_gate_2026-10-10')
+sys.path.insert(0,str(prev/'fft_scan_network_gate_2026-10-09'))
+from scan_flow import make_graph
+from central_partition import partition,bitrev,modular_fft_minor,primitive_root_of_unity
+
+def shuffles(n,kind):
+ p=bitrev(n);k=n.bit_length()-1;m=k//2
+ if kind=='all_bitrev': return [p]*3
+ if kind=='middle_rotate':
+  def rotate(j):return ((j<<1)&(n-1))|(j>>(k-1))
+  return [p,[rotate(p[j]) for j in range(n)],p]
+ if kind=='middle_xor':
+  def mix(j):return j^(((j>>(m-1))&1)<<m)
+  return [p,[mix(p[j]) for j in range(n)],p]
+ raise ValueError(kind)
+
+def do(n,kind='all_bitrev'):
+ A,B,d,_=partition(n);pp=shuffles(n,kind);G,big=make_graph(n,[1]*4,pp)
+ source=('SOURCE',);sink=('SINK',)
+ for c in B:G.add_edge(source,(0,'x',c,'i'),capacity=big)
+ for r in A:G.add_edge((3,'y',r,'o'),sink,capacity=big)
+ val,(a,b)=nx.minimum_cut(G,source,sink,capacity='capacity',flow_func=nx.algorithms.flow.preflow_push)
+ crossing=[]
+ for u,v,attr in G.edges(data=True):
+  if u in a and v in b:
+   crossing.append({'from':list(u),'to':list(v),'capacity':attr['capacity']})
+ assert sum(e['capacity'] for e in crossing)==val
+ assert all(e['capacity']==1 for e in crossing)
+ assert val<=4*d if kind=='all_bitrev' else True
+ assert val<n//2,(n,kind,val,n//2)
+ cert={'n':n,'stage_orders':[1]*4,'permutation':kind,'shuffles':pp,
+       'input_set':'middle-partition B','output_set':'middle-partition A',
+       'fourier_rank':n//2,'upper_rank':int(val),
+       'cut_edges':crossing,'modular_determinants':[
+           {'prime':pp,'omega':primitive_root_of_unity(n,pp),'determinant':modular_fft_minor(n,pp)}
+           for pp in (12289,65537)]}
+ f=here/f'EXACT_NETWORK_CERTIFICATE_N{n}_{kind}.json';f.write_text(json.dumps(cert,indent=2)+'\n')
+ print('CREATED',f.name,'edges',len(crossing),'rank',n//2,'bound',val,'bytes',f.stat().st_size,flush=True)
+
+if __name__=='__main__':
+ for n in (128,256):do(n)
+ for kind in ('middle_rotate','middle_xor'):do(256,kind)

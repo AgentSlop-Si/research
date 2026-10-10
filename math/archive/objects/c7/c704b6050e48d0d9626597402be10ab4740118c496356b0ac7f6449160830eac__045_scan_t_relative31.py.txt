@@ -1,0 +1,38 @@
+import torch, math, cmath, json
+
+torch.set_default_dtype(torch.float64); cdtype=torch.complex128; n=16
+seq=[(4,5),(0,4),(6,14),(8,12),(2,3),(2,6),(2,10),(12,13),(7,15),(5,13),(13,15),(0,1),(10,14),(10,11),(1,9),(3,11),(1,5),(3,7),(9,11),(9,13),(5,7),(1,3),(11,15),(8,9),(0,8),(14,15),(0,2),(6,7),(12,14),(4,12),(8,10)]
+
+def targ(t):
+ A=torch.tensor([[1+0j,1+0j],[1+0j,complex(t)]],dtype=cdtype)
+ T=A
+ for _ in range(3): T=torch.kron(T,A)
+ return T
+
+def fit(t,seed,steps=650):
+ T=targ(t); g=len(seq); torch.manual_seed(seed)
+ z=torch.zeros((g,3,2),requires_grad=True); di=torch.zeros((n,2),requires_grad=True); do=torch.zeros((n,2),requires_grad=True)
+ with torch.no_grad(): z.normal_(0,.1); di.normal_(0,.03); do.normal_(0,.03)
+ pars=[z,di,do]
+ def ex(u): return torch.exp(u[...,0]+1j*u[...,1])
+ def build():
+  M=torch.diag(ex(di)); pv=ex(z)
+  for j,(x,y) in enumerate(seq):
+   p,q,r=pv[j,0],pv[j,1],pv[j,2]; s=complex(t)*q*r/p
+   ox=M[x,:]; oy=M[y,:]; nx=p*ox+q*oy; ny=r*ox+s*oy
+   M=M.clone();M[x,:]=nx;M[y,:]=ny
+  return torch.diag(ex(do))@M
+ opt=torch.optim.Adam(pars,lr=.02); best=1e9
+ scale=torch.abs(T)
+ for it in range(steps):
+  opt.zero_grad(); M=build(); R=(M-T)/scale
+  rel=torch.sqrt(torch.mean(torch.abs(R)**2)); loss=rel*rel
+  loss.backward(); torch.nn.utils.clip_grad_norm_(pars,30); opt.step(); best=min(best,rel.item())
+  if it in (350,520):
+   for pg in opt.param_groups:pg['lr']*=.3
+ return best
+vals=[-16,-8,-4,-2,-1,-.5,-.25,.25,.5,2,4,8,16,1j,-1j,cmath.exp(2j*math.pi/3),-1+1j,-1-1j]
+out=[]
+for i,t in enumerate(vals):
+ e=fit(t,12000+i); rec={'t_re':complex(t).real,'t_im':complex(t).imag,'rel_entry_rms':e};out.append(rec);print(rec,flush=True)
+json.dump(out,open('adaptive_fft_cpp/t_relative_scan31.json','w'),indent=2)

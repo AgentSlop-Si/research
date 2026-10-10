@@ -1,0 +1,203 @@
+   1 """Independent integer fixed-point Green bridge and a-posteriori certificates.
+   2 No uploaded code is imported. mpmath is used ONLY for external DFT/test oracles.
+   3 """
+   4 from fractions import Fraction as F
+   5 import math,json,random
+   6 import mpmath as mp
+   7 mp.mp.dps=100
+   8 
+   9 def rnd(a,b):
+  10     assert b>0
+  11     return (a+b//2)//b if a>=0 else -((-a+b//2)//b)
+  12 def add(a,b):return (a[0]+b[0],a[1]+b[1])
+  13 def sub(a,b):return (a[0]-b[0],a[1]-b[1])
+  14 def conj(a):return (a[0],-a[1])
+  15 def rawmul(a,b):return (a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0])
+  16 def mul(a,b,Q):
+  17     x,y=rawmul(a,b);return (rnd(x,Q),rnd(y,Q))
+  18 def scale(a,s,Q):return (rnd(a[0]*s,Q),rnd(a[1]*s,Q))
+  19 def div(a,s,Q):return (rnd(a[0]*Q,s),rnd(a[1]*Q,s))
+  20 def mass(a):return sum(abs(z[0])+abs(z[1]) for z in a)
+  21 def boxmax(a):return max((abs(z[0])+abs(z[1]) for z in a),default=0)
+  22 def roots(N,p):
+  23     Q=1<<p; L=p+10; guard=(p+1).bit_length()+20;G=Q<<guard
+  24     def atan(d):
+  25         total=0; power=d;k=0
+  26         while power*(2*k+1)<=G:
+  27             v=G//(power*(2*k+1));total+=v if k%2==0 else -v
+  28             power*=d*d;k+=1
+  29         return total
+  30     pi=16*atan(5)-4*atan(239);x=rnd(2*pi,N)
+  31     ct=G;st=x;c=ct;s=st
+  32     for k in range(L):
+  33         ct=-rnd(ct*x*x,G*G*(2*k+1)*(2*k+2))
+  34         st=-rnd(st*x*x,G*G*(2*k+2)*(2*k+3))
+  35         c+=ct;s+=st
+  36     root=(rnd(c,G//Q),rnd(s,G//Q))
+  37     out=[(Q,0)]
+  38     for _ in range(1,N):out.append(mul(out[-1],root,Q))
+  39     return out,F(8*N,Q)
+  40 def solve_source(x,a,Q):
+  41     coeff=[];prev=0
+  42     for i in range(len(x)):
+  43         prev=rnd(Q*Q,a*Q-prev);coeff.append(prev)
+  44     beta=[];prev=(0,0)
+  45     for v,c in zip(x,coeff):prev=scale(add(v,prev),c,Q);beta.append(prev)
+  46     z=beta[:]
+  47     for i in range(len(x)-2,-1,-1):z[i]=add(beta[i],scale(z[i+1],coeff[i],Q))
+  48     return z
+  49 
+  50 def tridiag(z,a):
+  51     out=[]
+  52     for i,v in enumerate(z):
+  53         r=(a*v[0],a*v[1])
+  54         if i:r=sub(r,z[i-1])
+  55         if i+1<len(z):r=sub(r,z[i+1])
+  56         out.append(r)
+  57     return out
+  58 
+  59 def source(x,Q):
+  60     z3=solve_source(x,3,Q);z4=solve_source(x,4,Q)
+  61     r3=[sub(a,b) for a,b in zip(x,tridiag(z3,3))]
+  62     r4=[sub(a,b) for a,b in zip(x,tridiag(z4,4))]
+  63     return [add(a,b) for a,b in zip(z3,z4)],F(2*mass(r3)+mass(r4),2*Q)
+  64 
+  65 def select(a,k):
+  66     if len(a)<=5:return sorted(a)[k]
+  67     med=[select(a[i:i+5],len(a[i:i+5])//2) for i in range(0,len(a),5)]
+  68     pivot=select(med,len(med)//2)
+  69     lo=[x for x in a if x<pivot];eq=[x for x in a if x==pivot]
+  70     if k<len(lo):return select(lo,k)
+  71     if k<len(lo)+len(eq):return pivot
+  72     hi=[x for x in a if x>pivot]
+  73     return select(hi,k-len(lo)-len(eq))
+  74 
+  75 def median_head(u):
+  76     N=len(u);q=math.gcd(N,4);h=[None]*N
+  77     for j in range(q):
+  78         idx=list(range(j,N,q));m=len(idx)//2
+  79         v=(select([u[k][0] for k in idx],m),select([u[k][1] for k in idx],m))
+  80         for k in idx:h[k]=v
+  81     return h,[sub(a,b) for a,b in zip(u,h)]
+  82 
+  83 def head_transform(h):
+  84     N=len(h);q=math.gcd(N,4);out=[(0,0)]*N
+  85     rotations=[(1,0),(0,1),(-1,0),(0,-1)]
+  86     for t in range(q):
+  87         z=(0,0)
+  88         for j in range(q):z=add(z,rawmul(h[j],rotations[(4*t*j//q)%4]))
+  89         out[t*N//q]=(z[0]*(N//q),z[1]*(N//q))
+  90     return out
+  91 
+  92 def h_apply_exact(v,qs,Q):
+  93     N=len(v);s=(sum(z[0] for z in v),sum(z[1] for z in v))
+  94     t=(0,0)
+  95     for a,b in zip(qs,v):t=add(t,rawmul(a,b))
+  96     out=[];den=N*Q*Q
+  97     for q,z in zip(qs,v):
+  98         a=rawmul((3*Q-2*q[0],0),z);b=rawmul(conj(q),s)
+  99         out.append((F(N*a[0]+t[0]+b[0],den),F(N*a[1]+t[1]+b[1],den)))
+ 100     return out
+ 101 
+ 102 def solve_target(v,qs,Q):
+ 103     N=len(v);gs=[rnd(2*Q*Q,7*Q-4*q[0]) for q in qs]
+ 104     t=rnd(sum(gs),N)
+ 105     rp=rnd(2*Q+11*t,4);rm=rnd(2*Q+3*t,4)
+ 106     b0=(0,0);b1=(0,0)
+ 107     for q,g,z in zip(qs,gs,v):
+ 108         w=scale(z,g,Q);b1=add(b1,w);b0=add(b0,mul(q,w,Q))
+ 109     b0=(rnd(b0[0],N),rnd(b0[1],N));b1=(rnd(b1[0],N),rnd(b1[1],N))
+ 110     plus=div(add(b0,b1),2*rp,Q);minus=div(sub(b0,b1),2*rm,Q)
+ 111     a=add(plus,minus);b=sub(plus,minus)
+ 112     return [scale(sub(sub(z,a),mul(conj(q),b,Q)),g,Q) for z,q,g in zip(v,qs,gs)]
+ 113 
+ 114 def target(v,qs,rho,Q):
+ 115     z=solve_target(v,qs,Q)
+ 116     hv=h_apply_exact(v,qs,Q);hz=h_apply_exact(z,qs,Q)
+ 117     residual=[];out=[]
+ 118     for vv,zz,hvv,hzz in zip(v,z,hv,hz):
+ 119         residual.append((F(vv[0],Q)-hzz[0]-F(zz[0],2*Q),F(vv[1],Q)-hzz[1]-F(zz[1],2*Q)))
+ 120         out.append((hvv[0]/2+F(vv[0],4*Q)-F(zz[0],8*Q),hvv[1]/2+F(vv[1],4*Q)-F(zz[1],8*Q)))
+ 121     rbox=boxmax(residual)
+ 122     tau=2*rho*F(boxmax(v),Q)+F(11,36)*(rbox+4*rho*F(boxmax(z),Q))
+ 123     return out,tau,rbox
+ 124 
+ 125 def mpz(z):return mp.mpc(mp.mpf(z[0].numerator)/z[0].denominator,mp.mpf(z[1].numerator)/z[1].denominator)
+ 126 def dft(x):
+ 127     N=len(x);w=mp.e**(2j*mp.pi/N)
+ 128     return [sum(x[j]*w**(j*k) for j in range(N)) for k in range(N)]
+ 129 def qsolve(v,a):
+ 130     p=[];b=[]
+ 131     for i,x in enumerate(v):
+ 132         pp=F(a)-(1/p[-1] if i else 0);p.append(pp)
+ 133         b.append((F(x)+(b[-1] if i else 0))/pp)
+ 134     z=b[:]
+ 135     for i in range(len(v)-2,-1,-1):z[i]+=z[i+1]/p[i]
+ 136     return z
+ 137 
+ 138 def run_case(x,p,eta=F(1,16),inject=True):
+ 139     N=len(x);Q=1<<p;qs,rho=roots(N,p);assert rho<=F(1,8)
+ 140     qerr=max(abs(mp.mpc(*q)/Q-mp.e**(2j*mp.pi*k/N)) for k,q in enumerate(qs));assert qerr<=float(rho)
+ 141     xg=[(int(a)*Q,int(b)*Q) for a,b in x]
+ 142     u,E=source(xg,Q);h,r=median_head(u);Mr=F(mass(r),Q)
+ 143     # ORACLE ONLY: instantiate an admissible decoder output with a known error.
+ 144     # The O(N) claim uses the previously proved packed-decoder interface instead.
+ 145     fr=dft([mp.mpc(*z)/Q for z in r]);bound=eta*Mr
+ 146     vh=head_transform(h);v=[]
+ 147     for k,(a,b) in enumerate(vh):
+ 148         bump=mp.mpf(bound.numerator)/bound.denominator/2 if inject else 0
+ 149         value=fr[k]+mp.mpc(a,b)/Q+((-1)**k)*bump
+ 150         v.append((int(mp.nint(value.real*Q)),int(mp.nint(value.imag*Q))))
+ 151     out,tau,rbox=target(v,qs,rho,Q)
+ 152     ev=F(2,Q) # certified decoder-to-fixed-point rounding; conservatively two components
+ 153     certificate=F(73,18)*(eta*Mr+E+ev)+tau
+ 154     truth=dft([mp.mpc(a,b) for a,b in x]);err=max(abs(mpz(y)-t) for y,t in zip(out,truth))
+ 155     assert err<=mp.mpf(certificate.numerator)/certificate.denominator
+ 156     # Check source residual certificate against an independent exact rational solve.
+ 157     for c in range(2):
+ 158         exact=[a+b for a,b in zip(qsolve([z[c] for z in x],3),qsolve([z[c] for z in x],4))]
+ 159         # Combined component bound checked below.
+ 160         if c==0:actual_E=sum(abs(F(u[i][c],Q)-exact[i]) for i in range(N))
+ 161         else:actual_E+=sum(abs(F(u[i][c],Q)-exact[i]) for i in range(N))
+ 162     assert actual_E<=E
+ 163     _,r0=median_head(xg);M0=F(mass(r0),Q)
+ 164     return dict(N=N,p=p,residual_mass=float(Mr),original_periodic_residual_mass=float(M0),source_certificate=float(E),source_actual_error=float(actual_E),target_certificate=float(tau),target_residual=float(rbox),root_error=float(qerr),root_bound=float(rho),total_certificate=float(certificate),observed_error=float(err),original_median_certificate=float(eta*M0),certificate_ratio=float(certificate/(eta*M0)) if M0 else None)
+ 165 
+ 166 def target_only(N,p):
+ 167     Q=1<<p;qs,rho=roots(N,p)
+ 168     vv=[(j*j-7*j+3,4*j-2) for j in range(N)]
+ 169     v=[(a*Q,b*Q) for a,b in vv];out,tau,_=target(v,qs,rho,Q)
+ 170     # Independent conjugacy oracle, never used by the executor.
+ 171     inv=[z/N for z in dft([mp.mpc(*vv[(-j)%N]) for j in range(N)])]
+ 172     alpha=[];beta=[]
+ 173     for i,x in enumerate(inv):
+ 174         a=1/(mp.mpf('3.5')-(alpha[-1] if i else 0));alpha.append(a)
+ 175         beta.append(a*(x+(beta[-1] if i else 0)))
+ 176     z=beta[:]
+ 177     for j in range(N-2,-1,-1):z[j]+=alpha[j]*z[j+1]
+ 178     ss=[]
+ 179     for j,x in enumerate(inv):
+ 180         t=3*x-(inv[j-1] if j else 0)-(inv[j+1] if j+1<N else 0)
+ 181         ss.append(t/2+x/4-z[j]/8)
+ 182     truth=dft(ss);err=max(abs(mpz(a)-b) for a,b in zip(out,truth))
+ 183     assert err<=mp.mpf(tau.numerator)/tau.denominator,(N,p,err,tau)
+ 184     return dict(N=N,p=p,target_error=float(err),target_certificate=float(tau))
+ 185 
+ 186 def main():
+ 187     rng=random.Random(1252);rows=[]
+ 188     for N in (4,8,16,32,64):
+ 189         for p in (32,48,64):
+ 190             rows.append(run_case([(rng.randint(-20,20),rng.randint(-20,20)) for _ in range(N)],p))
+ 191     # Integer, dense, near-Green-periodic family, fresh at each length.
+ 192     structured=[]
+ 193     for N in (8,16,32,64,128):
+ 194         A=1<<20;v=[F(1)]*N;tv=tridiag([(1,0)]*N,3)
+ 195         resolvent=qsolve(v,F(7,2))
+ 196         xx=[F(tv[i][0],2)+F(1,4)-resolvent[i]/8 for i in range(N)]
+ 197         x=[(rnd((A*z).numerator,(A*z).denominator),0) for z in xx]
+ 198         structured.append(run_case(x,64))
+ 199     zero=run_case([(0,0)]*16,48,inject=False)
+ 200     isolated=[target_only(N,p) for N in (4,8,16,32) for p in (32,48,64)]
+ 201     report={'scope':'Integer fixed-point source/target executors and exact a-posteriori certificates; direct DFT is a test-only decoder oracle, not the claimed runtime.','random_cases':rows,'near_green_periodic':structured,'zero_control':zero,'isolated_target_checks':isolated,'passed':len(rows)+len(structured)+len(isolated)+1}
+ 202     print(json.dumps(report,indent=2));open(__file__.replace('check_fixed_bridge.py','results.json'),'w').write(json.dumps(report,indent=2)+'\n')
+ 203 if __name__=='__main__':main()

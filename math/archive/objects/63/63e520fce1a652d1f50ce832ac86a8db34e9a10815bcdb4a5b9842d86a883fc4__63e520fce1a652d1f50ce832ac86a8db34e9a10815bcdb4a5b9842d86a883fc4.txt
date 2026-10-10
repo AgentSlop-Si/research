@@ -1,0 +1,111 @@
+"""Exact Green-Union regression checks, incl dense-orbit strict extensions."""
+from __future__ import annotations
+import random,unittest
+import phase_union_general as phase
+import multishear_union as multi
+import multishear_green_union as green
+import shear_gauge_union as gauge
+from test_multishear import build_case
+from test_shear_gauge import primitive_n_root,dft_slow
+
+
+def fixture(n,q,p,g,R_per=1,seed=1728):
+    rng=random.Random(seed+n+g)
+    _clean,omega,items=build_case(n,q,p,g,seed=seed)
+    orbits=tuple(multi.Orbit(a,mu,(),tuple(b)) for a,mu,b in items)
+    innovations={}
+    for t in range(2*g,q):
+        hs=rng.sample(range(n//q),R_per)
+        innovations[t]=[(h,rng.randrange(1,p)) for h in hs]
+    raw=green.build_green_fixture(n,p,omega,q,orbits,innovations)
+    return raw,omega,items,innovations
+
+
+class GreenTest(unittest.TestCase):
+    def test_recursion_coefficients(self):
+        p=998244353;m=8
+        os=tuple(multi.Orbit(i+1,2+i,(),tuple([0]*m)) for i in range(3))
+        ops=green.recurrence_shifts(os,p,m)
+        self.assertEqual(len(ops),2**3-1)
+        for h in range(m):
+            eta=pow(3,(p-1)//m,p)
+            lambdas=[o.scalar*pow(eta,-o.shift*h,p)%p for o in os]
+            poly=1
+            # Evaluate characteristic product at z=lam_j; should be zero.
+            for lam in lambdas:
+                val=pow(lam,3,p)
+                for lag,shift,coef in ops:
+                    val+=coef*pow(lam,3-lag,p)*pow(eta,-shift*h,p)
+                self.assertEqual(val%p,0)
+
+    def test_exact_full_dft_many_orders_and_lengths(self):
+        for n,q,p in [(64,8,998244353),(72,8,1009),(144,12,1009),
+                      (256,16,998244353),(1024,32,998244353)]:
+            for g in [1,2,3]:
+                if 2*g>q:continue
+                for R_per in [0,1,2]:
+                    for rep in range(2):
+                        raw,omega,items,innov=fixture(n,q,p,g,R_per,seed=rep+400)
+                        R=(q-2*g)*R_per
+                        c=green.recognize(raw,p,omega,g,max(q,R),q)
+                        self.assertIsNotNone(c,(n,g,R_per,rep))
+                        self.assertEqual(len(c.events),R)
+                        out,ops=green.transform_certified(c,True)
+                        self.assertEqual(out,dft_slow(raw,p,omega),(n,g,R_per,rep))
+                        self.assertEqual(ops['innovation_geometric_terms'],g*q*R)
+
+    def test_strict_extension_of_multishear(self):
+        n=256;q=16;p=998244353;g=2
+        raw,w,items,innov=fixture(n,q,p,g,1,seed=707)
+        self.assertIsNone(multi.recognize(raw,p,w,g,q))
+        for d in (1,2,3):
+            self.assertIsNone(gauge.recognize(raw,p,w,d,q,q))
+        cert=green.recognize(raw,p,w,g,q,q)
+        self.assertIsNotNone(cert)
+        self.assertEqual(green.transform_certified(cert),dft_slow(raw,p,w))
+
+    def test_zero_innovations_match_original_multiorbit(self):
+        n=256;q=16;p=998244353;g=3
+        raw,w,items,innov=fixture(n,q,p,g,0,seed=221)
+        old=multi.recognize(raw,p,w,g,q)
+        new=green.recognize(raw,p,w,g,0,q)
+        self.assertIsNotNone(old)
+        self.assertIsNotNone(new)
+        self.assertEqual(multi.transform_certified(old),green.transform_certified(new))
+
+    def test_corrupt_late_sample_budget_zero_reject(self):
+        n=256;q=16;p=998244353;g=2
+        raw,w,items,innov=fixture(n,q,p,g,0,seed=12)
+        raw[10+q*3]=(raw[10+q*3]+1)%p
+        self.assertIsNone(green.recognize(raw,p,w,g,0,q))
+
+    def test_corrupt_clean_pilot_reject(self):
+        n=256;q=16;p=998244353;g=2
+        raw,w,items,innov=fixture(n,q,p,g,0,seed=12)
+        raw[1+q*3]=(raw[1+q*3]+1)%p
+        self.assertIsNone(green.recognize(raw,p,w,g,0,q))
+
+    def test_random_dense_never_incorrect(self):
+        rng=random.Random(180031)
+        for n,q,p in [(64,8,998244353),(72,8,1009),(256,16,998244353)]:
+            w=primitive_n_root(p,n)
+            for _ in range(30):
+                x=[rng.randrange(p) for _ in range(n)]
+                for g in (1,2,3):
+                    cert=green.recognize(x,p,w,g,q,q)
+                    if cert is not None:
+                        self.assertEqual(green.transform_certified(cert),dft_slow(x,p,w))
+
+    def test_large_4096_sparse_events_spot_check(self):
+        n=4096;q=64;p=998244353;g=3
+        raw,w,items,innov=fixture(n,q,p,g,1,seed=4096)
+        cert=green.recognize(raw,p,w,g,q,q)
+        self.assertIsNotNone(cert)
+        full,ops=green.transform_certified(cert,True)
+        roots=phase.phase_table(n,p,w)
+        for k in (0,1,2,3,7,31,63,64,255,256,257,1009,1023,2047,4095):
+            slow=sum(raw[j]*roots[(-k*j)%n] for j in range(n))%p
+            self.assertEqual(full[k],slow)
+        self.assertEqual(ops['raw_verification_terms'],n)
+
+if __name__=='__main__':unittest.main()

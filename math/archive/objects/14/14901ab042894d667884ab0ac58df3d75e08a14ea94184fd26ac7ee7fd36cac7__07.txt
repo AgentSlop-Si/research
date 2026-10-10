@@ -1,0 +1,169 @@
+   1 #!/usr/bin/env python3
+   2 from fractions import Fraction as Q
+   3 from pathlib import Path
+   4 import json
+   5 import argparse
+   6 import hashlib
+   7 
+   8 def trim(a):
+   9     a=list(a)
+  10     while a and a[-1]==0:a.pop()
+  11     return a
+  12 
+  13 def pa(a,b):
+  14     return trim([(a[i] if i<len(a) else 0)+(b[i] if i<len(b) else 0) for i in range(max(len(a),len(b)))])
+  15 
+  16 def pn(a):return [-x for x in a]
+  17 def pm(a,b):
+  18     c=[Q(0)]*(max(0,len(a)+len(b)-1))
+  19     for i,x in enumerate(a):
+  20         for j,y in enumerate(b):c[i+j]+=x*y
+  21     return trim(c)
+  22 def pd(a,b):
+  23     a=trim(a);b=trim(b)
+  24     if not b:raise ZeroDivisionError
+  25     q=[Q(0)]*max(0,len(a)-len(b)+1)
+  26     while len(a)>=len(b):
+  27         j=len(a)-len(b); t=a[-1]/b[-1];q[j]=t
+  28         a=pa(a,pn([0]*j+[t*x for x in b]))
+  29     return trim(q),a
+  30 
+  31 def pinv(a,m):
+  32     r0,r1=list(m),trim(a); s0,s1=[],[Q(1)]
+  33     while r1:
+  34         q,r=pd(r0,r1);r0,r1=r1,r;s0,s1=s1,pa(s0,pn(pm(q,s1)))
+  35     if len(r0)!=1:raise ZeroDivisionError('nonunit base field')
+  36     return pd([x/r0[0] for x in s0],m)[1]
+  37 
+  38 class K:
+  39     modulus=[Q(1)]*5
+  40     def __init__(self,a=0):
+  41         if isinstance(a,K):self.a=a.a;return
+  42         a=list(a) if isinstance(a,(tuple,list)) else [a]
+  43         a=pd([Q(x) for x in a],self.modulus)[1]
+  44         self.a=tuple(a+[Q(0)]*(4-len(a)))
+  45     def __add__(self,b):return K(pa(self.a,K(b).a))
+  46     __radd__=__add__
+  47     def __neg__(self):return K(pn(self.a))
+  48     def __sub__(self,b):return self+-K(b)
+  49     def __rsub__(self,b):return K(b)+-self
+  50     def __mul__(self,b):return K(pm(self.a,K(b).a))
+  51     __rmul__=__mul__
+  52     def inv(self):return K(pinv(self.a,self.modulus))
+  53     def __truediv__(self,b):return self*K(b).inv()
+  54     def __rtruediv__(self,b):return K(b)*self.inv()
+  55     def __eq__(self,b):return self.a==K(b).a
+  56     def __bool__(self):return any(self.a)
+  57     def __pow__(self,n):
+  58         if n<0:return self.inv()**(-n)
+  59         out=K(1); a=self
+  60         while n:
+  61             if n&1:out=out*a
+  62             a=a*a;n//=2
+  63         return out
+  64     def serial(self):return [str(x) for x in self.a]
+  65     def __repr__(self):return str(self.serial())
+  66 
+  67 class E:
+  68     p0=None;p1=None
+  69     def __init__(self,a=0,b=0):
+  70         if isinstance(a,E):self.a,self.b=a.a,a.b
+  71         else:self.a,self.b=K(a),K(b)
+  72     def __add__(self,y):
+  73         y=E(y);return E(self.a+y.a,self.b+y.b)
+  74     __radd__=__add__
+  75     def __neg__(self):return E(-self.a,-self.b)
+  76     def __sub__(self,y):return self+-E(y)
+  77     def __rsub__(self,y):return E(y)+-self
+  78     def __mul__(self,y):
+  79         y=E(y)
+  80         return E(self.a*y.a-self.p0*self.b*y.b,self.a*y.b+self.b*y.a-self.p1*self.b*y.b)
+  81     __rmul__=__mul__
+  82     def norm(self):return self.a*self.a-self.p1*self.a*self.b+self.p0*self.b*self.b
+  83     def inv(self):
+  84         norm=self.norm()
+  85         if not norm:raise ZeroDivisionError('quadratic algebra denominator nonunit')
+  86         return E((self.a-self.p1*self.b)/norm,-self.b/norm)
+  87     def __truediv__(self,y):return self*E(y).inv()
+  88     def __rtruediv__(self,y):return E(y)*self.inv()
+  89     def __eq__(self,y):
+  90         y=E(y);return self.a==y.a and self.b==y.b
+  91     def __bool__(self):return bool(self.a) or bool(self.b)
+  92     def __pow__(self,n):
+  93         if n<0:return self.inv()**(-n)
+  94         out=E(1);a=self
+  95         while n:
+  96             if n&1:out=out*a
+  97             a=a*a;n//=2
+  98         return out
+  99     def serial(self):return {'constant':self.a.serial(),'delta':self.b.serial()}
+ 100 
+ 101 
+ 102 def mm(a,b):
+ 103     return [[sum(a[i][k]*b[k][j] for k in range(len(b))) for j in range(len(b[0]))] for i in range(len(a))]
+ 104 def ma(a,b):return [[x+y for x,y in zip(r,s)] for r,s in zip(a,b)]
+ 105 def ms(c,a):return [[c*x for x in r] for r in a]
+ 106 def ident(n=5):return [[K(int(i==j)) for j in range(n)] for i in range(n)]
+ 107 def diag(a):return [[x if i==j else K(0) for j in range(len(a))] for i,x in enumerate(a)]
+ 108 def mi(a):
+ 109     n=len(a);b=[list(row)+ident(n)[i] for i,row in enumerate(a)]
+ 110     for j in range(n):
+ 111         k=next(i for i in range(j,n) if b[i][j]);b[j],b[k]=b[k],b[j]
+ 112         t=b[j][j];b[j]=[x/t for x in b[j]]
+ 113         for i in range(n):
+ 114             if i!=j:
+ 115                 t=b[i][j];b[i]=[x-t*y for x,y in zip(b[i],b[j])]
+ 116     return [row[n:] for row in b]
+ 117 
+ 118 parser=argparse.ArgumentParser();parser.add_argument('--out-dir',default=str(Path(__file__).resolve().parent));args=parser.parse_args()
+ 119 source=Path(__file__).resolve().parent/'source/CERTIFICATE_INPUT.json'
+ 120 cert=json.loads(source.read_text())
+ 121 E.p0=K(cert['extension_polynomial_monic']['constant']);E.p1=K(cert['extension_polynomial_monic']['linear'])
+ 122 def decode(x):return E(K(x['constant']),K(x['delta']))
+ 123 u=list(map(decode,cert['u']));v=list(map(decode,cert['v']));delta=list(map(decode,cert['diagonal_correction']));t=decode(cert['pole_t'])
+ 124 z=K([0,1]);g=1+2*(z**2+z**3);c=5*g
+ 125 F=[[z**(i*j) for j in range(5)] for i in range(5)]
+ 126 Fbar=[[z**(-i*j)/5 for j in range(5)] for i in range(5)]
+ 127 adiag=[z**(3*i*i) for i in range(5)];A=diag(adiag);I=ident()
+ 128 B=mi(ma(Fbar,A));assert B==[[K(x) for x in row] for row in cert['target']]
+ 129 M=mm(A,F);M2=mm(M,M);assert mm(M2,M)==ms(c,I)
+ 130 loop=mm(A,B);loop2=mm(loop,loop);loop3=mm(loop2,loop)
+ 131 mu=ma(ma(ms(1+c,loop3),ms(-3*c,loop2)),ma(ms(3*c,loop),ms(-c,I)));assert mu==ms(0,I)
+ 132 closure=ma(ma(ms(1+c,loop2),ms(1-2*c,loop)),ms(1+c,I))
+ 133 assert mm(ma(I,ms(-1,loop)),closure)==I and mm(closure,ma(I,ms(-1,loop)))==I
+ 134 assert mm(B,closure)==F
+ 135 BAB=mm(mm(B,A),B);BABAB=mm(mm(BAB,A),B)
+ 136 reconstructed=ma(ma(ms(1+c,B),ms(1-2*c,BAB)),ms(1+c,BABAB));assert reconstructed==F
+ 137 counts={'B_calls':0,'Green_solves':0,'diagonal_corrections':0,'A_calls':0}
+ 138 
+ 139 def solve_green(closing,x):
+ 140     counts['Green_solves']+=1
+ 141     weights=[E(1)]*4+[closing]
+ 142     pref,total=E(1),E(0)
+ 143     for j in range(5):total+=pref*x[j];pref*=weights[j]
+ 144     y=[total/(1-pref)]+[E(0)]*4
+ 145     for i in range(4,0,-1):y[i]=x[i]+weights[i]*y[(i+1)%5]
+ 146     assert all(y[i]-weights[i]*y[(i+1)%5]==x[i] for i in range(5))
+ 147     return y
+ 148 
+ 149 def apply_B(x):
+ 150     counts['B_calls']+=1;counts['diagonal_corrections']+=1
+ 151     a=solve_green(t,[v[i]*x[i] for i in range(5)])
+ 152     b=solve_green(1/t,[u[i]*x[i] for i in range(5)])
+ 153     return [(1-t)*u[i]*a[i]+(t-1)*v[i]*b[i]+delta[i]*x[i] for i in range(5)]
+ 154 
+ 155 def apply_A(x):
+ 156     counts['A_calls']+=1
+ 157     return [E(adiag[i])*x[i] for i in range(5)]
+ 158 
+ 159 vectors=[[E(int(i==j)) for i in range(5)] for j in range(5)]
+ 160 vectors += [[E(i+1) for i in range(5)],[E(z**i) for i in range(5)]]
+ 161 for x in vectors:
+ 162     y0=apply_B(x);y1=apply_B(apply_A(y0));y2=apply_B(apply_A(y1))
+ 163     out=[E(1+c)*y0[i]+E(1-2*c)*y1[i]+E(1+c)*y2[i] for i in range(5)]
+ 164     expected=[sum(E(F[i][j])*x[j] for j in range(5)) for i in range(5)]
+ 165     assert out==expected
+ 166 assert counts=={'B_calls':21,'Green_solves':42,'diagonal_corrections':21,'A_calls':14}
+ 167 result={'status':'PASS','matrix_entries_per_identity':25,'identities':['target_inverse_definition','(AF)^3=cI','cubic_mu(AB)=0','(I-AB)*closure=I','closure*(I-AB)=I','B*closure=F','F=(1+c)B+(1-2c)BAB+(1+c)BABAB'],'c':c.serial(),'scan_basis_vectors':5,'scan_additional_vectors':2,'exact_output_entries':35,'all_scan_counts':counts,'per_transform_counts':{'sequential_B_calls':3,'nontrivial_cyclic_Green_solves':6,'diagonal_correction_applications':3,'chirp_A_applications':2},'scope':'Fixed N5 exact reconstruction; no all-length family, root-generation oracle or speedup claim.'}
+ 168 output=Path(args.out_dir);output.mkdir(parents=True,exist_ok=True);path=output/'RECONSTRUCTION_RESULTS.json';path.write_text(json.dumps(result,indent=2)+'\n')
+ 169 print(json.dumps({'status':'PASS','scan_output_entries':35,'Green_solves':42,'result_sha256':hashlib.sha256(path.read_bytes()).hexdigest()}))

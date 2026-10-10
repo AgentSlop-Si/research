@@ -1,0 +1,102 @@
+   1 #!/usr/bin/env python3
+   2 """Exact integer necessary-condition screen for two bidirectional scan stages.
+   3 No fitting, floating point, or assumptions about scan coefficient nonzeros.
+   4 The internal permutation is P[p[j], j]=1, with zero-based indices.
+   5 """
+   6 import argparse
+   7 from fractions import Fraction
+   8 from itertools import permutations
+   9 import json
+  10 from math import factorial
+  11 from pathlib import Path
+  12 
+  13 
+  14 def reverse_bits(j, m):
+  15     return int(format(j, f'0{m}b')[::-1], 2)
+  16 
+  17 
+  18 def screen(p):
+  19     n = len(p)
+  20     assert sorted(p) == list(range(n))
+  21     counts = [0] * (n + 1)
+  22     best = (-1, 0, 0, 0, 0)
+  23     for l, value in enumerate(p, 1):
+  24         for k in range(1, n + 1):
+  25             counts[k] += int(value < k)
+  26             signed = n * counts[k] - k * l
+  27             if abs(signed) > best[0]:
+  28                 best = (abs(signed), k, l, counts[k], signed)
+  29     numerator, k, l, q, signed = best
+  30     # Independently verify the reported maximum witness directly.
+  31     assert q == sum(value < k for value in p[:l])
+  32     assert numerator == abs(n * q - k * l)
+  33     return dict(passes=numerator <= 2*n,
+  34                 max_discrepancy=str(Fraction(numerator,n)),
+  35                 scaled_max_discrepancy=numerator,
+  36                 witness=dict(k=k,l=l,q=q,signed_discrepancy=str(Fraction(signed,n))))
+  37 
+  38 
+  39 def structured(n):
+  40     m = n.bit_length()-1
+  41     assert n == 1 << m
+  42     r = [reverse_bits(j,m) for j in range(n)]
+  43     yield 'bit_reversal', {}, r
+  44     for t in range(n):
+  45         yield 'cyclic_translation', {'t':t}, [(j+t)%n for j in range(n)]
+  46         yield 'cyclic_reflection', {'t':t}, [(t-j)%n for j in range(n)]
+  47     for s in range(1,m):
+  48         yield 'bit_rotation', {'s':s}, [((j<<s)|(j>>(m-s)))&(n-1) for j in range(n)]
+  49     for a in range(n):
+  50         yield 'bit_reversal_output_xor', {'a':a}, [x^a for x in r]
+  51         # An input XOR gives the same family, since R(j XOR a)=R(j) XOR R(a).
+  52     for t in range(n):
+  53         yield 'bit_reversal_output_translation', {'t':t}, [(x+t)%n for x in r]
+  54         yield 'bit_reversal_input_translation', {'t':t}, [r[(j+t)%n] for j in range(n)]
+  55 
+  56 
+  57 def run(n):
+  58     m=n.bit_length()-1
+  59     rows=[]
+  60     for family,param,p in structured(n):
+  61         rows.append(dict(family=family,parameters=param,**screen(p)))
+  62     bits=[]
+  63     for sigma in permutations(range(m)):
+  64         p=[sum(((j>>sigma[t])&1)<<t for t in range(m)) for j in range(n)]
+  65         bits.append(dict(sigma=list(sigma),**screen(p)))
+  66     assert len(bits)==factorial(m)
+  67     assert len({tuple(row['sigma']) for row in bits})==factorial(m)
+  68     families={}
+  69     for row in rows:
+  70         f=families.setdefault(row['family'],dict(total=0,passing=[]))
+  71         f['total']+=1
+  72         if row['passes']:
+  73             f['passing'].append({k:v for k,v in row.items() if k!='family'})
+  74     return dict(n=n,threshold_scaled=2*n,structured_family_summary=families,
+  75                 structured_candidates=rows,bit_coordinate_permutations=bits,
+  76                 bit_coordinate_summary=dict(total=len(bits),
+  77                     passing=[row for row in bits if row['passes']],
+  78                     minimum_max_discrepancy=str(Fraction(min(row['scaled_max_discrepancy'] for row in bits),n)),
+  79                     minimizers=[row for row in bits if row['scaled_max_discrepancy']==min(x['scaled_max_discrepancy'] for x in bits)]))
+  80 
+  81 
+  82 def main():
+  83     parser=argparse.ArgumentParser()
+  84     parser.add_argument('--output',default=str(Path(__file__).with_name('discrepancy_results.json')))
+  85     args=parser.parse_args()
+  86     result={'meaning':'Passing only means this necessary screen does not reject the candidate. It does not assert that a factorization exists.',
+  87             'permutation_convention':'P[p[j],j]=1; sigma maps output bit t from input bit sigma[t].',
+  88             'results':[run(32),run(64)]}
+  89     Path(args.output).write_text(json.dumps(result,indent=2)+'\n')
+  90     for record in result['results']:
+  91         print('N=',record['n'])
+  92         for name,summary in record['structured_family_summary'].items():
+  93             print(name, 'passing',len(summary['passing']),'of',summary['total'])
+  94             print('  passing parameters:',[x['parameters'] for x in summary['passing']])
+  95         summary=record['bit_coordinate_summary']
+  96         print('bit-coordinate permutations: passing',len(summary['passing']),'of',summary['total'], 'minimum discrepancy',summary['minimum_max_discrepancy'])
+  97         print('  passing sigma:',[x['sigma'] for x in summary['passing']])
+  98         print('  minimizers:',[(x['sigma'],x['witness']) for x in summary['minimizers']])
+  99     print('Full exact witnesses:',args.output)
+ 100 
+ 101 if __name__=='__main__':
+ 102     main()

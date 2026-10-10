@@ -1,0 +1,519 @@
+   1	"""Prototype for the shrinking-error packed sparse-surrogate DFT branch.
+   2	
+   3	This is an algebra/error/cost-model experiment, not a practical FFT replacement.
+   4	The asymptotic theorem uses much larger N than the toy tests below.
+   5	"""
+   6	
+   7	from __future__ import annotations
+   8	
+   9	import json
+  10	import math
+  11	from dataclasses import asdict, dataclass
+  12	from typing import Dict, List, Tuple
+  13	
+  14	import numpy as np
+  15	
+  16	PHASES = np.asarray([1 + 0j, -1 + 0j, 1j, -1j], dtype=np.complex128)
+  17	
+  18	
+  19	@dataclass
+  20	class Params:
+  21	    N: int
+  22	    B: int
+  23	    k: int
+  24	    eps_phase: float
+  25	    h1: float
+  26	    h2: float
+  27	    Q_start: int
+  28	    Q_slope: int
+  29	    descriptor_bits: int
+  30	    gamma: float
+  31	    g_wordfit: int
+  32	    g_used: int
+  33	    G: int
+  34	    field_bits: int
+  35	    word_bits: int
+  36	    lanes_per_word: int
+  37	    words_per_vector: int
+  38	
+  39	
+  40	def unitary_fft(x: np.ndarray) -> np.ndarray:
+  41	    return np.fft.fft(x) / math.sqrt(len(x))
+  42	
+  43	
+  44	def decoder_bound_normalized(p: Params) -> float:
+  45	    """Error in units of L_box(x)/sqrt(N)."""
+  46	    return p.eps_phase + p.h1 / math.sqrt(2.0) + p.h2 / math.sqrt(2.0)
+  47	
+  48	
+  49	def concentration_k(N: int, eta_sample: float, delta: float) -> int:
+  50	    """Safe componentwise complex Hoeffding + union bound."""
+  51	    return math.ceil(4.0 * math.log(4.0 * N / delta) / (eta_sample**2))
+  52	
+  53	
+  54	def choose_params(
+  55	    N: int,
+  56	    k: int,
+  57	    B: int | None = None,
+  58	    eps_phase: float = 0.04,
+  59	    h1: float = 0.03,
+  60	    h2: float = 0.02,
+  61	    gamma: float = 0.72,
+  62	    word_constant: float = 8.0,
+  63	    g_override: int | None = None,
+  64	) -> Params:
+  65	    if N <= 1:
+  66	        raise ValueError("N must exceed 1")
+  67	    if k <= 0:
+  68	        raise ValueError("k must be positive")
+  69	    B = min(N, B if B is not None else k)
+  70	    if B <= 0:
+  71	        raise ValueError("B must be positive")
+  72	
+  73	    # Nearest-bin phase errors obey pi/Q_start + pi*B/Q_slope <= eps_phase.
+  74	    Q_start = max(2, math.ceil(2.0 * math.pi / eps_phase))
+  75	    Q_slope = max(2, math.ceil(2.0 * math.pi * B / eps_phase))
+  76	
+  77	    # Four phases (+1,-1,+i,-i), quantized start phase, quantized slope.
+  78	    alphabet_bound = 4 * Q_start * Q_slope
+  79	    descriptor_bits = math.ceil(math.log2(alphabet_bound + 1))
+  80	
+  81	    logN = math.log2(N)
+  82	    g_wordfit = max(1, math.floor(gamma * logN / descriptor_bits))
+  83	    g = g_override if g_override is not None else g_wordfit
+  84	    if g < 1:
+  85	        raise ValueError("group size must be at least 1")
+  86	
+  87	    # Pad k to a multiple of g. Repeating independent draws is equivalent to
+  88	    # simply drawing the rounded-up sample count in the actual algorithm.
+  89	    k_used = g * math.ceil(k / g)
+  90	    G = k_used // g
+  91	
+  92	    qv = math.ceil(1.0 / h1) + 3
+  93	    max_accumulated_field = G * (2 * qv)
+  94	    field_bits = max(2, math.ceil(math.log2(max_accumulated_field + 1)) + 1)
+  95	
+  96	    word_bits = max(64, math.ceil(word_constant * logN))
+  97	    lanes_per_word = max(1, word_bits // field_bits)
+  98	    words_per_vector = math.ceil(B / lanes_per_word)
+  99	
+ 100	    return Params(
+ 101	        N=N,
+ 102	        B=B,
+ 103	        k=k_used,
+ 104	        eps_phase=eps_phase,
+ 105	        h1=h1,
+ 106	        h2=h2,
+ 107	        Q_start=Q_start,
+ 108	        Q_slope=Q_slope,
+ 109	        descriptor_bits=descriptor_bits,
+ 110	        gamma=gamma,
+ 111	        g_wordfit=g_wordfit,
+ 112	        g_used=g,
+ 113	        G=G,
+ 114	        field_bits=field_bits,
+ 115	        word_bits=word_bits,
+ 116	        lanes_per_word=lanes_per_word,
+ 117	        words_per_vector=words_per_vector,
+ 118	    )
+ 119	
+ 120	
+ 121	def signed_atom_distribution(x: np.ndarray) -> Tuple[float, np.ndarray, List[Tuple[int, int]]]:
+ 122	    masses: List[float] = []
+ 123	    atoms: List[Tuple[int, int]] = []
+ 124	    for j, z in enumerate(x):
+ 125	        a = float(z.real)
+ 126	        b = float(z.imag)
+ 127	        if a != 0.0:
+ 128	            masses.append(abs(a))
+ 129	            atoms.append((j, 0 if a > 0 else 1))
+ 130	        if b != 0.0:
+ 131	            masses.append(abs(b))
+ 132	            atoms.append((j, 2 if b > 0 else 3))
+ 133	    L = float(sum(masses))
+ 134	    if L == 0.0:
+ 135	        return 0.0, np.asarray([], dtype=float), []
+ 136	    probs = np.asarray(masses, dtype=float) / L
+ 137	    return L, probs, atoms
+ 138	
+ 139	
+ 140	def sample_atoms(x: np.ndarray, k: int, rng: np.random.Generator) -> Tuple[float, List[Tuple[int, int]]]:
+ 141	    L, probs, atoms = signed_atom_distribution(x)
+ 142	    if L == 0.0:
+ 143	        return 0.0, []
+ 144	    idx = rng.choice(len(atoms), size=k, replace=True, p=probs)
+ 145	    return L, [atoms[int(i)] for i in idx]
+ 146	
+ 147	
+ 148	def exact_sampled_spectrum(N: int, L: float, samples: List[Tuple[int, int]]) -> np.ndarray:
+ 149	    if not samples:
+ 150	        return np.zeros(N, dtype=np.complex128)
+ 151	    y = np.zeros(N, dtype=np.complex128)
+ 152	    amp = L / len(samples)
+ 153	    for j, phase_code in samples:
+ 154	        y[j] += amp * PHASES[phase_code]
+ 155	    return unitary_fft(y)
+ 156	
+ 157	
+ 158	def quant_phase_bin(num: int, den: int, Q: int) -> int:
+ 159	    r = num % den
+ 160	    return int((Q * r + den // 2) // den) % Q
+ 161	
+ 162	
+ 163	def group_key_for_block(
+ 164	    samples: List[Tuple[int, int]], m0: int, p: Params, group_idx: int
+ 165	) -> Tuple[Tuple[int, int, int], ...]:
+ 166	    lo = group_idx * p.g_used
+ 167	    hi = lo + p.g_used
+ 168	    out: List[Tuple[int, int, int]] = []
+ 169	    for j, phase_code in samples[lo:hi]:
+ 170	        qa = quant_phase_bin(j * m0, p.N, p.Q_start)
+ 171	        qb = quant_phase_bin(j, p.N, p.Q_slope)
+ 172	        out.append((phase_code, qa, qb))
+ 173	    return tuple(out)
+ 174	
+ 175	
+ 176	def build_group_entry(
+ 177	    key: Tuple[Tuple[int, int, int], ...], p: Params, lanes: int
+ 178	) -> Tuple[np.ndarray, np.ndarray]:
+ 179	    t = np.arange(lanes, dtype=float)
+ 180	    v = np.zeros(lanes, dtype=np.complex128)
+ 181	    for phase_code, qa, qb in key:
+ 182	        alpha = qa / p.Q_start
+ 183	        beta = qb / p.Q_slope
+ 184	        v += PHASES[phase_code] * np.exp(-2j * np.pi * (alpha + t * beta))
+ 185	    v /= p.g_used
+ 186	    zr = np.rint(v.real / p.h1).astype(np.int64)
+ 187	    zi = np.rint(v.imag / p.h1).astype(np.int64)
+ 188	    qv = math.ceil(1.0 / p.h1) + 3
+ 189	    zr = np.clip(zr, -qv, qv)
+ 190	    zi = np.clip(zi, -qv, qv)
+ 191	    return zr, zi
+ 192	
+ 193	
+ 194	def pack_nonnegative_lanes(vals: np.ndarray, field_bits: int, lanes_per_word: int) -> List[int]:
+ 195	    words: List[int] = []
+ 196	    mask = (1 << field_bits) - 1
+ 197	    for start in range(0, len(vals), lanes_per_word):
+ 198	        word = 0
+ 199	        for lane, val in enumerate(vals[start : start + lanes_per_word]):
+ 200	            iv = int(val)
+ 201	            if iv < 0 or iv > mask:
+ 202	                raise ValueError((iv, field_bits))
+ 203	            word |= iv << (lane * field_bits)
+ 204	        words.append(word)
+ 205	    return words
+ 206	
+ 207	
+ 208	def unpack_nonnegative_lanes(
+ 209	    words: List[int], count: int, field_bits: int, lanes_per_word: int
+ 210	) -> np.ndarray:
+ 211	    vals: List[int] = []
+ 212	    mask = (1 << field_bits) - 1
+ 213	    for word in words:
+ 214	        for lane in range(lanes_per_word):
+ 215	            vals.append((word >> (lane * field_bits)) & mask)
+ 216	            if len(vals) == count:
+ 217	                return np.asarray(vals, dtype=np.int64)
+ 218	    return np.asarray(vals, dtype=np.int64)
+ 219	
+ 220	
+ 221	def packed_decode(
+ 222	    N: int, L: float, samples: List[Tuple[int, int]], p: Params
+ 223	) -> Tuple[np.ndarray, Dict[str, int]]:
+ 224	    if L == 0.0:
+ 225	        return np.zeros(N, dtype=np.complex128), {
+ 226	            "table_entries": 0,
+ 227	            "lookup_count": 0,
+ 228	            "packed_word_adds": 0,
+ 229	            "descriptor_count": 0,
+ 230	        }
+ 231	    if len(samples) != p.k:
+ 232	        raise ValueError((len(samples), p.k))
+ 233	
+ 234	    cache: Dict[Tuple, Tuple[np.ndarray, np.ndarray]] = {}
+ 235	    out = np.zeros(N, dtype=np.complex128)
+ 236	    qv = math.ceil(1.0 / p.h1) + 3
+ 237	    lookup_count = 0
+ 238	    packed_word_adds = 0
+ 239	    descriptor_count = 0
+ 240	
+ 241	    for m0 in range(0, N, p.B):
+ 242	        lanes = min(p.B, N - m0)
+ 243	        word_count = math.ceil(lanes / p.lanes_per_word)
+ 244	        wr_sum = [0] * word_count
+ 245	        wi_sum = [0] * word_count
+ 246	
+ 247	        for group_idx in range(p.G):
+ 248	            key = group_key_for_block(samples, m0, p, group_idx)
+ 249	            descriptor_count += len(key)
+ 250	            entry = cache.get(key)
+ 251	            if entry is None:
+ 252	                entry = build_group_entry(key, p, lanes)
+ 253	                cache[key] = entry
+ 254	            zr, zi = entry
+ 255	            pr = pack_nonnegative_lanes(zr + qv, p.field_bits, p.lanes_per_word)
+ 256	            pi = pack_nonnegative_lanes(zi + qv, p.field_bits, p.lanes_per_word)
+ 257	            for wi in range(word_count):
+ 258	                wr_sum[wi] += pr[wi]
+ 259	                wi_sum[wi] += pi[wi]
+ 260	                packed_word_adds += 2
+ 261	            lookup_count += 1
+ 262	
+ 263	        sr = (
+ 264	            unpack_nonnegative_lanes(wr_sum, lanes, p.field_bits, p.lanes_per_word)
+ 265	            - p.G * qv
+ 266	        )
+ 267	        si = (
+ 268	            unpack_nonnegative_lanes(wi_sum, lanes, p.field_bits, p.lanes_per_word)
+ 269	            - p.G * qv
+ 270	        )
+ 271	        avg = (p.h1 / p.G) * (sr.astype(float) + 1j * si.astype(float))
+ 272	        avg = p.h2 * (np.rint(avg.real / p.h2) + 1j * np.rint(avg.imag / p.h2))
+ 273	        out[m0 : m0 + lanes] = (L / math.sqrt(N)) * avg
+ 274	
+ 275	    return out, {
+ 276	        "table_entries": len(cache),
+ 277	        "lookup_count": lookup_count,
+ 278	        "packed_word_adds": packed_word_adds,
+ 279	        "descriptor_count": descriptor_count,
+ 280	    }
+ 281	
+ 282	
+ 283	def make_inputs(N: int, rng: np.random.Generator) -> Dict[str, np.ndarray]:
+ 284	    flat = np.ones(N, dtype=np.complex128)
+ 285	    random_phase = np.exp(2j * np.pi * rng.random(N))
+ 286	    gaussian = rng.normal(size=N) + 1j * rng.normal(size=N)
+ 287	    power_law = (rng.normal(size=N) + 1j * rng.normal(size=N)) / np.sqrt(
+ 288	        np.arange(1, N + 1)
+ 289	    )
+ 290	    spike_noise = 0.02 * (rng.normal(size=N) + 1j * rng.normal(size=N))
+ 291	    idx = rng.choice(N, size=max(1, N // 64), replace=False)
+ 292	    spike_noise[idx] += 4.0 * (rng.normal(size=len(idx)) + 1j * rng.normal(size=len(idx)))
+ 293	    return {
+ 294	        "flat": flat,
+ 295	        "random_phase": random_phase,
+ 296	        "gaussian": gaussian,
+ 297	        "power_law": power_law,
+ 298	        "spike_noise": spike_noise,
+ 299	    }
+ 300	
+ 301	
+ 302	def symbolic_cost_model(
+ 303	    log2N: int,
+ 304	    failure_power: float = 1.0,
+ 305	    mode: str = "linear",
+ 306	    gamma: float = 0.72,
+ 307	    word_constant: float = 8.0,
+ 308	    error_constant: float = 1.0,
+ 309	) -> Dict[str, float | int | str]:
+ 310	    """Asymptotic scale model without constructing N=2^log2N.
+ 311	
+ 312	    linear mode:
+ 313	      eta ~= C loglog(N)/sqrt(log N), k from Hoeffding, B=k.
+ 314	
+ 315	    subfft mode:
+ 316	      k ~= log^3(N)/(loglog N)^3, giving time N logN/loglogN
+ 317	      and sampling scale roughly (loglog N)^(3/2)/log N.
+ 318	    """
+ 319	    L = float(log2N)
+ 320	    ell = max(1.0, math.log2(max(2.0, L)))
+ 321	    ln_factor = math.log(4.0) + (1.0 + failure_power) * L * math.log(2.0)
+ 322	
+ 323	    if mode == "linear":
+ 324	        eta_sample = min(0.9, error_constant * ell / math.sqrt(L))
+ 325	        k0 = math.ceil(4.0 * ln_factor / (eta_sample**2))
+ 326	    elif mode == "subfft":
+ 327	        k0 = max(1, math.ceil(L**3 / (ell**3)))
+ 328	        eta_sample = math.sqrt(4.0 * ln_factor / k0)
+ 329	    else:
+ 330	        raise ValueError(mode)
+ 331	
+ 332	    B = k0
+ 333	    eta_total = min(0.95, 2.0 * eta_sample)
+ 334	    eps_phase = eta_total / 4.0
+ 335	    h1 = eta_total / (4.0 * math.sqrt(2.0))
+ 336	    h2 = eta_total / (4.0 * math.sqrt(2.0))
+ 337	
+ 338	    Q_start = max(2, math.ceil(2.0 * math.pi / eps_phase))
+ 339	    Q_slope = max(2, math.ceil(2.0 * math.pi * B / eps_phase))
+ 340	    pbits = math.ceil(math.log2(1 + 4 * Q_start * Q_slope))
+ 341	    g = max(1, math.floor(gamma * L / pbits))
+ 342	    k = g * math.ceil(k0 / g)
+ 343	    G = k // g
+ 344	
+ 345	    qv = math.ceil(1.0 / h1) + 3
+ 346	    field_bits = max(2, math.ceil(math.log2(G * (2 * qv) + 1)) + 1)
+ 347	    word_bits = max(64, math.ceil(word_constant * L))
+ 348	    lanes_per_word = max(1, word_bits // field_bits)
+ 349	    words_per_vector = math.ceil(B / lanes_per_word)
+ 350	
+ 351	    # Normalize modeled online subcosts by N.
+ 352	    descriptor_ratio = k / B
+ 353	    lookup_ratio = G / B
+ 354	    packed_add_ratio = 2.0 * G * words_per_vector / B
+ 355	    table_exponent = pbits * g / L
+ 356	
+ 357	    return {
+ 358	        "mode": mode,
+ 359	        "log2N": log2N,
+ 360	        "log2log2N": ell,
+ 361	        "eta_sample": eta_sample,
+ 362	        "eta_total_budget": eta_total,
+ 363	        "k": k,
+ 364	        "B": B,
+ 365	        "descriptor_bits": pbits,
+ 366	        "g": g,
+ 367	        "G": G,
+ 368	        "field_bits": field_bits,
+ 369	        "words_per_vector": words_per_vector,
+ 370	        "descriptor_ops_over_N": descriptor_ratio,
+ 371	        "lookups_over_N": lookup_ratio,
+ 372	        "packed_word_adds_over_N": packed_add_ratio,
+ 373	        "modeled_total_non_io_over_N": descriptor_ratio + lookup_ratio + packed_add_ratio,
+ 374	        "table_exponent_logN": table_exponent,
+ 375	        "predicted_sampling_scale": eta_sample,
+ 376	    }
+ 377	
+ 378	
+ 379	def packed_correctness_experiment(rng: np.random.Generator) -> List[Dict]:
+ 380	    rows: List[Dict] = []
+ 381	    N = 2048
+ 382	    inputs = make_inputs(N, rng)
+ 383	    for k in [16, 32, 64, 128]:
+ 384	        # Shrink decoder precision mildly as k grows. Toy constants are chosen for
+ 385	        # tractable tests, not to instantiate the asymptotic theorem literally.
+ 386	        scale = math.sqrt(16.0 / k)
+ 387	        eps_phase = 0.04 * scale
+ 388	        h1 = 0.03 * scale
+ 389	        h2 = 0.02 * scale
+ 390	        p = choose_params(
+ 391	            N=N,
+ 392	            k=k,
+ 393	            B=k,
+ 394	            eps_phase=eps_phase,
+ 395	            h1=h1,
+ 396	            h2=h2,
+ 397	            g_override=4,
+ 398	        )
+ 399	        for name, x in inputs.items():
+ 400	            L, samples = sample_atoms(x, p.k, rng)
+ 401	            exact_sampled = exact_sampled_spectrum(N, L, samples)
+ 402	            approx, stats = packed_decode(N, L, samples, p)
+ 403	            norm = L / math.sqrt(N) if L else 1.0
+ 404	            decoder_error = float(np.max(np.abs(approx - exact_sampled)) / norm) if L else 0.0
+ 405	            rows.append(
+ 406	                {
+ 407	                    "N": N,
+ 408	                    "case": name,
+ 409	                    "requested_k": k,
+ 410	                    "params": asdict(p),
+ 411	                    "decoder_error_normalized": decoder_error,
+ 412	                    "decoder_bound_normalized": decoder_bound_normalized(p),
+ 413	                    **stats,
+ 414	                }
+ 415	            )
+ 416	    return rows
+ 417	
+ 418	
+ 419	def sampling_scaling_experiment(rng: np.random.Generator) -> List[Dict]:
+ 420	    rows: List[Dict] = []
+ 421	    N = 2048
+ 422	    cases = make_inputs(N, rng)
+ 423	    selected = {k: cases[k] for k in ["flat", "random_phase", "gaussian", "spike_noise"]}
+ 424	    for k in [16, 32, 64, 128, 256, 512]:
+ 425	        for name, x in selected.items():
+ 426	            exact = unitary_fft(x)
+ 427	            L, _, _ = signed_atom_distribution(x)
+ 428	            norm = L / math.sqrt(N) if L else 1.0
+ 429	            errs: List[float] = []
+ 430	            for _ in range(40):
+ 431	                L2, samples = sample_atoms(x, k, rng)
+ 432	                estimate = exact_sampled_spectrum(N, L2, samples)
+ 433	                errs.append(float(np.max(np.abs(estimate - exact)) / norm))
+ 434	            rows.append(
+ 435	                {
+ 436	                    "N": N,
+ 437	                    "case": name,
+ 438	                    "k": k,
+ 439	                    "trials": len(errs),
+ 440	                    "median_normalized_sampling_error": float(np.median(errs)),
+ 441	                    "p90_normalized_sampling_error": float(np.quantile(errs, 0.9)),
+ 442	                    "max_normalized_sampling_error": float(np.max(errs)),
+ 443	                    "sqrt_logN_over_k": math.sqrt(math.log(N) / k),
+ 444	                }
+ 445	            )
+ 446	    return rows
+ 447	
+ 448	
+ 449	def rejected_energy_mixture_check(rng: np.random.Generator) -> List[Dict]:
+ 450	    """Quantify why the half-length-squared/half-uniform shortcut is not stronger.
+ 451	
+ 452	    It gives an additive O(||x||_2) scale, while L_box/sqrt(N) <= sqrt(2)||x||_2.
+ 453	    For flat cancellation-heavy inputs the two scales differ only by a constant.
+ 454	    """
+ 455	    rows: List[Dict] = []
+ 456	    for N in [256, 1024, 4096, 16384]:
+ 457	        for name, x in {
+ 458	            "flat": np.ones(N, dtype=np.complex128),
+ 459	            "random_phase": np.exp(2j * np.pi * rng.random(N)),
+ 460	            "single_spike": np.eye(1, N, int(rng.integers(0, N)), dtype=np.complex128).ravel(),
+ 461	            "gaussian": rng.normal(size=N) + 1j * rng.normal(size=N),
+ 462	        }.items():
+ 463	            Lbox = float(np.sum(np.abs(x.real) + np.abs(x.imag)))
+ 464	            l2 = float(np.linalg.norm(x))
+ 465	            rows.append(
+ 466	                {
+ 467	                    "N": N,
+ 468	                    "case": name,
+ 469	                    "Lbox_over_sqrtN": Lbox / math.sqrt(N),
+ 470	                    "l2": l2,
+ 471	                    "ratio_Lbox_over_sqrtN_to_l2": (Lbox / math.sqrt(N)) / l2 if l2 else 0.0,
+ 472	                }
+ 473	            )
+ 474	    return rows
+ 475	
+ 476	
+ 477	def run() -> Dict:
+ 478	    rng = np.random.default_rng(20261009)
+ 479	    result = {
+ 480	        "packed_correctness": packed_correctness_experiment(rng),
+ 481	        "sampling_scaling": sampling_scaling_experiment(rng),
+ 482	        "rejected_energy_mixture": rejected_energy_mixture_check(rng),
+ 483	        "cost_model_linear": [
+ 484	            symbolic_cost_model(m, mode="linear")
+ 485	            for m in [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+ 486	        ],
+ 487	        "cost_model_subfft": [
+ 488	            symbolic_cost_model(m, mode="subfft")
+ 489	            for m in [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+ 490	        ],
+ 491	    }
+ 492	    return result
+ 493	
+ 494	
+ 495	if __name__ == "__main__":
+ 496	    result = run()
+ 497	    with open("results.json", "w", encoding="utf-8") as f:
+ 498	        json.dump(result, f, indent=2)
+ 499	
+ 500	    pc = result["packed_correctness"]
+ 501	    ss = result["sampling_scaling"]
+ 502	    print("packed cases", len(pc))
+ 503	    print("max decoder error", max(r["decoder_error_normalized"] for r in pc))
+ 504	    print("max decoder bound", max(r["decoder_bound_normalized"] for r in pc))
+ 505	    print(
+ 506	        "decoder violations",
+ 507	        sum(r["decoder_error_normalized"] > r["decoder_bound_normalized"] + 1e-12 for r in pc),
+ 508	    )
+ 509	    print("sampling rows", len(ss))
+ 510	    print("random-phase medians")
+ 511	    for row in ss:
+ 512	        if row["case"] == "random_phase":
+ 513	            print(row["k"], row["median_normalized_sampling_error"], row["sqrt_logN_over_k"])
+ 514	    print("linear cost tail")
+ 515	    for row in result["cost_model_linear"][-4:]:
+ 516	        print(row)
+ 517	    print("subfft cost tail")
+ 518	    for row in result["cost_model_subfft"][-4:]:
+ 519	        print(row)

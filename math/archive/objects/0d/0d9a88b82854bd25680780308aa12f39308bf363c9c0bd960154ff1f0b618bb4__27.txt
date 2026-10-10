@@ -1,0 +1,225 @@
+   1 """Auditor-authored checks. Standard library only. No source imports or execution."""
+   2 import itertools as it, json, math, random
+   3 from pathlib import Path
+   4 
+   5 def ident(n): return [[int(i==j) for j in range(n)] for i in range(n)]
+   6 def mm(a,b,p): return [[sum(x*y for x,y in zip(r,c))%p for c in zip(*b)] for r in a]
+   7 def mv(a,x,p): return [sum(u*v for u,v in zip(r,x))%p for r in a]
+   8 def plus(a,b,p,sgn=1): return [[(x+sgn*y)%p for x,y in zip(r,s)] for r,s in zip(a,b)]
+   9 def scale(a,t,p): return [[x*t%p for x in r] for r in a]
+  10 def rank(a,p):
+  11     a=[r[:] for r in a];k=0
+  12     for j in range(len(a[0]) if a else 0):
+  13         u=next((i for i in range(k,len(a)) if a[i][j]%p),None)
+  14         if u is None:continue
+  15         a[k],a[u]=a[u],a[k];d=pow(a[k][j],-1,p)
+  16         for i in range(k+1,len(a)):
+  17             t=a[i][j]*d%p
+  18             a[i]=[(x-t*y)%p for x,y in zip(a[i],a[k])]
+  19         k+=1
+  20         if k==len(a):break
+  21     return k
+  22 
+  23 def inv(a,p):
+  24     n=len(a);a=[r[:]+e for r,e in zip(a,ident(n))]
+  25     for j in range(n):
+  26         u=next((i for i in range(j,n) if a[i][j]),None)
+  27         if u is None:raise ValueError('singular')
+  28         a[j],a[u]=a[u],a[j];a[j]=[x*pow(a[j][j],-1,p)%p for x in a[j]]
+  29         for i in range(n):
+  30             if i!=j:
+  31                 t=a[i][j];a[i]=[(x-t*y)%p for x,y in zip(a[i],a[j])]
+  32     return [r[n:] for r in a]
+  33 
+  34 def root(n,p):
+  35     # Finite check setup only, explicitly searched; not a free algorithm oracle.
+  36     return next(w for w in range(1,p) if pow(w,n,p)==1 and all(pow(w,d,p)!=1 for d in range(1,n) if n%d==0))
+  37 def ft(n,p):
+  38     w=root(n,p);return [[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+  39 def support(a):return max(sum(bool(x) for x in c) for c in zip(*a))
+  40 def binomial(n,t,a,p):
+  41     z=ident(n)
+  42     for j in range(n):z[(j+t)%n][j]=(z[(j+t)%n][j]-a)%p
+  43     return z
+  44 
+  45 def cycle_solve(x,a,t,p):
+  46     # Solve by affine propagation from the final coordinate in each cycle.
+  47     n=len(x);d=math.gcd(n,t);m=n//d;den=(1-pow(a,m,p))%p
+  48     if den==0:raise ValueError('singular')
+  49     den=pow(den,-1,p);out=[0]*n
+  50     for offset in range(d):
+  51         lane=[(offset+k*t)%n for k in range(m)];b=0
+  52         for i in lane:b=(a*b+x[i])%p
+  53         prev=b*den%p
+  54         for i in lane:prev=(a*prev+x[i])%p;out[i]=prev
+  55     return out
+  56 
+  57 def gauge(n,p,rng):
+  58     rows=rng.sample(range(n),n);v=[[0]*n for _ in range(n)]
+  59     for j,i in enumerate(rows):v[i][j]=rng.randrange(1,p)
+  60     return v
+  61 
+  62 def minors():
+  63     out=[]
+  64     for n,p in [(3,7),(5,11),(7,29)]:
+  65         f=ft(n,p);count=0
+  66         for k in range(1,n+1):
+  67             for rr in it.combinations(range(n),k):
+  68                 for cc in it.combinations(range(n),k):
+  69                     assert rank([[f[i][j] for j in cc] for i in rr],p)==k;count+=1
+  70         out.append({'N':n,'p':p,'nonzero_minors':count})
+  71     return out
+  72 
+  73 def uncertainty():
+  74     out=[]
+  75     for n,p in [(5,11),(7,29),(8,17)]:
+  76         f=ft(n,p)
+  77         for k in [1,2]:
+  78             count=0;minimum=n
+  79             for ix in it.combinations(range(n),k):
+  80                 for cs in it.product(range(1,p),repeat=k):
+  81                     y=[sum(c*f[i][j] for j,c in zip(ix,cs))%p for i in range(n)];b=sum(bool(t) for t in y)
+  82                     assert k*b>=n
+  83                     if n in [5,7]:assert k+b>=n+1
+  84                     count+=1;minimum=min(minimum,b)
+  85             out.append({'N':n,'p':p,'k':k,'vectors':count,'minimum_output_support':minimum})
+  86     # Composite length: prime additive rule really fails, product rule is sharp.
+  87     assert sum(bool(t) for t in mv(ft(8,17),[1,0,0,0,1,0,0,0],17))==4
+  88     # GF(8)=GF(2)[u]/(u^3+u+1), primitive seventh root u.
+  89     def mul(x,y):
+  90         z=0
+  91         while y:
+  92             if y&1:z^=x
+  93             y>>=1;x<<=1
+  94             if x&8:x^=11
+  95         return z
+  96     def power(x,e):
+  97         y=1
+  98         for _ in range(e):y=mul(y,x)
+  99         return y
+ 100     vals=[1^power(2,k)^power(2,3*k) for k in range(7)]
+ 101     assert sum(bool(v) for v in vals)==4
+ 102     return {'exhaustive':out,'composite_sharp':{'N':8,'input_support':2,'output_support':4},'prime_finite_field_additive_counterexample':{'N':7,'field':'GF(8), u^3+u+1','input':[1,1,0,1,0,0,0],'output':vals,'support_sum':7,'required_complex_bound':8}}
+ 103 
+ 104 def networks():
+ 105     rng=random.Random(123512);rows=[]
+ 106     for n,p in [(3,7),(5,11),(8,97),(12,97),(16,97)]:
+ 107         for L in [1,2,3,4]:
+ 108             for r0 in [0,1,2]:
+ 109                 for rep in range(2):
+ 110                     G=ident(n);H=ident(n);budget=0
+ 111                     for stage in range(L):
+ 112                         while True:
+ 113                             t=rng.randrange(1,n);a=rng.randrange(p)
+ 114                             if pow(a,n//math.gcd(n,t),p)==1:continue
+ 115                             B=binomial(n,t,a,p)
+ 116                             g=mm(mm(gauge(n,p,rng),inv(B,p),p),gauge(n,p,rng),p)
+ 117                             uv=mm([[rng.randrange(p) for _ in range(r0)] for i in range(n)],[[rng.randrange(p) for j in range(n)] for _ in range(r0)],p) if r0 else [[0]*n for _ in range(n)]
+ 118                             h=plus(g,uv,p)
+ 119                             if rank(h,p)==n:break
+ 120                         gi=inv(g,p);hi=inv(h,p)
+ 121                         delta=plus(hi,gi,p,-1)
+ 122                         assert delta==scale(mm(mm(hi,uv,p),gi,p),-1,p)
+ 123                         assert rank(delta,p)==rank(uv,p)<=r0
+ 124                         G=mm(g,G,p);H=mm(h,H,p);budget+=rank(uv,p)
+ 125                     gi=inv(G,p);hi=inv(H,p);r=rank(plus(hi,gi,p,-1),p);s=support(gi)
+ 126                     assert r<=budget and s<=2**L
+ 127                     rows.append({'N':n,'L':L,'r_each':r0,'rank_budget':budget,'actual_inverse_rank':r,'actual_inverse_col_support':s})
+ 128     # Positive full Fourier stages with sufficient correction rank must be allowed.
+ 129     pos=[]
+ 130     for n,p in [(3,7),(5,11),(7,29),(8,17),(12,97)]:
+ 131         f=ft(n,p);R=plus(f,ident(n),p,-1);r=rank(R,p)
+ 132         assert (r+1)**2>=n
+ 133         if n in [3,5,7]:assert 2*(r+1)>=n+1
+ 134         pos.append({'N':n,'H_equals_F':True,'G_equals_I':True,'correction_rank':r})
+ 135     return {'cases':rows,'positive_F_controls':pos}
+ 136 
+ 137 def green_checks():
+ 138     rng=random.Random(140512);count=0;singular=0;fusion=0;comm=[];chirps=[]
+ 139     for n in [1,2,3,4,5,6,8,10,12,15,16]:
+ 140         p=241;w=root(n,p)
+ 141         admissible=[a for a in range(p) if pow(a,n,p)!=1][:3]
+ 142         for t in range(n):
+ 143             for a in [0,1,2,3,7]:
+ 144                 b=binomial(n,t,a,p);d=math.gcd(n,t)
+ 145                 if pow(a,n//d,p)==1:
+ 146                     assert rank(b,p)<n
+ 147                     try:cycle_solve([1]*n,a,t,p)
+ 148                     except ValueError:singular+=1
+ 149                     else:raise AssertionError('singular accepted')
+ 150                 else:
+ 151                     bi=inv(b,p)
+ 152                     for j in range(n):
+ 153                         x=[int(i==j) for i in range(n)];assert cycle_solve(x,a,t,p)==[r[j] for r in bi]
+ 154                     count+=1
+ 155         for K in range(1,n+1):
+ 156             if n%K:continue
+ 157             z=pow(w,n//K,p)
+ 158             for a in admissible:
+ 159                 mean=[[0]*n for _ in range(n)];base=inv(binomial(n,1,a,p),p)
+ 160                 for j in range(K):
+ 161                     conjugate=[[base[r][c]*pow(z,j*(r-c)%(p-1),p)%p for c in range(n)] for r in range(n)]
+ 162                     assert conjugate==inv(binomial(n,1,a*pow(z,j,p)%p,p),p)
+ 163                     mean=plus(mean,conjugate,p)
+ 164                 mean=scale(mean,pow(K,-1,p),p)
+ 165                 target=inv(binomial(n,K,pow(a,K,p),p),p)
+ 166                 assert mean==target;fusion+=1
+ 167         if n>1:
+ 168             a=next(a for a in range(1,p) if pow(a,n,p)!=1)
+ 169             A=binomial(n,1,a,p);B=[[(1-a*pow(w,i,p))%p if i==j else 0 for j in range(n)] for i in range(n)]
+ 170             ai=inv(A,p);bi=inv(B,p);C=plus(mm(ai,bi,p),mm(bi,ai,p),p,-1)
+ 171             rhs=mm(mm(mm(mm(ai,bi,p),plus(mm(A,B,p),mm(B,A,p),p,-1),p),bi,p),ai,p)
+ 172             assert C==rhs and rank(C,p)==n and support(mm(B,A,p))<=2
+ 173             comm.append({'N':n,'rank':n})
+ 174         if n%2:
+ 175             h=pow(2,-1,n) if n>1 else 0
+ 176             C=[[pow(w,(-h*(i-j)**2)%n,p) for j in range(n)] for i in range(n)];D=[pow(w,h*i*i%n,p) for i in range(n)]
+ 177             assert [[D[i]*C[i][j]*D[j]%p for j in range(n)] for i in range(n)]==ft(n,p)
+ 178             ci=inv(C,p);assert all(all(r) for r in ci);chirps.append({'N':n,'inverse_support':support(ci)})
+ 179     # N=1 commutator has rank zero, not one.
+ 180     return {'stride_operator_basis_cases':count,'singular_guards':singular,'full_orbit_matrix_identities':fusion,'commutator_cases':comm,'odd_chirp_cases':chirps,'N1_commutator_rank':0}
+ 181 
+ 182 def large():
+ 183     n=65536;p=786433;a=2;K=16;w=pow(10,(p-1)//n,p)
+ 184     assert pow(w,n,p)==1 and pow(w,n//2,p)!=1
+ 185     x=[(j*j+31*j+19)%p for j in range(n)]
+ 186     z=cycle_solve(x,pow(a,K,p),K,p);phase=pow(w,n//K,p)
+ 187     average=[0]*n;c=a
+ 188     for j in range(K):
+ 189         y=cycle_solve(x,c,1,p)
+ 190         average=[(u+v)%p for u,v in zip(average,y)];c=c*phase%p
+ 191     average=[v*pow(K,-1,p)%p for v in average]
+ 192     assert z==average
+ 193     assert all((z[j]-pow(a,K,p)*z[(j-K)%n]-x[j])%p==0 for j in range(n))
+ 194     # Corrected modulation plan: shared powers plus one batch inversion.
+ 195     powers=[1]*n
+ 196     for j in range(1,n):powers[j]=powers[j-1]*w%p
+ 197     den=[(1-2*t)%p for t in powers];pref=[1]
+ 198     for t in den:pref.append(pref[-1]*t%p)
+ 199     tmp=pow(pref[-1],-1,p);iz=[0]*n
+ 200     for j in range(n-1,-1,-1):iz[j]=tmp*pref[j]%p;tmp=tmp*den[j]%p
+ 201     v=[u*t%p for u,t in zip(x,iz)];y=cycle_solve(v,a,1,p)
+ 202     assert all(den[j]*v[j]%p==x[j] and (y[j]-a*y[j-1])%p==v[j] for j in range(n))
+ 203     diffs=[]
+ 204     for k in [0,1,2,17]:
+ 205         value=sum(xj*powers[k*j%n] for j,xj in enumerate(x))%p
+ 206         if value!=y[k]:diffs.append(k)
+ 207     assert len(diffs)>0
+ 208     # Standard left-to-right binary ladder counts, initial leading bit uncharged.
+ 209     binary=sum(j.bit_length()-1+j.bit_count()-1 for j in range(1,n))
+ 210     assert binary==21*n+3
+ 211     return {'N':n,'p':p,'omega':w,'K':K,'full_fusion_outputs':n,'full_pair_stage_residuals':2*n,'DFT_disagreement_bins':diffs,'independent_pow_binary_ladder_multiplications':binary,'shared_root_recurrence_multiplications':n-1,'corrected_modulation_multiplications':6*n-1,'corrected_modulation_subtractions':n,'corrected_modulation_inversions':1,'counts_exclude_root_order_verification_and_modular_inversion_implementation':True}
+ 212 
+ 213 def bounds():
+ 214     out=[]
+ 215     for n,prime in [(127,True),(257,True),(1024,False),(65536,False),(1048576,False)]:
+ 216         for L in range(1,5):
+ 217             s=2**L;r=0
+ 218             while ((s+1)*(r+1)<n+1 if prime else s*(r+1)**2<n):r+=1
+ 219             out.append({'N':n,'L':L,'prime':prime,'minimum_total_rank':r})
+ 220     return out
+ 221 
+ 222 if __name__=='__main__':
+ 223     result={'status':'passed','independent':True,'uploaded_code_executed':False,'minors':minors(),'uncertainty':uncertainty(),'networks':networks(),'green':green_checks(),'large':large(),'rank_bounds':bounds()}
+ 224     Path('INDEPENDENT_RESULTS.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 225     print(json.dumps({'status':result['status'],'minors':sum(x['nonzero_minors'] for x in result['minors']),'networks':len(result['networks']['cases']),'green':result['green'],'large':result['large']},sort_keys=True))

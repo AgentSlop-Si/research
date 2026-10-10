@@ -1,0 +1,26 @@
+   1 import unittest
+   2 from random import Random
+   3 from itertools import combinations
+   4 from cut_budget import fourier,rank,permute
+   5 from prime_endpoints import field
+   6 
+   7 class TestPrimeEndpointCorollary(unittest.TestCase):
+   8     def test_exhaustive_small_minor(self):
+   9         for n in (5,7):
+  10             p,g=field(n,1);f=fourier(n,p,g)
+  11             m=n//2
+  12             subsets=list(combinations(range(n),m))
+  13             for rows in subsets:
+  14                 for cols in subsets:
+  15                     self.assertEqual(rank([[f[i][j] for j in cols] for i in rows],p),m)
+  16     def test_independent_endpoint_permutations(self):
+  17         rng=Random(321)
+  18         for n in (5,7,11,13,17,31):
+  19             p,g=field(n,1);f=fourier(n,p,g);m=n//2
+  20             for _ in range(5):
+  21                 ro=list(range(n));co=list(range(n))
+  22                 rng.shuffle(ro);rng.shuffle(co)
+  23                 w=permute(f,ro,co)
+  24                 self.assertEqual(rank([row[:m] for row in w[:m]],p),m)
+  25                 self.assertEqual(rank([row[m:] for row in w[:m]],p),m)
+  26 if __name__=='__main__':unittest.main()

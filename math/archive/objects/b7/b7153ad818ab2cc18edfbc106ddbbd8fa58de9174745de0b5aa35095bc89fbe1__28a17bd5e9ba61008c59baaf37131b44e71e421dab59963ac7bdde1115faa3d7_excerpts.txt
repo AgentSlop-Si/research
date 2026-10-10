@@ -1,0 +1,98 @@
+1: from __future__ import annotations
+2: from typing import Iterable
+3: 
+4: MOD = 998244353
+5: GENERATOR = 3
+6: 
+7: 
+8: def inv(a: int, p: int = MOD) -> int:
+9:     a %= p
+10:     if a == 0:
+11:         raise ZeroDivisionError
+12:     return pow(a, p - 2, p)
+13: 
+14: 
+15: def eye(n: int) -> list[list[int]]:
+16:     return [[1 if i == j else 0 for j in range(n)] for i in range(n)]
+
+36: def mat_mul(a, b, p: int = MOD):
+37:     n, k, m = len(a), len(b), len(b[0])
+38:     assert len(a[0]) == k
+39:     bt = list(zip(*b))
+40:     return [[sum(x * y for x, y in zip(row, col)) % p for col in bt] for row in a]
+41: 
+42: 
+43: def mat_vec(a, x, p: int = MOD):
+44:     return [sum(v * w for v, w in zip(row, x)) % p for row in a]
+45: 
+46: 
+47: def mat_pow(a, e: int, p: int = MOD):
+48:     n = len(a)
+49:     out = eye(n)
+50:     base = [row[:] for row in a]
+51:     while e:
+52:         if e & 1:
+53:             out = mat_mul(out, base, p)
+54:         base = mat_mul(base, base, p)
+55:         e >>= 1
+56:     return out
+57: 
+58: 
+
+82: def inv_mod(a, p: int = MOD):
+83:     n = len(a)
+84:     aug = [list(map(lambda z: z % p, a[i])) + eye(n)[i] for i in range(n)]
+85:     r = 0
+86:     for c in range(n):
+87:         pivot = next((i for i in range(r, n) if aug[i][c] % p), None)
+88:         if pivot is None:
+89:             raise ValueError("singular")
+90:         aug[r], aug[pivot] = aug[pivot], aug[r]
+91:         z = inv(aug[r][c], p)
+92:         aug[r] = [(v * z) % p for v in aug[r]]
+93:         for i in range(n):
+94:             if i != r and aug[i][c] % p:
+95:                 f = aug[i][c]
+96:                 aug[i] = [(x - f * y) % p for x, y in zip(aug[i], aug[r])]
+97:         r += 1
+98:     return [row[n:] for row in aug]
+99: 
+100: 
+101: def permutation_matrix(perm: list[int]) -> list[list[int]]:
+102:     n = len(perm)
+103:     if sorted(perm) != list(range(n)):
+104:         raise ValueError("not a permutation")
+105:     out = zeros(n, n)
+106:     for j, i in enumerate(perm):
+107:         out[i][j] = 1
+108:     return out
+109: 
+110: 
+111: def cycle_shift(n: int) -> list[list[int]]:
+112:     return permutation_matrix([(j + 1) % n for j in range(n)])
+113: 
+114: 
+115: def poly_matrix(coeffs: list[int], pmat, p: int = MOD):
+116:     n = len(pmat)
+117:     out = zeros(n, n)
+118:     power = eye(n)
+119:     for c in coeffs:
+120:         if c % p:
+121:             out = mat_add(out, mat_scale(c, power, p), p)
+122:         power = mat_mul(power, pmat, p)
+123:     return out
+124: 
+125: 
+126: def submatrix(a, rows: Iterable[int], cols: Iterable[int]):
+127:     rows, cols = list(rows), list(cols)
+128:     return [[a[i][j] for j in cols] for i in rows]
+129: 
+130: 
+131: def primitive_root_of_order(n: int, p: int = MOD, generator: int = GENERATOR) -> int:
+132:     if (p - 1) % n:
+133:         raise ValueError(f"order {n} does not divide p-1")
+134:     w = pow(generator, (p - 1) // n, p)
+135:     if pow(w, n, p) != 1:
+136:         raise AssertionError
+137:     # caller uses n that is prime or power of two in this package
+138:     return w

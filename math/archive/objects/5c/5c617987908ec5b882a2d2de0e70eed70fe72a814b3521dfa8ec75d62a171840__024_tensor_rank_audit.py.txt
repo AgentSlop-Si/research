@@ -1,0 +1,44 @@
+"""Independent finite-field flattening-rank certificate for multiplication.
+
+For equal length n, polynomial-product bilinear tensor has 2n-1 outputs.
+Its output-vs-input-pairs flattening has rank exactly 2n-1, since each
+row has disjoint nonempty support; this gives a bilinear rank lower bound.
+
+For n<=8 we also calculate the rank via modular Gaussian elimination.
+"""
+from __future__ import annotations
+import json
+
+def modular_rank(rows,p=998244353):
+    m=[list(map(lambda x:x%p,row)) for row in rows]
+    if not m:return 0
+    ncols=len(m[0]);pivot=0
+    for j in range(ncols):
+        idx=next((i for i in range(pivot,len(m)) if m[i][j]),None)
+        if idx is None:continue
+        m[pivot],m[idx]=m[idx],m[pivot]
+        inv=pow(m[pivot][j],-1,p)
+        for col in range(j,ncols):m[pivot][col]=(m[pivot][col]*inv)%p
+        for i in range(pivot+1,len(m)):
+            scalar=m[i][j]
+            if scalar:
+                for col in range(j,ncols):
+                    m[i][col]=(m[i][col]-scalar*m[pivot][col])%p
+        pivot+=1
+        if pivot==len(m):break
+    return pivot
+
+def audit():
+    report=[]
+    for n in range(1,9):
+        rows=[[1 if i+j==k else 0 for i in range(n) for j in range(n)]
+              for k in range(2*n-1)]
+        rank=modular_rank(rows)
+        assert rank==2*n-1
+        report.append({'n':n,'output_coefficient_count':2*n-1,
+                       'flattening_rank_mod_998244353':rank,
+                       'evaluation_interpolation_products':2*n-1})
+    print(json.dumps(report,indent=2))
+    return report
+
+if __name__=='__main__':audit()

@@ -1,0 +1,46 @@
+1: import unittest
+2: import numpy as np
+3: from multi_view import SharedProjectedFourierStore,union_frequency_sets
+4: 
+5: class TestMultiView(unittest.TestCase):
+6:     def test_shared_updates_and_independent_queries(self):
+7:         rng=np.random.default_rng(313); n=512;r=7
+8:         view_bins={'fast':[1,3,9,17],'slow':[2,7,100],'mix':[3,7,11,255]}
+9:         union,_,_=union_frequency_sets(view_bins,n)
+10:         basis=rng.standard_normal((r,n))+1j*rng.standard_normal((r,n))
+11:         proj=np.fft.fft(basis,axis=1)[:,union]
+12:         c=rng.standard_normal(r)+1j*rng.standard_normal(r)
+13:         prepared=[5,77]
+14:         st=SharedProjectedFourierStore(n,union,proj,view_bins,c,prepared_positions=prepared,event_capacity=12)
+15:         x=c@basis
+16:         for t in range(25):
+17:             if t%3:
+18:                 i=t%r;d=.01*(t+1)*(1+1j);st.add_coefficient(i,d);x+=d*basis[i]
+19:             else:
+20:                 j=prepared[t%2];d=.02*(1-1j);st.add_point(j,d);x[j]+=d
+21:             if t%2==0:
+22:                 got=st.query('fast');self.assertTrue(np.allclose(got,np.fft.fft(x)[view_bins['fast']],rtol=3e-11,atol=3e-9))
+23:             if t%7==0:
+24:                 got=st.query('slow');self.assertTrue(np.allclose(got,np.fft.fft(x)[view_bins['slow']],rtol=3e-11,atol=3e-9))
+25:         # slow view may have lost history; exact rebuild must still work.
+26:         for name,b in view_bins.items():
+27:             self.assertTrue(np.allclose(st.query(name),np.fft.fft(x)[b],rtol=3e-11,atol=3e-9))
+28:         st.compact()
+29:     def test_union_mapping(self):
+30:         u,_,idx=union_frequency_sets({'a':[9,1,9],'b':[2,1]},16)
+31:         self.assertEqual(u.tolist(),[1,2,9]);self.assertEqual(idx['a'].tolist(),[2,0,2])
+32: 
+33:     def test_query_many_fused(self):
+34:         rng=np.random.default_rng(99);n=256;r=5
+35:         vb={'a':[1,2,3,4,5],'b':[3,4,5,6,7],'c':[4,5,8]}
+36:         union,_,_=union_frequency_sets(vb,n)
+37:         basis=rng.standard_normal((r,n))+1j*rng.standard_normal((r,n));proj=np.fft.fft(basis,axis=1)[:,union]
+38:         c=np.ones(r,dtype=np.complex128);st=SharedProjectedFourierStore(n,union,proj,vb,c,event_capacity=64)
+39:         x=c@basis
+40:         for t in range(20):
+41:             i=t%r;d=.01*(1+1j);st.add_coefficient(i,d);x+=d*basis[i]
+42:         out=st.query_many(['a','b','c']);fx=np.fft.fft(x)
+43:         for name,b in vb.items():self.assertTrue(np.allclose(out[name],fx[b],rtol=3e-11,atol=3e-9))
+44:         self.assertIn(st.views['a'].strategy,('batch_rebuild','rebuild','replay'))
+45: 
+46: if __name__=='__main__':unittest.main()

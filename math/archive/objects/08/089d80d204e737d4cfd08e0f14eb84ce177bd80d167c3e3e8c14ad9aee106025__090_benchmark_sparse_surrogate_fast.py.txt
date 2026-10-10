@@ -1,0 +1,27 @@
+import json,time,math
+import numpy as np
+from sparse_surrogate import sparsify_input
+from sparse_surrogate_fast import sparse_dft_vectorized
+try:
+ from scipy import fft as sp_fft
+except: sp_fft=None
+
+def fft(x): return sp_fft.fft(x,norm='ortho') if sp_fft else np.fft.fft(x,norm='ortho')
+rng=np.random.default_rng(77); out=[]
+for n in [2**14,2**16,2**18,2**20]:
+ for eps in [.5,.35,.25]:
+  x=np.ones(n,dtype=np.complex128)
+  # median five full FFTs
+  tf=[]
+  for _ in range(5):
+   t=time.perf_counter(); ref=fft(x); tf.append(time.perf_counter()-t)
+  ts=[]; errs=[]; bs=[]; supp=[]
+  for _ in range(5):
+   t=time.perf_counter(); s,p=sparsify_input(x,eps,.05,rng=rng); raw,b=sparse_dft_vectorized(n,s); y=raw/math.sqrt(n); ts.append(time.perf_counter()-t)
+   errs.append(float(np.max(np.abs(y-ref))/np.linalg.norm(x))); bs.append(b); supp.append(len(s))
+  out.append({'n':n,'epsilon':eps,'k':p.requested_samples,'support':float(np.median(supp)),'b':int(np.median(bs)),
+   'fft_ms':1000*float(np.median(tf)),'surrogate_ms':1000*float(np.median(ts)),
+   'wall_ratio':float(np.median(ts)/np.median(tf)),'median_error':float(np.median(errs)),
+   'butterfly_ratio':math.log2(int(np.median(bs)))/math.log2(n)})
+open('benchmark_sparse_surrogate_fast_results.json','w').write(json.dumps(out,indent=2))
+print(json.dumps(out,indent=2))

@@ -1,0 +1,149 @@
+import sys, unittest, math
+from pathlib import Path
+from math import sqrt
+ROOT=Path(__file__).resolve().parents[1]
+P12=ROOT.parent/'fft_green_phase12_unitary_escape'
+sys.path.insert(0,str(ROOT));sys.path.insert(0,str(P12))
+from lp_gate import (P,path_lp_bound,general_cayley_lp_bound,
+                     phase12_stage_bound,lower_bound_stage_count)
+from haar_adapter import haar_synthesis,haar_analysis,HaarEscapeMixer
+from unitary_mixer import UnitaryGreenMixer
+
+
+def vnorm(x,p=2):
+    return sum(abs(z)**p for z in x)**(1/p)
+
+
+class NormGateTest(unittest.TestCase):
+    def test_analytic_constants(self):
+        self.assertAlmostEqual(P,1.8)
+        self.assertAlmostEqual(general_cayley_lp_bound(3,2,P),7)
+        self.assertLess(phase12_stage_bound(),1.05)
+        self.assertGreater(lower_bound_stage_count(2**20),5)
+        self.assertEqual(lower_bound_stage_count(1),0)
+
+    def test_tree_hypothesis_required(self):
+        with self.assertRaises(ValueError):
+            general_cayley_lp_bound(3,2,1.5)
+
+    def test_phase12_actual_vectors_below_operator_bound(self):
+        K=phase12_stage_bound()
+        for n in (16,32,64,128):
+            s=UnitaryGreenMixer(n,seed=12000+n)
+            for k in (0,1,n//2,n-1):
+                x=[0j]*n;x[k]=1
+                self.assertLessEqual(vnorm(s.apply(x),P),K+1e-9)
+                self.assertLessEqual(vnorm(s.apply(x,inverse=True),P),K+1e-9)
+
+
+class HaarEscapeTest(unittest.TestCase):
+    def test_haar_forward_inverse(self):
+        for m in (2,4,8,16,32,64):
+            x=[complex((i*13+7)%23-11,(i*17+3)%11-5) for i in range(m)]
+            y=haar_synthesis(x)
+            back=haar_analysis(y)
+            self.assertLess(max(abs(a-b) for a,b in zip(back,x)),1e-12)
+            self.assertLess(abs(vnorm(y)-vnorm(x)),1e-11)
+            e=[0j]*m;e[0]=1
+            self.assertLess(max(abs(a-1/sqrt(m)) for a in haar_synthesis(e)),1e-13)
+
+    def test_haar_augmented_unitary_inverse(self):
+        for n in (16,32,64,128):
+            s=HaarEscapeMixer(n,seed=11000+n)
+            x=[complex((j*11+2)%19-9,(j*7+1)%17-8) for j in range(n)]
+            y=s.apply(x)
+            z=s.apply(y,inverse=True)
+            self.assertLess(max(abs(a-b) for a,b in zip(x,z)),2e-11)
+            self.assertLess(abs(vnorm(x)-vnorm(y)),2e-11)
+            self.assertLess(abs(vnorm(s.apply([1]+[0]*(n-1)))-1),1e-11)
+
+    def test_haar_adapter_has_growing_lp_norm_for_all_p_lt_2(self):
+        # Use V alone to avoid cancelling the deliberately distributed input.
+        for n in (32,64,128,256):
+            s=HaarEscapeMixer(n,seed=111+n)
+            x=[0j]*n;x[n//2]=1
+            y=s.apply_V(x)
+            for p in (1,1.5,1.8):
+                target=((1+(1/512)**p*(n//2)**(1-p/2))**(1/p))/s.norm
+                self.assertAlmostEqual(vnorm(y,p),target,places=10)
+
+    def test_fourier_covariance_failure(self):
+        # A column permutation of a true F is not generally F; test exact DFT identity.
+        for n in (8,16,32):
+            s=HaarEscapeMixer(n,seed=12001+n)
+            Zx=[0j]*n;Zx[1]=1 # Z e0 = e1
+            left=s.apply(Zx)
+            col0=s.apply([1]+[0]*(n-1))
+            right=[complex(math.cos(-2*math.pi*k/n),math.sin(-2*math.pi*k/n))*col0[k] for k in range(n)]
+            self.assertGreater(max(abs(a-b) for a,b in zip(left,right)),0.1)
+
+
+if __name__=='__main__':unittest.main()
+
+class ModularHaarTest(unittest.TestCase):
+    def test_modular_haar_exact_inverse(self):
+        from haar_adapter_mod import (MOD, SQRT2, haar_analysis_mod,haar_synthesis_mod,
+                                      HaarEscapeMixerMod)
+        self.assertEqual(SQRT2*SQRT2%MOD,2)
+        for m in (2,4,8,16,32):
+            v=[(a*a*101+7*a+1)%MOD for a in range(m)]
+            self.assertEqual(haar_analysis_mod(haar_synthesis_mod(v)),v)
+            self.assertEqual(haar_synthesis_mod(haar_analysis_mod(v)),v)
+        for n in (8,16,32,64):
+            op=HaarEscapeMixerMod(n,seed=301+n)
+            x=[(3*j*j+7*j+5)%MOD for j in range(n)]
+            self.assertEqual(op.apply(op.apply(x),inverse=True),x)
+            self.assertEqual(op.apply(op.apply(x,inverse=True)),x)
+
+    def test_finite_rank_gate(self):
+        from exact_covariance_gate import covariance_matrix
+        from haar_adapter_mod import HaarEscapeMixerMod
+        from unitary_mixer import rank_mod,MOD
+        for n in (8,16,32):
+            r=rank_mod(covariance_matrix(HaarEscapeMixerMod(n,seed=5031+n)),MOD)
+            self.assertGreaterEqual(r,n-1)
+
+class PhasePermutationGateTest(unittest.TestCase):
+    def test_dense_diagonal_fast_formulas(self):
+        # Our two diagonal formulas are verified against independently formed
+        # dense matrix products with no unsupported floating assumptions.
+        from phase_permutation_gate import (mats,diag_shift_conjugate,diag_modulation_conjugate)
+        from haar_adapter_mod import HaarEscapeMixerMod
+        from unitary_mixer import MOD
+        n=8;stage=HaarEscapeMixerMod(n,seed=567)
+        a,ai=mats(stage)
+        shift=[sum(a[i][k]*ai[(k-1)%n][i] for k in range(n))%MOD for i in range(n)]
+        omega=pow(3,(MOD-1)//n,MOD)
+        modulation=[sum(ai[i][k]*pow(omega,k,MOD)*a[k][i] for k in range(n))%MOD for i in range(n)]
+        self.assertEqual(diag_shift_conjugate(stage),shift)
+        self.assertEqual(diag_modulation_conjugate(stage),modulation)
+        for i in range(n):
+            e=[0]*n;e[i]=1
+            y=stage.apply(e,inverse=True)
+            zy=[0]*n
+            for j,val in enumerate(y):zy[(j+1)%n]=val
+            independent_m=stage.apply(zy)[i]
+            b=stage.apply(e)
+            db=[pow(omega,k,MOD)*b[k]%MOD for k in range(n)]
+            independent_b=stage.apply(db,inverse=True)[i]
+            self.assertEqual(independent_m,shift[i])
+            self.assertEqual(independent_b,modulation[i])
+
+    def test_two_stage_veto_for_sampled_graphs(self):
+        from phase_permutation_gate import certify_two_stage
+        for n in (8,16,32):
+            for f,s in (('green_tree','green_tree'),('green_tree','haar_adapter'),
+                        ('haar_adapter','green_tree'),('haar_adapter','haar_adapter'),
+                        ('strong_haar','strong_haar'),('strong_haar','haar_adapter')):
+                self.assertFalse(certify_two_stage(n,f,s)['diag_multisets_match'])
+
+
+class StrongParameterControl(unittest.TestCase):
+    def test_strong_haar_modular_inverse(self):
+        from haar_adapter_mod import StrongHaarEscapeMixerMod
+        from unitary_mixer import MOD
+        for n in (8,16,32,64):
+            op=StrongHaarEscapeMixerMod(n,seed=980+n)
+            x=[(j*j*31+17*j+9)%MOD for j in range(n)]
+            self.assertEqual(op.apply(op.apply(x),inverse=True),x)
+            self.assertEqual(op.apply(op.apply(x,inverse=True)),x)

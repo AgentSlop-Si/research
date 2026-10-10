@@ -1,0 +1,79 @@
+1: """Linear-work shifted resolvent of the exact cyclic bidiagonal C."""
+2: import sys
+3: from pathlib import Path
+4: from dataclasses import dataclass
+5: from collections import Counter
+6: ROOT=Path(__file__).resolve().parent.parent
+7: sys.path.insert(0,str(ROOT/'fft_qweyl_boundary_research'))
+8: from fixed_kernel import Counted
+9: from operators import prepare_sparse
+10: 
+11: 
+12: @dataclass
+13: class ResolventPlan:
+14:     sparse: object
+15:     inverse_weights: list
+16:     preparation: dict
+17: 
+18: 
+19: def prepare_resolvent(field,n,q):
+20:     sparse=prepare_sparse(field,n,q)
+21:     c=Counted(field)
+22:     weights=sparse.upper+[sparse.corner]
+23:     prefix=[field.one]
+24:     for w in weights:
+25:         prefix.append(c.mul(prefix[-1],w))
+26:     # Their product is exactly -1, so this batch inversion needs no inverse.
+27:     inverse_product=c.neg(field.one)
+28:     inverse_weights=[field.zero]*n
+29:     for j in range(n-1,-1,-1):
+30:         inverse_weights[j]=c.mul(inverse_product,prefix[j])
+31:         if j:
+32:             inverse_product=c.mul(inverse_product,weights[j])
+33:     counts=Counter(sparse.preparation)
+34:     counts.update(c.count)
+35:     return ResolventPlan(sparse,inverse_weights,dict(counts))
+36: 
+37: 
+38: def solve(field,plan,lam,x):
+39:     """Solve (lambda I-C)y=x for any nonzero lambda, all coordinates.
+40: 
+41: The parameter-dependent preparation is charged on every call; one inversion
+42: involves lambda**N, never any vector input. No division by lambda-q**(-i).
+43: """
+44:     if lam==field.zero:
+45:         raise ValueError('C is singular; lambda must be nonzero')
+46:     n=plan.sparse.n
+47:     if len(x)!=n:
+48:         raise ValueError('wrong input length')
+49:     parameter=Counted(field)
+50:     a=[parameter.mul(parameter.sub(lam,u),w)
+51:        for u,w in zip(plan.sparse.diagonal,plan.inverse_weights)]
+52:     lam_n=lam
+53:     for _ in range(n.bit_length()-1):
+54:         lam_n=parameter.mul(lam_n,lam_n)
+55:     inverse_lam_n=parameter.inv(lam_n)
+56:     c=Counted(field)
+57:     b=[c.neg(c.mul(v,w)) for v,w in zip(x,plan.inverse_weights)]
+58:     affine_offset=field.zero
+59:     for ai,bi in zip(a,b):
+60:         affine_offset=c.add(c.mul(ai,affine_offset),bi)
+61:     y=[c.mul(affine_offset,inverse_lam_n)]
+62:     for j in range(n-1):
+63:         y.append(c.add(c.mul(a[j],y[-1]),b[j]))
+64:     total=Counter(parameter.count)
+65:     total.update(c.count)
+66:     return y,dict(parameter_preparation=dict(parameter.count),
+67:                   vector_action=dict(c.count),field_operations=dict(total),
+68:                   full_output_writes=n,
+69:                   logical_temporary_element_writes=2*n)
+70: 
+71: 
+72: def expected_preparation(n):
+73:     l=n.bit_length()-1
+74:     return dict(mul=4*n+l-1,sub=n-1,neg=2,constant_inverse=1)
+75: 
+76: 
+77: def expected_solve(n):
+78:     l=n.bit_length()-1
+79:     return dict(mul=4*n+l,sub=n,constant_inverse=1,neg=n,add=2*n-1)

@@ -1,0 +1,218 @@
+   1 """Newly authored audit. Uploaded Python is never imported or executed.
+   2 All matrix arithmetic below is exact prime-field arithmetic; certificate JSON
+   3 is read solely as data. Formulae are rebuilt from the stated matrix model.
+   4 """
+   5 import json, random, hashlib, argparse
+   6 from pathlib import Path
+   7 import numpy as np
+   8 ROOT = Path(__file__).resolve().parent.parent / 'source_material' / 'algebraic'
+   9 OUT = Path(__file__).resolve().parent
+  10 P = 12289
+  11 PERM = [7,0,6,3,4,1,2,5]
+  12 
+  13 def rr(A,p,with_transform=False):
+  14     A=np.asarray(A,dtype=np.int64).copy()%p
+  15     nr,nc=A.shape; T=np.eye(nr,dtype=np.int64); piv=[]; r=0
+  16     for c in range(nc):
+  17         if r==nr: break
+  18         q=next((k for k in range(r,nr) if A[k,c]),None)
+  19         if q is None: continue
+  20         A[[r,q]]=A[[q,r]]; T[[r,q]]=T[[q,r]]
+  21         z=pow(int(A[r,c]),-1,p); A[r]=A[r]*z%p; T[r]=T[r]*z%p
+  22         for i in range(nr):
+  23             if i!=r and A[i,c]:
+  24                 z=int(A[i,c]); A[i]=(A[i]-z*A[r])%p; T[i]=(T[i]-z*T[r])%p
+  25         piv.append(c); r+=1
+  26     return A,piv,T
+  27 
+  28 def rank(A,p=P): return len(rr(A,p)[1])
+  29 def inv(A,p):
+  30     R,cols,T=rr(A,p)
+  31     assert cols==list(range(len(A)))
+  32     return T
+  33 
+  34 def det(A,p):
+  35     a=np.asarray(A,dtype=np.int64).copy()%p; v=1
+  36     for c in range(len(a)):
+  37         k=next((i for i in range(c,len(a)) if a[i,c]),None)
+  38         if k is None:return 0
+  39         if k!=c: a[[c,k]]=a[[k,c]];v=-v
+  40         z=int(a[c,c]);v=v*z%p
+  41         a[c]=a[c]*pow(z,-1,p)%p
+  42         for i in range(c+1,len(a)):
+  43             a[i]=(a[i]-int(a[i,c])*a[c])%p
+  44     return v%p
+  45 
+  46 def seed_point(n,r,seed=1011,p=P):
+  47     rng=random.Random(seed); pts=[]
+  48     for _ in range(2):
+  49         groups={k:np.array([[rng.randrange(1,p) for _ in range(r)] for _ in range(n)],dtype=np.int64) for k in ('L','V','U','W')}
+  50         d=np.array([rng.randrange(1,p) for _ in range(n)],dtype=np.int64)
+  51         pts.append(np.concatenate([d]+[groups[k].ravel() for k in ('L','V','U','W')]))
+  52     return np.concatenate(pts)
+  53 
+  54 def stage(x,n,r,p):
+  55     d=x[:n]; off=n; g=[]
+  56     for _ in range(4):g.append(x[off:off+n*r].reshape(n,r));off+=n*r
+  57     L,V,U,W=g
+  58     return (np.diag(d)+np.tril(L@V.T,-1)+np.triu(U@W.T,1))%p
+  59 
+  60 def value(x,n=8,r=1,perm=PERM,p=P):
+  61     k=n*(1+4*r)
+  62     return stage(x[k:],n,r,p)@stage(x[:k],n,r,p)[perm]%p
+  63 
+  64 def jacobian(x,n=8,r=1,perm=PERM,p=P):
+  65     # Each scalar coordinate occurs at most linearly, so difference is exact.
+  66     base=value(x,n,r,perm,p); cols=[]
+  67     for k in range(len(x)):
+  68         y=x.copy();y[k]+=1
+  69         cols.append((value(y,n,r,perm,p)-base).ravel()%p)
+  70     return np.array(cols,dtype=np.int64).T
+  71 
+  72 def stage_derivative(x,u):
+  73     d,L,V,U,W=x.reshape(5,8);dd,l,v,q,w=u.reshape(5,8)
+  74     return (np.diag(dd)+np.tril(np.outer(l,V)+np.outer(L,v),-1)+np.triu(np.outer(q,W)+np.outer(U,w),1))%P
+  75 
+  76 def stage_hessian(u,v):
+  77     _,l1,v1,u1,w1=u.reshape(5,8);_,l2,v2,u2,w2=v.reshape(5,8)
+  78     return (np.tril(np.outer(l1,v2)+np.outer(l2,v1),-1)+np.triu(np.outer(u1,w2)+np.outer(u2,w1),1))%P
+  79 
+  80 def hessian(x,u,v):
+  81     a,b=x[:40],x[40:]; ua,ub=u[:40],u[40:];va,vb=v[:40],v[40:]
+  82     A=stage(a,8,1,P); B=stage(b,8,1,P)
+  83     return (stage_hessian(ub,vb)@A[PERM]+stage_derivative(b,ub)@stage_derivative(a,va)[PERM]+stage_derivative(b,vb)@stage_derivative(a,ua)[PERM]+B@stage_hessian(ua,va)[PERM]).ravel()%P
+  84 
+  85 def gauges(x):
+  86     out=[]
+  87     for offset in (0,40):
+  88         for k in (8,23,31,32):
+  89             g=np.zeros(80,dtype=np.int64);g[offset+k]=1;out.append(g)
+  90         for lo,hi in ((8,16),(24,32)):
+  91             g=np.zeros(80,dtype=np.int64);g[offset+lo:offset+lo+8]=x[offset+lo:offset+lo+8];g[offset+hi:offset+hi+8]=-x[offset+hi:offset+hi+8];out.append(g)
+  92     for k in range(8):
+  93         g=np.zeros(80,dtype=np.int64);q=PERM.index(k)
+  94         for off in (0,8,24):g[off+k]=x[off+k]
+  95         for off in (0,16,32):g[40+off+q]=-x[40+off+q]
+  96         out.append(g)
+  97     return np.array(out).T%P
+  98 
+  99 def curvature_check():
+ 100     x=seed_point(8,1);J=jacobian(x);R,cols,T=rr(J,P);Q=T[len(cols):]
+ 101     E=np.zeros(64,dtype=np.int64);E[7]=1
+ 102     aug=np.column_stack((J,E));cert=json.loads((ROOT/'curvature_minor_certificate.json').read_text())
+ 103     cd=det(aug[np.ix_(cert['minor_rows'],cert['minor_columns'])],P)
+ 104     assert len(cols)==60 and rank(aug)==61 and cd==6913
+ 105     G=gauges(x);assert rank(G)==20 and not np.any(J@G%P)
+ 106     # Universally cover all first tangents v against all 20 gauge generators.
+ 107     eye=np.eye(80,dtype=np.int64)
+ 108     for i in range(80):
+ 109         for k in range(20):assert not np.any(Q@hessian(x,eye[i],G[:,k])%P)
+ 110     v=eye[7]+eye[40];assert np.array_equal(hessian(x,v,v)*pow(2,-1,P)%P,E)
+ 111     assert np.any(Q@E%P)
+ 112     def solve(y):
+ 113         z=T@y%P
+ 114         if np.any(z[60:]):return None
+ 115         u=np.zeros(80,dtype=np.int64);u[cols]=z[:60]
+ 116         assert np.array_equal(J@u%P,y%P)
+ 117         return u
+ 118     def accept(d1,d2):
+ 119         u=solve(d1)
+ 120         return u is not None and solve((d2-hessian(x,u,u)*pow(2,-1,P))%P) is not None
+ 121     assert not accept(J@v%P,np.zeros(64,dtype=np.int64)) and accept(J@v%P,E)
+ 122     rng=random.Random(910)
+ 123     VI=inv(np.array([[pow(t,k,P) for k in range(5)] for t in range(5)],dtype=np.int64),P)
+ 124     for _ in range(20):
+ 125         u=np.array([rng.randrange(P) for _ in x],dtype=np.int64);w=np.array([rng.randrange(P) for _ in x],dtype=np.int64)
+ 126         d1=J@u%P;d2=(J@w+hessian(x,u,u)*pow(2,-1,P))%P
+ 127         assert accept(d1,d2)
+ 128         ys=np.array([value((x+t*u)%P).ravel() for t in range(5)])
+ 129         coeff=VI@ys%P
+ 130         assert np.array_equal(coeff[1],d1)
+ 131         assert np.array_equal(coeff[2],hessian(x,u,u)*pow(2,-1,P)%P)
+ 132     return {'jacobian_rank':60,'augmented_rank':61,'saved_minor_determinant':cd,'independent_gauge_rank':20,'all_1600_coordinate_gauge_Hessian_conormal_pairings_zero':True,'realized_jets_accepted':20,'independent_degree_four_interpolations':20,'straight_line_rejected_corrected_curve_accepted':True,'nonzero_conormal_E':(Q@E%P).tolist(),'point_integer_coordinates_d_L_V_U_W':x.tolist()}
+ 133 
+ 134 def identities(B,p):
+ 135     a=[(int(B[i,j])*int(B[7,0])-int(B[i,0])*int(B[7,j]))%p for i in range(2,7) for j in range(1,i)]
+ 136     b=[(int(B[i,j])*int(B[0,7])-int(B[i,7])*int(B[0,j]))%p for i in range(1,6) for j in range(i+1,7)]
+ 137     return np.array(a+b,dtype=np.int64)
+ 138 
+ 139 def normalized_stage(rng,p,fix_diag):
+ 140     d=[1]*8 if fix_diag else [rng.randrange(1,p) for _ in range(8)]
+ 141     L=[0]+[rng.randrange(1,p) for _ in range(6)]+[1];V=[rng.randrange(1,p) for _ in range(7)]+[0]
+ 142     U=[1]+[rng.randrange(1,p) for _ in range(6)]+[0];W=[0]+[rng.randrange(1,p) for _ in range(7)]
+ 143     return stage(np.array(d+L+V+U+W,dtype=np.int64),8,1,p)
+ 144 
+ 145 def root(n,p):
+ 146     for g in range(2,p):
+ 147         z=pow(g,(p-1)//n,p)
+ 148         if pow(z,n,p)==1 and pow(z,n//2,p)!=1:return z
+ 149     raise AssertionError
+ 150 
+ 151 def elimination_checks():
+ 152     records=[]
+ 153     for p in (12289,65537):
+ 154         rng=random.Random(614122+p);passes=0;random_failures=0;breaks=0;z=root(8,p)
+ 155         F=np.array([[pow(z,i*j,p) for j in range(8)] for i in range(8)],dtype=np.int64)
+ 156         for _ in range(30):
+ 157             A=normalized_stage(rng,p,True);B=normalized_stage(rng,p,False);PA=A[PERM];d=det(PA,p)
+ 158             if not d:continue
+ 159             M=B@PA%p;I=inv(PA,p);rec=M@I%p
+ 160             assert np.array_equal(rec,B) and not np.any(identities(rec,p))
+ 161             G=M@(d*I%p)%p;assert np.array_equal(identities(G,p),identities(B,p)*(d*d%p)%p)
+ 162             L=rec[:,0]*pow(int(rec[7,0]),-1,p)%p;V=rec[7,:];U=rec[:,7]*pow(int(rec[0,7]),-1,p)%p;W=rec[0,:]
+ 163             got=(np.diag(np.diag(rec))+np.tril(np.outer(L,V),-1)+np.triu(np.outer(U,W),1))%p
+ 164             assert np.array_equal(got,rec);passes+=1
+ 165             for i,j in [(i,j) for i in range(2,7) for j in range(1,i)]+[(i,j) for i in range(1,6) for j in range(i+1,7)]:
+ 166                 bad=B.copy();bad[i,j]=(bad[i,j]+1)%p
+ 167                 assert np.count_nonzero(identities(bad,p))==1;breaks+=1
+ 168             if np.any(identities(F@I%p,p)):random_failures+=1
+ 169         records.append({'prime':p,'positive_products_and_exact_reconstructions':passes,'single_equation_mutation_checks':breaks,'random_A_failures_for_F8_not_nonexistence_evidence':random_failures})
+ 170     return records
+ 171 
+ 172 def ct_checks():
+ 173     saved=json.loads((ROOT/'ct_control_results.json').read_text()); out=[]
+ 174     for row in saved['results']:
+ 175         a,b=row['radix_pair'];n=a*b;z=root(n,P)
+ 176         # Derive factors from input/output labels, independently of source loops.
+ 177         io=row['input_order'];oo=row['output_order'];pm=row['middle_shuffle']
+ 178         oa=[0,1] if a==2 else [0,2,1,3]
+ 179         ob=[0,2,1,3] if b==4 else list(range(b))
+ 180         A=np.zeros((n,n),dtype=np.int64);B=np.zeros_like(A)
+ 181         for rowi in range(n):
+ 182             block,v=divmod(rowi,b)
+ 183             for coli,j in enumerate(io):
+ 184                 if j%a==block:A[rowi,coli]=pow(z,a*ob[v]*(j//a),P)
+ 185         for rowi,k in enumerate(oo):
+ 186             k2=k%b;k1=k//b
+ 187             for coli in range(n):
+ 188                 cb,u=divmod(coli,a)
+ 189                 if cb==k2:B[rowi,coli]=pow(z,oa[u]*(k2+b*k1),P)
+ 190         F=np.array([[pow(z,k*j,P) for j in io] for k in oo],dtype=np.int64)
+ 191         assert np.array_equal(B@A[pm]%P,F)
+ 192         def order(S):return max(rank(S[:k,k:]) for k in range(1,n)),max(rank(S[k:,:k]) for k in range(1,n))
+ 193         ao,bo=order(A),order(B)
+ 194         assert max(ao)==row['rank_stage_1'] and max(bo)==row['rank_stage_2']
+ 195         if n==16:assert A[1,0]==A[5,4]==1 and A[5,0]==0
+ 196         out.append({'n':n,'all_entries_equal':True,'A_upper_lower_orders':ao,'B_upper_lower_orders':bo})
+ 197     # Exact characteristic-zero F4 cut-2 blocks under [0,2,1,3]:
+ 198     # [[1,1],[-1,-1]] and [[1,-1],[1,-1]], both rank one.
+ 199     return out
+ 200 
+ 201 def large_checks():
+ 202     saved=json.loads((ROOT/'large_curvature_results.json').read_text());out=[]
+ 203     for row in saved:
+ 204         pm=row['perm'];J=jacobian(seed_point(16,2),16,2,pm);R,cols,T=rr(J,P);rk=len(cols);Q=T[rk:]
+ 205         assert rk==row['jacobian_rank'];assert all(np.any(Q[:,i*16+pm[i]]) for i in range(16))
+ 206         out.append({'n':16,'r':2,'rank':rk,'all_16_diagonal_quadratic_terms_transverse_mod_p':True,'permutation':pm})
+ 207     return out
+ 208 
+ 209 if __name__=='__main__':
+ 210     parser=argparse.ArgumentParser(description=__doc__)
+ 211     parser.add_argument('--source-dir','--source',dest='source',type=Path,default=ROOT,help='Directory containing the three certificate JSON files; read only')
+ 212     parser.add_argument('--output',type=Path,default=OUT,help='Directory for independent results JSON')
+ 213     args=parser.parse_args();ROOT=args.source.resolve();OUT=args.output.resolve();OUT.mkdir(parents=True,exist_ok=True)
+ 214     result={}
+ 215     for name,f in [('curvature',curvature_check),('elimination',elimination_checks),('ct_controls',ct_checks),('larger_pointwise_checks',large_checks)]:
+ 216         result[name]=f();print(name, 'PASS',flush=True)
+ 217     (OUT/'independent_algebraic_results.json').write_text(json.dumps(result,indent=2)+'\n')
+ 218     print(json.dumps({k:v for k,v in result.items() if k!='curvature'},indent=2))

@@ -1,0 +1,340 @@
+1: """Exact cold/warm same-B integer products via a verified correction graph.
+2: 
+3: Arithmetic counters use a declared word/field-operation model, not CPU time.
+4: NTT modulus 65537 permits exact digit convolution when n*(base-1)^2 < p.
+5: All roots, B's transform, graph discovery, and full product digits are charged.
+6: """
+7: from collections import Counter
+8: from dataclasses import dataclass
+9: 
+10: 
+11: class Counts(Counter):
+12:     def arithmetic(self):
+13:         return sum(self[k] for k in ('mod_mul','mod_add','mod_sub',
+14:                                      'int_mul','int_add','int_sub','int_neg','divmod'))
+15: 
+16: 
+17: def power(a, e, p, c):
+18:     out = 1
+19:     while e:
+20:         c['root_exponent_steps'] += 1
+21:         if e & 1:
+22:             out = out*a % p
+23:             c['mod_mul'] += 1
+24:         e >>= 1
+25:         if e:
+26:             a = a*a % p
+27:             c['mod_mul'] += 1
+28:     return out
+29: 
+30: 
+31: @dataclass
+32: class Context:
+33:     n: int
+34:     base: int
+35:     m: int
+36:     p: int
+37:     roots: list
+38:     permutation: list
+39:     inverse_m: int
+40:     b: list
+41:     fb: list
+42: 
+43: 
+44: def fft(x, ctx, c, inverse=False):
+45:     m, p = ctx.m, ctx.p
+46:     out = [x[j] for j in ctx.permutation]
+47:     c['fft_permutation_reads'] += m
+48:     c['fft_permutation_writes'] += m
+49:     width = 2
+50:     while width <= m:
+51:         half, stride = width//2, m//width
+52:         for start in range(0, m, width):
+53:             for j in range(half):
+54:                 exponent = j*stride
+55:                 if inverse:
+56:                     exponent = (-exponent) % m
+57:                 u = out[start+j]
+58:                 v = out[start+j+half]*ctx.roots[exponent] % p
+59:                 out[start+j] = (u+v) % p
+60:                 out[start+j+half] = (u-v) % p
+61:                 c['mod_mul'] += 1
+62:                 c['mod_add'] += 1
+63:                 c['mod_sub'] += 1
+64:                 c['butterfly_register_reads'] += 2
+65:                 c['butterfly_register_writes'] += 2
+66:                 c['root_table_reads'] += 1
+67:                 c['butterflies'] += 1
+68:         width *= 2
+69:     if inverse:
+70:         out = [a*ctx.inverse_m % p for a in out]
+71:         c['mod_mul'] += m
+72:         c['inverse_scale_reads'] += m
+73:         c['inverse_scale_writes'] += m
+74:     return out
+75: 
+76: 
+77: def prepare(b, base, c):
+78:     n, p = len(b), 65537
+79:     m = 1 << (2*n-1).bit_length()
+80:     if n < 1 or n*(base-1)**2 >= p or (p-1) % m:
+81:         raise ValueError('digit bound or supported NTT length violated')
+82:     root = power(3, (p-1)//m, p, c)
+83:     assert power(root, m, p, c) == 1
+84:     assert power(root, m//2, p, c) != 1
+85:     roots = [1]
+86:     for _ in range(1, m):
+87:         roots.append(roots[-1]*root % p)
+88:         c['mod_mul'] += 1
+89:         c['root_table_writes'] += 1
+90:     perm = [0]*m
+91:     for i in range(1, m):
+92:         perm[i] = (perm[i>>1]>>1) | ((i & 1)*(m>>1))
+93:         c['permutation_index_steps'] += 1
+94:     inverse_m = power(m, p-2, p, c)
+95:     ctx = Context(n, base, m, p, roots, perm, inverse_m, list(b), [])
+96:     padded = list(b)+[0]*(m-n)
+97:     c['padding_writes'] += m
+98:     ctx.fb = fft(padded, ctx, c)
+99:     return ctx
+100: 
+101: 
+102: def fresh(a, ctx, c):
+103:     padded = list(a)+[0]*(ctx.m-ctx.n)
+104:     c['padding_writes'] += ctx.m
+105:     fa = fft(padded, ctx, c)
+106:     prod = [a*b % ctx.p for a,b in zip(fa, ctx.fb)]
+107:     c['mod_mul'] += ctx.m
+108:     c['pointwise_reads'] += 2*ctx.m
+109:     c['pointwise_writes'] += ctx.m
+110:     c['fresh_products'] += 1
+111:     return fft(prod, ctx, c, inverse=True)[:2*ctx.n-1]
+112: 
+113: 
+114: def update(parent_product, patch, ctx, c):
+115:     if not patch:
+116:         c['identical_product_copy_reads'] += len(parent_product)
+117:         c['identical_product_copy_writes'] += len(parent_product)
+118:         c['correction_products'] += 1
+119:         return list(parent_product)
+120:     delta = [0]*len(parent_product)
+121:     c['correction_zero_writes'] += len(delta)
+122:     for j, difference in patch:
+123:         for k, value in enumerate(ctx.b):
+124:             delta[j+k] += difference*value
+125:             c['int_mul'] += 1
+126:             c['int_add'] += 1
+127:             c['correction_updates'] += 1
+128:     out = [v+d for v,d in zip(parent_product, delta)]
+129:     c['int_add'] += len(out)
+130:     c['correction_merge_reads'] += 2*len(out)
+131:     c['correction_merge_writes'] += len(out)
+132:     c['correction_products'] += 1
+133:     return out
+134: 
+135: 
+136: def normalize(coefficients, n, base, c):
+137:     carry, digits = 0, []
+138:     for j in range(2*n):
+139:         value = (coefficients[j] if j < len(coefficients) else 0)+carry
+140:         carry, digit = divmod(value, base)
+141:         c['int_add'] += 1
+142:         c['divmod'] += 1
+143:         c['full_output_digit_writes'] += 1
+144:         digits.append(digit)
+145:     assert carry == 0
+146:     return digits
+147: 
+148: 
+149: def fresh_weight(n, m):
+150:     # Two transforms (three scalar ops per butterfly), inverse scaling,
+151:     # and pointwise multiplication. B's FFT is charged in shared preparation.
+152:     return 3*m*(m.bit_length()-1)+2*m
+153: 
+154: 
+155: def validate(queries, b, base, c):
+156:     n = len(b)
+157:     if not isinstance(base,int) or isinstance(base,bool) or base < 2:
+158:         raise ValueError('base must be an integer at least two')
+159:     if not queries:
+160:         raise ValueError('at least one query required')
+161:     for vector in [b]+list(queries):
+162:         if len(vector) != n:
+163:             raise ValueError('all block vectors must have the same length')
+164:         for value in vector:
+165:             c['input_digit_reads'] += 1
+166:             c['validation_comparisons'] += 2
+167:             if not isinstance(value, int) or not 0 <= value < base:
+168:                 raise ValueError('inputs must be canonical nonnegative digits')
+169: 
+170: 
+171: def numeric_difference(a, b, base, c):
+172:     """Canonical signed blocks of B-A, using only bounded block operations."""
+173:     sign=0
+174:     for j in range(len(a)-1,-1,-1):
+175:         c['numeric_difference_order_comparisons'] += 1
+176:         c['numeric_difference_digit_reads'] += 2
+177:         if a[j] != b[j]:
+178:             sign=1 if b[j]>a[j] else -1
+179:             break
+180:     if not sign:
+181:         return []
+182:     larger,smaller=(b,a) if sign>0 else (a,b)
+183:     borrow=0
+184:     patch=[]
+185:     for j,(large,small) in enumerate(zip(larger,smaller)):
+186:         c['numeric_difference_digit_reads'] += 2
+187:         value=large-small-borrow
+188:         c['int_sub'] += 2
+189:         c['numeric_difference_borrow_tests'] += 1
+190:         if value < 0:
+191:             value += base
+192:             c['int_add'] += 1
+193:             borrow=1
+194:         else:
+195:             borrow=0
+196:         if value:
+197:             if sign<0:
+198:                 value=-value
+199:                 c['int_neg'] += 1
+200:             patch.append((j,value))
+201:     assert borrow==0
+202:     return patch
+203: 
+204: 
+205: def discover(queries, ctx, c, numeric_patches=False, candidate_edges=None):
+206:     patches = {}
+207:     if candidate_edges is None:
+208:         pairs=[(i,j) for i in range(len(queries)) for j in range(i+1,len(queries))]
+209:     else:
+210:         pairs=[]
+211:         seen=set()
+212:         for edge in candidate_edges:
+213:             c['candidate_edge_records_read'] += 1
+214:             if len(edge)!=2 or not all(isinstance(v,int) and not isinstance(v,bool)
+215:                     and 0<=v<len(queries) for v in edge) or edge[0]==edge[1]:
+216:                 raise ValueError('invalid candidate edge')
+217:             edge=tuple(sorted(edge))
+218:             if edge not in seen:
+219:                 seen.add(edge); pairs.append(edge)
+220:     for i,j in pairs:
+221:             patch = []
+222:             for k, (a,b) in enumerate(zip(queries[i],queries[j])):
+223:                 delta = b-a
+224:                 c['int_sub'] += 1
+225:                 c['discovery_digit_reads'] += 2
+226:                 c['discovery_zero_tests'] += 1
+227:                 if delta:
+228:                     patch.append((k,delta))
+229:                     c['stored_patch_records'] += 1
+230:             if numeric_patches:
+231:                 alternative=numeric_difference(queries[i],queries[j],ctx.base,c)
+232:                 c['numeric_patch_records_created'] += len(alternative)
+233:                 c['patch_representation_comparisons'] += 1
+234:                 if len(alternative)<len(patch):
+235:                     patch=alternative
+236:                     c['numeric_patches_selected'] += 1
+237:                 else:
+238:                     c['coordinate_patches_selected'] += 1
+239:             patches[i,j] = patch
+240:             patches[j,i] = [(k,-v) for k,v in patch]
+241:             c['int_neg'] += len(patch)
+242:             c['stored_patch_records'] += len(patch)
+243:     return patches
+244: 
+245: 
+246: def plan_mst(queries, patches, ctx, c, warm_index=None, merge_length=None):
+247:     q = len(queries)
+248:     weights = [fresh_weight(ctx.n,ctx.m)]*q
+249:     parent = [-1]*q
+250:     if warm_index is not None:
+251:         weights[warm_index] = 0
+252:     done, order = set(), []
+253:     for _ in range(q):
+254:         best = None
+255:         for j in range(q):
+256:             c['scheduler_membership_tests'] += 1
+257:             if j not in done:
+258:                 c['scheduler_weight_comparisons'] += 1
+259:                 if best is None or (weights[j],j) < (weights[best],best):
+260:                     best = j
+261:         done.add(best)
+262:         order.append((best,parent[best],weights[best]))
+263:         for j in range(q):
+264:             c['scheduler_membership_tests'] += 1
+265:             if j in done:
+266:                 continue
+267:             if (best,j) not in patches:
+268:                 continue
+269:             patch = patches[best,j]
+270:             merge=2*ctx.n-1 if merge_length is None else merge_length
+271:             weight = 2*ctx.n*len(patch)+merge if patch else 0
+272:             c['scheduler_edge_cost_evaluations'] += 1
+273:             c['scheduler_weight_comparisons'] += 1
+274:             if weight < weights[j]:
+275:                 weights[j], parent[j] = weight,best
+276:     return order
+277: 
+278: 
+279: def run(queries, b, base=16, graph=True, warm_index=None, warm_state=None,
+280:         numeric_patches=False, candidate_edges=None):
+281:     c = Counts()
+282:     validate(queries,b,base,c)
+283:     if warm_index is not None and (not isinstance(warm_index,int)
+284:             or isinstance(warm_index,bool) or not 0 <= warm_index < len(queries)):
+285:         raise ValueError('warm index must name an existing query')
+286:     if warm_state is None:
+287:         ctx = prepare(b,base,c)
+288:         cached = {}
+289:     else:
+290:         ctx, index, anchor_digits, coefficients = warm_state
+291:         if (not isinstance(index,int) or isinstance(index,bool)
+292:                 or not 0 <= index < len(queries)):
+293:             raise ValueError('cached index must name an existing query')
+294:         c['warm_cache_key_comparisons'] += 2*len(b)+3
+295:         if (ctx.b != list(b) or ctx.base != base or warm_index != index
+296:                 or queries[index] != anchor_digits):
+297:             raise ValueError('warm state does not match B/base/anchor value/index')
+298:         expected_length=2*ctx.n if numeric_patches else 2*ctx.n-1
+299:         if len(coefficients)!=expected_length:
+300:             raise ValueError('warm product representation mode mismatch')
+301:         cached = {index:list(coefficients)}
+302:         c['warm_coefficient_reads'] += len(coefficients)
+303:     if warm_index is not None and warm_index not in cached:
+304:         raise ValueError('warm anchor must be supplied explicitly')
+305:     prep_arithmetic = c.arithmetic()
+306:     if graph:
+307:         patches = discover(queries,ctx,c,numeric_patches,candidate_edges)
+308:         order = plan_mst(queries,patches,ctx,c,warm_index,
+309:                          2*ctx.n if numeric_patches else None)
+310:     else:
+311:         patches = {}
+312:         order = [(i,-1,0 if i in cached else fresh_weight(ctx.n,ctx.m))
+313:                  for i in range(len(queries))]
+314:     plan_arithmetic = c.arithmetic()-prep_arithmetic
+315:     outputs = [None]*len(queries)
+316:     for i,parent,weight in order:
+317:         before = c.arithmetic()
+318:         if parent == -1:
+319:             if i not in cached:
+320:                 cached[i] = fresh(queries[i],ctx,c)
+321:         else:
+322:             patch = patches[parent,i]
+323:             cached[i] = update(cached[parent],patch,ctx,c)
+324:         assert c.arithmetic()-before == weight
+325:         outputs[i] = normalize(cached[i],ctx.n,base,c)
+326:         if numeric_patches:
+327:             cached[i]=outputs[i]
+328:     return {'outputs':outputs,'coefficients':cached,'context':ctx,
+329:         'counts':dict(c),'total_arithmetic':c.arithmetic(),
+330:         'preparation_arithmetic':prep_arithmetic,'discovery_arithmetic':plan_arithmetic,
+331:         'schedule':order,'product_arithmetic':sum(x[2] for x in order),
+332:         'correction_supports':[len(v) for v in patches.values()]}
+333: 
+334: 
+335: def as_integer(digits, base):
+336:     """Verification only; not called by the counted algorithm."""
+337:     value = 0
+338:     for digit in reversed(digits):
+339:         value = value*base+digit
+340:     return value

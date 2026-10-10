@@ -1,0 +1,73 @@
+"""Polynomial upper compatibility gate and nonzero resultant witness.
+
+The 9x9 minor of the 11x9 gate is an honest polynomial over
+Z[z]/(z^4+1)[h0,h1,h2,h6], after using the t,beta tail linear
+elimination and globally rescaling generator directions. This file
+provides the evaluation circuit; it need NOT expand the huge resultant.
+"""
+from __future__ import annotations
+import sys,random
+import _bootstrap
+from dual_support import primitive_root
+from adjacent_tail import equations
+from inverse_quartic import poly_eval
+from triple_gate import build_UL,modrank
+from universal_gate import gate,det
+
+EQ,W,E3,E4,Q=equations()
+MINOR_ROWS=[0,1,2,5,6,7,8,9,10]
+
+def lift_poly(p,z,h):
+ """Compute Uhat and Lhat polynomially (no divisions except constant root inversion)."""
+ s,h1,h2,x=[v%p for v in h]
+ v=[0]+[s,h1,h2,x]+[0]
+ a,b,c=[poly_eval(E,v,p,z) for E in E3]
+ d,e,f=[poly_eval(E,v,p,z) for E in E4]
+ Delta=(a*e-b*d)%p
+ T=(-c*e+b*f)%p
+ V=(-a*f+c*d)%p
+ xi=pow(z,-1,p)
+ c1=(1+xi+xi*xi)%p
+ c2=(xi+xi*xi+pow(xi,3,p))%p
+ c3=pow(xi,3,p)
+ H=[s,h1,h2]
+ for k in range(3):H.append((c1*H[k+2]-c2*H[k+1]+c3*H[k])%p)
+ H.append(x)
+ Uhat=H+[0]
+ M=(z-1)*T%p
+ Lhat=[0]
+ for k in range(1,7):
+  term=((z-1)*(Delta+V*(H[k]-s))+(T-Delta+V*(s-1))*(pow(xi,k,p)-1))%p
+  Lhat.append(term)
+ Lhat.append(M)
+ return Uhat,Lhat,dict(s=s,h=h,Delta=Delta,T=T,V=V,M=M,z=z,W=poly_eval(W,v,p,z))
+
+def evaluate_minor(p,z,h):
+ Uhat,Lhat,d=lift_poly(p,z,h)
+ F=[[pow(z,i*k,p) for k in range(8)] for i in range(8)]
+ K=gate(p,F,Uhat,Lhat)
+ return det([K[i] for i in MINOR_ROWS],p),modrank(K,p),d
+
+def run_checks(n=100):
+ rng=random.Random(2026100921)
+ out=[]
+ for p in [17,12289,65537]:
+  z=primitive_root(p,8)
+  verified=0
+  for k in range(n):
+   h=[rng.randrange(p) for _ in range(4)]
+   Uhat,Lhat,info=lift_poly(p,z,h)
+   s,Delta,T,V,M=[info[k] for k in ('s','Delta','T','V','M')]
+   if not s or not Delta or not T:continue
+   t=T*pow(Delta,-1,p)%p;beta=V*pow(Delta,-1,p)%p
+   U,L=build_UL(p,z,h,t,beta)
+   assert Uhat==[s*u%p for u in U]
+   assert Lhat==[M*l%p for l in L]
+   verified+=1
+  assert verified>=n//2
+  out.append(dict(prime=p,primitive_8th_root=z,cases=verified,identity='Uhat=s*U, Lhat=M*L'))
+ print('polynomial basis checks',out,flush=True)
+ assert evaluate_minor(17,9,[1,0,0,2])[0]==3
+ assert evaluate_minor(17,9,[1,0,0,12])[0]==2
+ return out
+if __name__=='__main__':run_checks()

@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Fresh characteristic-zero audit. Uploaded Python is never imported or executed.
+Uses SymPy polynomial arithmetic over Q[z]/(z^4+1), with determinants reconstructed
+from the stated Fourier matrix columns, and compares uploaded JSON as inert data.
+"""
+from pathlib import Path
+import json,itertools,math,time,sys
+import sympy as sp
+from sympy.polys.rings import ring
+BASE=Path(__file__).resolve().parents[1]
+SRC=BASE/'extracted/fft_spectral_determinant_gate_2026-10-09'
+OUT=Path(__file__).resolve().parent
+started=time.time()
+u=sp.Symbol('z'); K=sp.QQ.alg_field_from_poly(sp.Poly(u**4+1,u),alias='z')
+R,t,h0,h1,h2,h6,beta,g1,g2=ring('t,h0,h1,h2,h6,beta,g1,g2',K)
+z=R.ground_new(K.unit); zero=R.zero; one=R.one
+xs=R.gens
+
+def det(M):
+ n=len(M); total=zero
+ for perm in itertools.permutations(range(n)):
+  term=one
+  for i,j in enumerate(perm):term*=M[i][j]
+  total+=(-1 if sum(perm[i]>perm[j] for i in range(n) for j in range(i+1,n))%2 else 1)*term
+ return total
+
+def records_poly(records):
+ out=zero
+ for indices,coef in records:
+  mon=[0]*8
+  for k in indices:mon[k]+=1
+  c=sum((K.unit**j*int(v) for j,v in enumerate(coef)),K.zero)
+  out+=R.from_dict({tuple(mon):c})
+ return out
+
+def split(P,j):
+ result={}
+ for mon,c in P.items():
+  q=list(mon); degree=q[j];q[j]=0
+  result.setdefault(degree,zero)
+  result[degree]+=R.from_dict({tuple(q):c})
+ return result
+
+def evaluate(P,vals,p,w):
+ out=0
+ for exponents,coef in P.items():
+  # ANP coefficients are stored highest degree first.
+  c=0
+  for a in coef.to_list():
+   c=(c*w+int(a.numerator)*pow(int(a.denominator),-1,p))%p
+  for x,e in zip(vals,exponents):c=c*pow(x,e,p)%p
+  out=(out+c)%p
+ return out
+
+def description(P):return {'term_count':len(P),'degree':max(map(sum,P)) if P else -1}
+
+# H is a three-character sequence with roots 1,z^-1,z^-2 through positions 0..5.
+# Its penultimate entry is free; the final entry is normalized to 1.
+roots=[one,z**7,z**6]
+s1=sum(roots,zero);s2=sum((roots[i]*roots[j] for i in range(3) for j in range(i+1,3)),zero);s3=math.prod(roots)
+H=[h0,h1,h2]
+for j in range(3,8):H.append(s1*H[-1]-s2*H[-2]+s3*H[-3])
+Hstar=H[:];H[6]=h6;H[7]=one
+scale=t*(z-one)
+L=[zero]+[(one-beta*h0)*(z-one)+(t-one+beta*(h0-one))*(z**((-j)%8)-one)+beta*H[j]*(z-one) for j in range(1,7)]+[scale]
+# L records scale times actual lower generator, so only determinant column 2 is scaled.
+M=[[sum((z**((i*j)%8)*H[j] for j in range(3)),zero),
+    sum((z**((i*j)%8)*L[j] for j in range(4,8)),zero),
+    z**((3*i)%8),sum((z**((i*j)%8)*H[j] for j in range(8)),zero)] for i in range(4,8)]
+Q=det(M)
+qdata=json.loads((SRC/'exact_spectral_minor.json').read_text())
+assert Q==records_poly(qdata['terms'])
+A=split(Q,0).get(1,zero); B=split(Q,5).get(1,zero); C=Q-t*A-beta*B
+assert all(not m[0] and not m[5] for P in (A,B,C) for m in P)
+assert Q==t*A+beta*B+C
+print('Q exact match',description(Q),flush=True)
+
+# Three row-3 compatibility resultants, constructed directly from Fourier row restrictions.
+def row(freq,k,gamma):
+ q=[z**((freq*j)%8)-gamma for j in range(8)]
+ return [sum((q[j]*H[j] for j in range(k)),zero),sum((q[j]*L[j] for j in range(k+1,8)),zero),q[k]]
+D={}
+for k in (4,1,2,5):
+ row0=[sum(H[:k],zero),sum(L[k+1:],zero),one]
+ D[k]=(det([row(1,k,g1),row(2,k,g2),row(3,k,zero)]),det([row(1,k,g1),row(2,k,g2),row0]))
+RR={k:D[4][0]*D[k][1]-D[k][0]*D[4][1] for k in (1,2,5)}
+rdata=json.loads((SRC/'exact_upper_resultants.json').read_text())
+for k,P in RR.items():
+ assert P==records_poly(rdata['resultants'][str(k)]['terms'])
+ assert all(m[6]+m[7]<=1 for m in P)
+ print('R',k,'exact match',description(P),flush=True)
+
+# The adjacent-column tail occupies characters z,z^2,z^3 on samples 3..7.
+r=[z,z**2,z**3];a=sum(r,zero);b=r[0]*r[1]+r[0]*r[2]+r[1]*r[2];c=math.prod(r)
+E=[L[j+3]-a*L[j+2]+b*L[j+1]-c*L[j] for j in (3,4)]
+coeff=[]
+for P in E+[Q]:
+ at=split(P,0).get(1,zero);bt=split(P,5).get(1,zero);ct=P-t*at-beta*bt
+ assert all(not m[0] and not m[5] for v in (at,bt,ct) for m in v)
+ coeff.append([at,bt,ct])
+W=det(coeff)
+wdata=json.loads((SRC/'adjacent_tail_elimination.json').read_text())
+assert W==records_poly(wdata['W_terms'])
+assert evaluate(W,[0,2,3,5,7,0,0,0],12289,8246)==9966
+print('W exact match',description(W),flush=True)
+
+# Coefficient circuit: exact coefficient-by-coefficient reconstruction, not random checking.
+cc=json.loads((SRC/'five_parameter_circuit.json').read_text())
+for key,P in [('A',A),('B',B),('C',C)]:assert P==records_poly(cc['beta_polynomial'][key])
+Ecoeff=[]
+for k,saved_row in zip((1,2,5),cc['upper_matrix']):
+ entries=[]
+ for gamma_i,saved in zip((None,6,7),saved_row):
+  v=zero
+  for mon,cx in RR[k].items():
+   if (gamma_i is None and mon[6]+mon[7]==0) or (gamma_i is not None and mon[gamma_i]==1):
+    q=list(mon)
+    if gamma_i is not None:q[gamma_i]=0
+    v+=R.from_dict({tuple(q):cx})
+  layers=split(v,5)
+  assert max(layers)<=2
+  polys=[layers.get(d,zero) for d in range(3)]
+  for P,terms in zip(polys,saved):assert P==records_poly(terms)
+  entries.append(polys)
+ Ecoeff.append(entries)
+witness=cc['witness']; p=witness['prime'];w=witness['root'];vals=witness['x']+[0,0,0]
+bb=evaluate(B,vals,p,w);mm=-(vals[0]*evaluate(A,vals,p,w)+evaluate(C,vals,p,w))%p
+mmatrix=[[sum(evaluate(entry[d],vals,p,w)*pow(bb,2-d,p)*pow(mm,d,p) for d in range(3))%p for entry in line] for line in Ecoeff]
+def determinant_mod(M,p):
+ return sum((-1 if sum(perm[i]>perm[j] for i in range(len(M)) for j in range(i+1,len(M)))%2 else 1)*math.prod(M[i][j] for i,j in enumerate(perm)) for perm in itertools.permutations(range(len(M))))%p
+hh=determinant_mod(mmatrix,p)
+assert (bb,mm,hh)==(12110,11930,4730)
+print('H circuit coefficients and witness match',flush=True)
+
+jw=json.loads((SRC/'independence_witness.json').read_text());p=jw['prime'];w=jw['root'];vals=jw['params']
+J=[[evaluate(P.diff(x),vals,p,w) for x in xs] for P in [Q]+list(RR.values())]
+assert J==jw['jacobian_rows']
+minor=determinant_mod([[line[j] for j in jw['selected_columns']] for line in J],p)
+assert minor==10570
+print('Jacobian minor exactly reproduced',minor,flush=True)
+
+# Store the exact tail coefficient determinant and coefficient matrices for future chart analysis.
+def record(P):
+ out=[]
+ for m,co in sorted(P.items()):
+  inds=[j for j,e in enumerate(m) for _ in range(e)]
+  cr=list(reversed(co.to_list()))+[0]*4
+  out.append([inds,[int(cr[j]) for j in range(4)]])
+ return out
+pivot=coeff[0][0]*coeff[1][1]-coeff[0][1]*coeff[1][0]
+(OUT/'independent_tail_coefficients.json').write_text(json.dumps({'variables':[str(x) for x in xs], 'coefficient_field':'Q[z]/(z^4+1)','coefficient_order':['t','beta','constant'],'equations':[[record(P) for P in row] for row in coeff],'tail_pivot':record(pivot)},indent=2)+'\n')
+res={'uploaded_code_executed':False,'Q':description(Q),'Q_split_terms':[len(A),len(B),len(C)],'R':{str(k):description(P) for k,P in RR.items()},'W':description(W),'W_witness':9966,'H_circuit_coefficients_match':True,'H_witness':{'B':bb,'m':mm,'H':hh},'jacobian_minor':minor,'tail_pivot':description(pivot),'exact_coefficients_verified':len(Q)+sum(len(P) for P in RR.values())+len(W),'elapsed_seconds':round(time.time()-started,3)}
+(OUT/'exact_results.json').write_text(json.dumps(res,indent=2)+'\n')
+print(json.dumps(res,indent=2),flush=True)

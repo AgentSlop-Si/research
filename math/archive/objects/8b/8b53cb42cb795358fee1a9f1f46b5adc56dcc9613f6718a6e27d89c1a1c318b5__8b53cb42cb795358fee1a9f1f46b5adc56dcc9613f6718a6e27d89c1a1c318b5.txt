@@ -1,0 +1,61 @@
+"""Exact 2-stage Fourier phase/permutation synthesis veto.
+
+If A=S2 Q P S1 intertwines Z and D, where Q is ANY invertible diagonal
+and P is ANY permutation, then the diagonal multiset of S1 Z S1^-1
+MUST equal the diagonal multiset of S2^-1 D S2. No search over phases
+or permutations is needed. The condition is necessary, not sufficient.
+"""
+import json
+from unitary_mixer import MOD,UnitaryGreenMixer
+from haar_adapter_mod import HaarEscapeMixerMod,StrongHaarEscapeMixerMod
+
+
+def mats(stage):
+    n=stage.n
+    fcols=[];icols=[]
+    for j in range(n):
+        x=[0]*n;x[j]=1
+        fcols.append(stage.apply(x))
+        icols.append(stage.apply(x,inverse=True))
+    f=[[fcols[j][i] for j in range(n)] for i in range(n)]
+    iv=[[icols[j][i] for j in range(n)] for i in range(n)]
+    return f,iv
+
+
+def diag_shift_conjugate(stage):
+    f,iv=mats(stage)
+    n=stage.n
+    return [sum(f[i][j]*iv[(j-1)%n][i] for j in range(n))%MOD for i in range(n)]
+
+
+def diag_modulation_conjugate(stage):
+    f,iv=mats(stage)
+    n=stage.n
+    omega=pow(3,(MOD-1)//n,MOD)
+    return [sum(iv[i][k]*pow(omega,k,MOD)*f[k][i] for k in range(n))%MOD for i in range(n)]
+
+
+def certify_two_stage(n,first='green_tree',second='haar_adapter',seed=2609):
+    ctor={'green_tree':lambda s:UnitaryGreenMixer(n,p=MOD,seed=s),
+          'haar_adapter':lambda s:HaarEscapeMixerMod(n,seed=s),
+          'strong_haar':lambda s:StrongHaarEscapeMixerMod(n,seed=s)}
+    s1=ctor[first](seed+n)
+    s2=ctor[second](seed+10*n)
+    lhs=sorted(diag_shift_conjugate(s1))
+    rhs=sorted(diag_modulation_conjugate(s2))
+    # diagonal invariance is necessary even for arbitrary NONUNIT diagonal Q.
+    return dict(n=n,first=first,second=second,
+                diag_multisets_match=lhs==rhs,
+                exact_mismatch_index=next((i for i,(x,y) in enumerate(zip(lhs,rhs)) if x!=y),None),
+                first_mismatch=[next((x for x,y in zip(lhs,rhs) if x!=y),None),
+                                next((y for x,y in zip(lhs,rhs) if x!=y),None)],
+                quantifier='arbitrary intermediate permutation and invertible diagonal, fixed S1,S2')
+
+
+def run():
+    return [certify_two_stage(n,f,s) for n in (8,16,32,64,128)
+            for f,s in (('green_tree','green_tree'),('green_tree','haar_adapter'),
+                        ('haar_adapter','green_tree'),('haar_adapter','haar_adapter'),
+                        ('strong_haar','strong_haar'),('strong_haar','haar_adapter'))]
+
+if __name__=='__main__':print(json.dumps(run(),indent=2))

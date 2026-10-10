@@ -1,0 +1,97 @@
+0001 #!/usr/bin/env python3
+0002 """Independent Phase5 controls. No uploaded source imports/execution."""
+0003 import itertools,json,math,random
+0004 from pathlib import Path
+0005 def field(n):
+0006  p=n+1
+0007  while any(p%d==0 for d in range(2,math.isqrt(p)+1)):p+=n
+0008  proper=[d for d in range(1,n) if n%d==0]
+0009  for w in range(2,p):
+0010   if pow(w,n,p)==1 and all(pow(w,d,p)!=1 for d in proper):return p,w
+0011  raise AssertionError
+0012 def solve(A,b,p):
+0013  a=[row[:]+[v] for row,v in zip(A,b)];n=len(A)
+0014  for j in range(n):
+0015   i=next(i for i in range(j,n) if a[i][j]);a[i],a[j]=a[j],a[i]
+0016   iv=pow(a[j][j],-1,p);a[j]=[v*iv%p for v in a[j]]
+0017   for i in range(n):
+0018    if i==j:continue
+0019    z=a[i][j];a[i]=[(x-z*y)%p for x,y in zip(a[i],a[j])]
+0020  return [a[i][-1] for i in range(n)]
+0021 def rank(A,p):
+0022  a=[row[:] for row in A];r=0
+0023  for j in range(len(a[0])):
+0024   i=next((i for i in range(r,len(a)) if a[i][j]),None)
+0025   if i is None:continue
+0026   a[i],a[r]=a[r],a[i];iv=pow(a[r][j],-1,p);a[r]=[v*iv%p for v in a[r]]
+0027   for i in range(r+1,len(a)):
+0028    z=a[i][j];a[i]=[(x-z*y)%p for x,y in zip(a[i],a[r])]
+0029   r+=1
+0030   if r==len(a):break
+0031  return r
+0032 def dft(x,w,p):return [sum(v*pow(w,-k*t,p) for t,v in enumerate(x))%p for k in range(len(x))]
+0033 def mst_prim(m):
+0034  seen={0};dist=[0]+[m//math.gcd(m,j) for j in range(1,m)];cost=0
+0035  while len(seen)<m:
+0036   j=min((j for j in range(m) if j not in seen),key=lambda j:dist[j]);cost+=dist[j];seen.add(j)
+0037   for k in range(m):
+0038    if k not in seen:dist[k]=min(dist[k],m//math.gcd(m,k-j))
+0039  return cost
+0040 def mst_formula(m):
+0041  L=1;ans=0
+0042  for d in range(2,m+1):
+0043   if m%d==0:
+0044    nxt=math.lcm(L,d);ans+=d*(m//L-m//nxt);L=nxt
+0045  return ans
+0046 def run():
+0047  rng=random.Random(202610092216);out={'full_raw_cases':0,'full_dft_bins':0,'transition_rank_cases':0,'arbitrary_gauge_edge_entries':0,'mst_cases':0,'composite_rigidity_cases':[],'stable_large_mask_cases':[]}
+0048  for m in range(2,13):
+0049   p,w=field(m*m);eta=pow(w,m,p);n=m*m
+0050   schedules=[[0]*m,list(range(m)),[rng.randrange(m) for _ in range(m)]]
+0051   for a in schedules:
+0052    x=[rng.randrange(p) for _ in range(n)];C=[dft([x[t+m*u] for u in range(m)],eta,p) for t in range(m)]
+0053    output=[0]*n
+0054    for h in range(m):
+0055     lam=[pow(w,j-m*h*a[j],p) for j in range(m)]
+0056     assert len(set(lam))==m
+0057     V=[[pow(v,t,p) for v in lam] for t in range(m)]
+0058     B=solve(V,[C[t][h] for t in range(m)],p)
+0059     K=[[sum(pow(pow(w,-h-s*m,p)*lam[j]%p,t,p) for t in range(m))%p for j in range(m)] for s in range(m)]
+0060     assert sum(v!=0 for row in K for v in row)==m*m-m+1
+0061     assert sum(K[s][h]!=0 for s in range(m))==1
+0062     out['arbitrary_gauge_edge_entries']+=m*m
+0063     for s in range(m):output[h+s*m]=sum(K[s][j]*B[j] for j in range(m))%p
+0064    assert output==dft(x,w,p);out['full_raw_cases']+=1;out['full_dft_bins']+=n
+0065    for delta in range(m):
+0066     E=[[pow(eta,-delta*t*a[j],p) for j in range(m)] for t in range(m)]
+0067     assert rank(E,p)==len({delta*z%m for z in a});out['transition_rank_cases']+=1
+0068   # All requested adjacent mask ranks are possible in the omega^j universal gauge.
+0069   for r in range(1,m+1):
+0070    a=[j%r for j in range(m)];E=[[pow(eta,-t*a[j],p) for j in range(m)] for t in range(m)]
+0071    assert rank(E,p)==r;out['transition_rank_cases']+=1
+0072  for m in range(2,201):
+0073   assert mst_prim(m)==mst_formula(m);out['mst_cases']+=1
+0074  for m in range(2,7):
+0075   count=0;total=0
+0076   for a in itertools.product(range(m),repeat=m):
+0077    exact=all(len({(j-h*a[j])%m for j in range(m)})==m for h in range(m))
+0078    criterion=all((j-k)%math.gcd(a[j]-a[k],m)!=0 for j in range(m) for k in range(j))
+0079    assert exact==criterion;count+=exact;total+=1
+0080   if m in (2,3,5):assert count==m
+0081   out['composite_rigidity_cases'].append({'M':m,'all_shear_schedules':total,'universally_invertible_schedules':count})
+0082  for m in [4,8,16,32,64]:
+0083   p,w=field(m*m);eta=pow(w,m,p);a=[2*j%m for j in range(m)]
+0084   assert all(math.gcd(1-2*h,m)==1 for h in range(m))
+0085   # Fourier Gram identity algebraically: sum_t eta^(t*(e_j-e_k)) = M delta_jk.
+0086   for h in range(m):
+0087    e=[(j-h*a[j])%m for j in range(m)];assert len(set(e))==m
+0088   E=[[pow(eta,-t*a[j],p) for j in range(m)] for t in range(m)];rr=rank(E,p);assert rr==m//2
+0089   out['stable_large_mask_cases'].append({'M':m,'all_h_fourier_permutations':True,'adjacent_mask_rank':rr,'complex_condition_number':1})
+0090  # General affine classification, without assuming M prime or prime-power.
+0091  for m in range(2,101):
+0092   primes=[p for p in range(2,m+1) if m%p==0 and all(p%d for d in range(2,math.isqrt(p)+1))];rad=math.prod(primes)
+0093   for c in range(m):assert all(math.gcd(1-c*h,m)==1 for h in range(m))==(c%rad==0)
+0094  out['affine_classification_lengths']=99
+0095  return out
+0096 if __name__=='__main__':
+0097  r=run();Path(__file__).with_name('PHASE5_REVIEW_RESULTS.json').write_text(json.dumps(r,indent=2)+'\n');print(json.dumps(r,indent=2))

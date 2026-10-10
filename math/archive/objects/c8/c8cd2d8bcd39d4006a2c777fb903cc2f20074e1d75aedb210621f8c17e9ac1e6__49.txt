@@ -1,0 +1,98 @@
+0001 #!/usr/bin/env python3
+0002 """Dual-sweep and diagonal-gauge exact controls; no parameter search."""
+0003 from pathlib import Path
+0004 import json,random
+0005 HERE=Path(__file__).resolve().parent
+0006 p=97;rng=random.Random(9211)
+0007 
+0008 def route(m):
+0009     n=m*m;counts=[0]*(n+1);area=[(i//m+1)*(i%m+1) for i in range(n)]
+0010     for a in area:counts[a]+=1
+0011     offsets=[];v=0
+0012     for c in counts:offsets.append(v);v+=c
+0013     order=[0]*n
+0014     for i,a in enumerate(area):order[offsets[a]]=i;offsets[a]+=1
+0015     sigma=[0]*n
+0016     for k,i in enumerate(order):sigma[i]=order[n-1-k]
+0017     return sigma
+0018 
+0019 def solve(x,m,q,transpose=False):
+0020     n=m*m;y=[0]*n
+0021     if not transpose:
+0022         for i in range(n):
+0023             t,u=divmod(i,m)
+0024             y[i]=(x[i]+(pow(q,u,p)*y[i-m] if t else 0)+(y[i-1] if u else 0))%p
+0025     else:
+0026         for i in range(n-1,-1,-1):
+0027             t,u=divmod(i,m)
+0028             y[i]=(x[i]+(pow(q,u,p)*y[i+m] if t+1<m else 0)+(y[i+1] if u+1<m else 0))%p
+0029     return y
+0030 
+0031 def stage(x,m,q,alpha,beta,transpose=False):
+0032     sigma=route(m);qi=pow(q,-1,p)
+0033     a=solve(x,m,q,transpose)
+0034     if not transpose:
+0035         tmp=solve(x[::-1],m,qi);b=[tmp[i] for i in sigma]
+0036     else:
+0037         tmp=solve([x[i] for i in sigma],m,qi,True);b=tmp[::-1]
+0038     return [(alpha*u+beta*v)%p for u,v in zip(a,b)]
+0039 
+0040 def normalize(T,F,r,c):
+0041     n=len(T)
+0042     if any(T[r][j]==0 for j in range(n)) or any(T[i][c]==0 for i in range(n)):
+0043         return {'status':'reference_zero_impossible','valid':False}
+0044     E=[F[r][j]*pow(T[r][j],-1,p)%p for j in range(n)]
+0045     D=[F[i][c]*pow(T[i][c]*E[c]%p,-1,p)%p for i in range(n)]
+0046     U=[[D[i]*T[i][j]*E[j]%p for j in range(n)] for i in range(n)]
+0047     assert D[r]==1 and U[r]==F[r] and all(U[i][c]==F[i][c] for i in range(n))
+0048     mismatch=sum(U[i][j]!=F[i][j] for i in range(n) for j in range(n))
+0049     cross_mismatch=0
+0050     for i in range(n):
+0051         for j in range(n):
+0052             a=T[i][j]*T[r][c]*pow(T[i][c]*T[r][j]%p,-1,p)%p
+0053             b=F[i][j]*F[r][c]*pow(F[i][c]*F[r][j]%p,-1,p)%p
+0054             assert (U[i][j]==F[i][j])==(a==b)
+0055             cross_mismatch+=a!=b
+0056     assert mismatch==cross_mismatch
+0057     return {'status':'normalized','valid':mismatch==0,'mismatches':mismatch,'cross_ratio_mismatches':cross_mismatch}
+0058 
+0059 cases=[];gauge_controls=[]
+0060 for m,q in [(2,22),(4,8)]:
+0061     n=m*m;assert pow(q,n,p)==1 and pow(q,n//2,p)!=1
+0062     perm=list(range(n));rng.shuffle(perm);diag=[rng.randrange(1,p) for i in range(n)]
+0063     def C(x,tr=False):
+0064         if not tr:return [diag[i]*x[perm[i]]%p for i in range(n)]
+0065         y=[0]*n
+0066         for i,j in enumerate(perm):y[j]=diag[i]*x[i]%p
+0067         return y
+0068     F=[[pow(q,-i*j,p) for j in range(n)] for i in range(n)]
+0069     for alpha,beta,gamma,delta in [(1,1,1,2),(0,1,1,2),(1,0,2,1),(1,-1,1,-1),(1,2,0,1),(1,1,1,0),(0,0,1,1),(1,1,0,0)]:
+0070         def Tapply(x,tr=False):
+0071             if not tr:return stage(C(stage(x,m,q,alpha,beta)),m,pow(q,-1,p),gamma,delta)
+0072             return stage(C(stage(x,m,pow(q,-1,p),gamma,delta,True),True),m,q,alpha,beta,True)
+0073         columns=[Tapply([int(i==j) for i in range(n)]) for j in range(n)]
+0074         T=[[columns[j][i] for j in range(n)] for i in range(n)]
+0075         x=[rng.randrange(p) for _ in range(n)];u=Tapply(x);v=Tapply(x,True)
+0076         assert u==[sum(T[i][j]*x[j] for j in range(n))%p for i in range(n)]
+0077         assert v==[sum(T[j][i]*x[j] for j in range(n))%p for i in range(n)]
+0078         row0=Tapply([1]+[0]*(n-1),True);col0=Tapply([1]+[0]*(n-1))
+0079         assert row0==T[0] and col0==[T[i][0] for i in range(n)]
+0080         cases.append({'m':m,'N':n,'couplings':[alpha,beta,gamma,delta],
+0081                       'forward_and_transpose_exact':True,'linear_cost_reference_extraction_matches_dense':True,
+0082                       'normalization':normalize(T,F,0,0)})
+0083     L=[rng.randrange(1,p) for _ in range(n)];R=[rng.randrange(1,p) for _ in range(n)]
+0084     positive=[[F[i][j]*L[i]*R[j]%p for j in range(n)] for i in range(n)]
+0085     assert normalize(positive,F,0,0)['valid']
+0086     negative=[row[:] for row in positive];negative[-1][-1]=negative[-1][-1]*2%p
+0087     assert normalize(negative,F,0,0)['mismatches']==1
+0088     interior_zero=[row[:] for row in positive];interior_zero[-1][-1]=0
+0089     assert normalize(interior_zero,F,0,0)['mismatches']==1
+0090     for i,j in [(0,0),(0,n-1),(n-1,0)]:
+0091         bad=[row[:] for row in positive];bad[i][j]=0
+0092         assert normalize(bad,F,0,0)['status']=='reference_zero_impossible'
+0093     gauge_controls.append({'N':n,'positive_rank_one_gauge':True,'single_entry_corruption_detected':True,
+0094                            'interior_zero_detected':True,'three_reference_zero_branches_rejected':True})
+0095 result={'field':'F97','family_controls':cases,'gauge_controls':gauge_controls,
+0096         'scope':'Exact controls for application and conditional diagonal normalization only; no Fourier construction search or parameter synthesis claim.'}
+0097 (HERE/'NORMALIZATION_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+0098 print(json.dumps(result,indent=2))

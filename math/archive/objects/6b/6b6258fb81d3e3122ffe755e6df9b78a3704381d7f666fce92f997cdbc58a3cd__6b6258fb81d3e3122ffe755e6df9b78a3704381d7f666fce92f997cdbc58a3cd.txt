@@ -1,0 +1,216 @@
+"""Exact finite-field certificates for the 3-stage double-bit-reversal FFT project.
+
+No numerical 'FFT solved' claim. Structural theorems proved in PROOF_CERTIFICATE.md.
+Only stdlib Python. Modular finite fields support powers of two <= 128 when p=65537.
+"""
+from __future__ import annotations
+from itertools import combinations
+import random
+
+
+def bitrev(n):
+    assert n > 0 and n&(n-1)==0
+    m=n.bit_length()-1
+    return [int(format(k, f'0{m}b')[::-1],2) for k in range(n)]
+
+def parity_perm(n, seed=0):
+    rng=random.Random(seed)
+    even=list(range(0,n,2)); odd=list(range(1,n,2))
+    rng.shuffle(even);rng.shuffle(odd)
+    return even+odd
+
+def root(n,p):
+    assert (p-1)%n==0
+    for a in range(2,p):
+        w=pow(a,(p-1)//n,p)
+        if pow(w,n,p)==1 and (n==1 or pow(w,n//2,p)!=1):
+            return w
+    raise ValueError('no primitive root')
+
+def scalar_stage(n,u=1,v=2,d=3):
+    return [[u if i>j else v if i<j else d for j in range(n)] for i in range(n)]
+
+def matrix_stage(a,b,c,e,d,p):
+    n=len(a)
+    assert all(len(x)==n for x in (b,c,e,d))
+    return [[(a[i]*b[j] if i>j else c[i]*e[j] if i<j else d[i])%p for j in range(n)] for i in range(n)]
+
+def matmul(A,B,p):
+    if not A or not B:return []
+    assert len(A[0])==len(B)
+    BT=list(zip(*B))
+    return [[sum(x*y for x,y in zip(row,col))%p for col in BT] for row in A]
+
+def matvec(A,x,p):
+    return [sum(a*b for a,b in zip(row,x))%p for row in A]
+
+def apply_scan(a,b,c,e,d,x,p):
+    n=len(a)
+    prefix=0
+    suffix=sum((e[i]*x[i] for i in range(n)))%p
+    out=[]
+    for i in range(n):
+        suffix=(suffix-e[i]*x[i])%p
+        out.append((d[i]*x[i]+a[i]*prefix+c[i]*suffix)%p)
+        prefix=(prefix+b[i]*x[i])%p
+    return out
+
+def det_mod(A,p):
+    n=len(A)
+    if n==0:return 1
+    a=[[x%p for x in row] for row in A]
+    ans=1
+    for k in range(n):
+        pivot=next((i for i in range(k,n) if a[i][k]),None)
+        if pivot is None:return 0
+        if pivot!=k:
+            a[k],a[pivot]=a[pivot],a[k]
+            ans=-ans
+        z=a[k][k];ans=ans*z%p
+        zinv=pow(z,-1,p)
+        for i in range(k+1,n):
+            coeff=a[i][k]*zinv%p
+            if coeff:
+                for j in range(k+1,n):
+                    a[i][j]=(a[i][j]-coeff*a[k][j])%p
+                a[i][k]=0
+    return ans%p
+
+def rank_mod(A,p):
+    if not A:return 0
+    a=[[x%p for x in row] for row in A]
+    n,m=len(a),len(a[0]);rank=0
+    for j in range(m):
+        piv=next((i for i in range(rank,n) if a[i][j]),None)
+        if piv is None:continue
+        a[rank],a[piv]=a[piv],a[rank]
+        z=pow(a[rank][j],-1,p)
+        for i in range(rank+1,n):
+            coeff=a[i][j]*z%p
+            if coeff:
+                for c in range(j+1,m):a[i][c]=(a[i][c]-coeff*a[rank][c])%p
+                a[i][j]=0
+        rank+=1
+        if rank==n:break
+    return rank
+
+def inverse_mod(A,p):
+    n=len(A)
+    aug=[[(v%p) for v in row]+[int(i==j) for j in range(n)] for i,row in enumerate(A)]
+    for j in range(n):
+        pivot=next((i for i in range(j,n) if aug[i][j]),None)
+        if pivot is None:raise ValueError('singular')
+        aug[j],aug[pivot]=aug[pivot],aug[j]
+        inv=pow(aug[j][j],-1,p)
+        aug[j]=[x*inv%p for x in aug[j]]
+        for i in range(n):
+            if i!=j and aug[i][j]:
+                v=aug[i][j]
+                aug[i]=[(a-v*b)%p for a,b in zip(aug[i],aug[j])]
+    return [row[n:] for row in aug]
+
+def perm_conjugate(A,perm):
+    return [[A[perm[i]][perm[j]] for j in range(len(perm))] for i in range(len(perm))]
+
+def perm_left(A,perm):
+    return [A[perm[i]] for i in range(len(perm))]
+
+def perm_right(A,perm):
+    return [[row[perm[j]] for j in range(len(perm))] for row in A]
+
+def minor2(A,r1,r2,c1,c2,p):
+    return (A[r1][c1]*A[r2][c2]-A[r1][c2]*A[r2][c1])%p
+
+def all_qs_minor_violations(A,p,limit=None):
+    """QS rank<=1 iff all 2*C(n,4) strictly-offdiagonal 2x2 minors vanish."""
+    n=len(A);violations=[]
+    for a,b,c,d in combinations(range(n),4):
+        # Lower: rows c,d / cols a,b.  Upper: rows a,b / cols c,d.
+        for r1,r2,s1,s2 in ((c,d,a,b),(a,b,c,d)):
+            v=minor2(A,r1,r2,s1,s2,p)
+            if v:
+                violations.append((r1,r2,s1,s2,v))
+                if limit is not None and len(violations)>=limit:return violations
+    return violations
+
+def fft(n,w,p):
+    return [[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+
+def fourier_minor_formula(n,w,p,r1,r2,c1,c2):
+    return (pow(w,r1*c1+r2*c2,p)*(1-pow(w,(r1-r2)*(c2-c1),p)))%p
+
+def v2(k):
+    assert k>0
+    v=0
+    while k%2==0:k//=2;v+=1
+    return v
+
+def zero_minor_count_formula(n):
+    """For n=2^m: number of zero 2x2 minors of Fourier F_n."""
+    assert n>0 and n&(n-1)==0
+    m=n.bit_length()-1
+    return (n**3*(m-2))//8 + n*n//4 if n>=2 else 0
+
+def zero_minor_count_bruteforce(n):
+    assert n&(n-1)==0
+    m=n.bit_length()-1;z=0
+    for r1,r2 in combinations(range(n),2):
+        vr=v2(r2-r1)
+        for c1,c2 in combinations(range(n),2):
+            if vr+v2(c2-c1)>=m:z+=1
+    return z
+
+def compound_entry(A,p,rows,cols):
+    return minor2(A,rows[0],rows[1],cols[0],cols[1],p)
+
+def exterior_cauchy_binet(A,F,C,rows,cols,p):
+    """Return minor of (A*F*C) via Lambda^2(A) Lambda^2(F) Lambda^2(C)."""
+    n=len(A); pairs=list(combinations(range(n),2))
+    left=[compound_entry(A,p,rows,K) for K in pairs]
+    right=[compound_entry(C,p,L,cols) for L in pairs]
+    return sum(left[i]*compound_entry(F,p,K,L)*right[j]
+               for i,K in enumerate(pairs) for j,L in enumerate(pairs))%p
+
+def inverse_stage_middle(A,C,F,perm,p):
+    """P * C * F * A * P, P bit-reversal involution."""
+    assert perm==bitrev(len(perm))
+    return perm_conjugate(matmul(matmul(C,F,p),A,p),perm)
+
+def augmented_stage_matrix(a,b,c,e,d,p):
+    """K=[D A C;-L*B I-L 0;-U*E 0 I-U]; det(K)=det(S)."""
+    n=len(a);N=3*n
+    H=[[0]*N for _ in range(N)]
+    for i in range(n):
+        H[i][i]=d[i]%p
+        H[i][n+i]=a[i]%p
+        H[i][2*n+i]=c[i]%p
+        H[n+i][n+i]=1
+        H[2*n+i][2*n+i]=1
+        if i>0:
+            H[n+i][i-1]=(-b[i-1])%p
+            H[n+i][n+i-1]=(-1)%p
+        if i<n-1:
+            H[2*n+i][i+1]=(-e[i+1])%p
+            H[2*n+i][2*n+i+1]=(-1)%p
+    return H
+
+def triple_stage_product_simple(S1,S2,S3,perm,p):
+    """Readable version: S3 @ P @ S2 @ P @ S1."""
+    # Pre-/post-composition maps: left P picks rows in perm order.
+    P_S1=perm_left(S1,perm)
+    S2_P_S1=matmul(S2,P_S1,p)
+    P_S2_P_S1=perm_left(S2_P_S1,perm)
+    return matmul(S3,P_S2_P_S1,p)
+
+def block2_stage(n,p,seed):
+    """Invertible quasiseparable rank-one stage OUTSIDE separated-generator chart."""
+    assert n%2==0
+    rng=random.Random(seed)
+    M=[[0]*n for _ in range(n)]
+    for j in range(0,n,2):
+        while True:
+            x=[rng.randrange(1,p) for _ in range(4)]
+            if (x[0]*x[3]-x[1]*x[2])%p:break
+        M[j][j]=x[0];M[j][j+1]=x[1]
+        M[j+1][j]=x[2];M[j+1][j+1]=x[3]
+    return M

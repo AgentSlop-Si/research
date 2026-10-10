@@ -1,0 +1,101 @@
+   1	import numpy as np, math, sys
+   2	sys.path.insert(0,'/mnt/data')
+   3	
+   4	
+   5	def unitfft(x): return np.fft.fft(x)/math.sqrt(len(x))
+   6	
+   7	def make_phase(N,a,beta):
+   8	    n=np.arange(N,dtype=np.int64)
+   9	    # N power of two; safe for our test sizes
+  10	    return np.exp(2j*np.pi*(((np.int64(a)*n*n+np.int64(beta)*n)&np.int64(N-1)).astype(float))/N)
+  11	
+  12	def project(x,M,a,beta):
+  13	    N=len(x); K=N//M
+  14	    sig=make_phase(N,a,beta).reshape(K,M)
+  15	    d=np.sum(sig*x.reshape(K,M),axis=1)
+  16	    return d
+  17	
+  18	def decode_from_Dnorm(d,Dnorm,N,M,a,beta):
+  19	    # Adapt exact recurrence using supplied approximation to normalized K-DFT(d)
+  20	    K=N//M; D=np.asarray(Dnorm)*math.sqrt(K)
+  21	    r=np.arange(K,dtype=np.int64)
+  22	    # global chirp has block scalar q_r; local summaries dloc=d/q_r
+  23	    qr=np.exp(2j*np.pi*(((np.int64(a)*r*r*np.int64(M*M)+np.int64(beta)*r*np.int64(M))&np.int64(N-1)).astype(float))/N)
+  24	    dloc=d/qr
+  25	    # Dnorm passed is DFT of global d, not dloc! Need recursively transform dloc, not d.
+  26	    raise RuntimeError('use dloc recursively')
+  27	
+  28	def project_local_summary(x,M,a,beta):
+  29	    # Return dloc for local-phase convention and block scalar qr, such that global d=qr*dloc.
+  30	    N=len(x);K=N//M
+  31	    r=np.arange(K,dtype=np.int64);t=np.arange(M,dtype=np.int64)
+  32	    c=(2*np.int64(a)*np.int64(M)*r+np.int64(beta)) & np.int64(N-1)
+  33	    # local sigma exp(2pi i/N(a t^2+c_r t))
+  34	    ph=(np.int64(a)*t[None,:]*t[None,:] + c[:,None]*t[None,:]) & np.int64(N-1)
+  35	    Sloc=np.exp(2j*np.pi*ph.astype(float)/N)
+  36	    dloc=np.sum(Sloc*x.reshape(K,M),axis=1)
+  37	    return dloc
+  38	
+  39	def decode_local_from_Dnorm(dloc,Dnorm,N,M,a,beta):
+  40	    K=N//M; D=np.asarray(Dnorm,dtype=complex)*math.sqrt(K)
+  41	    step=(2*a)%N; g=math.gcd(step,N); assert g==2
+  42	    Y=np.empty(N,complex); sqN=math.sqrt(N)
+  43	    tt=np.arange(M,dtype=np.int64)
+  44	    # two direct seeds, vectorize over blocks; P seed per block x M
+  45	    rr=np.arange(K,dtype=np.int64)
+  46	    c=(2*np.int64(a)*np.int64(M)*rr+np.int64(beta)) & np.int64(N-1)
+  47	    for seed in range(g):
+  48	        ph=(np.int64(a)*tt[None,:]*tt[None,:] + ((np.int64(seed)+c[:,None])&np.int64(N-1))*tt[None,:]) & np.int64(N-1)
+  49	        P=np.sum(np.exp(-2j*np.pi*ph.astype(float)/N),axis=1)
+  50	        w=np.exp(-2j*np.pi*seed*rr/K)
+  51	        Y[seed]=np.sum(dloc*w*P)/sqN
+  52	    cA=np.exp(-2j*np.pi*beta/N); cB=np.exp(-2j*np.pi*beta/K)
+  53	    for seed in range(g):
+  54	        m=seed
+  55	        while True:
+  56	            nxt=(m+step)%N
+  57	            if nxt==seed: break
+  58	            A=np.exp(-2j*np.pi*(a+m)/N)
+  59	            B=np.exp(-2j*np.pi*((a*M*M+m*M)%N)/N)
+  60	            forcing=D[m%K]/sqN - B*cB*D[(m+2*a*M)%K]/sqN
+  61	            Y[nxt]=(Y[m]-forcing)/(A*cA)
+  62	            m=nxt
+  63	    return Y
+  64	
+  65	def recursive_est(x,M,rng,base=16):
+  66	    x=np.asarray(x,complex);N=len(x)
+  67	    if N<=base or N%M: return unitfft(x)
+  68	    a=int(2*rng.integers(0,N//2)+1); beta=int(rng.integers(0,N))
+  69	    dloc=project_local_summary(x,M,a,beta)
+  70	    Dnorm=recursive_est(dloc,M,rng,base)
+  71	    return decode_local_from_Dnorm(dloc,Dnorm,N,M,a,beta)
+  72	
+  73	def avg_est(x,M,L,rng,base=16):
+  74	    out=np.zeros(len(x),complex)
+  75	    for _ in range(L): out+=recursive_est(x,M,rng,base)
+  76	    return out/L
+  77	
+  78	def cases(N,rng):
+  79	    n=np.arange(N,dtype=float)
+  80	    out={'flat':np.ones(N,complex),'gaussian':rng.normal(size=N)+1j*rng.normal(size=N),
+  81	         'random_phase':np.exp(2j*np.pi*rng.random(N)),
+  82	         'global_chirp':np.exp(2j*np.pi*(5*n*n+7*n)/N)}
+  83	    for s in [1,4,16,64]:
+  84	      if s<=N:
+  85	       z=np.zeros(N,complex);idx=rng.choice(N,s,replace=False);z[idx]=np.exp(2j*np.pi*rng.random(s));out[f'sparse{s}']=z
+  86	    return out
+  87	
+  88	if __name__=='__main__':
+  89	 rng=np.random.default_rng(7)
+  90	 for N in [256,1024,4096]:
+  91	  print('N',N)
+  92	  for name,x in cases(N,rng).items():
+  93	   X=unitfft(x); norm=np.linalg.norm(x); scale=np.sum(np.abs(x))/math.sqrt(N)
+  94	   row=[]
+  95	   for L in [1,2,4,8,16]:
+  96	    es=[]; es1=[]
+  97	    for _ in range(8):
+  98	      Y=avg_est(x,4,L,rng,base=16)
+  99	      e=np.max(np.abs(Y-X));es.append(e/norm if norm else 0);es1.append(e/scale if scale else 0)
+ 100	    row.append((L,float(np.median(es)),float(np.median(es1))))
+ 101	   print(name,row)

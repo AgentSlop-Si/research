@@ -1,0 +1,61 @@
+# Audit of shrinking-error v4
+
+9 October 2026. Source: `fft_wordram_shrinking_error_v4(2).zip`, Library ID `[private-id]`, 18,401 bytes, SHA-256 `1f8e2c0836f2fc1405323c33016f00255306f85e51b5d08faab9d3a141f32db3`.
+
+## Verdict
+
+This is genuinely new accuracy progress. Enlarging the output block together with the sample count closes the descriptor-cost obstruction to taking more samples. The two advertised asymptotic time/error points are valid after completing the finite-arithmetic/model details, under the explicit bounded-integer or common-scale word-input model used in the prior synthesis:
+
+- O(N) total charged work with O(loglog N/sqrt(log N)) times L_box(x)/sqrt(N) all-bin additive error.
+- O(N log N/loglog N) total charged work with O((loglog N)^(3/2)/log N) times that scale.
+
+See `SHRINKING_ERROR_THEOREM.md` for the standalone model-specific proof. The increasing-block/sample idea belongs to this user-supplied v4 archive; the audit provides a rigorous completion. This is neither an exact FFT nor a practical speedup or novelty certificate.
+
+Important comparison: for power-of-two lengths, standard sampling plus a pruned FFT gives the second point's same error in O(N loglog N), asymptotically faster than v4's O(N log N/loglog N). The second point is a valid parameter choice of this evaluator, not a generally superior accuracy/time frontier. The first O(N) point remains the principal advance. See `../PRUNED_BASELINE.md` for arithmetic and bounded-word completion and `../SHRINKING_PRIOR_ART.md` for primary sources.
+
+## What was checked
+
+All five files were read: README, research argument, source, saved results, and unit-test source. None matches prior bytes. No uploaded Python was run or imported. An independent standard-library verifier was authored and executed separately.
+
+The main identity is sound. Write L=log N and ell=loglog N. At the O(N) point, k=B=Theta(L^2/ell^2), descriptor width p=Theta(ell), group size g=Theta(L/ell), group count G=Theta(L/ell), guard width q=Theta(ell), words per vector P=Theta(L/ell), and blocks R=Theta(N ell^2/L^2). Thus Rk=Theta(N) and RGP=Theta(N). At k=B=Theta(L^3/ell^3), the analogous accumulation term is Theta(N L/ell). All tables remain N^gamma polylog(N)=o(N).
+
+Equal group sizes are handled by drawing a rounded-up actual sample count, not by mixing unequal group means. Capped rejection gives a worst-case polylogarithmic sampling cost with an explicit failure budget. Growing phasor/output precision is only O(loglog N) bits, so its uniform construction still fits the charged polylogarithmic preprocessing allowance. Output normalization is not a free exact square root.
+
+## Model and error qualifications
+
+The source phrase 'fresh arbitrary finite-precision input' is broader than its stated mass arithmetic proves. O(1)-word floats with arbitrary varying exponents do not imply that an exact common-denominator mass sum fits O(1) words. The completed result keeps bounded integer/common-scale inputs; extending it to a wider representation would require an explicit normalization/truncation argument.
+
+The guarantee is a maximum coordinate error, divided by the input l2 norm when using the Cauchy bound. It is not an l2-relative approximation of the whole Fourier output vector. On random real-sign inputs both new allowances still greatly exceed the largest typical coefficient asymptotically; zero output satisfies either error tolerance with high probability on that family. The theorem nevertheless imposes meaningful conditions on coherent large peaks and does strictly improve the worst-case error factor over constant-error v3.
+
+The source coordinate-sampling variance calculation is correct for unbiased independent coordinate estimators and constant RMS accuracy. It is not an impossibility result for all structured or input-aware Fourier algorithms, nor does variance alone establish every high-probability lower bound.
+
+## Prototype status and finite reporting issues
+
+The v4 prototype remains an algebra/scaling experiment, not the uniform O(N) implementation:
+
+1. `packed_decode` lazily computes gB phasors per new key and caches scalar arrays.
+2. It re-packs every B-lane real/imaginary entry at every lookup, charging Theta(B) scalar work per lookup.
+3. Dictionary keys are Python tuples; no one-word key is actually encoded in the program.
+4. All tests override g=4. At N=2048 the declared word width is 88 bits; keys need 84, 92, 100, or 108 bits. Fifteen of 20 cases exceed the stated word width, and all 20 exceed the gamma log2 N=7.92-bit table-key budget. The source clearly describes these as toy constants, so they are not counterexamples to the sufficiently-large-N theorem.
+5. The 20 saved cases contain 9,796 cache misses out of 10,240 lookups; 8 cases miss at every lookup. There is no hidden practical table reuse supporting their speed.
+6. The cost model counts descriptor/lookups/additions and explicitly omits I/O; it also omits the prototype's lazy generation and per-lookup packing. Its counters support an asymptotic formula, not measured total runtime.
+
+There is a small budget-reporting bug: `eta_total=min(0.95,2*eta_sample)` can be less than `eta_sample+eta_total/2`, the sampling bound plus its assigned phase/rounding terms. This affects linear-model log2 N=64,128,256 and sub-FFT log2 N=64. Replace the clipped label by the actual sum, or avoid clipping the total below its constituent budget. The asymptotic rows are eventually unclipped; the theorem's rates are unchanged.
+
+The saved decoder and sampling summaries agree with the documentation: maximum normalized decoder error 0.03057051485605762, zero bound violations among 20 saved rows, and regression slopes -0.4891504, -0.4875612, -0.4829123, -0.4822510 for flat, random-phase, Gaussian, and spike-noise families. These are static checks of saved data, not independent repetitions of the uploaded random experiment. A usual FFT is used only as a comparison oracle, not to generate the packed decoder's answers.
+
+## Independently executed checks
+
+`independent_checks.py` imports no uploaded source and performs:
+
+- 980 physical 64-bit guarded-sum blocks, including 66,780 lanes, endpoints, alternating extrema, and random values; all exact sums match.
+- 1,806 exact integer nearest-phase cases, including odd/even N; all circular error bounds hold.
+- 216 deterministic decoder cases with independently formed phasor trajectories, equal-sized groups, packed integer sums, and explicit direct-sum references. Maximum observed error 0.03331883883322675; maximum fraction of the deterministic bound 0.6405714537438147; zero violations.
+- Recalculation of the saved-data summaries and key/budget diagnostics above.
+- Verification of all 74 file hashes covered by the separate macro checkpoint's manifest.
+
+These tests support the algebra and identify finite test limitations. They do not empirically prove a probability theorem, uniform asymptotic time bound, novelty, or practical performance.
+
+## Next useful research
+
+Combine v4's growing B=k schedule with the macro checkpoint's eager prepacked-table and certified finite-arithmetic components, then verify a full parameterized driver with strict word accounting. This is an implementation task rather than a new proof of the fixed-accuracy result. A targeted prior-art check should now address the shrinking-error tradeoffs; the previous fixed-error review cannot establish their originality.

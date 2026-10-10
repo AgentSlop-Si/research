@@ -1,0 +1,1861 @@
+
+Built it, bro. We now have a working adaptive FFT research engine, with source code, mathematical notes, automated tests, and reproducible benchmarks.
+Complete Python project · Source, tests, benchmarks, documentation
+What I implemented
+The engine recognizes repeated FFT inputs, cyclic shifts, sparse changes, and linear relationships between different input arrays. It also includes a canonical shared-computation graph, two-real-FFT packing, bounded caching, and an optimized SciPy/NumPy fallback.
+The strongest practical result is computing many different FFTs using only a few basis FFTs.
+For example, suppose:
+Re implementing it to toher language to check if fast bookeping bottleneck for us
+?
+Yeah — that’s exactly the next experiment I’d run.
+
+Reimplement the adaptive/bookkeeping layer in C++ first, while keeping the same algorithmic logic. That lets us answer the important question:
+
+Is our adaptive FFT idea slow because the algorithm is bad, or because Python bookkeeping—hashing, dictionaries, object allocation, graph traversal—is hiding the benefit?
+
+For your engine, I’d test four implementations:
+
+Version	FFT backend	Adaptive logic
+Python baseline	SciPy/NumPy	Python
+C++ baseline	FFTW/pocketfft	none
+C++ adaptive	same FFT backend	C++
+C++ adaptive + optimized hashes	same backend	C++
+The critical rule is use the same FFT backend for baseline and adaptive tests. Otherwise we might accidentally conclude that the adaptive algorithm is faster when we really just changed FFT libraries.
+
+C++ is especially good for this because the expensive bookkeeping you described can become very cheap:
+
+canonical graph nodes → structs/indices rather than Python objects
+basis lookup → unordered_map / flat hash tables
+repeated-array detection → 64/128-bit fingerprints
+linear-relation metadata → packed contiguous arrays
+cache → fixed-capacity LRU/hash structure
+sparse changes → small vectors of (index, delta)
+cyclic shifts → integer metadata instead of materializing arrays
+DAG references → integer IDs/pointers
+allocations → arenas/pools instead of thousands of Python allocations
+And there’s an important benchmark we should add.
+
+Measure separately:
+
+T
+adaptive
+=
+T
+detect
++
+T
+lookup
++
+T
+graph
++
+T
+FFT
++
+T
+reconstruct
+T 
+adaptive
+​
+ =T 
+detect
+​
+ +T 
+lookup
+​
+ +T 
+graph
+​
+ +T 
+FFT
+​
+ +T 
+reconstruct
+​
+ 
+instead of only measuring total runtime.
+
+Then suppose we get something like:
+
+N = 1,048,576
+100 related FFT inputs
+
+Python adaptive:
+    detection       410 ms
+    bookkeeping     570 ms
+    FFT basis       140 ms
+    reconstruction  110 ms
+    total          1230 ms
+
+C++ adaptive:
+    detection        25 ms
+    bookkeeping      18 ms
+    FFT basis       125 ms
+    reconstruction   35 ms
+    total           203 ms
+
+100 ordinary FFTs:
+    2900 ms
+That would be very significant. It would mean Python was masking most of the gain.
+
+But there is an even more interesting experiment for our research.
+
+We should plot:
+
+T
+bookkeeping
+T
+total
+T 
+total
+​
+ 
+T 
+bookkeeping
+​
+ 
+​
+ 
+against both 
+N
+N and number of related transforms 
+M
+M.
+
+If that fraction tends toward zero as 
+N
+N increases, then the bookkeeping concern basically disappears for large transforms.
+
+For example, imagine detection is approximately
+
+O
+(
+N
+)
+O(N)
+while a fresh FFT is
+
+O
+(
+N
+log
+⁡
+N
+)
+.
+O(NlogN).
+Then:
+
+N
+N
+log
+⁡
+N
+=
+1
+log
+⁡
+N
+→
+0.
+NlogN
+N
+​
+ = 
+logN
+1
+​
+ →0.
+So even linear bookkeeping can become asymptotically cheap relative to recomputing an FFT.
+
+And your basis idea makes this more interesting.
+
+If 
+M
+M inputs can be expressed using only 
+r
+r basis transforms, then roughly:
+
+T
+(
+M
+,
+N
+)
+≈
+r
+N
+log
+⁡
+N
++
+T
+relation detection
++
+M
+N
+T(M,N)≈rNlogN+T 
+relation detection
+​
+ +MN
+instead of
+
+M
+N
+log
+⁡
+N
+.
+MNlogN.
+For fixed/small 
+r
+r, the dominant work per additional transform can approach:
+
+O
+(
+N
+)
+O(N)
+rather than 
+O
+(
+N
+log
+⁡
+N
+)
+O(NlogN).
+
+That's the part worth investigating carefully.
+
+I’d choose C++ before Rust
+Not because Rust is slower—it isn't—but because for this experiment C++ gives us the shortest path to FFTW/MKL/pocketfft, SIMD intrinsics, memory-layout control, hardware counters, and extremely low-level profiling.
+
+Afterward, a Rust port would be useful to verify that the result isn't dependent on obscure C++ tricks.
+
+There is also one experiment I really want in the rewrite:
+
+Adaptive engine with relationship detection OFF
+Adaptive engine with hashing only
+Adaptive engine with DAG reuse
+Adaptive engine with basis detection
+Adaptive engine with everything
+That's an ablation study. It tells us exactly where the speedup comes from.
+
+So yeah bro — don't rewrite the whole research project blindly.
+
+Port the hot path first:
+
+fingerprint
+    ↓
+relationship lookup
+    ↓
+basis/DAG lookup
+    ↓
+decision: reuse / reconstruct / FFT
+    ↓
+cache update
+Keep Python as the benchmark driver initially.
+
+That single C++ module should already tell us whether bookkeeping is the bottleneck or whether we've got a genuinely strong computational reuse effect.
+
+Yeah do it
+
+Обработка заняла 4m 8s
+Done, bro. I ported the adaptive hot path to C++20 + FFTW, compiled it, ran correctness tests, and benchmarked the ablations.
+
+The result is actually interesting: Python bookkeeping was part of the problem, but not the whole problem. At large 
+N
+N, exact caching clearly wins; however, for shifts and sparse changes, scanning memory and reconstructing the full spectrum can itself cost as much as—or more than—FFTW.
+
+Key results from this machine:
+
+Case	N	C++ adaptive vs FFTW
+Exact repeated FFT	65,536	1.76× faster
+Exact repeated FFT	262,144	1.89× faster
+Cyclic shifts	65,536	0.38×
+Cyclic shifts	262,144	0.56×
+1 sparse edit	65,536	0.60×
+1 sparse edit	262,144	~1.00× break-even
+Unrelated data	262,144	0.45×
+The surprising part is the shift case. At 
+N
+=
+262,144
+N=262,144, roughly:
+
+T
+relation detection
+≈
+31.6
+ ms
+T 
+relation detection
+​
+ ≈31.6 ms
+T
+reconstruction
+≈
+10.1
+ ms
+T 
+reconstruction
+​
+ ≈10.1 ms
+while the actual seed FFT work was only around:
+
+2.34
+ ms
+.
+2.34 ms.
+So we've now pushed through the Python layer and exposed the next bottleneck: memory traversal.
+
+That suggests a much stronger direction than merely optimizing the scanner:
+
+don’t discover the relationship if we can already know it
+don’t discover the relationship if we can already know it
+​
+ 
+For example, instead of receiving a new dense vector and asking:
+
+“is this 
+x
+ with one changed element?”
+“is this x with one changed element?”
+the upstream code could send:
+
+(
+base_id
+,
+j
+,
+Δ
+)
+(base_id,j,Δ)
+Then detection changes from scanning 
+N
+N values to basically O(1) metadata lookup.
+
+Likewise a cyclic shift could arrive as:
+
+(
+base_id
+,
+s
+)
+(base_id,s)
+rather than making us rediscover 
+s
+s.
+
+And the low-rank case revealed another important thing: if we compute
+
+F
+(
+X
+)
+=
+C
+ 
+F
+(
+B
+)
+F(X)=CF(B)
+but immediately materialize all 
+M
+×
+N
+M×N complex outputs, the memory writes can eat much of our theoretical saving.
+
+So instead we should consider keeping the answer compressed:
+
+(
+C
+,
+ 
+F
+(
+B
+)
+)
+(C, F(B))
+​
+ 
+and only materializing an individual FFT when a downstream operation actually needs it.
+
+That starts looking much more powerful:
+
+Input generator
+     ↓
+relationship metadata
+     ↓
+Adaptive FFT engine
+     ↓
+basis spectra
+     ↓
+compressed/lazy spectrum DAG
+     ↓
+materialize only when necessary
+rather than:
+
+dense array
+   ↓
+scan N values
+   ↓
+discover relationship
+   ↓
+reconstruct N outputs
+This may be the next important step in the research.
+
+I included the C++ source, CMake build, benchmark runner, original Python reference, JSON results, and a findings document.
+
+Download the complete C++ experiment
+
+The next experiment I'd run is metadata-assisted FFT reuse + lazy spectra. That's where we can remove the 
+O
+(
+N
+)
+O(N) discovery cost rather than merely making it faster.
+
+
+CPP_FINDINGS.md
+Документ
+
+cpp_benchmark_results.json
+Код
+
+adaptive_fft_cpp.cpp
+Код
+Did we theoretically beat o n log n, continue research
+
+Обработка заняла 11m 16s
+Yes — for the dynamic/structured FFT problem we are building, we now have a genuine exact 
+o
+(
+N
+log
+⁡
+N
+)
+o(NlogN) bound. But we have not shown 
+o
+(
+N
+log
+⁡
+N
+)
+o(NlogN) for an arbitrary fresh dense DFT.
+
+The strongest result from this research round is this:
+
+T
+update
+(
+N
+,
+k
+)
+=
+O
+ ⁣
+(
+N
+(
+1
++
+log
+⁡
+(
+k
++
+1
+)
+)
+)
+T 
+update
+​
+ (N,k)=O(N(1+log(k+1)))
+​
+ 
+where 
+k
+k is the number of known changed input samples.
+
+Why this works
+Suppose we already know
+
+X
+=
+F
+(
+x
+)
+X=F(x)
+and the next input is
+
+x
+′
+=
+x
++
+Δ
+x 
+′
+ =x+Δ
+where only 
+k
+k entries of 
+Δ
+Δ are nonzero.
+
+By Fourier linearity,
+
+F
+(
+x
+′
+)
+=
+X
++
+F
+(
+Δ
+)
+.
+F(x 
+′
+ )=X+F(Δ).
+So we don't transform 
+x
+′
+x 
+′
+  again. We transform only the sparse difference 
+Δ
+Δ.
+
+In a radix-2 FFT tree, at depth 
+d
+d, at most
+
+min
+⁡
+(
+2
+d
+,
+k
+)
+min(2 
+d
+ ,k)
+subtrees can contain changes. Therefore the butterfly work on that level is at most
+
+N
+2
+min
+⁡
+(
+1
+,
+k
+2
+d
+)
+.
+2
+N
+​
+ min(1, 
+2 
+d
+ 
+k
+​
+ ).
+Summing over all levels gives
+
+B
+(
+N
+,
+k
+)
+≤
+N
++
+N
+2
+⌈
+log
+⁡
+2
+k
+⌉
+.
+B(N,k)≤N+ 
+2
+N
+​
+ ⌈log 
+2
+​
+ k⌉.
+Hence
+
+B
+(
+N
+,
+k
+)
+=
+O
+(
+N
+(
+1
++
+log
+⁡
+k
+)
+)
+.
+B(N,k)=O(N(1+logk)).
+​
+ 
+This is also consistent with the classical pruned-FFT result: FFTW's documentation states that a transform with only 
+K
+K nonzero inputs can be done in 
+O
+(
+N
+log
+⁡
+K
+)
+O(NlogK), instead of 
+O
+(
+N
+log
+⁡
+N
+)
+O(NlogN). 
+
+Now divide by ordinary FFT complexity:
+
+N
+(
+1
++
+log
+⁡
+k
+)
+N
+log
+⁡
+N
+=
+1
++
+log
+⁡
+k
+log
+⁡
+N
+.
+NlogN
+N(1+logk)
+​
+ = 
+logN
+1+logk
+​
+ .
+Therefore, whenever
+
+log
+⁡
+k
+=
+o
+(
+log
+⁡
+N
+)
+,
+logk=o(logN),
+we get
+
+T
+update
+=
+o
+(
+N
+log
+⁡
+N
+)
+.
+T 
+update
+​
+ =o(NlogN).
+​
+ 
+Equivalently,
+
+k
+=
+N
+o
+(
+1
+)
+.
+k=N 
+o(1)
+ 
+​
+ .
+So we get some very concrete cases:
+
+Changes 
+k
+k	Update complexity	Beats 
+N
+log
+⁡
+N
+NlogN?
+1
+1	
+Θ
+(
+N
+)
+Θ(N)	Yes
+constant	
+Θ
+(
+N
+)
+Θ(N)	Yes
+(
+log
+⁡
+N
+)
+c
+(logN) 
+c
+ 	
+O
+(
+N
+log
+⁡
+log
+⁡
+N
+)
+O(NloglogN)	Yes
+e
+log
+⁡
+N
+e 
+logN
+​
+ 
+ 	
+o
+(
+N
+log
+⁡
+N
+)
+o(NlogN)	Yes
+N
+0.01
+N 
+0.01
+ 	
+Θ
+(
+N
+log
+⁡
+N
+)
+Θ(NlogN)	No asymptotic little-
+o
+o
+N
+/
+2
+N/2	
+Θ
+(
+N
+log
+⁡
+N
+)
+Θ(NlogN)	No
+And 
+k
+=
+1
+k=1 is particularly nice:
+
+T
+(
+N
+,
+1
+)
+=
+Θ
+(
+N
+)
+.
+T(N,1)=Θ(N)
+​
+ .
+If we require all 
+N
+N Fourier coefficients to be explicitly produced, that's basically optimal: changing one input sample generally changes every Fourier coefficient, so simply updating/writing the dense answer costs 
+Ω
+(
+N
+)
+Ω(N).
+
+Our prototype actually verified the operation count
+I implemented the cached-layer version.
+
+For
+
+N
+=
+65
+ 
+536
+,
+k
+=
+1
+,
+N=65536,k=1,
+it recomputed exactly:
+
+131
+ 
+070
+131070
+complex intermediate values.
+
+That's essentially
+
+2
+N
+.
+2N.
+A complete radix-2 traversal has approximately
+
+N
+log
+⁡
+2
+N
+=
+65
+ 
+536
+×
+16
+=
+1
+ 
+048
+ 
+576
+Nlog 
+2
+​
+ N=65536×16=1048576
+stage values.
+
+So at this size we're already looking at roughly an 8× reduction in the relevant node count.
+
+At
+
+N
+=
+262
+ 
+144
+N=262144
+a single change invalidated:
+
+524
+ 
+286
+≈
+2
+N
+.
+524286≈2N.
+And the resulting spectrum agreed with FFTW to roughly 
+10
+−
+12
+10 
+−12
+ .
+
+So the scaling predicted by the derivation is actually appearing in the implementation.
+
+But wall clock has an important twist
+Our first cached-tree implementation is still slower than FFTW.
+
+That's because FFTW is insanely optimized and our dynamic tree does scattered memory accesses, dirty-index lists and branch bookkeeping.
+
+So we currently have:
+
+asymptotic arithmetic win
+asymptotic arithmetic win
+​
+ 
+but not yet universally:
+
+wall-clock win
+.
+wall-clock win
+​
+ .
+I therefore built a second implementation that computes the pruned FFT of the sparse delta without retaining the whole 
+N
+log
+⁡
+N
+NlogN FFT tree.
+
+Its butterfly counts follow the predicted formula. For maximally separated, power-of-two 
+k
+k, approximately:
+
+B
+(
+N
+,
+k
+)
+≈
+N
+(
+1
++
+1
+2
+log
+⁡
+2
+k
+)
+−
+k
+.
+B(N,k)≈N(1+ 
+2
+1
+​
+ log 
+2
+​
+ k)−k.
+​
+ 
+For example at 
+N
+=
+65
+ 
+536
+N=65536:
+
+k
+=
+1
+:
+65
+ 
+535
+k=1:65535
+k
+=
+2
+:
+98
+ 
+302
+k=2:98302
+k
+=
+4
+:
+131
+ 
+068.
+k=4:131068.
+So the mathematical reduction is real.
+
+The naive recursive implementation still has allocation/cache-locality problems, though. That's the next engineering target.
+
+There is important prior art
+I found something extremely close to our cached-tree idea: eFFT, published in IEEE TPAMI in 2024, with an open-source C++ implementation published in 2026.
+
+It maintains radix-2 intermediate matrices in a tree and, when events change the input, recomputes only affected branches while preserving the exact Fourier transform. Their single-event computation is linear in the number of pixels rather than pixel-count times a logarithm. 
+
+So:
+
+“cache FFT layers and update one changed input in 
+O
+(
+N
+)
+”
+“cache FFT layers and update one changed input in O(N)”
+​
+ 
+is not our novel breakthrough.
+
+That's actually a valuable discovery because it prevents us from making a false novelty claim.
+
+There is even older theory. Reif and Tate gave an incremental DFT algorithm in 1997 with 
+O
+(
+N
+)
+O( 
+N
+​
+ ) worst-case time per change/query request. Their model asks things like “change input 
+x
+i
+x 
+i
+​
+ ” and “give me output 
+X
+j
+X 
+j
+​
+ ,” rather than materializing all 
+N
+N outputs after every modification. 
+
+That's why they can go below 
+N
+N: they don't necessarily write the entire spectrum.
+
+Where our project gets more interesting
+The individual tricks are mostly known.
+
+But combining all of them into one relation-aware Fourier runtime still looks much more interesting.
+
+Suppose a new vector can be represented as
+
+x
+=
+∑
+j
+=
+1
+r
+c
+j
+b
+j
++
+Δ
+,
+x= 
+j=1
+∑
+r
+​
+ c 
+j
+​
+ b 
+j
+​
+ +Δ,
+where:
+
+b
+1
+,
+…
+,
+b
+r
+b 
+1
+​
+ ,…,b 
+r
+​
+  are cached basis vectors,
+their FFTs are already known,
+Δ
+Δ contains only 
+k
+k changed coordinates.
+Then
+
+F
+(
+x
+)
+=
+∑
+j
+=
+1
+r
+c
+j
+F
+(
+b
+j
+)
++
+F
+(
+Δ
+)
+.
+F(x)= 
+j=1
+∑
+r
+​
+ c 
+j
+​
+ F(b 
+j
+​
+ )+F(Δ).
+The basis reconstruction costs
+
+O
+(
+r
+N
+)
+,
+O(rN),
+while the sparse residual costs
+
+O
+(
+N
+(
+1
++
+log
+⁡
+(
+k
++
+1
+)
+)
+)
+.
+O(N(1+log(k+1))).
+Combined:
+
+T
+(
+N
+,
+r
+,
+k
+)
+=
+O
+(
+N
+[
+r
++
+1
++
+log
+⁡
+(
+k
++
+1
+)
+]
+)
+.
+T(N,r,k)=O(N[r+1+log(k+1)]).
+​
+ 
+Now we get the condition
+
+r
++
+log
+⁡
+(
+k
++
+1
+)
+=
+o
+(
+log
+⁡
+N
+)
+r+log(k+1)=o(logN)
+which implies
+
+T
+(
+N
+,
+r
+,
+k
+)
+=
+o
+(
+N
+log
+⁡
+N
+)
+.
+T(N,r,k)=o(NlogN).
+​
+ 
+That's a much broader family than merely “one pixel changed.”
+
+For constant 
+r
+r and constant 
+k
+k:
+
+T
+=
+Θ
+(
+N
+)
+.
+T=Θ(N)
+​
+ .
+That's pretty clean.
+
+And our old low-rank result fits perfectly
+Suppose we have 
+M
+M different signals generated from 
+r
+r bases:
+
+x
+i
+=
+∑
+j
+=
+1
+r
+C
+i
+j
+b
+j
+.
+x 
+i
+​
+ = 
+j=1
+∑
+r
+​
+ C 
+ij
+​
+ b 
+j
+​
+ .
+Instead of 
+M
+M FFTs:
+
+O
+(
+M
+N
+log
+⁡
+N
+)
+,
+O(MNlogN),
+we calculate 
+r
+r FFTs:
+
+O
+(
+r
+N
+log
+⁡
+N
+)
+O(rNlogN)
+and reconstruct:
+
+O
+(
+M
+r
+N
+)
+.
+O(MrN).
+Total:
+
+O
+(
+r
+N
+log
+⁡
+N
++
+M
+r
+N
+)
+.
+O(rNlogN+MrN).
+​
+ 
+Relative to doing 
+M
+M independent FFTs:
+
+r
+N
+log
+⁡
+N
++
+M
+r
+N
+M
+N
+log
+⁡
+N
+=
+r
+M
++
+r
+log
+⁡
+N
+.
+MNlogN
+rNlogN+MrN
+​
+ = 
+M
+r
+​
+ + 
+logN
+r
+​
+ .
+Therefore the total cost is genuinely little-
+o
+o whenever
+
+r
+=
+o
+(
+M
+)
+and
+r
+=
+o
+(
+log
+⁡
+N
+)
+.
+r=o(M)andr=o(logN).
+​
+ 
+So our “many FFTs from a few basis FFTs” observation also has a rigorous sub-
+N
+log
+⁡
+N
+NlogN amortized regime.
+
+I think the right abstraction is now this
+Instead of asking:
+
+“Can FFT be faster than 
+N
+log
+⁡
+N
+NlogN?”
+
+define the relation complexity of a new vector relative to what the engine already knows.
+
+Call it something like
+
+ρ
+(
+x
+∣
+C
+)
+,
+ρ(x∣C),
+where 
+C
+C is cached Fourier state.
+
+Examples:
+
+ρ
+=
+1
+ρ=1
+for a known shift/repeat,
+
+ρ
+=
+r
+ρ=r
+for an 
+r
+r-basis representation,
+
+ρ
+=
+1
++
+log
+⁡
+(
+k
++
+1
+)
+ρ=1+log(k+1)
+for a 
+k
+k-sparse modification,
+
+and
+
+ρ
+=
+log
+⁡
+N
+ρ=logN
+when nothing useful is known and we fall back to FFT.
+
+The engine's target becomes roughly:
+
+T
+(
+x
+∣
+C
+)
+=
+O
+(
+N
+min
+⁡
+(
+log
+⁡
+N
+,
+ρ
+(
+x
+∣
+C
+)
+)
+)
+.
+T(x∣C)=O(Nmin(logN,ρ(x∣C))).
+​
+ 
+That's actually a much better description of what we've built.
+
+It's conditional/parameterized Fourier complexity.
+
+A completely random fresh vector gives:
+
+ρ
+≈
+log
+⁡
+N
+ρ≈logN
+and therefore ordinary FFT.
+
+A highly related stream can give:
+
+ρ
+=
+O
+(
+1
+)
+ρ=O(1)
+and therefore:
+
+Θ
+(
+N
+)
+.
+Θ(N).
+The next breakthrough target
+I would not spend our effort trying to claim:
+
+arbitrary DFT = 
+o
+(
+N
+log
+⁡
+N
+)
+o(NlogN)
+
+from caching.
+
+The known lower-bound landscape is subtle: 
+Ω
+(
+N
+log
+⁡
+N
+)
+Ω(NlogN) is proved in restricted/well-conditioned linear models, while obtaining a matching lower bound in sufficiently general models has historically remained difficult. 
+
+Instead, I think we should try to make this theorem practical:
+
+T
+adaptive
+=
+O
+(
+N
+min
+⁡
+{
+log
+⁡
+N
+,
+ 
+r
++
+1
++
+log
+⁡
+(
+k
++
+1
+)
+}
+)
+T 
+adaptive
+​
+ =O(Nmin{logN,r+1+log(k+1)})
+​
+ 
+with:
+
+exact reuse,
+shift reuse,
+sparse delta FFT,
+basis reuse,
+basis + sparse residual,
+canonical DAG reuse,
+lazy spectrum,
+full FFT fallback.
+And crucially, upstream code should give us:
+
+base_id
+changed_positions
+changed_values
+basis_ids
+coefficients
+shift
+instead of handing us a dense array and forcing us to rediscover all the relationships.
+
+That removes much of the bookkeeping bottleneck we saw in C++.
+
+There is another nice connection to the current 2026 landscape: OpenAI's September 23 preprint claims exact integer multiplication in
+
+O
+(
+n
+(
+log
+⁡
+n
+)
+1
+−
+κ
+)
+,
+κ
+=
+2
+−
+182
+,
+O(n(logn) 
+1−κ
+ ),κ=2 
+−182
+ ,
+on a fixed finite-alphabet multitape Turing machine, which is truly 
+o
+(
+n
+log
+⁡
+n
+)
+o(nlogn) in that model. But that does not say the arbitrary DFT itself is sub-
+N
+log
+⁡
+N
+NlogN; it's a different construction and complexity model. 
+
+So the status I'd put in our research log is:
+
+We have crossed the 
+N
+log
+⁡
+N
+NlogN boundary for exact structured/dynamic Fourier computation, with a clean 
+O
+(
+N
+(
+1
++
+log
+⁡
+(
+k
++
+1
+)
+)
+)
+O(N(1+log(k+1))) sparse-update bound and 
+O
+(
+r
+N
+)
+O(rN) cached-basis reconstruction. We have not crossed it for arbitrary fresh dense DFT. The new research question is whether a general relation-aware Fourier runtime can automatically attain the cheapest parameterized bound with low enough constants to outperform optimized FFT libraries in practice.
+
+I saved the theorem, proof sketch, prior-art boundary, new C++ prototypes, and benchmarks here:
+
+Complete new theory + prototype bundle
+
+This is a much stronger and more defensible result than simply saying “we cached some FFTs.”
+
+
+THEORY_UPDATE_2026-10-09.md
+Документ
+Continue research, we at the finish
+
+I’m pushing on the one remaining question that matters: can we turn the collection of reuse tricks into one clean theorem/runtime that is stronger than the known special cases, without accidentally claiming a universal sub-
+N
+log
+⁡
+N
+NlogN FFT? I’m checking prior art on dynamic DFTs, pruned FFTs, sparse updates, and lower bounds in parallel, then I’ll try to formalize the strongest defensible result and stress-test it in code.
+
+Исследованы адаптивный FFT и теоретические границы
+
+Исследовал табуляцию FFT
+
+
+Поиск выполнен на 27 сайтах
+
+There’s one more avenue worth testing before calling this “finished”: your original unlimited-memory/tabulation intuition. Dynamic updates beat 
+N
+log
+⁡
+N
+NlogN, but that changes the problem. I’m now checking whether finite-alphabet inputs plus precomputed micro-FFTs can beat 
+N
+log
+⁡
+N
+NlogN even for a fresh input, and exactly where the model/bit-complexity assumptions matter.
+
+Уточнил ограничения табуляции
+
+
+Поиск выполнен на 16 сайтах
+
+This is the big one: the September 23 OpenAI multiplication paper explicitly points to a companion exact-DFT manuscript claiming a single algorithm for every 
+x
+∈
+C
+n
+x∈C 
+n
+ , every positive 
+n
+n, with
+
+O
+ ⁣
+(
+n
+(
+log
+⁡
+n
+)
+1
+−
+10
+−
+13
+)
+=
+o
+(
+n
+log
+⁡
+n
+)
+O(n(logn) 
+1−10 
+−13
+ 
+ )=o(nlogn)
+in an exact complex-register model. So the universal barrier has in fact been crossed in a specific computation model — independently of our dynamic reuse work. I’m locating that companion paper now and comparing its mechanism to our engine, because this may tell us how to pivot from “structured updates” to a genuine fresh-input sub-
+N
+log
+⁡
+N
+NlogN transform.
+
+
+Поиск выполнен на 3 сайтах
+
+Проанализированы файлы, разделы и алгоритмы математического препринта
+
+
+Поиск выполнен на 1 сайте
+
+Изучены исходники и теоремы препринта о конечной победе и отражении
+
+Вычислена структура тензорного унипотента и проверены ограничения поддержки
+
+
+Поиск выполнен на 7 сайтах
+
+Used container tool
+
+Оптимизировал 28-шаговую схему госсипа
+
+
+Поиск выполнен на 13 сайтах
+
+Оценён требуемый рост обусловленности
+
+Получены строки после повторения
+
+Вычислен порог экспоненты для успеха
+
+
+
+
+
+
+chain broken
+
+Обработка заняла 8m 52s
+
+
+
+

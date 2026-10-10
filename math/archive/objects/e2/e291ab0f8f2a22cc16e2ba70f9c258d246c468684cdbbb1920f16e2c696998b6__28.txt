@@ -1,0 +1,155 @@
+   1	"""Independently authored phase-12 arithmetic evaluator; no uploaded imports.
+   2	
+   3	The caller supplies an explicit permutation. Validation is a linear seen-array
+   4	pass. p=None is floating complex; p=998244353 is an exact finite-field audit
+   5	of the unnormalized stage. This is NOT a Fourier transform.
+   6	"""
+   7	import math
+   8	
+   9	
+  10	class Arithmetic:
+  11	    def __init__(self, p=None):
+  12	        self.p = p
+  13	        self.count = 0
+  14	        self.imag = 1j if p is None else pow(3, (p - 1) // 4, p)
+  15	        if p is not None and self.imag * self.imag % p != p - 1:
+  16	            raise ValueError('field needs this specified square root of -1')
+  17	
+  18	    def reduce(self, x):
+  19	        return x if self.p is None else x % self.p
+  20	
+  21	    def add(self, x, y):
+  22	        self.count += 1
+  23	        return self.reduce(x + y)
+  24	
+  25	    def sub(self, x, y):
+  26	        self.count += 1
+  27	        return self.reduce(x - y)
+  28	
+  29	    def mul(self, x, y):
+  30	        self.count += 1
+  31	        return self.reduce(x * y)
+  32	
+  33	    def inv(self, x):
+  34	        self.count += 1
+  35	        return 1 / x if self.p is None else pow(x, -1, self.p)
+  36	
+  37	
+  38	class Forest:
+  39	    def __init__(self, parents, alpha, arithmetic):
+  40	        self.parents = list(parents)
+  41	        self.n = len(parents)
+  42	        self.op = arithmetic
+  43	        op = arithmetic
+  44	        children = [[] for _ in parents]
+  45	        roots = []
+  46	        for v, parent in enumerate(parents):
+  47	            if parent == -1:
+  48	                roots.append(v)
+  49	            elif type(parent) is int and 0 <= parent < self.n and parent != v:
+  50	                children[parent].append(v)
+  51	            else:
+  52	                raise ValueError('invalid parent')
+  53	        self.order = list(roots)
+  54	        for v in self.order:
+  55	            self.order.extend(children[v])
+  56	        if len(self.order) != self.n:
+  57	            raise ValueError('parent graph has a cycle')
+  58	        self.q = [0] * self.n
+  59	        alpha2 = op.mul(alpha, alpha)
+  60	        for v in reversed(self.order):
+  61	            d = 1
+  62	            for c in children[v]:
+  63	                d = op.add(d, op.mul(alpha2, self.q[c]))
+  64	            self.q[v] = op.inv(d)
+  65	        s = op.mul(op.imag, alpha)
+  66	        self.g = [op.mul(s, q) for q in self.q]
+  67	
+  68	    def apply(self, x, inverse=False):
+  69	        if len(x) != self.n:
+  70	            raise ValueError('length mismatch')
+  71	        op = self.op
+  72	        # Negation of precomputed couplings is charged in inverse applications.
+  73	        g = [op.sub(0, v) for v in self.g] if inverse else self.g
+  74	        rhs = list(x)
+  75	        for v in reversed(self.order):
+  76	            parent = self.parents[v]
+  77	            if parent != -1:
+  78	                rhs[parent] = op.add(rhs[parent], op.mul(g[v], rhs[v]))
+  79	        y = [0] * self.n
+  80	        for v in self.order:
+  81	            value = op.mul(self.q[v], rhs[v])
+  82	            parent = self.parents[v]
+  83	            if parent != -1:
+  84	                value = op.add(value, op.mul(g[v], y[parent]))
+  85	            y[v] = value
+  86	        return [op.sub(op.mul(2, v), z) for v, z in zip(y, x)]
+  87	
+  88	
+  89	def validate_and_invert(order):
+  90	    n = len(order)
+  91	    inverse = [-1] * n
+  92	    for i, v in enumerate(order):
+  93	        if type(v) is not int or v < 0 or v >= n or inverse[v] != -1:
+  94	            raise ValueError('not a permutation')
+  95	        inverse[v] = i
+  96	    return inverse
+  97	
+  98	
+  99	def path_parents(order):
+ 100	    parents = [-1] * len(order)
+ 101	    for i in range(1, len(order)):
+ 102	        parents[order[i]] = order[i - 1]
+ 103	    return parents
+ 104	
+ 105	
+ 106	class Mixer:
+ 107	    def __init__(self, row_permutation, p=None):
+ 108	        n = len(row_permutation)
+ 109	        if n < 2 or n % 2:
+ 110	            raise ValueError('positive even length required')
+ 111	        inverted = validate_and_invert(row_permutation)
+ 112	        self.n = n
+ 113	        self.m = n // 2
+ 114	        self.op = Arithmetic(p)
+ 115	        op = self.op
+ 116	        a = op.inv(32)
+ 117	        self.path1 = Forest(path_parents(list(range(n))), a, op)
+ 118	        self.path2 = Forest(path_parents(inverted), a, op)
+ 119	        size = 1
+ 120	        while 2 * size + 1 <= self.m:
+ 121	            size = 2 * size + 1
+ 122	        self.tree_size = size
+ 123	        tree_parent = [-1 if v == 0 or v >= size else (v - 1) // 2
+ 124	                       for v in range(self.m)]
+ 125	        self.tree = Forest(tree_parent, 2, op)
+ 126	        self.e = op.inv(512)
+ 127	        self.ie = op.mul(op.imag, self.e)
+ 128	        denom = op.add(1, op.mul(self.e, self.e))
+ 129	        self.reverse_scale = op.inv(denom)
+ 130	        # sqrt of a single N-independent constant, charged separately.
+ 131	        self.normalization = 1 / math.sqrt(denom) if p is None else 1
+ 132	
+ 133	    def involution(self, x):
+ 134	        return (self.tree.apply(x[self.m:]) +
+ 135	                self.tree.apply(x[:self.m], inverse=True))
+ 136	
+ 137	    def rotation(self, x, inverse=False):
+ 138	        op = self.op
+ 139	        coefficient = op.sub(0, self.ie) if inverse else self.ie
+ 140	        rx = self.involution(x)
+ 141	        y = [op.add(v, op.mul(coefficient, w)) for v, w in zip(x, rx)]
+ 142	        scale = self.normalization
+ 143	        if op.p is not None and inverse:
+ 144	            scale = self.reverse_scale
+ 145	        return [op.mul(scale, v) for v in y]
+ 146	
+ 147	    def apply(self, x, inverse=False):
+ 148	        if len(x) != self.n:
+ 149	            raise ValueError('length mismatch')
+ 150	        if inverse:
+ 151	            y = self.rotation(x, inverse=True)
+ 152	            y = self.path1.apply(y, inverse=True)
+ 153	            return self.path2.apply(y, inverse=True)
+ 154	        return self.rotation(self.path1.apply(self.path2.apply(x)))
+ 155	

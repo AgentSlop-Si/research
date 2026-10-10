@@ -1,0 +1,268 @@
+INVERSE SUPPORT CLOSES THE PURE-SCAN / ARBITRARY-SHUFFLE GATE
+Verified 2026-10-09
+
+RESULT
+
+Let N > 1. Any exact factorization of an N-point Fourier matrix into t
+serial pure one-state forward/backward scans, arbitrary diagonal factors,
+and arbitrary coordinate permutations, including permutations BETWEEN
+scans, satisfies
+
+    t >= 1 + ceil(log_2 N).
+
+The simpler maximum-row-support argument already gives t >= ceil(log_2 N).
+The extra 1 uses the singleton boundary row of the first inverse scan.
+
+For N = 2^m over C, and more generally over a field containing a primitive
+N-th root of unity, an explicit construction uses at most 2m pure scans
+with interleaved permutations. Consequently the minimum pure-scan count
+is Theta(log N) for dyadic lengths. The exact minimum between m+1 and 2m
+is not determined here, except when those bounds coincide.
+
+This is an architecture-specific factorization theorem, not a general
+Fourier arithmetic-circuit lower bound. The method does not extend as
+stated to general scalar-state filters with direct input feedthrough.
+No literature-priority claim is made.
+
+
+1. PRECISE MODEL AND FIELD ASSUMPTIONS
+
+All factors act on the same N-dimensional vector space over a field K.
+All coefficients and permutations are input-independent. A pure forward
+scan is precisely
+
+    y_0 = b_0 x_0,
+    y_i = a_i y_(i-1) + b_i x_i,       1 <= i < N.
+
+A pure backward scan is
+
+    y_(N-1) = b_(N-1) x_(N-1),
+    y_i = a_i y_(i+1) + b_i x_i,       0 <= i < N-1.
+
+Zero a_i values are permitted and reset the recurrence. The boundary
+state is zero. Only the current N-vector is passed to the next factor:
+there are no additional channels, saved side inputs, branches, sums of
+operators, or rectangular expansion/compression stages.
+
+Between scans one may apply arbitrary diagonal matrices and arbitrary
+permutation matrices. There is no bound on their coefficients or on
+permutation distance. Initial and final permutations are also allowed.
+
+For the Fourier specialization, K contains a primitive N-th root omega,
+and N is nonzero in K. Define F_N[k,j] = omega^(kj), 0 <= k,j < N. Then
+
+    F_N^(-1)[j,k] = (1/N) omega^(-jk),
+
+so every entry of F_N^(-1) is nonzero. Over C these assumptions hold for
+every positive integer N. For dyadic N > 1 the root assumption already
+excludes characteristic 2. No norm, stability, bounded-coefficient, or
+positivity assumption is used.
+
+
+2. INVERTIBILITY FORCES EVERY SCAN'S INPUT COEFFICIENT TO BE NONZERO
+
+A product of square N-by-N matrices over a field is invertible only if
+every factor is invertible. Each scan is triangular with diagonal b_i,
+so its determinant is the product of all b_i. Therefore a scan occurring
+in a factorization of an invertible target must have b_i != 0 for all i.
+Every intervening diagonal factor must likewise be nonsingular.
+
+For a forward scan, solving its defining equations gives
+
+    x_0 = y_0 / b_0,
+    x_i = (y_i - a_i y_(i-1)) / b_i.
+
+Its inverse is lower bidiagonal. A backward scan has an upper-bidiagonal
+inverse, by the identical calculation with i+1. In either direction,
+each inverse row has at most two nonzeros, and a boundary row has exactly
+one nonzero.
+
+Inverse diagonal and permutation factors have exactly one nonzero per
+row and column. Products of these factors are nonsingular monomial
+matrices; multiplying by one merely rescales/reorders coordinates.
+
+
+3. SUPPORT PROOF, INCLUDING THE STRONGER BOUNDARY-ROW VERSION
+
+Write r(A) for the maximum number of nonzeros in a row of A. For arbitrary
+square matrices A and B,
+
+    supp((AB)[i,:]) is contained in
+    the union of supp(B[k,:]) over k in supp(A[i,:]).
+
+Hence r(AB) <= r(A) r(B). Cancellation only decreases support, so it
+cannot invalidate this upper bound. Reversing and inverting the original
+factorization therefore gives
+
+    r(F_N^(-1)) <= 2^t.
+
+As r(F_N^(-1)) = N, this proves t >= ceil(log_2 N), regardless of how the
+permutations are interleaved.
+
+For the stronger statement, first observe that t = 0 gives a monomial
+matrix, which cannot have an everywhere-nonzero inverse when N > 1.
+Thus t >= 1. In the inverse product, ignore any leading monomial factor
+and take the singleton boundary row of the leftmost inverse scan. There
+is a corresponding row of the whole product: the leading monomial
+factor only reorders and rescales rows. Immediately after that inverse
+scan, this row has support size 1. Every subsequent inverse scan can
+multiply its support size by at most 2; all intervening monomial factors
+preserve support size. Consequently at least one row of the final
+inverse product has at most
+
+    2^(t-1)
+
+nonzeros. Since every row of F_N^(-1) has N nonzeros,
+
+    N <= 2^(t-1),
+    t >= 1 + ceil(log_2 N).
+
+This argument actually applies to any invertible target whose inverse
+has no zero entries, not only Fourier matrices. More generally, if every
+inverse row has at least q nonzeros and t >= 1, it gives
+t >= 1 + ceil(log_2 q). The case N = 1 is exceptional and needs no scans.
+
+
+4. EXPLICIT 2 log_2 N UPPER BOUND FOR DYADIC LENGTHS
+
+A radix-2 Fourier butterfly with nonzero twiddle w is
+
+    B(w) = [[1, w], [1, -w]].
+
+It factors exactly as
+
+    B(w) = L U(w),
+    L    = [[1, 0], [1, 1]],
+    U(w) = [[1, w], [0, -2w]].
+
+Place the disjoint pairs of a butterfly layer at adjacent coordinates
+(2q, 2q+1), using a permutation. Allow w to vary with the pair.
+
+First implement the block-diagonal U layer with ONE backward scan:
+
+    b_(2q)   = 1,       a_(2q)   = -1/2,
+    b_(2q+1) = -2 w_q,  a_(2q+1) = 0.
+
+Indeed, the odd output is -2 w_q x_(2q+1); the preceding even output is
+x_(2q) - (1/2)(-2 w_q x_(2q+1)) = x_(2q) + w_q x_(2q+1).
+The odd-coordinate resets prevent interaction between pairs.
+
+Next implement the block-diagonal L layer with ONE forward scan:
+
+    b_i = 1 for all i,
+    a_(2q) = 0,    a_(2q+1) = 1.
+
+The even output stays unchanged; the odd output becomes the sum of the
+two inputs to this L layer. Thus the pair outputs are exactly
+
+    x_(2q) + w_q x_(2q+1),
+    x_(2q) - w_q x_(2q+1).
+
+The radix-2 identity follows directly by splitting the DFT input into
+even and odd indices. If N = 2n, let E_k and O_k be their n-point DFTs
+with root omega^2. Then, for 0 <= k < n,
+
+    (F_N x)_k     = E_k + omega^k O_k,
+    (F_N x)_(k+n) = E_k - omega^k O_k.
+
+Recursing gives log_2 N layers of disjoint B(w) butterflies. Permutations
+make each layer's pairs adjacent; resets allow all pairs and subproblems
+to use the same two full-vector scan passes. Therefore 2 log_2 N pure
+scan passes suffice, with O(log N) additional permutations. This is a
+realization of the classical radix-2 FFT in the stated primitive family,
+not a faster FFT algorithm.
+
+
+5. WHAT WORK LOWER BOUND DOES AND DOES NOT FOLLOW
+
+If the implementation model charges Theta(N) work for every full scan
+pass, the lower bound on t immediately implies Omega(N log N) work.
+For dyadic lengths the construction above costs O(N log N), including
+O(N) indexed movements per inter-layer permutation, so this particular
+full-pass architecture has Theta(N log N) optimal work.
+
+The scan-count theorem remains true if permutations are free. However,
+the theorem alone does NOT establish a work bound for implementations
+that fuse factors, skip degenerate coordinates, avoid materializing
+intermediate full vectors, or use a different arithmetic circuit. One
+must separately justify the claimed Theta(N) charge per counted pass.
+
+It also does not apply to rectangular factors with extra registers,
+nonlinear/adaptive primitives, parallel channels added together, general
+state-space output maps, or an arbitrary O(N)-cost wide-stage family.
+The all-length claim is the lower bound; the matching logarithmic upper
+bound proved here is for dyadic lengths only.
+
+
+6. GENERAL FEEDTHROUGH: A CONCRETE FAILURE OF THE SPARSE-INVERSE LEMMA
+
+Consider the one-state causal filter, over C,
+
+    h_(-1) = 0,
+    h_i = h_(i-1) + x_i,
+    y_i = h_i + x_i.
+
+This uses a direct input feedthrough term in addition to its state. Let
+Z be the nilpotent lower-shift matrix, Z[i,i-1] = 1. Its input/output
+matrix is
+
+    T = I + (I-Z)^(-1) = (2I-Z)(I-Z)^(-1).
+
+It is invertible, but
+
+    T^(-1) = (I-Z)(2I-Z)^(-1)
+           = (1/2) I - sum_(k=1)^(N-1) 2^(-(k+1)) Z^k.
+
+Every entry on or below the diagonal is nonzero. In particular the last
+row of T^(-1) has N nonzeros after ONE such feedthrough pass. For N >= 3,
+this directly contradicts the proposed per-factor two-nonzeros-per-row
+invariant in the enlarged model. The same example is the sum of an
+identity channel and a pure prefix-sum channel.
+
+Therefore the present proof cannot establish the logarithmic Fourier
+pass bound for general feedthrough filters or sums of scan channels.
+This counterexample DOES NOT exhibit a constant-pass Fourier algorithm
+in the enlarged class, and it does not disprove a possible Fourier
+lower bound there by a different method. That larger question remains
+unresolved by this note.
+
+An output scaling y_i = c_i h_i without direct feedthrough is different:
+it is simply a diagonal factor after the pure scan and is already
+covered when the total map is invertible.
+
+
+7. VERIFICATION, RESEARCH STATUS, AND REFERENCES
+
+The uploaded RESEARCH.md, README.md, and NEXT_GATE.md were read as static
+text. No uploaded program was imported or executed.
+
+A separate, newly written exact arithmetic check over F_257 compared the
+entire matrix produced by the two-scan-per-butterfly construction against
+F_N for N = 2, 4, 8, 16, 32, and 64. All checks passed. Each individual
+scan was also inverted by the stated local formula during those checks.
+The feedthrough inverse formula and its dense final row were separately
+checked at N = 7 over the same field. These finite checks corroborate
+the algebra; the all-size statements rest on the proofs above.
+
+This closes the uploaded NEXT_GATE's o(log N)-pass possibility for its
+SERIAL PURE-SCAN family even after arbitrary internal shuffles. It does
+not close that gate for every input-independent O(N)-cost wide stage.
+
+Historical caution: bidiagonal Fourier factorizations were studied long
+before this project. Paul D. Gader's 1989 paper discusses 2N-2-factor
+bidiagonal factorizations and systolic DFT evaluation, with no reduction
+in floating-point operation count relative to direct evaluation. The
+present short support argument is not accompanied by a novelty claim.
+
+Primary source:
+P. D. Gader, Bidiagonal Factorization of Fourier Matrices and Systolic
+Algorithms for Computing Discrete Fourier Transforms, IEEE Transactions
+on Acoustics, Speech, and Signal Processing, 37(8), August 1989.
+Author-hosted PDF:
+https://faculty.eng.ufl.edu/computing-for-life/wp-content/uploads/sites/68/2020/07/Bidiagonal-Factorization-of-Fourier-Matrices-and-Systolic-Algorithms-for-Computing-Discrete-Fourier-Transforms-.pdf
+
+Related earlier paper:
+P. D. Gader, Tridiagonal factorizations of Fourier matrices and applications
+to parallel computations of discrete Fourier transforms, Linear Algebra
+and its Applications, 102, 169-209, April 1988.
+https://doi.org/10.1016/0024-3795(88)90325-4

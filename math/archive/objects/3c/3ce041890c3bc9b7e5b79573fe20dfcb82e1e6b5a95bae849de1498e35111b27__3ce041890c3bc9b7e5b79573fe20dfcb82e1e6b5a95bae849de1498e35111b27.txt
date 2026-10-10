@@ -1,0 +1,37 @@
+"""Create and validate the portable research archive from a fixed file manifest."""
+from pathlib import Path
+import hashlib,zipfile,json
+
+ROOT=Path(__file__).resolve().parent
+OUTPUT=ROOT.parent/'fft_nonunitary_global_green_research_2026-10-09.zip'
+FILES=[
+ 'README.md','RESEARCH.md','RESULTS_SUMMARY.md','NEXT_GATE.md',
+ 'green_stages.py','gauge_fft.py','gauge_recognizer.py',
+ 'norm_budget.py','real_condition_control.py','independent_audit.py',
+ 'synthesis_probe.py','benchmark.py',
+ 'benchmark_results.json','condition_results.json',
+ 'independent_results.json','norm_results.json','synthesis_probe_results.json',
+ 'tests/test_green_gauge.py','package.py']
+
+def package():
+    check=[]
+    for x in FILES:
+        h=hashlib.sha256((ROOT/x).read_bytes()).hexdigest()
+        check.append(f'{h}  {x}')
+    (ROOT/'SHA256SUMS.txt').write_text('\n'.join(check)+'\n')
+    with zipfile.ZipFile(OUTPUT,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=8) as z:
+        for x in [*FILES,'SHA256SUMS.txt']:
+            z.write(ROOT/x,arcname='fft_global_green_gauge/'+x)
+    with zipfile.ZipFile(OUTPUT) as z:
+        bad=z.testzip()
+        assert bad is None
+        for line in z.read('fft_global_green_gauge/SHA256SUMS.txt').decode().splitlines():
+            h,x=line.split('  ')
+            assert hashlib.sha256(z.read('fft_global_green_gauge/'+x)).hexdigest()==h
+    print('archive:',OUTPUT)
+    print('bytes:',OUTPUT.stat().st_size)
+    print('files:',len(FILES)+1)
+    print('SHA256:',hashlib.sha256(OUTPUT.read_bytes()).hexdigest())
+    print('ZIP CRC: OK; recorded checksums:',len(FILES),'OK')
+
+if __name__=='__main__':package()

@@ -1,0 +1,21 @@
+1: from pathlib import Path
+2: import subprocess,sys,json,time
+3: ROOT=Path(__file__).resolve().parent
+4: CHECKS=[('fft_control_variate_fusion_research','verify_fusion_identity.py'),
+5:         ('fft_control_variate_fusion_research','review_edge_checks.py'),
+6:         ('fft_control_variate_fusion_research','run_audit.py'),
+7:         ('fft_composed_graph_fusion_research','run_audit.py'),
+8:         ('fft_composed_graph_fusion_research','review_edge_checks.py'),
+9:         ('fft_fusion_exact_gate_research','verify_fusion.py')]
+10: if __name__=='__main__':
+11:     records=[]
+12:     for folder,script in CHECKS:
+13:         start=time.perf_counter()
+14:         r=subprocess.run([sys.executable,script],cwd=ROOT/folder,capture_output=True,text=True)
+15:         records.append({'folder':folder,'script':script,'exit_code':r.returncode,
+16:                         'seconds':time.perf_counter()-start,'stdout':r.stdout,'stderr':r.stderr})
+17:         print(('PASS' if r.returncode==0 else 'FAIL')+' '+folder+'/'+script,flush=True)
+18:         if r.returncode: break
+19:     ok=len(records)==len(CHECKS) and all(r['exit_code']==0 for r in records)
+20:     (ROOT/'rerun_results.json').write_text(json.dumps({'status':'PASS' if ok else 'FAIL','runs':records},indent=2)+'\n')
+21:     raise SystemExit(0 if ok else 1)

@@ -1,0 +1,179 @@
+   1 #!/usr/bin/env python3
+   2 """Independent exact checks; no imported/executed uploaded source. Python stdlib only."""
+   3 from collections import Counter, deque
+   4 from itertools import permutations, combinations
+   5 from pathlib import Path
+   6 import json, math, random
+   7 
+   8 ROOT=Path(__file__).resolve().parent
+   9 
+  10 def rank(A,p):
+  11     A=[list(row) for row in A]
+  12     if not A:return 0
+  13     m,n=len(A),len(A[0]);q=0
+  14     for j in range(n):
+  15         pivot=next((i for i in range(q,m) if A[i][j]%p),None)
+  16         if pivot is None:continue
+  17         A[q],A[pivot]=A[pivot],A[q]
+  18         inv=pow(A[q][j],-1,p)
+  19         A[q]=[x*inv%p for x in A[q]]
+  20         for i in range(q+1,m):
+  21             c=A[i][j]%p
+  22             A[i]=[(x-c*y)%p for x,y in zip(A[i],A[q])]
+  23         q+=1
+  24         if q==m:break
+  25     return q
+  26 
+  27 def inv(A,p):
+  28     n=len(A);T=[list(A[i])+[int(i==j) for j in range(n)] for i in range(n)]
+  29     for j in range(n):
+  30         k=next(i for i in range(j,n) if T[i][j]%p)
+  31         T[j],T[k]=T[k],T[j]; c=pow(T[j][j],-1,p)
+  32         T[j]=[c*x%p for x in T[j]]
+  33         for i in range(n):
+  34             if i!=j:
+  35                 c=T[i][j];T[i]=[(x-c*y)%p for x,y in zip(T[i],T[j])]
+  36     return [r[n:] for r in T]
+  37 
+  38 def mul(A,B,p):return [[sum(x*y for x,y in zip(row,col))%p for col in zip(*B)] for row in A]
+  39 def sub(A,R,H):return [[A[i][j] for j in H] for i in R]
+  40 def qs(A,p):
+  41     n=len(A)
+  42     return (max((rank(sub(A,range(k),range(k,n)),p) for k in range(1,n)),default=0),
+  43             max((rank(sub(A,range(k,n),range(k)),p) for k in range(1,n)),default=0))
+  44 
+  45 def root(n,p):
+  46     prime_divisors=[d for d in range(2,n+1) if n%d==0 and all(d%e for e in range(2,math.isqrt(d)+1))]
+  47     for b in range(2,p):
+  48         z=pow(b,(p-1)//n,p)
+  49         if pow(z,n,p)==1 and all(pow(z,n//d,p)!=1 for d in prime_divisors):return z
+  50     raise ValueError('No primitive root')
+  51 
+  52 def gate_values(pi,u,v,ranks):
+  53     cu,cd,bu,bd=ranks;n=len(pi);a=min(pi[u:v+1]);b=max(pi[u:v+1]);t=v-u+1
+  54     budget=(bu if u else 0)+(bd if v+1<n else 0)
+  55     return ((min(t,a),budget+(cu if a else 0)),
+  56             (min(t,n-1-b),budget+(cd if b+1<n else 0)),
+  57             (min(t,n-1-b+a),budget+(cu if a else 0)+(cd if b+1<n else 0)))
+  58 
+  59 def slow_screen(pi,ranks=(1,1,1,1)):
+  60     return all(x<=y for u in range(len(pi)) for v in range(u,len(pi)) for x,y in gate_values(pi,u,v,ranks))
+  61 
+  62 def rolling_extrema(a,width):
+  63     lo,hi=deque(),deque()
+  64     for j,x in enumerate(a):
+  65         while lo and a[lo[-1]]>=x:lo.pop()
+  66         while hi and a[hi[-1]]<=x:hi.pop()
+  67         lo.append(j);hi.append(j)
+  68         while lo and lo[0]<=j-width:lo.popleft()
+  69         while hi and hi[0]<=j-width:hi.popleft()
+  70         if j+1>=width:yield j-width+1,a[lo[0]],a[hi[0]]
+  71 
+  72 def fast_screen(pi,ranks=(1,1,1,1)):
+  73     """Exact all-window reduction: at most six endpoint and three sliding tests."""
+  74     n=len(pi);cu,cd,bu,bd=ranks
+  75     for typ,cr in enumerate((cu,cd,cu+cd)):
+  76         for side,br in ((0,bd),(1,bu)):
+  77             w=br+cr+1
+  78             if w<n:
+  79                 u,v=(0,w-1) if side==0 else (n-w,n-1)
+  80                 x,y=gate_values(pi,u,v,ranks)[typ]
+  81                 if x>y:return False
+  82         w=bu+bd+cr+1
+  83         if w<=n-2:
+  84             for u,a,b in rolling_extrema(pi,w):
+  85                 if 1<=u and u+w<=n-1:
+  86                     if typ==0 and a>=w:return False
+  87                     if typ==1 and n-1-b>=w:return False
+  88                     if typ==2 and a>0 and b<n-1 and n-1-b+a>=w:return False
+  89     return True
+  90 
+  91 def old_screen(pi):
+  92     n=len(pi)
+  93     return all(min(t,min(pi[:t]))<=2 and min(t,n-1-max(pi[-t:]))<=2 for t in range(1,n))
+  94 
+  95 def general_checks(M,C,B,pi,p):
+  96     n=len(pi);cu,cd=qs(C,p);bu,bd=qs(B,p)
+  97     assert mul(M,[[row[j] for j in pi] for row in C],p)==B
+  98     count=0
+  99     for u in range(n):
+ 100         for v in range(u,n):
+ 101             a,b=min(pi[u:v+1]),max(pi[u:v+1]);t=v-u+1
+ 102             R=list(range(u))+list(range(v+1,n));beta=(bu if u else 0)+(bd if v+1<n else 0)
+ 103             for H,extra in ((range(a,n),cu if a else 0),(range(b+1),cd if b+1<n else 0),(range(a,b+1),(cu if a else 0)+(cd if b+1<n else 0))):
+ 104                 assert t-len(H)+rank(sub(M,R,H),p)<=beta+extra
+ 105                 count+=1
+ 106     return count
+ 107 
+ 108 def ct_control(a,b,p):
+ 109     """Derive two stages from j=s+a*t, k=q+b*p, with dyadic small orders."""
+ 110     n=a*b;z=root(n,p)
+ 111     oa=list(range(a)) if a==2 else [0,2,1,3]
+ 112     ob=[0,2,1,3]
+ 113     input_pairs=[(s,t) for s in range(a) for t in ob]
+ 114     after_first=[(s,q) for s in range(a) for q in ob]
+ 115     after_shuffle=[(s,q) for q in range(b) for s in oa]
+ 116     output_pairs=[(ell,q) for q in range(b) for ell in oa]
+ 117     A=[[pow(z,a*q*t,p) if s==ss else 0 for ss,t in input_pairs] for s,q in after_first]
+ 118     B=[[pow(z,(q+b*ell)*s,p) if q==qq else 0 for s,qq in after_shuffle] for ell,q in output_pairs]
+ 119     pi=[after_first.index(pair) for pair in after_shuffle]
+ 120     inp=[s+a*t for s,t in input_pairs];out=[q+b*ell for ell,q in output_pairs]
+ 121     M=[[pow(z,k*j,p) for j in inp] for k in out]
+ 122     assert mul(B,[A[k] for k in pi],p)==M
+ 123     C=inv(A,p);assert qs(A,p)==qs(B,p)==qs(C,p)==(1,1)
+ 124     checks=general_checks(M,C,B,pi,p)
+ 125     h=max(pi[:3])+1; actual=rank(sub(M,range(3,n),range(h)),p)
+ 126     assert actual==h-1 and not slow_screen(pi)
+ 127     return dict(n=n,prime=p,root=z,input_order=inp,output_order=out,pi=pi,stage_qs=[1,1],checks=checks,witness_rank=actual,naive_rank=h,corrected_lower=3-h+actual,naive_lower=3)
+ 128 
+ 129 def main():
+ 130     rng=random.Random(782518)
+ 131     counts=Counter();fast_equal=0
+ 132     for pi in permutations(range(8)):
+ 133         a=slow_screen(pi);b=fast_screen(pi);assert a==b;fast_equal+=1
+ 134         counts[str((old_screen(pi),a))]+=1
+ 135     assert counts=={'(True, True)':15728,'(True, False)':12856,'(False, False)':11736}
+ 136     for n in range(2,11):
+ 137         for _ in range(120):
+ 138             pi=list(range(n));rng.shuffle(pi);rs=tuple(rng.randrange(4) for _ in range(4))
+ 139             assert slow_screen(pi,rs)==fast_screen(pi,rs);fast_equal+=1
+ 140     for n in (16,32,64,100):
+ 141         for _ in range(30):
+ 142             pi=list(range(n));rng.shuffle(pi);rs=tuple(rng.randrange(10) for _ in range(4))
+ 143             assert slow_screen(pi,rs)==fast_screen(pi,rs);fast_equal+=1
+ 144     witness=[8,0,13,4,9,3,15,5,6,1,12,11,10,2,14,7]
+ 145     assert slow_screen(witness)
+ 146     marker_controls=[]
+ 147     for n in (16,17,18):
+ 148         good=[]
+ 149         for loc in combinations(range(n),4):
+ 150             if loc[0]<=2 and loc[-1]>=n-3 and max(y-x for x,y in zip(loc,loc[1:]))<=4:good.append(loc)
+ 151         marker_controls.append({'n':n,'allowed_extreme_four_position_sets':len(good),'sets':good if n>=17 else None})
+ 152     assert marker_controls[1]['sets']==[(2,6,10,14)] and marker_controls[2]['sets']==[]
+ 153     ct=[ct_control(a,4,12289) for a in (2,4)]
+ 154     gen=0
+ 155     for n in (3,5,8,12):
+ 156         p=12289
+ 157         for _ in range(4):
+ 158             def stage():
+ 159                 while True:
+ 160                     u=[rng.randrange(1,p) for i in range(n)];v=[rng.randrange(1,p) for i in range(n)]
+ 161                     if (1+sum(x*y for x,y in zip(u,v)))%p:break
+ 162                 return [[(int(i==j)+u[i]*v[j])%p for j in range(n)] for i in range(n)]
+ 163             C,B=stage(),stage();pi=list(range(n));rng.shuffle(pi)
+ 164             M=mul(B,inv([[row[j] for j in pi] for row in C],p),p)
+ 165             gen+=general_checks(M,C,B,pi,p)
+ 166     vd=0
+ 167     for p in (12289,65537):
+ 168         for n in (8,16,32,64):
+ 169             z=root(n,p)
+ 170             for _ in range(16):
+ 171                 rho=list(range(n));rng.shuffle(rho);c=rng.randrange(n);d=rng.choice([d for d in range(1,n) if math.gcd(d,n)==1])
+ 172                 M=[[pow(z,rho[i]*(c+d*j),p) for j in range(n)] for i in range(n)]
+ 173                 R=rng.sample(range(n),rng.randrange(n+1));lo=rng.randrange(n);hi=rng.randrange(lo+1,n+1);H=range(lo,hi)
+ 174                 assert rank(sub(M,R,H),p)==min(len(R),len(H));vd+=1
+ 175     out={'status':'PASS','stdlib_only':True,'uploaded_code_executed':False,'N8_counts':dict(counts),'fast_slow_screen_equivalences':fast_equal,'N16_screen_witness':witness,'marker_controls':marker_controls,'CT_controls':ct,'general_rank_inequalities':gen,'affine_Vandermonde_checks':vd,'scope':'Exact finite-field and combinatorial controls; proof in WINDOW_AUDIT.md. Passing is not sufficient for factorization.'}
+ 176     (ROOT/'CHECK_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+ 177     print(json.dumps(out,indent=2))
+ 178 
+ 179 if __name__=='__main__':main()

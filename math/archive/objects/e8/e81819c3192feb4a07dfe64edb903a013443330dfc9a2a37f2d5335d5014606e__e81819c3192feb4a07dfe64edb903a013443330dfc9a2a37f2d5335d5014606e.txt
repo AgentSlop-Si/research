@@ -1,0 +1,130 @@
+"""Independent exact checker: own elimination, Fourier sum, matrices, and roots.
+
+Unlike unit tests it does not import the project's inverse/rank utilities.
+"""
+from __future__ import annotations
+from green_stages import green_family,apply_sum_inverse,apply_inverse_of_sum,P
+from gauge_fft import GaugeFFT
+import json,math,random
+from pathlib import Path
+
+
+def inverse(a,p=P):
+    n=len(a)
+    rows=[[v%p for v in a[i]]+[int(i==j) for j in range(n)] for i in range(n)]
+    for j in range(n):
+        k=next(i for i in range(j,n) if rows[i][j])
+        rows[k],rows[j]=rows[j],rows[k]
+        iv=pow(rows[j][j],p-2,p)
+        rows[j]=[(v*iv)%p for v in rows[j]]
+        for k in range(n):
+            if k!=j:
+                q=rows[k][j]
+                if q:rows[k]=[(v-q*w)%p for v,w in zip(rows[k],rows[j])]
+    return [r[n:] for r in rows]
+
+
+def multiply(A,B,p=P):
+    return [[sum(A[i][h]*B[h][j] for h in range(len(B)))%p
+             for j in range(len(B[0]))] for i in range(len(A))]
+
+
+def matrix_of(func,n):
+    cols=[]
+    for j in range(n):
+        e=[0]*n;e[j]=1;cols.append(func(e))
+    return [[cols[j][i]%P for j in range(n)] for i in range(n)]
+
+
+def rank(a,p=P):
+    a=[[v%p for v in row] for row in a]
+    if not a:return 0
+    r=0
+    for j in range(len(a[0])):
+        k=next((i for i in range(r,len(a)) if a[i][j]),None)
+        if k is None:continue
+        a[k],a[r]=a[r],a[k]
+        iv=pow(a[r][j],p-2,p)
+        a[r]=[(v*iv)%p for v in a[r]]
+        for i in range(r+1,len(a)):
+            c=a[i][j]
+            if c:a[i]=[(v-c*w)%p for v,w in zip(a[i],a[r])]
+        r+=1
+        if r==len(a):break
+    return r
+
+
+def direct_dft(x,p=P):
+    n=len(x); w=pow(3,(p-1)//n,p)
+    return [sum(x[j]*pow(w,k*j%n,p) for j in range(n))%p for k in range(n)]
+
+
+def tri_matrix(T):
+    n=T.n
+    return [[T.diagonal[i] if i==j else (
+            T.upper[i] if j==i+1 else (T.lower[j] if i==j+1 else 0))
+             for j in range(n)] for i in range(n)]
+
+
+def verify():
+    stats={'green_matrix_cases':[], 'gauge_matrix_cases':[],
+           'fresh_fft_vectors':0,'full_matrix_equalities':0,
+           'dense_gauge_stage_matrices':0}
+    for n in (4,8,16,32):
+        T,U,V=green_family(n)
+        A,B,C=tri_matrix(T),tri_matrix(U),tri_matrix(V)
+        assert [[(A[i][j]+B[i][j])%P for j in range(n)] for i in range(n)]==C
+        Ainv=inverse(A);Binv=inverse(B)
+        S=[[(Ainv[i][j]+Binv[i][j])%P for j in range(n)] for i in range(n)]
+        Sdirect=matrix_of(lambda x: apply_sum_inverse(T,U,x),n)
+        assert Sdirect==S
+        SInv=inverse(S)
+        SInvDirect=matrix_of(lambda x:apply_inverse_of_sum(T,U,V,x),n)
+        assert SInv==SInvDirect
+        assert sum(bool(v) for row in S for v in row)==n*n
+        assert sum(bool(v) for row in SInv for v in row)==n*n
+        if n>=8:
+            assert max(rank([row[s:] for row in S[:s]]) for s in range(1,n))==2
+        stats['green_matrix_cases'].append({'n':n,'S_nonzeros':n*n,'S_inverse_nonzeros':n*n,
+            'offdiag_upper_max':max(rank([row[s:] for row in S[:s]]) for s in range(1,n))})
+        f=GaugeFFT(n)
+        plain=[matrix_of(lambda x,i=i:f.physical_stage(i,x,False),n) for i in range(len(f.stages))]
+        dressed=[matrix_of(lambda x,i=i:f.physical_stage(i,x,True),n) for i in range(len(f.stages))]
+        H=matrix_of(lambda x:f.gauge.action(x),n)
+        Hi=matrix_of(lambda x:f.gauge.action(x,inverse=True),n)
+        assert multiply(H,Hi)==[[int(i==j) for j in range(n)] for i in range(n)]
+        E=[[int(i==j) for j in range(n)] for i in range(n)]
+        assert rank([[(H[i][j]-E[i][j])%P for j in range(n)] for i in range(n)])==1
+        for i,(B0,G) in enumerate(zip(plain,dressed)):
+            expect=(multiply(H,B0) if i==0 else
+                multiply(B0,Hi) if i==len(plain)-1 else multiply(multiply(H,B0),Hi))
+            assert G==expect
+            assert sum(bool(v) for row in G for v in row)==n*n
+            stats['dense_gauge_stage_matrices']+=1
+        M=E
+        for G in dressed:M=multiply(G,M)
+        pindex=f.perm
+        M=[[M[i][pindex.index(j)] for j in range(n)] for i in range(n)]
+        expected=matrix_of(direct_dft,n)
+        assert M==expected
+        stats['full_matrix_equalities']+=1
+        rng=random.Random(n*1337)
+        for _ in range(12):
+            x=[rng.randrange(P) for _ in range(n)]
+            assert f.apply(x,True)[0]==direct_dft(x)
+            stats['fresh_fft_vectors']+=1
+        stats['gauge_matrix_cases'].append({'n':n,'dense_stages':len(dressed),
+            'full_matrix_verified':True,'gauge_rank':1})
+    for n in (64,128,256,512,1024,2048):
+        f=GaugeFFT(n)
+        rng=random.Random(n+999)
+        x=[rng.randrange(P) for _ in range(n)]
+        assert f.apply(x,True)[0]==f.apply(x,False)[0]
+        stats['fresh_fft_vectors']+=1
+    return stats
+
+if __name__=='__main__':
+    out=verify()
+    dest=Path(__file__).with_name('independent_results.json')
+    dest.write_text(json.dumps(out,indent=2)+'\n')
+    print(json.dumps(out,indent=2))

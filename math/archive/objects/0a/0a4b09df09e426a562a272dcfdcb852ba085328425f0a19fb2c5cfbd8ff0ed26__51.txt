@@ -1,0 +1,44 @@
+1: """One-time discovery of an INTEGER congruence witness.
+2: Only the independent verify_exact.py is necessary for the proof;
+3: Cholesky here is merely a convenient way to search for integer T.
+4: """
+5: from pathlib import Path
+6: import json,gzip
+7: import numpy as np
+8: from scipy.linalg import solve_triangular
+9: BASE=Path(__file__).resolve().parent
+10: rec=json.loads((BASE/'AFFINE_LAYOUT.json').read_text())
+11: k=rec['k'];n=1<<k
+12: 
+13: def affine_permutation(cols):
+14:     p=np.zeros(n,dtype=np.int64)
+15:     for i in range(n):
+16:         x=0
+17:         for bit in range(k):
+18:             if (i>>bit)&1:x^=cols[bit]
+19:         p[i]=x
+20:     assert len(set(map(int,p)))==n
+21:     return p
+22: 
+23: perms=[affine_permutation(cols) for cols in rec['affine_shuffle_columns']]
+24: idx=np.arange(n,dtype=np.int64)
+25: L=np.zeros((n,n),dtype=np.int64)
+26: for j in range(len(perms)+1):
+27:     for a,b in zip(idx[:-1],idx[1:]):
+28:         L[a,a]+=1;L[b,b]+=1;L[a,b]-=1;L[b,a]-=1
+29:     if j<len(perms):idx=idx[perms[j]]
+30: M=50*L-101*np.eye(n,dtype=np.int64)+50*np.ones((n,n),dtype=np.int64)
+31: C=np.linalg.cholesky(M.astype(np.float64))
+32: # Compute upper-triangular inverse of lower-triangular Cholesky transpose.
+33: R=solve_triangular(C.T,np.eye(n),lower=False,check_finite=True)
+34: T=np.rint((1<<12)*R).astype(np.int64)
+35: assert (np.tril(T,-1)==0).all() and (T.diagonal()!=0).all()
+36: H=T.T@(M@T)
+37: diag=np.diag(H)
+38: margins=diag-(np.abs(H).sum(axis=1)-np.abs(diag))
+39: assert np.all(margins>0), int(np.min(margins))
+40: with gzip.open(BASE/'INTEGER_CONGRUENCE_CERTIFICATE.json.gz','wt',encoding='utf-8',compresslevel=9) as f:
+41:     json.dump({'N':n,'shift_num':101,'shift_den':50,'rounding_scale':4096,'T':T.tolist()},f,separators=(',',':'))
+42: print('N=',n,'T nz=',int(np.count_nonzero(T)),'max abs T=',int(np.max(np.abs(T))))
+43: print('H positive diag minimum=',int(diag.min()),'strict SDD margin=',int(margins.min()))
+44: print('lambda_2(L) > 101/50 certified by INTEGER symmetric diagonal dominance.')

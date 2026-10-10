@@ -1,0 +1,39 @@
+"""Minimal modular NTT reference retained from Phase 11 (same project).
+Prime 998244353 supports radix-2 NTT lengths up to 2**23.
+"""
+P = 998244353
+
+def _ntt(a, inverse=False):
+    n=len(a);j=0
+    for i in range(1,n):
+        bit=n>>1
+        while j&bit:
+            j^=bit;bit>>=1
+        j^=bit
+        if i<j:a[i],a[j]=a[j],a[i]
+    step=2
+    while step<=n:
+        root=pow(3,(P-1)//step,P)
+        if inverse:root=pow(root,P-2,P)
+        half=step>>1
+        for start in range(0,n,step):
+            w=1
+            for i in range(start,start+half):
+                u=a[i];v=a[i+half]*w%P
+                a[i]=(u+v)%P;a[i+half]=(u-v)%P
+                w=w*root%P
+        step<<=1
+    if inverse:
+        inv=pow(n,P-2,P)
+        for i in range(n):a[i]=a[i]*inv%P
+
+def ntt_convolution(a,b):
+    m=len(a)+len(b)-1
+    size=1<<(m-1).bit_length()
+    if size>1<<23:raise ValueError('reference prime insufficient for transform length')
+    x=[int(v)%P for v in a]+[0]*(size-len(a))
+    y=[int(v)%P for v in b]+[0]*(size-len(b))
+    _ntt(x);_ntt(y)
+    x=[u*v%P for u,v in zip(x,y)]
+    _ntt(x,True)
+    return x[:m]

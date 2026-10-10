@@ -1,0 +1,159 @@
+   1 """Independent Phase 8 cross-checks, with direct modular reference DFTs.
+   2 
+   3 Not a proof of asymptotic novelty. Includes random fresh inputs, exact matrix
+   4 identities, cyclotomic enumeration, and one large selected-bin reference.
+   5 """
+   6 import json
+   7 import random
+   8 import time
+   9 from pathlib import Path
+  10 from phase8 import (fixture,roots_table,eval_radix2_remainder,
+  11                     eval_generic_remainder,crt_bridge_certificate,
+  12                     root_poly_mod,remainder_transfer,exhaustive_root_split,
+  13                     enumerate_crt_transfer_supports,radix2_symbolic_merges,
+  14                     unitary_entropy_audit,schur_cut_certificate,
+  15                     dense_star,lut_gate_bound)
+  16 
+  17 HERE=Path(__file__).resolve().parent
+  18 
+  19 def direct_one(x,k,p,w):
+  20     # Completely distinct input scanning implementation: sequential power update.
+  21     accum=0;phase=1;step=pow(w,(-k)%len(x),p)
+  22     for item in x:
+  23         accum=(accum+item*phase)%p
+  24         phase=phase*step%p
+  25     return accum
+  26 
+  27 def direct_vector(x,p,w):return [direct_one(x,k,p,w) for k in range(len(x))]
+  28 
+  29 def independent_rank(M,p):
+  30     a=[list(row) for row in M];r=0;m=len(a);n=len(a[0]) if a else 0
+  31     for col in range(n):
+  32         hit=None
+  33         for i in range(r,m):
+  34             if a[i][col]%p:
+  35                 hit=i;break
+  36         if hit is None:continue
+  37         a[r],a[hit]=a[hit],a[r]
+  38         factor=pow(a[r][col],p-2,p)
+  39         for row in range(r+1,m):
+  40             if a[row][col]:
+  41                 q=a[row][col]*factor%p
+  42                 for j in range(col,n):
+  43                     a[row][j]=(a[row][j]-q*a[r][j])%p
+  44         r+=1
+  45     return r
+  46 
+  47 def independent_crt_factorization(n,p,w,split):
+  48     m=n//2;B=tuple(j for j in range(n) if j not in split)
+  49     roots=roots_table(n,p,w)
+  50     RA=remainder_transfer(root_poly_mod(split,roots,p),p)
+  51     RB=remainder_transfer(root_poly_mod(B,roots,p),p)
+  52     # For every low/high monomial coefficient, verify its two remainders,
+  53     # then evaluation using entirely direct Horner at every root.
+  54     rng=random.Random(n+len(split))
+  55     for _ in range(9):
+  56         x=[rng.randrange(p) for _ in range(n)]
+  57         low=x[:m];high=x[m:]
+  58         L=[(low[i]+sum(RA[i][j]*high[j] for j in range(m)))%p for i in range(m)]
+  59         R=[(low[i]+sum(RB[i][j]*high[j] for j in range(m)))%p for i in range(m)]
+  60         for labels,poly in ((split,L),(B,R)):
+  61             for k in labels:
+  62                 z=roots[-k%n]
+  63                 val=0
+  64                 for a in reversed(poly):val=(val*z+a)%p
+  65                 assert val==direct_one(x,k,p,w)
+  66     diff=[[(RB[i][j]-RA[i][j])%p for j in range(m)] for i in range(m)]
+  67     assert independent_rank(diff,p)==m
+  68     return True
+  69 
+  70 
+  71 def main():
+  72     start=time.time();rng=random.Random(17170008)
+  73     complete=0;coeffs=0;ops=[]
+  74     for n,reps in ((4,15),(8,15),(16,15),(32,15),(64,10),(128,10),(256,8)):
+  75         p,w=fixture(n)
+  76         for trial in range(reps):
+  77             x=[rng.randrange(p) for _ in range(n)]
+  78             got,ledger=eval_radix2_remainder(x,p,w)
+  79             expect=direct_vector(x,p,w)
+  80             assert got==expect,(n,trial)
+  81             complete+=1;coeffs+=n
+  82             if trial==0:
+  83                 ops.append({'n':n,'p':p,**ledger.record(),
+  84                             'total_scalar_ops':ledger.adds+ledger.muls+ledger.root_prep_muls})
+  85 
+  86     partition_checks=0
+  87     for n in (8,16,32):
+  88         p,w=fixture(n)
+  89         examples=[tuple(range(0,n,2)),tuple(range(n//2))]
+  90         if n==16:examples += [(0,1,2,3,4,8,10,12), (0,1,2,4,5,7,11,14)]
+  91         for split in examples:
+  92             assert independent_crt_factorization(n,p,w,split)
+  93             partition_checks+=1
+  94 
+  95     n=16;p,w=fixture(n)
+  96     comparisons={}
+  97     x=[rng.randrange(p) for _ in range(n)]
+  98     reference=direct_vector(x,p,w)
+  99     for policy in ('subgroup','contiguous','noncoset16'):
+ 100         got,ledger=eval_generic_remainder(x,p,w,policy)
+ 101         assert got==reference
+ 102         comparisons[policy]={**ledger.record(),'total_charged_scalar_ops':
+ 103                               ledger.adds+ledger.muls+ledger.root_prep_muls+
+ 104                               ledger.plan_adds+ledger.plan_muls}
+ 105 
+ 106     poly8=exhaustive_root_split(8)
+ 107     poly16=exhaustive_root_split(16)
+ 108     finite16=enumerate_crt_transfer_supports(16,p,w)
+ 109     # Check all class-16 balanced split differences independently, not only samples.
+ 110     from itertools import combinations
+ 111     roots=roots_table(16,p,w);all_rank_checks=0
+ 112     for A in combinations(range(16),8):
+ 113         B=tuple(j for j in range(16) if j not in A)
+ 114         if A>B:continue
+ 115         RA=remainder_transfer(root_poly_mod(A,roots,p),p)
+ 116         RB=remainder_transfer(root_poly_mod(B,roots,p),p)
+ 117         diff=[[(RB[i][j]-RA[i][j])%p for j in range(8)] for i in range(8)]
+ 118         assert independent_rank(diff,p)==8
+ 119         all_rank_checks+=1
+ 120 
+ 121     symbolic=[radix2_symbolic_merges(n,*fixture(n)) for n in (8,16,32,64)]
+ 122     entropy=[unitary_entropy_audit(n) for n in (8,16,32)]
+ 123     schur=[schur_cut_certificate(n,*fixture(n)) for n in (8,16,32)]
+ 124     star=[]
+ 125     for n in (8,16,32):
+ 126         p,w=fixture(n)
+ 127         M,count=dense_star(n,p)
+ 128         assert independent_rank(M,p)==n
+ 129         star.append({'n':n,'additive_gates':count,'all_entries_nonzero':all(v!=0 for row in M for v in row)})
+ 130 
+ 131     # Large exact execution, selected independent direct O(n)-per-bin references.
+ 132     n=65536;p,w=fixture(n)
+ 133     x=[rng.randrange(p) for _ in range(n)]
+ 134     got,ledger=eval_radix2_remainder(x,p,w)
+ 135     selected=sorted({0,1,2,3,n//2,n-1, *[rng.randrange(n) for _ in range(30)]})
+ 136     assert all(got[k]==direct_one(x,k,p,w) for k in selected)
+ 137 
+ 138     report={'date':'2026-10-10','result':'NO universal O(N) FFT',
+ 139             'new_regression_tests':13,
+ 140             'full_fresh_random_dfts':complete,'full_coefficients_independently_checked':coeffs,
+ 141             'large_n':n,'large_selected_bins_independently_checked':len(selected),
+ 142             'large_field_size':p,'large_ledger':ledger.record(),
+ 143             'independent_crt_factorization_cases':partition_checks,
+ 144             'all_balanced_16_splits_verified_bridge_full_rank':all_rank_checks,
+ 145             'cyclotomic_n8':poly8,'cyclotomic_n16':poly16,
+ 146             'finite_field_transfer_n16':finite16,
+ 147             'executor_scalar_ledger':ops,'root_division_cost_n16':comparisons,
+ 148             'symbolic_union':symbolic,'unitary_entropy_prior_art':entropy,
+ 149             'schur_sharpness':schur,'linear_dense_star_counterexample':star,
+ 150             'finite_field_truth_table': [lut_gate_bound(z,fixture(z)[0],table_exponent=3) for z in (16,64,256,1024)],
+ 151             'audit_seconds':round(time.time()-start,3)}
+ 152     (HERE/'AUDIT_RESULTS.json').write_text(json.dumps(report,indent=2)+'\n')
+ 153     print(json.dumps({k:report[k] for k in (
+ 154         'full_fresh_random_dfts','full_coefficients_independently_checked',
+ 155         'large_n','large_selected_bins_independently_checked',
+ 156         'all_balanced_16_splits_verified_bridge_full_rank','audit_seconds')},indent=2))
+ 157     return report
+ 158 
+ 159 if __name__=='__main__':main()

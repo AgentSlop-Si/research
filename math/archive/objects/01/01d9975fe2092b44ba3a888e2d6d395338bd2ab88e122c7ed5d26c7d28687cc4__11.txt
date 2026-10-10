@@ -1,0 +1,30 @@
+0001 /* gcc -O1 -g -std=c11 -fsanitize=address,undefined -fno-omit-frame-pointer \
+0002  * test_adaptive_sanitizers.c -lm -o test_adaptive_sanitizers
+0003  * ASAN_OPTIONS=detect_leaks=0 ./test_adaptive_sanitizers
+0004  * LeakSanitizer cannot run under the execution sandbox's tracing. */
+0005 #include "adaptive_fft.c"
+0006 #include <stdio.h>
+0007 int main(void) {
+0008     double worst=0;
+0009     for(size_t n=16;n<=1048576;n*=2) {
+0010         adaptive_plan *p=fft_adaptive_create(n);if(!p)return 2;
+0011         uint8_t *x=malloc(n);cx *reference=malloc(n*sizeof(cx)),*y=malloc(n*sizeof(cx));
+0012         if(!x||!reference||!y)return 2;
+0013         uint32_t state=71236789;
+0014         for(size_t j=0;j<n;++j){state^=state<<13;state^=state>>17;state^=state<<5;x[j]=state&1;}
+0015         fft_radix2(p->base,x,reference);
+0016         for(int method=0;method<6;++method) {
+0017             if(fft_adaptive_select(p,method)||fft_adaptive_execute(p,x,y))return 1;
+0018             for(size_t j=0;j<n;++j) {
+0019                 double error=hypot(y[j].r-reference[j].r,y[j].i-reference[j].i);
+0020                 if(error>worst)worst=error;if(error>1e-9)return 1;
+0021             }
+0022         }
+0023         x[n-1]=255;y[0]=(cx){123,456};
+0024         if(fft_adaptive_execute(p,x,y)!=-2 || y[0].r!=123 || y[0].i!=456)return 1;
+0025         if(fft_adaptive_select(p,6)!=-1)return 1;
+0026         fft_adaptive_destroy(p);free(x);free(y);free(reference);
+0027     }
+0028     printf("Adaptive API ASan/UBSan passed; maximum method error %.12g. Leak detection disabled for sandbox compatibility.\n",worst);
+0029     return 0;
+0030 }

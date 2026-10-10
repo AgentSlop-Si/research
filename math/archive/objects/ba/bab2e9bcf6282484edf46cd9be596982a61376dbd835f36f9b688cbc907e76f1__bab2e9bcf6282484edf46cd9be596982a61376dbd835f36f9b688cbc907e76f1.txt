@@ -1,0 +1,110 @@
+"""Independent Green-Union innovation construction + direct DFT audit.
+
+Generates raw inputs using an independently coded shift-operator recurrence,
+not `multishear_green_union.build_green_fixture`. References use O(N^2)
+direct arithmetic for all small-case DFT output coefficients, and O(N)
+per selected bin for N=65536.
+"""
+from __future__ import annotations
+import json,random,time
+from pathlib import Path
+from itertools import combinations
+from independent_audit import primitive_n_root,raw_multi_fixture,ref_dft
+import multishear_green_union as green
+
+SEED=17172027
+RNG=random.Random(SEED)
+HERE=Path(__file__).parent
+
+
+def raw_green(n,q,p,omega,g,events_per_time=1):
+    m=n//q
+    pure,params=raw_multi_fixture(n,q,p,omega,g)
+    # PILOT ONLY: 2g pure orbit rows, with genuine sparse innovations afterwards.
+    rows=[[pure[t+q*u] for u in range(m)] for t in range(2*g)]
+    subset_ops=[]
+    for lag in range(1,g+1):
+        for subset in combinations(params,lag):
+            scale=(-1)**lag
+            shift=0
+            for a,mu,b in subset:
+                scale=scale*mu%p
+                shift=(shift+a)%m
+            subset_ops.append((lag,shift,scale%p))
+    eta=pow(omega,q,p)
+    powers=[1]*m
+    for h in range(1,m):powers[h]=powers[h-1]*eta%p
+    R=0
+    for t in range(2*g,q):
+        events=[(h,RNG.randrange(1,p)) for h in RNG.sample(range(m),events_per_time)]
+        R+=len(events)
+        row=[]
+        for u in range(m):
+            injected=sum(c*powers[(h*u)%m] for h,c in events)
+            recurrence=-sum(scale*rows[t-lag][(u-shift)%m]
+                             for lag,shift,scale in subset_ops)
+            row.append((injected+recurrence)%p)
+        rows.append(row)
+    x=[0]*n
+    for t,row in enumerate(rows):
+        for u,z in enumerate(row):x[t+q*u]=z
+    return x,params,R
+
+
+def main():
+    start=time.perf_counter()
+    counts={'complete_vectors':0,'complete_bins':0,'random_dense_checked':0,
+            'random_dense_rejected':0,'large_spot_bins':0}
+    for n,q,p in [(64,8,998244353),(72,8,1009),(144,12,1009),
+                  (256,16,998244353),(1024,32,998244353)]:
+        w=primitive_n_root(n,p)
+        for g in (1,2,3):
+            for count in (0,1,2):
+                reps=4 if n<1024 else 2
+                for _ in range(reps):
+                    x,params,R=raw_green(n,q,p,w,g,count)
+                    cert=green.recognize(x,p,w,g,max(q,R),q)
+                    assert cert is not None,(n,g,count,'rejected')
+                    assert len(cert.events)==R
+                    recovered={(o.shift,o.scalar):list(o.base) for o in cert.orbits}
+                    for a,mu,b in params:assert recovered[(a,mu)]==b
+                    out=green.transform_certified(cert)
+                    ref=ref_dft(x,p,w)
+                    assert all(out[k]==v for k,v in ref.items()),(n,g,count,'mismatch')
+                    counts['complete_vectors']+=1
+                    counts['complete_bins']+=n
+    for n,q,p in [(64,8,998244353),(144,12,1009),(256,16,998244353)]:
+        w=primitive_n_root(n,p)
+        for _ in range(50):
+            x=[RNG.randrange(p) for _ in range(n)]
+            for g in (1,2,3):
+                cert=green.recognize(x,p,w,g,q,q)
+                counts['random_dense_checked']+=1
+                if cert is None:counts['random_dense_rejected']+=1
+                else:
+                    result=green.transform_certified(cert)
+                    ref=ref_dft(x,p,w)
+                    assert all(result[k]==v for k,v in ref.items())
+
+    n=65536;q=256;p=998244353;g=3;w=primitive_n_root(n,p)
+    x,params,R=raw_green(n,q,p,w,g,1)
+    cert=green.recognize(x,p,w,g,q,q)
+    assert cert is not None and len(cert.events)==R
+    all_output,counters=green.transform_certified(cert,True)
+    selected=[0,1,2,3,5,7,11,13,17,31,32,63,64,127,128,255,256,257,511,
+              512,513,1009,1023,1024,2001,4095,4096,8191,16383,16384,32767,
+              32768,50001,65533,65534,65535]
+    ref=ref_dft(x,p,w,selected)
+    assert all(all_output[k]==v for k,v in ref.items())
+    counts['large_spot_bins']=len(selected)
+    result={'date':'2026-10-10','seed':SEED,'arithmetic_model':'F_p exact, primitive N-root supplied',
+            'tested':counts,'large_n_counters':counters,
+            'seconds_python':round(time.perf_counter()-start,3),
+            'limitations':['Only clean first 2g rows and sparse later innovations',
+                           'No universal exact O(N) DFT','No unconditional novelty claim',
+                           'No classical output acceleration from quantum simulation']}
+    (HERE/'GREEN_AUDIT_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+    print(json.dumps(result,indent=2))
+    return result
+
+if __name__=='__main__':main()

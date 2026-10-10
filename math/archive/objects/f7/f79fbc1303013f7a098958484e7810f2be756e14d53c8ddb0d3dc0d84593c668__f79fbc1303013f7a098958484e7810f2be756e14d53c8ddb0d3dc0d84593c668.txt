@@ -1,0 +1,197 @@
+"""Independently authored algebra checks. Never imports uploaded executables.
+FFT calls and dense matrix solves below are reference/test operations, not a claim
+of a word-RAM or practical speed implementation.
+"""
+import itertools, json, math
+from fractions import Fraction
+from pathlib import Path
+import numpy as np
+
+OUT=Path(__file__).parent
+ROOTS=np.array([1,1j,-1,-1j])
+
+def dft(n):
+    return np.exp(-2j*np.pi*np.outer(np.arange(n),np.arange(n))/n)/np.sqrt(n)
+
+def local_spectra(x,K,M):return dft(K)@np.asarray(x).reshape(K,M)
+
+def decode(A):
+    K,M=A.shape; N=K*M; out=np.empty(N,complex)
+    for p in range(K):
+        vals=dft(M)@(A[p]*np.exp(-2j*np.pi*p*np.arange(M)/N))
+        out[p+K*np.arange(M)]=vals
+    return out
+
+def row(x,K,M,q,xi):
+    X=np.asarray(x).reshape(K,M); r=np.arange(K)[:,None]
+    z=np.sum(X*np.conj(xi)[None,:]*np.exp(-2j*np.pi*r*np.asarray(q)[None,:]/K),axis=1)
+    Z=np.fft.fft(z,norm='ortho')
+    local=np.empty((K,M),complex)
+    for p in range(K):local[p]=xi*Z[(p-np.asarray(q))%K]
+    return local,decode(local)
+
+def gauge_seeds(K,M):
+    # Common q and phase shifts leave all decoded local estimates unchanged.
+    for qt in itertools.product(range(K),repeat=M-1):
+      q=np.array((0,)+qt)
+      for pt in itertools.product(range(4),repeat=M-1):yield q,ROOTS[np.array((0,)+pt)]
+
+def sketch_matrix(K,M,q,xi):
+    C=np.zeros((K,K*M),complex)
+    for r in range(K):C[r,r*M:(r+1)*M]=np.conj(xi)*np.exp(-2j*np.pi*r*q/K)
+    return C
+
+def median_estimate(x,K,M,R,rng):
+    samples=[]
+    for j in range(R):
+      q=rng.integers(K,size=M);xi=ROOTS[rng.integers(4,size=M)]
+      samples.append(row(x,K,M,q,xi)[0])
+    a=np.asarray(samples)
+    med=np.median(a.real,axis=0)+1j*np.median(a.imag,axis=0)
+    return med,decode(med)
+
+def periodic_mean(x,d):
+    N=len(x);a=np.asarray(x).reshape(N//d,d).mean(axis=0)
+    return np.tile(a,N//d)
+
+def exhaustive_case(K,M):
+    N=K*M;rng=np.random.default_rng(1729+N)
+    x=rng.normal(size=N)+1j*rng.normal(size=N)
+    F=dft(N);A=local_spectra(x,K,M);exact=F@x;E=np.vdot(x,x).real
+    Et=np.sum(np.abs(x.reshape(K,M))**2,axis=0)
+    avlocal=np.zeros_like(A);avout=np.zeros(N,complex)
+    mse=np.zeros(N);localmse=np.zeros_like(A.real)
+    EH=np.zeros((N,N),complex);risk=np.zeros((N,N),complex)
+    errs=[]; traces=[]; norms=[]; maxproj=0.;count=0
+    for q,xi in gauge_seeds(K,M):
+      local,y=row(x,K,M,q,xi);C=sketch_matrix(K,M,q,xi);P=C.conj().T@C;H=F@P
+      errs.append(float(np.max(np.abs(y-H@x))))
+      maxproj=max(maxproj,float(np.max(np.abs(P@P-M*P))))
+      assert np.linalg.matrix_rank(H,tol=1e-9)==K
+      traces.append(complex(np.trace(F.conj().T@H)))
+      norms.append(float(np.sum(np.abs(H)**2)))
+      avlocal+=local;avout+=y;mse+=np.abs(y-exact)**2;localmse+=np.abs(local-A)**2
+      EH+=H;risk+=(H-F).conj().T@(H-F);count+=1
+    avlocal/=count;avout/=count;mse/=count;localmse/=count;EH/=count;risk/=count
+    checks={
+      'K':K,'M':M,'states':count,
+      'factorization_error':float(np.max(np.abs(decode(A)-exact))),
+      'sketch_decoder_error':max(errs),
+      'mean_local_error':float(np.max(np.abs(avlocal-A))),
+      'mean_output_error':float(np.max(np.abs(avout-exact))),
+      'per_output_variance_error':float(np.max(np.abs(mse-(M-1)*E/N))),
+      'local_variance_error':float(np.max(np.abs(localmse-(E-Et)[None,:]/K))),
+      'mean_operator_error':float(np.max(np.abs(EH-F))),
+      'risk_matrix_error':float(np.max(np.abs(risk-(M-1)*np.eye(N)))),
+      'projection_identity_error':maxproj,
+      'trace_error':float(max(abs(t-N) for t in traces)),
+      'frobenius_squared_error':float(max(abs(v-N*M) for v in norms)),
+      'minimax_risk':N/K-1}
+    for k,v in checks.items():
+      if k.endswith('error'):assert v<2e-11,(k,v)
+    return checks
+
+def exact_heavy_tail(K,M):
+    # Each non-source collision has mass 1-1/K at zero and 1/(4K) at each root.
+    vals=[(0,0),(1,0),(0,1),(-1,0),(0,-1)]
+    probs=[Fraction(K-1,K)]+[Fraction(1,4*K)]*4
+    m2=Fraction(0);m4=Fraction(0)
+    for ids in itertools.product(range(5),repeat=M-1):
+      a=sum(vals[i][0] for i in ids);b=sum(vals[i][1] for i in ids)
+      mass=math.prod(probs[i] for i in ids);s=Fraction(a*a+b*b,M)
+      m2+=mass*s;m4+=mass*s*s
+    theory2=Fraction(M-1,M*K)
+    theory4=(Fraction(M-1,K)+Fraction(2*(M-1)*(M-2),K*K))/(M*M)
+    assert m2==theory2 and m4==theory4
+    return {'K':K,'M':M,'m2':str(m2),'m4':str(m4),'kurtosis':str(m4/m2**2)}
+
+def median_moment_checks():
+    values=[Fraction(-3),Fraction(0),Fraction(2)]
+    probs=[Fraction(1,10),Fraction(4,10),Fraction(5,10)]
+    mean=sum(v*p for v,p in zip(values,probs));var=sum((v-mean)**2*p for v,p in zip(values,probs))
+    ans=[]
+    for s in [1,2,3,4]:
+      R=2*s-1;moment=Fraction(0)
+      for ids in itertools.product(range(3),repeat=R):
+        y=sorted(values[i] for i in ids)[s-1]
+        moment+=math.prod(probs[i] for i in ids)*(y-mean)**(2*s)
+      bound=math.comb(R,s)*var**s;assert moment<=bound
+      ans.append({'s':s,'ratio':float(moment/bound)})
+    return ans
+
+def kernel_and_mean_checks():
+    rng=np.random.default_rng(771);K=4;M=8;N=K*M;R=3
+    Cs=[sketch_matrix(K,M,rng.integers(K,size=M),ROOTS[rng.integers(4,size=M)]) for _ in range(R)]
+    L=np.concatenate(Cs);u,s,vh=np.linalg.svd(L,full_matrices=True);v=vh[-1].conj()
+    rank=int(np.linalg.matrix_rank(L));null=float(np.linalg.norm(L@v))
+    assert rank<=R*K<N and null<1e-12
+    x=rng.normal(size=N)+1j*rng.normal(size=N);h=periodic_mean(x,M);r=x-h
+    A=local_spectra(r,K,M)
+    assert np.max(np.abs(A[0]))<1e-12
+    ortho=float(abs(np.vdot(r,h)))
+    # Compare against many arbitrary heads, using Pythagoras rather than optimization code.
+    maxpyth=0.
+    for _ in range(100):
+      g=np.tile(rng.normal(size=M)+1j*rng.normal(size=M),K)
+      er=abs(np.linalg.norm(x-g)**2-(np.linalg.norm(r)**2+np.linalg.norm(h-g)**2))
+      maxpyth=max(maxpyth,er)
+    assert maxpyth<1e-10
+    return {'K':K,'M':M,'R':R,'rank':rank,'kernel_residual':null,'kernel_fourier_norm':float(np.linalg.norm(dft(N)@v)),'periodic_orthogonality':ortho,'periodic_pythagoras_error':maxpyth,'removed_local_p0':float(np.max(np.abs(A[0])))}
+
+def green_fusion_checks():
+    rng=np.random.default_rng(531);N=32;K=8;M=4;R=5;s=(R+1)//2;delta=.2
+    T=3*np.eye(N)-np.eye(N,k=1)-np.eye(N,k=-1)
+    S=np.linalg.inv(T)+np.linalg.inv(T+np.eye(N));F=dft(N)
+    B=F@np.linalg.inv(S)@F.conj().T;Rinf=float(np.max(np.sum(np.abs(B),axis=1)))
+    x=rng.normal(size=N)+1j*rng.normal(size=N)
+    u=S@x;h=periodic_mean(u,4);r=u-h
+    _,zr=median_estimate(r,K,M,R,rng);y=B@(F@h+zr)
+    beta=np.sqrt(2)*(2*N*math.comb(2*s-1,s)/delta)**(1/(2*s))*np.sqrt(M*(M-1)/N)
+    observed=float(np.max(np.abs(y-F@x)));bound=float((73/18)*beta*np.linalg.norm(r))
+    assert Rinf<=73/18+1e-12 and observed<=bound
+    return {'N':N,'B_infinity_norm':Rinf,'established_bound':73/18,'observed_error':observed,'proved_bound':bound,'direct_residual_energy':float(np.linalg.norm(x-periodic_mean(x,4))**2),'green_residual_energy':float(np.linalg.norm(r)**2)}
+
+def structured_checks():
+    rng=np.random.default_rng(119);K=64;M=4;N=K*M;R=5;s=3;h0=1;results=[]
+    rho=(M-1)*h0/K;bound=min(1,N*math.comb(R,s)*rho**s)
+    for trial in range(12):
+      A=np.zeros((K,M),complex)
+      for t in range(M):A[rng.integers(K),t]=rng.normal()+1j*rng.normal()
+      x=(dft(K).conj().T@A).reshape(-1)
+      am,y=median_estimate(x,K,M,R,rng)
+      results.append(float(np.max(np.abs(y-dft(N)@x))))
+    return {'K':K,'M':M,'R':R,'h0':h0,'failure_bound':bound,'trials':len(results),'roundoff_exact':sum(e<1e-10 for e in results),'max_errors':results}
+
+
+def exhaustive_tail_checks():
+    cases=[]
+    for K in (8,16):
+      M=2;b=1;alpha=1/8
+      rng=np.random.default_rng(991+K)
+      A=(rng.integers(-2,3,size=(K,M))+1j*rng.integers(-2,3,size=(K,M))).astype(complex)
+      A[1,0]=100+30j;A[K-2,1]=-80+50j
+      heavy=np.zeros_like(A)
+      for t in range(M):
+        idx=np.argsort(np.abs(A[:,t]))[-b:];heavy[idx,t]=A[idx,t]
+      tail=A-heavy;T=float(np.sum(np.abs(tail)**2));rho=(M-1)*b/K
+      threshold=np.sqrt(T/(K*alpha));bad=np.zeros((K,M),int);tail_second=np.zeros((K,M));count=0
+      for q,xi in gauge_seeds(K,M):
+        for p0 in range(K):
+          for t in range(M):
+            err=sum(xi[t]*np.conj(xi[u])*A[(p0+q[u]-q[t])%K,u] for u in range(M) if u!=t)
+            tw=sum(xi[t]*np.conj(xi[u])*tail[(p0+q[u]-q[t])%K,u] for u in range(M) if u!=t)
+            bad[p0,t]+=abs(err)>threshold+1e-12
+            tail_second[p0,t]+=abs(tw)**2
+        count+=1
+      probs=bad/count;tail_second/=count
+      predicted=(T-np.sum(np.abs(tail)**2,axis=0))/K
+      assert np.all(probs<=rho+alpha+1e-12)
+      var_error=float(np.max(np.abs(tail_second-predicted[None,:])))
+      assert var_error<1e-10
+      cases.append({'K':K,'M':M,'top_entries_per_column':b,'states':count,'alpha':alpha,'rho':rho,'tail_energy':T,'threshold':float(threshold),'max_observed_bad_probability':float(np.max(probs)),'proved_row_bad_bound':rho+alpha,'tail_variance_error':var_error})
+    return cases
+
+if __name__=='__main__':
+    report={'provenance':'Independently authored; no uploaded code imported or executed.','exhaustive':[exhaustive_case(2,2),exhaustive_case(2,3),exhaustive_case(3,3),exhaustive_case(2,4)],'heavy_tail_exact':[exact_heavy_tail(2,3),exact_heavy_tail(8,4),exact_heavy_tail(64,5)],'median_moment':median_moment_checks(),'kernel_mean':kernel_and_mean_checks(),'green_fusion':green_fusion_checks(),'structured':structured_checks(),'spectral_tail_exhaustive':exhaustive_tail_checks()}
+    (OUT/'independent_results.json').write_text(json.dumps(report,indent=2))
+    print(json.dumps(report,indent=2))

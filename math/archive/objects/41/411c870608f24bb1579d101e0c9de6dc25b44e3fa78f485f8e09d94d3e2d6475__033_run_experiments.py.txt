@@ -1,0 +1,38 @@
+from __future__ import annotations
+import json
+from pathlib import Path
+
+from common import FIELD_DATA
+from green_parallel_sum_gate import exact_random_audit
+from semiseparable_annihilator_gate import exact_random_audit as semiseparable_audit
+
+
+def main():
+    green = []
+    for n in (11, 13, 17, 19, 29, 31):
+        p, g, omega = FIELD_DATA[n]
+        row = exact_random_audit(n, p, omega, trials=40, seed=1710)
+        row.update({"field_modulus": p, "primitive_generator": g, "omega": omega})
+        green.append(row)
+
+    n = 31
+    p, g, omega = FIELD_DATA[n]
+    semi = semiseparable_audit(n, p, omega, trials=30, seed=1711)
+    semi.update({"field_modulus": p, "primitive_generator": g, "omega": omega})
+
+    results = {
+        "green_parallel_sum": green,
+        "semiseparable_two_stage": semi,
+        "theorem_thresholds": {
+            "two_green_prime_length": 11,
+            "fully_nondegenerate_two_stage_prime_length": 31,
+        },
+    }
+    out = Path(__file__).with_name("results.json")
+    out.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    print(json.dumps(results, indent=2))
+    return results
+
+
+if __name__ == "__main__":
+    main()

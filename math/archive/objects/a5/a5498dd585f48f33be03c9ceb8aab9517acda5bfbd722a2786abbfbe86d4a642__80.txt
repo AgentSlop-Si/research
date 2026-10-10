@@ -1,0 +1,17 @@
+1: """Verify source hashes bundled in SHA256SUMS.txt (standard library only)."""
+2: from hashlib import sha256
+3: from pathlib import Path
+4: ROOT=Path(__file__).resolve().parent
+5: 
+6: def main():
+7:     count=0
+8:     for line in (ROOT/'SHA256SUMS.txt').read_text().splitlines():
+9:         if not line.strip():continue
+10:         digest, rel=line.split('  ',1)
+11:         item=ROOT/rel
+12:         assert item.is_file(),f'missing: {rel}'
+13:         assert sha256(item.read_bytes()).hexdigest()==digest,f'corrupt: {rel}'
+14:         count+=1
+15:     print(f'{count} file hashes verified')
+16: 
+17: if __name__=='__main__':main()

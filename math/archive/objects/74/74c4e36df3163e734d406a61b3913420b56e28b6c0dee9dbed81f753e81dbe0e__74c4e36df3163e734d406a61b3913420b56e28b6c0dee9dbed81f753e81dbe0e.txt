@@ -1,0 +1,35 @@
+import json
+import random
+import sys
+import unittest
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT))
+from apply_stage import check
+from jacobian_gate import study,MOD,basis,rank_mod
+from tangent_certificate import verify as verify_tangent
+from superconcentrator_gate import verify as verify_super
+
+class AlgebraicNetworkTests(unittest.TestCase):
+    def test_fast_exact_scan_apply(self):
+        for n,r in [(8,1),(16,2),(24,3),(32,4)]:self.assertTrue(check(n,r))
+    def test_n8_exhaustive_full_network(self):
+        z=json.loads((ROOT/'superconcentrator_N8_certificate.json').read_text())
+        self.assertIn('codimension 4',verify_super(z))
+    def test_n16_tangent_witness(self):
+        z=json.loads((ROOT/'nonlinear_tangent_certificate_N16.json').read_text())
+        self.assertIn('sparse delta support=2',verify_tangent(z))
+    def test_jacobian_matches_chart_dim_random_perms(self):
+        for n,r,dim in [(8,1,60),(16,1,132),(16,2,232),(32,1,276),(32,2,504)]:
+            p=list(range(n));random.Random(919+n).shuffle(p)
+            z,*_=study(n,r,p)
+            self.assertEqual(z['jacobian_rank'],dim)
+    def test_identity_permutation_keeps_product_qs(self):
+        z,*_=study(16,2,list(range(16)))
+        self.assertEqual(z['jacobian_rank'],200)
+    def test_saved_computer_optimization_status(self):
+        data=json.loads((ROOT/'milp_results.json').read_text())
+        self.assertEqual([(z['n'],z['r'],z['solver_status']) for z in data],[(8,1,0),(16,2,0),(24,3,0),(32,4,0)])
+        for z in data:self.assertGreater(z['lower_bound'],-1e-6)
+
+if __name__=='__main__':unittest.main()

@@ -1,0 +1,23 @@
+import unittest
+from mixed_order_green import audit
+
+
+class MixedOrderGreenStageTest(unittest.TestCase):
+    def test_exact_structural_control(self):
+        for n in (8,16,32,64):
+            result=audit(n,inverse=True)
+            self.assertEqual(result['parity_green_half_rank'],n//2)
+            self.assertGreaterEqual(result['mixed_half_rank'],n//2-1)
+            self.assertGreaterEqual(result['reflected_half_rank'],n//2-2)
+            self.assertEqual(result['mixed_nonzeros'],n*n)
+            self.assertEqual(result['mixed_inverse_nonzeros'],n*n)
+            self.assertEqual(result['reflected_inverse_nonzeros'],n*n)
+
+    def test_phase_recurrences(self):
+        from mixed_order_green import phase_diagonals
+        from minor_certificate import MOD
+        for n in (8,16,32,64):
+            left,right=phase_diagonals(n)
+            w=pow(3,(MOD-1)//n,MOD)
+            self.assertEqual(left,[pow(w,i*i,MOD) for i in range(n)])
+            self.assertEqual(right,[pow(w,i,MOD) for i in range(n)])

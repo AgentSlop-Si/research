@@ -1,0 +1,102 @@
+   1 """Fresh literal bounded-word-array conversion checks, not uploaded code."""
+   2 import random,json
+   3 class Bits:
+   4     work=0
+   5     def __init__(self,words,n,w):
+   6         self.a=words;self.n=n;self.w=w
+   7         self.mask=(1<<w)-1
+   8         assert len(words)==(n+w-1)//w
+   9         assert all(0<=a<=self.mask for a in words)
+  10     @classmethod
+  11     def fromint(cls,x,n,w):return cls([(x>>i)&((1<<w)-1) for i in range(0,n,w)],n,w)
+  12     def asint(self):return sum(x<<(self.w*i) for i,x in enumerate(self.a))
+  13     def cut(self,start,n):
+  14         out=[];w=self.w
+  15         for p in range(start,start+n,w):
+  16             j,r=divmod(p,w);z=(self.a[j]>>r) if j<len(self.a) else 0
+  17             if r and j+1<len(self.a):z|=(self.a[j+1]<<(w-r))&self.mask
+  18             out.append(z);Bits.work+=4
+  19         if n%w:out[-1]&=(1<<(n%w))-1
+  20         return Bits(out,n,w)
+  21     def put(self,start,b):
+  22         # Each b word enters at most two output words, masking each output.
+  23         w=self.w
+  24         for i,z in enumerate(b.a):
+  25             length=min(w,b.n-i*w);j,r=divmod(start+i*w,w)
+  26             lo=min(length,w-r);lm=((1<<lo)-1)<<r
+  27             self.a[j]=(self.a[j]&~lm)|((z<<r)&lm)
+  28             if lo<length:
+  29                 hm=(1<<(length-lo))-1
+  30                 self.a[j+1]=(self.a[j+1]&~hm)|((z>>lo)&hm)
+  31             Bits.work+=8
+  32     def xor(self,b):
+  33         Bits.work+=len(self.a)
+  34         return Bits([a^c for a,c in zip(self.a,b.a)],self.n,self.w)
+  35     def right(self,k):
+  36         z=Bits([0]*len(self.a),self.n,self.w)
+  37         if k<self.n:z.put(0,self.cut(k,self.n-k))
+  38         return z
+  39     def left(self,k):
+  40         z=Bits([0]*len(self.a),self.n,self.w)
+  41         if k<self.n:z.put(k,self.cut(0,self.n-k))
+  42         return z
+  43 
+  44 def to_y(f,m,k,h):
+  45     if m==k:return f
+  46     H=1<<(m-1);R=1<<(m-1-k)
+  47     low=f.cut(0,H*h);high=f.cut(H*h,H*h)
+  48     q=high.xor(high.right((H-R)*h));rem=low.xor(q.left(R*h))
+  49     out=Bits([0]*len(f.a),f.n,f.w)
+  50     out.put(0,to_y(rem,m-1,k,h));out.put(H*h,to_y(q,m-1,k,h))
+  51     return out
+  52 
+  53 def convert(f,m,h=1):
+  54     if m<=1:return f
+  55     k=1<<((m-1).bit_length()-1);D=1<<k
+  56     upper=convert(to_y(f,m,k,h),m-k,h*D)
+  57     out=Bits([0]*len(f.a),f.n,f.w)
+  58     for i in range(1<<(m-k)):
+  59         z=convert(upper.cut(i*h*D,h*D),k,h);out.put(i*h*D,z)
+  60     return out
+  61 
+  62 def polymul(a,b):
+  63     z=0
+  64     while b:
+  65         if b&1:z^=a
+  66         a<<=1;b>>=1
+  67     return z
+  68 
+  69 def basis_polys(m):
+  70     s=[2]
+  71     for i in range(m-1):
+  72         p=s[-1];square=sum(1<<(2*j) for j in range(p.bit_length()) if p>>j&1);s.append(p^square)
+  73     z=[]
+  74     for j in range(1<<m):
+  75         p=1
+  76         for i in range(m):
+  77             if j>>i&1:p=polymul(p,s[i])
+  78         z.append(p)
+  79     return z
+  80 
+  81 def reference(a,m,h):
+  82     out=0;basis=basis_polys(m)
+  83     for lane in range(h):
+  84         f=sum(((a>>(h*j+lane))&1)<<j for j in range(1<<m));v=0
+  85         for j in range((1<<m)-1,-1,-1):
+  86             if f>>j&1:f^=basis[j];v|=1<<j
+  87         assert f==0
+  88         out|=sum(((v>>j)&1)<<(h*j+lane) for j in range(1<<m))
+  89     return out
+  90 rng=random.Random(58152);cases=0
+  91 for w in [3,7,13,32]:
+  92  for m in [2,3,4,5,6,7,8]:
+  93   for h in [1,3,9]:
+  94    for _ in range(3):
+  95     n=(1<<m)*h;a=rng.getrandbits(n)
+  96     assert convert(Bits.fromint(a,n,w),m,h).asint()==reference(a,m,h);cases+=1
+  97 stats=[]
+  98 for m in [2,4,8,16]:
+  99     Q=1<<m;w=max(4,m);a=rng.getrandbits(Q);Bits.work=0
+ 100     out=convert(Bits.fromint(a,Q,w),m)
+ 101     stats.append(dict(m=m,n=Q,w=w,instrumented_word_boundaries=Bits.work,work_over_n_log2m=Bits.work/(Q*m.bit_length()-Q)))
+ 102 print(json.dumps(dict(exact_word_array_cases=cases,scaling=stats),indent=2))

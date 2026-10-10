@@ -1,0 +1,16 @@
+"""Run eight new regression tests and all 64 previous checkpoint tests."""
+import sys,subprocess,unittest,importlib.util
+from pathlib import Path
+import _bootstrap
+ROOT=Path(__file__).resolve().parent
+if __name__=='__main__':
+ print('NEW tests:',flush=True)
+ spec=importlib.util.spec_from_file_location('four_column_test_new_gate',ROOT/'test_new_gate.py')
+ mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+ suite=unittest.defaultTestLoader.loadTestsFromModule(mod)
+ result=unittest.TextTestRunner(verbosity=2).run(suite)
+ assert result.wasSuccessful() and result.testsRun==8
+ print('PRIOR checkpoint tests:',flush=True)
+ command=[sys.executable,str(_bootstrap.TARGET/'run_all.py')]
+ subprocess.run(command,cwd=str(_bootstrap.TARGET),check=True)
+ print('FINAL SUCCESS: 8/8 new + 64/64 prior = 72/72 tests passing',flush=True)

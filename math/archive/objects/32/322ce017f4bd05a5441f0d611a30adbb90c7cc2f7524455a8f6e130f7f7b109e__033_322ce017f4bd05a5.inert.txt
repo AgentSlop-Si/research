@@ -1,0 +1,107 @@
+# Exact-width Fourier sharing: a finite topology obstruction
+
+Research pass: 8 October 2026. Current best in this pass: the ordinary 32-call H16 word.
+
+## Result
+
+No 31-call word exists in the specific neighborhood tested here: delete one call from the fixed ordinary 32-call H16 butterfly schedule and replace the interacting pair at zero, one, or two surviving positions. Internal monomial permutations are first absorbed into the pair schedule. The statement permits arbitrary nonzero scalar factors and arbitrary endpoint row/column permutations; it does **not** permit additional internal routing that changes the resulting schedule outside this neighborhood.
+
+All 210,833,760 labeled width-16 schedules in this neighborhood were screened. Only 556 have enough input-output reachability to be possible. Every one of those 556 has an explicit single-register bottleneck certificate proving that it cannot realize H16. This is a finite restricted impossibility result, not merely a failed coefficient heuristic.
+
+This is **not** a lower bound against general 31-call words, larger rewiring neighborhoods, different baseline orderings, or arbitrary Fourier algorithms. No new fast transform, improved exponent, general lower bound, or novelty claim is made. A 31-call word remains an open target outside the tested family.
+
+## Why this target is relevant
+
+H2 is the unnormalized matrix [[1,1],[1,-1]], and H16 = H2 tensor H2 tensor H2 tensor H2. Each embedded call replaces exactly two of the same 16 registers. Inputs are 16 independent arbitrary variables; no equality of input values, repeated application, cache, or special input distribution is used.
+
+The pinned exact-DFT preprint's finite-win synthesis theorem gives an asymptotic route for an exact-width word with g < b*2^(b-1) calls and an exact fixed-width shear compiler. Here b=4 and the threshold is 32. A genuine 31-call certificate would satisfy the conditional moment test at s=199/200, because 31^200 < 32^199. The associated critical exponent is log(31)/log(32), approximately 0.9908392621. The theorem's monomial, uniform preparation, packing, exact-width compilation and all-length obligations still apply. The full explanation, limitations, model, sources and distinction from ordinary blocked FFT substitution are in THEORY.md.
+
+This experiment verifies the source-derived unit upper shear using three forward H2 calls, and the exact equivalence between H2 and the source's complex kernel C over Q(i). It does not independently implement the entire source compiler or tensor scheduler. No 31-call witness was obtained, so no improved asymptotic claim is activated.
+
+## Precisely enumerated family
+
+The baseline lists stages s=0,...,log2(n)-1. In each stage, it lists i=0,...,n-1 for which bit s is zero, and calls H2 on (i, i XOR 2^s). This is a fixed sequential ordering of the ordinary parallel stages.
+
+For each original call position d:
+1. Delete that call.
+2. Choose r distinct remaining positions, with r equal to 0, 1, or 2.
+3. At every chosen position, substitute any unordered pair of distinct registers other than the pair originally at that position.
+
+Ordered pair choices give no additional structural networks; endpoint signs and diagonal factors can represent the orientation relevant to H2. The rejection proof actually allows arbitrary linear two-register maps on each selected pair, a superset of diagonal-H2-diagonal maps.
+
+If the baseline has G calls and P=binomial(n,2) possible pairs, the enumerated count for exactly r replacements is G*binomial(G-1,r)*(P-1)^r. Counts are labeled edit configurations, not a claim that all configurations are different arithmetic circuits or nonisomorphic graphs.
+
+Results by width:
+- Width 4, baseline 4 calls, candidate 3 calls: 4 + 60 + 300 = 364 configurations; none have full reachability.
+- Width 8, baseline 12 calls, candidate 11 calls: 12 + 3,564 + 481,140 = 484,716 configurations; none have full reachability.
+- Width 16, baseline 32 calls, candidate 31 calls: 32 + 118,048 + 210,715,680 = 210,833,760 configurations. Exactly 556 pass reachability, all in the two-replacement family. All 556 fail the rank-cut test.
+
+Every family was enumerated in both forward and reverse reachability directions. Counts and complete survivor lists agree. search_topologies.cpp uses only exact integer masks. There are no numerical tolerances, random assignments, coefficient bounds or solver timeouts. The width-16 two-replacement forward pass took about 6.7 seconds here; machine timings are not mathematical evidence or transform benchmarks.
+
+## The finite rank certificate
+
+Represent every new version of a physical register by a node in a temporal dependency graph. A pair call has two previous register-value nodes and two new nodes, with every possible input-to-output edge. The graph deliberately permits more behavior than an H2 call, so any structural rank obstruction is safe.
+
+For each of the 556 surviving schedules the certificate names:
+- One intermediate value node z.
+- Two physical output positions.
+- A subset S of more than eight input positions.
+
+After deleting z, no directed path remains from any input in S to either selected output. Consequently, holding the other inputs zero, all dependence of those two outputs on S factors through the single scalar z. That 2-by-|S| submatrix has rank at most one for every choice of linear gate coefficients.
+
+For any two distinct H16 rows, their entrywise ratio is a nontrivial Walsh character: exactly eight entries are +1 and eight are -1. Any set of more than eight columns contains both ratio values, so the corresponding two-row restriction has rank two. Arbitrary nonzero row/column scaling and arbitrary row/column permutations preserve this contradiction. This explicitly handles endpoint monomials without enumerating their permutations.
+
+The 556 witnesses use input-set sizes 10 (388 witnesses), 12 (128) and 14 (40). One representative deletes original position 8, replaces remaining positions 17 and 20 by pairs (1,12) and (5,10), and cuts temporal node 50. Outputs 1 and 9 are then separated from the 12 inputs 0 through 7 and 12 through 15. Every certificate is included.
+
+rank_cuts.py finds these certificates by removing a node during forward mask propagation. verify.py independently constructs adjacency lists and checks each specified input's reachability with graph traversal; it does not import either search implementation. It also checks the target row-ratio property for every possible row pair.
+
+## Exact positive controls and operation accounting
+
+The emitted words baseline_4.json, baseline_8.json and baseline_16.json are replayed on full rational coefficient vectors. Their full operators equal H4, H8 and H16 respectively, on exactly the declared physical registers with no clean or dirty auxiliary register.
+
+The baseline costs are:
+- H4: 4 pair-kernel calls, 8 scalar additions/subtractions, 16 logical operand reads, 8 scalar writes.
+- H8: 12 calls, 24 additions/subtractions, 48 reads, 24 writes.
+- H16: 32 calls, 64 additions/subtractions, 128 reads, 64 writes.
+
+These are unnormalized targets, with zero scalar multiplications or explicit permutations in the listed baseline. Logical reads charge both operands of each scalar addition; a native paired kernel may reuse its two loaded inputs. Calls are simultaneous two-register primitives, so the node versions used by the verifier are bookkeeping, not extra live registers. Instruction fetches and addresses are additional. With indexed access, the H16 baseline has 32 kernel instruction records; addressing uses O(log n)-bit indices. No fixed-tape routing or hardware speedup is inferred.
+
+The verified three-H2 upper shear uses 3 calls, 6 additions/subtractions, 5 nonidentity scalar multiplications, 17 logical reads and 11 writes. Its rational diagonals are explicit in unit_shear.json. Thus a kernel-count benefit must not be mislabeled as the same number of scalar arithmetic operations.
+
+A hypothetical improved word must list all scalings and routing. A full diagonal slot costs up to n scalar multiplications; an explicitly materialized permutation requires n reads and n writes. In the cited finite-win recurrence, finitely many such slots contribute linear work, rather than being free runtime operations. The search here rules out all scalar choices structurally, so there is no hidden scalar-preparation program or uncounted improved candidate.
+
+Search, certificate generation, descriptor construction and verification are input-independent preparation work. They are included as reproducible research, not advertised as free online work. The baseline schedule can be generated in O(n log n) time. Retaining the enormous search as precomputation provides no online saving because it found no cheaper word. Exact arithmetic identities do not establish floating-point stability or fixed-bit-cost behavior.
+
+## Files and verification
+
+- search_topologies.cpp: bounded exhaustive topology enumerator.
+- rank_cuts.py: deterministic rank-certificate finder.
+- generate_controls.py: exact baseline and source-derived shear words.
+- verify.py: independent rational word replayer and graph certificate verifier.
+- results/: complete survivor lists, all 556 rank certificates, summaries, baseline words and validation log.
+- THEORY.md: recurrence gate and its requirements.
+- sources/: pinned upstream source reference metadata and hashes. Full upstream paper sections are not redistributed.
+- SHA256SUMS.json: final artifact manifest, excluding the manifest itself.
+
+Python 3.11+ standard library and a C++17 compiler suffice. No package installation is needed. To reproduce from this directory:
+
+    mkdir -p results
+    g++ -std=c++17 -O3 -Wall -Wextra search_topologies.cpp -o fft_search_topologies
+    for n in 4 8 16; do
+      for r in 0 1 2; do
+        fft_search_topologies "$n" "$r" > "results/topology_${n}_${r}.json"
+        fft_search_topologies "$n" "$r" reverse > "results/topology_${n}_${r}_reverse.json"
+      done
+    done
+    python3 rank_cuts.py
+    python3 generate_controls.py
+    python3 verify.py
+
+Verification checks the exact count formula, equality of forward/reverse survivor multisets, full reachability of every survivor, one valid cut for every survivor, every target row-ratio bound, all three baseline matrices, the rational shear, H2-to-C over Q(i), and the exact conditional moment inequality. Eight deliberately corrupted words/certificates are rejected. These are reproducible exact computations, not a proof-assistant formalization or an independent reimplementation of the entire width-16 exhaustive enumerator.
+
+## Source and scope
+
+The matrix and shear construction, finite-win criterion and conditional amplification are taken from the pinned preprint An explicit power saving for the exact discrete Fourier transform:
+https://github.com/openai/math/tree/fd4aeeb2ee4fc729c18d98444fed42fd0529eeeb/preprints/An-explicit-power-saving-for-the-exact-discrete-Fourier-transform-September-25-2026
+
+This pass does not replace the earlier synthetic two-round scalar experiment with a supposed improved FFT. It changes to an exact-width tensor-word target because that target has a specified asymptotic acceptance gate. The present contribution is a bounded search and explicit obstruction certificates. Existing general finite-win constructions remain prior work; no publication, priority or novelty claim is made.

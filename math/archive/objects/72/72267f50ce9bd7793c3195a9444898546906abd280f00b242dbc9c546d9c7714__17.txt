@@ -1,0 +1,45 @@
+1: """Whole project cross-check and deterministic audit JSON generation."""
+2: from __future__ import annotations
+3: import json,random
+4: from ordering_dp import optimal_orders
+5: from analytic_certificate import run as analytic
+6: from unitary_control import run as unitary
+7: from exact_scan_macro import fft_via_mixed_scan_macros,dft_matrix,P
+8: from reference_ntt import radix2_ntt
+9: 
+10: def main():
+11:     report={'model':'Fresh exact full NTT, two supported primes; no cached input or threads.',
+12:             'endpoint_orders':[optimal_orders(n) for n in (2,4,8)],
+13:             'analytic_certificates':analytic(),
+14:             'unitary_controls':unitary(),
+15:             'whole_basis_checked':0,'fresh_random_checked':0,'root_prime':P,
+16:             'macro_execution':[]}
+17:     for n in (2,4,8,16,32,64,128):
+18:         matrix=dft_matrix(n)
+19:         for j in range(n):
+20:             x=[int(i==j) for i in range(n)]
+21:             y,info=fft_via_mixed_scan_macros(x)
+22:             assert y==[row[j] for row in matrix]
+23:             report['whole_basis_checked']+=1
+24:         seed=random.Random(n+20261009)
+25:         for _ in range(10):
+26:             x=[seed.randrange(P) for _ in range(n)]
+27:             y,info=fft_via_mixed_scan_macros(x)
+28:             z,_=radix2_ntt(x)
+29:             assert y==z
+30:             report['fresh_random_checked']+=1
+31:         report['macro_execution'].append({'n':n,'stages':info['macro_stages'],
+32:             'scan_additions_upper':info['scan_additions_upper'],
+33:             'scan_multiplications_upper':info['scan_multiplications_upper'],
+34:             'twiddle_multiplications_upper':info['twiddle_multiplications_upper'],
+35:             'permutation_index_steps':info['permutation_index_steps']})
+36:     with open('audit_results.json','w') as f:json.dump(report,f,indent=2)
+37:     return report
+38: if __name__=='__main__':
+39:     r=main()
+40:     print('EXACT_AUDIT_OK')
+41:     print('endpoint qsep ranks',[(e['n'],e['optimum']) for e in r['endpoint_orders']])
+42:     print('independent 3x5 rank checks',sum(x['rank3_3x5_matrices'] for x in r['analytic_certificates']['primes']))
+43:     print('independent Fourier basis columns',r['whole_basis_checked'])
+44:     print('fresh dense random inputs',r['fresh_random_checked'])
+45:     print('unitary controls',len(r['unitary_controls']))

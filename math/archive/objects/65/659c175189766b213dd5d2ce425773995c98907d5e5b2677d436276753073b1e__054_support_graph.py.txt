@@ -1,0 +1,223 @@
+"""Support geometry, radix-2 dependency cones, and cyclic-coset spectra.
+
+All identities are classical Fourier algebra. Numerical execution is float64;
+the graph counts describe a specified radix-2 graph, not an FFT lower bound.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import gcd, isfinite
+from numbers import Integral
+from typing import Iterable, Mapping
+
+import numpy as np
+from scipy import fft
+
+from baseline_phase4.phase import phases_tiled
+
+
+def validate_n(n: int) -> int:
+    if isinstance(n, bool) or not isinstance(n, Integral) or not 1 <= n < 2**31:
+        raise ValueError("n must be an integer in [1, 2**31)")
+    return int(n)
+
+
+def normalize_changes(n: int, changes) -> dict[int, float]:
+    """Read all supplied metadata, coalesce repeated indices, drop exact zeros.
+
+    No tolerance-based pruning and no implicit scan of an unknown dense input.
+    """
+    n = validate_n(n)
+    items = changes.items() if isinstance(changes, Mapping) else changes
+    result = {}
+    for p, delta in items:
+        if isinstance(p, bool) or not isinstance(p, Integral) or not 0 <= p < n:
+            raise ValueError("edit index must be an integer in [0,n)")
+        if np.iscomplexobj(delta):
+            raise ValueError("this real-FFT interface accepts real changes only")
+        delta = float(delta)
+        if not isfinite(delta):
+            raise ValueError("nonfinite change")
+        value = result.get(int(p), 0.0) + delta
+        if not isfinite(value):
+            raise ValueError("coalesced change overflows float64")
+        if value == 0.0:
+            result.pop(int(p), None)
+        else:
+            result[int(p)] = value
+    return result
+
+
+@dataclass(frozen=True)
+class SupportProfile:
+    n: int
+    k: int
+    occupied_residues: tuple[int, ...]
+    dirty_output_cells: int
+    full_output_cells: int
+
+
+def support_profile(n: int, positions: Iterable[int]) -> SupportProfile:
+    """O(k log n) metadata work; W(S)=sum_d (n/2**d)|S mod 2**d|.
+
+    Depth zero is the whole transform; depth log2(n) contains input leaves.
+    Leaves are excluded from the work sum. Unary nodes still write outputs.
+    """
+    n = validate_n(n)
+    if n & (n - 1):
+        raise ValueError("the dependency certificate requires a power of two")
+    ps = set()
+    for p in positions:
+        if not isinstance(p, Integral) or isinstance(p, bool) or not 0 <= p < n:
+            raise ValueError("invalid support position")
+        ps.add(int(p))
+    levels = n.bit_length() - 1
+    occupied = tuple(len({p % (1 << d) for p in ps}) for d in range(levels + 1))
+    work = sum((n >> d) * occupied[d] for d in range(levels))
+    return SupportProfile(n, len(ps), occupied, work, n * levels)
+
+
+def coset_parameters(n: int, positions: Iterable[int]) -> tuple[int, int, int]:
+    """Largest divisor g of n for which all positions equal r modulo g."""
+    n = validate_n(n)
+    ps = list(positions)
+    if not ps:
+        return n, 0, 1
+    for p in ps:
+        if not isinstance(p, Integral) or isinstance(p, bool) or not 0 <= p < n:
+            raise ValueError("invalid support position")
+    g = n
+    first = int(ps[0])
+    for p in ps[1:]:
+        g = gcd(g, abs(int(p) - first))
+        if g == 1:
+            break
+    return g, first % g, n // g
+
+
+@dataclass(frozen=True)
+class CosetSpectrum:
+    """A compressed correction: short DFT plus a phase and repeat operator.
+
+    If delta[r+g*t]=z[t], then DFT_n(delta)[q] =
+    exp(-2*pi*i*r*q/n) * DFT_(n/g)(z)[q mod (n/g)].
+    Construction O(k+L log L), stored numeric payload O(L), L=n/g.
+    A requested dense rFFT still takes Theta(n) output work.
+    """
+    n: int
+    stride: int
+    residue: int
+    short_spectrum: np.ndarray
+    nonzero_changes: int
+
+    @classmethod
+    def from_changes(cls, n: int, changes) -> "CosetSpectrum":
+        delta = normalize_changes(n, changes)
+        g, r, length = coset_parameters(n, delta)
+        reduced = np.zeros(length, dtype=np.float64)
+        for p, value in delta.items():
+            reduced[(p - r) // g] = value
+        short = fft.fft(reduced)
+        short.flags.writeable = False
+        return cls(int(n), g, r, short, len(delta))
+
+    @property
+    def reduced_length(self) -> int:
+        return self.short_spectrum.size
+
+    @property
+    def numeric_bytes(self) -> int:
+        return self.short_spectrum.nbytes
+
+    def frequencies(self, indices: Iterable[int]) -> np.ndarray:
+        qs = list(indices)
+        if any(isinstance(q, bool) or not isinstance(q, Integral) or not 0 <= q < self.n for q in qs):
+            raise ValueError("frequency must be an integer in [0,n)")
+        qs = np.asarray(qs, dtype=np.int64)
+        phase = np.exp((-2j * np.pi / self.n) * ((qs * self.residue) % self.n))
+        return self.short_spectrum[qs % self.reduced_length] * phase
+
+    def materialize(self, *, real_half: bool = True) -> np.ndarray:
+        count = self.n // 2 + 1 if real_half else self.n
+        length = self.reduced_length
+        if length >= count:
+            out = self.short_spectrum[:count].copy()
+        else:
+            # np.resize concatenates a Python list of count/length arrays.
+            # Broadcast the periodic lift so even a length-1 quotient uses
+            # one array allocation and no per-period Python scheduling.
+            blocks = (count + length - 1) // length
+            packed = np.empty((blocks, length), dtype=np.complex128)
+            packed[:] = self.short_spectrum
+            out = packed.ravel()[:count]
+        if self.residue:
+            out *= phases_tiled(self.n, self.residue, count=count)
+        out[0] = out[0].real
+        if self.n % 2 == 0:
+            out[self.n // 2] = out[self.n // 2].real
+        return out
+
+
+def direct_update(parent: np.ndarray, n: int, changes: Mapping[int, float], out=None):
+    """Explicit spectrum update; no hidden phase cache. O(n*k) work."""
+    if out is None:
+        out = np.empty_like(parent)
+    np.copyto(out, parent)
+    for position, value in changes.items():
+        phase = phases_tiled(n, position)
+        phase *= value
+        out += phase
+    out[0] = out[0].real
+    if n % 2 == 0:
+        out[-1] = out[-1].real
+    return out
+
+
+def quotient_update(parent: np.ndarray, n: int, changes, out=None):
+    """Reuse a cyclic-coset quotient; g=1 is allowed but saves no FFT work."""
+    correction = CosetSpectrum.from_changes(n, changes)
+    delta = correction.materialize()
+    if out is None:
+        out = np.empty_like(parent)
+    np.add(parent, delta, out=out)
+    return out
+
+
+def pruned_dft(n: int, changes) -> np.ndarray:
+    """Diagnostic zero-pruned radix-2 graph, with native size<=16 leaves.
+
+    Returns all n complex frequencies, not rFFT half output. Python recursion
+    makes this a correctness/counting reference, not a production backend.
+    """
+    delta = normalize_changes(n, changes)
+    if n & (n - 1):
+        raise ValueError("power-of-two length required")
+
+    def visit(length, values):
+        if not values:
+            return None
+        if length <= 16:
+            dense = np.zeros(length)
+            for p, value in values.items():
+                dense[p] = value
+            return fft.fft(dense)
+        even = {p // 2: v for p, v in values.items() if p % 2 == 0}
+        odd = {p // 2: v for p, v in values.items() if p % 2 == 1}
+        e = visit(length // 2, even)
+        o = visit(length // 2, odd)
+        out = np.empty(length, dtype=np.complex128)
+        if o is None:
+            out[:length // 2] = e
+            out[length // 2:] = e
+        else:
+            o *= phases_tiled(length, 1, count=length // 2)
+            if e is None:
+                out[:length // 2] = o
+                out[length // 2:] = -o
+            else:
+                np.add(e, o, out=out[:length // 2])
+                np.subtract(e, o, out=out[length // 2:])
+        return out
+
+    result = visit(n, delta)
+    return np.zeros(n, dtype=np.complex128) if result is None else result

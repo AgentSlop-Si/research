@@ -1,0 +1,75 @@
+"""Exact positive control: products of Green sums ESCAPE the additive rank obstruction.
+
+This is NOT a Fourier transform. Its covariance error is computed explicitly
+and is typically full rank. This experiment identifies a still-open model.
+"""
+import json
+import random
+from green_sum_cert import (balanced_separation_witness,field_for_root,
+     make_tridiagonal,green_submatrix,add_matrices,rank_mod)
+
+
+def dense_product_mod(a,b,ell):
+    n=len(a)
+    out=[[0]*n for _ in range(n)]
+    for i in range(n):
+        for k in range(n):
+            x=a[i][k]
+            if x:
+                for j in range(n):
+                    out[i][j]=(out[i][j]+x*b[k][j])%ell
+    return out
+
+
+def sample_dense_green_sum(orders,rng,ell):
+    n=len(orders[0]);ids=list(range(n))
+    total=[[0]*n for _ in ids]
+    for order in orders:
+        diag,lo,up=make_tridiagonal(n,ell,rng)
+        left=[rng.randrange(1,ell) for _ in ids]
+        right=[rng.randrange(1,ell) for _ in ids]
+        M=green_submatrix(order,diag,lo,up,ids,ids,ell,left,right)
+        total=add_matrices(total,M,ell)
+    return total
+
+
+def cut(matrix,rows,cols):
+    return [[matrix[i][j] for j in cols] for i in rows]
+
+
+def full_covariance_rank(M,omega,ell):
+    """Z(e_k)=e_(k+1), D(j)=omega^j; Fourier obeys FZ=DF."""
+    n=len(M)
+    powers=[pow(omega,j,ell) for j in range(n)]
+    defect=[[(M[j][(k+1)%n]-powers[j]*M[j][k])%ell for k in range(n)] for j in range(n)]
+    return rank_mod(defect,ell)
+
+
+def product_escape_audit(n=64,seed=1709):
+    rng=random.Random(seed)
+    ell,omega=field_for_root(n,at_least=1_000_000)
+    orders=[]
+    for _ in range(4):
+        o=list(range(n));rng.shuffle(o);orders.append(o)
+    R,C=balanced_separation_witness(orders[:2])
+    A=sample_dense_green_sum(orders[:2],rng,ell)
+    B=sample_dense_green_sum(orders[2:],rng,ell)
+    AB=dense_product_mod(A,B,ell)
+    additive_rank=rank_mod(cut(A,R,C),ell)
+    product_rank=rank_mod(cut(AB,R,C),ell)
+    assert additive_rank<=2
+    assert product_rank>2
+    covrank=full_covariance_rank(AB,omega,ell)
+    assert covrank!=0
+    return {
+        'n':n,'field_prime':ell,'balanced_minor_size':len(R),
+        'one_green_sum_minor_rank':additive_rank,
+        'two_sums_product_minor_rank':product_rank,
+        'Fourier_covariance_defect_rank_of_product':covrank,
+        'arithmetic_apply_cost':'4 O(N) tridiagonal solves plus O(N) diagonal and vector addition',
+        'interpretation':'Product escapes the additive rank barrier, but is not phase-coherent Fourier.'
+    }
+
+
+if __name__=='__main__':
+    print(json.dumps([product_escape_audit(32),product_escape_audit(64)],indent=2))

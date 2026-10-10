@@ -1,0 +1,154 @@
+1: """Audit-authored exact periodic baseline. No uploaded code is imported.
+2: 
+3: Fits componentwise lower medians with deterministic median-of-medians selection.
+4: Returns exact Gaussian-integer unnormalized Fourier baseline and residual.
+5: No claim of novelty, full FFT computation, or numerical speed advantage.
+6: """
+7: from math import gcd
+8: 
+9: def select(a, k):
+10:     if not 0 <= k < len(a):
+11:         raise ValueError('invalid selection')
+12:     if len(a) <= 5:
+13:         return sorted(a)[k]
+14:     mids = []
+15:     for start in range(0, len(a), 5):
+16:         group = sorted(a[start:start+5])
+17:         mids.append(group[len(group)//2])
+18:     pivot = select(mids, len(mids)//2)
+19:     low, equal, high = [], 0, []
+20:     for v in a:
+21:         if v < pivot: low.append(v)
+22:         elif v > pivot: high.append(v)
+23:         else: equal += 1
+24:     if k < len(low): return select(low, k)
+25:     if k < len(low) + equal: return pivot
+26:     return select(high, k-len(low)-equal)
+27: 
+28: def periodic_baseline(coords):
+29:     if not coords or any(len(v)!=2 or any(type(z)is not int for z in v) for v in coords):
+30:         raise ValueError('nonempty Gaussian-integer input required')
+31:     N=len(coords); q=gcd(N,4); n=N//q
+32:     clusters=[[[] for _ in range(2)] for _ in range(q)]
+33:     sums=[[0,0] for _ in range(q)]
+34:     for j,pair in enumerate(coords):
+35:         for c,z in enumerate(pair):
+36:             clusters[j%q][c].append(z);sums[j%q][c]+=z
+37:     med=[tuple(select(clusters[s][c],(n-1)//2) for c in range(2)) for s in range(q)]
+38:     residual=[tuple(z-med[j%q][c] for c,z in enumerate(pair)) for j,pair in enumerate(coords)]
+39:     roots=((1,0),(0,-1),(-1,0),(0,1))
+40:     def spectrum_short(coordinates):
+41:         out={}
+42:         for t in range(q):
+43:             re=im=0
+44:             for s,(a,b) in enumerate(coordinates):
+45:                 u,v=roots[(4*s*t//q)%4]
+46:                 re+=a*u-b*v;im+=a*v+b*u
+47:             out[t*n]=(re,im)
+48:         return out
+49:     sparse_baseline=spectrum_short([(n*a,n*b) for a,b in med])
+50:     baseline=[sparse_baseline.get(k,(0,0)) for k in range(N)]
+51:     return {'N':N,'q':q,'class_medians':med,'residual':residual,
+52:             'residual_mass':sum(abs(z) for p in residual for z in p),
+53:             'input_mass':sum(abs(z) for p in coords for z in p),
+54:             'unnormalized_baseline':baseline,'exact_corner_spectrum':spectrum_short(sums)}
+55: 
+56: def combine_decoded_mean(fit, integer_outputs=None, denominator=1, *, failed=False):
+57:     """Add decoded residual sample mean, preserving exact raw quarter-root bins.
+58: 
+59:     Decoder contract: integer_outputs[k]/denominator approximates F(residual)[k]
+60:     divided by fit['residual_mass']. This adapter does not perform sampling or
+61:     establish decoder accuracy. Return pairs/denominator are unnormalized Fhat.
+62:     A flagged sampler failure is never treated as an accuracy-certified result.
+63:     """
+64:     N=fit['N'];mass=fit['residual_mass']
+65:     if mass==0:
+66:         return {'integer_outputs':list(fit['unnormalized_baseline']),
+67:                 'denominator':1,'exact':True,'failed':False}
+68:     if failed:
+69:         return {'integer_outputs':[(0,0)]*N,'denominator':1,'exact':False,'failed':True}
+70:     if type(denominator)is not int or denominator<=0 or integer_outputs is None or len(integer_outputs)!=N:
+71:         raise ValueError('valid N-entry rational decoder output required')
+72:     out=[]
+73:     for (u,v),(a,b) in zip(fit['unnormalized_baseline'],integer_outputs):
+74:         if type(a)is not int or type(b)is not int:
+75:             raise ValueError('integer decoder numerators required')
+76:         out.append((denominator*u+mass*a,denominator*v+mass*b))
+77:     for k,(a,b) in fit['exact_corner_spectrum'].items():
+78:         out[k]=(denominator*a,denominator*b)
+79:     return {'integer_outputs':out,'denominator':denominator,'exact':False,'failed':False}
+80: 
+81: if __name__ == '__main__':
+82:     import itertools,random,json
+83:     from pathlib import Path
+84:     selection_cases=0
+85:     for n in range(1,8):
+86:         for a in itertools.product((-1,0,1),repeat=n):
+87:             for k in {0,n//2,n-1}:
+88:                 assert select(list(a),k)==sorted(a)[k];selection_cases+=1
+89:     rng=random.Random(918171);fit_cases=0
+90:     for N in range(1,101):
+91:         for _ in range(10):
+92:             x=[(rng.randint(-200,200),rng.randint(-200,200)) for _ in range(N)]
+93:             r=periodic_baseline(x);n=N//r['q']
+94:             assert r['residual_mass']<=r['input_mass']
+95:             for s in range(r['q']):
+96:                 for c in range(2):
+97:                     a=sorted(x[j][c] for j in range(s,N,r['q']))
+98:                     assert r['class_medians'][s][c]==a[(n-1)//2]
+99:             fit_cases+=1
+100:     examples={
+101:         'near_constant_21':[(100,0)]*20+[(101,0)],
+102:         'outlier_9':[(5,0)]*8+[(100,0)],
+103:         'no_improvement_8':[(1,0)]*4+[(-1,0)]*4,
+104:         'exact_periodic_12':[(3,4),(-2,1),(7,-3),(0,9)]*3}
+105:     example_results={name:{k:v for k,v in periodic_baseline(x).items() if k in ('N','q','input_mass','residual_mass','class_medians')} for name,x in examples.items()}
+106:     assert example_results['near_constant_21']['residual_mass']==1
+107:     assert example_results['outlier_9']['residual_mass']==95
+108:     assert example_results['no_improvement_8']['residual_mass']==8
+109:     assert example_results['exact_periodic_12']['residual_mass']==0
+110:     # Independent exact DFT checks over finite fields, rather than rounded roots.
+111:     def prime(p):
+112:         return p>=2 and all(p%d for d in range(2,int(p**.5)+1))
+113:     modular_cases=0
+114:     for N in range(1,21):
+115:         p=N+1
+116:         while not prime(p): p+=N
+117:         def exact_order(a):
+118:             return pow(a,N,p)==1 and all(pow(a,d,p)!=1 for d in range(1,N) if N%d==0)
+119:         w=next(a for a in range(1,p) if exact_order(a))
+120:         # Gaussian arithmetic represented as pairs, so no square root of -1 is needed.
+121:         def mul(a,b): return ((a[0]*b[0]-a[1]*b[1])%p,(a[0]*b[1]+a[1]*b[0])%p)
+122:         # Validate real baseline using a separate Nth-root transform. At q<=2, roots
+123:         # are real. For q=4, choose the Gaussian embedding i=w**(-N/4).
+124:         i=pow(w,3*N//4,p) if N%4==0 else 0
+125:         x=[(rng.randint(-10,10),0) for _ in range(N)];r=periodic_baseline(x)
+126:         h=[r['class_medians'][j%r['q']][0] for j in range(N)]
+127:         for k,(a,b) in enumerate(r['unnormalized_baseline']):
+128:             direct=sum(z*pow(w,j*k,p) for j,z in enumerate(h))%p
+129:             assert direct==(a+b*i)%p
+130:         modular_cases+=1
+131:     adapter_cases=0
+132:     from fractions import Fraction
+133:     for x in examples.values():
+134:         fit=periodic_baseline(x);N=len(x)
+135:         numerators=[(j-2,3-j) for j in range(N)];D=7
+136:         z=combine_decoded_mean(fit,numerators,D)
+137:         for k,(a,b) in enumerate(z['integer_outputs']):
+138:             for c,v in enumerate((a,b)):
+139:                 if fit['residual_mass']==0:
+140:                     expected=Fraction(fit['unnormalized_baseline'][k][c])
+141:                 elif k in fit['exact_corner_spectrum']:
+142:                     expected=Fraction(fit['exact_corner_spectrum'][k][c])
+143:                 else:
+144:                     expected=Fraction(fit['unnormalized_baseline'][k][c])+Fraction(fit['residual_mass']*numerators[k][c],D)
+145:                 assert Fraction(v,z['denominator'])==expected
+146:         if fit['residual_mass']:
+147:             assert combine_decoded_mean(fit,failed=True)['failed']
+148:         else:
+149:             assert z['exact']
+150:         adapter_cases+=1
+151:     out={'status':'PASS','adapter_cases':adapter_cases,'selection_cases':selection_cases,'fit_cases':fit_cases,'modular_dft_lengths_checked':modular_cases,'examples':example_results,
+152:          'algorithm':'deterministic median-of-medians; only groups of <=5 are sorted',
+153:          'scope':'exact baseline and residual only; no approximate decoder and no uploaded code executed'}
+154:     Path(__file__).with_name('median_results.json').write_text(json.dumps(out,indent=2));print(json.dumps(out,indent=2))

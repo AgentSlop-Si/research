@@ -1,0 +1,463 @@
+   1 #!/usr/bin/env python3
+   2 """Independent exact review of route lifting, bank folding, and the N16 gate.
+   3 
+   4 Standard library only. No constructor or uploaded code is imported or run.
+   5 """
+   6 import argparse
+   7 import json
+   8 from pathlib import Path
+   9 import random
+  10 
+  11 P = 998244353
+  12 LABELS = [(axis, c, sign) for axis in ('H', 'V')
+  13           for c in (0, 1) for sign in (-1, 1)]
+  14 
+  15 
+  16 def inv(x):
+  17     assert x % P
+  18     return pow(x, -1, P)
+  19 
+  20 
+  21 def eye(n):
+  22     return [[int(i == j) for j in range(n)] for i in range(n)]
+  23 
+  24 
+  25 def mul(a, b):
+  26     bt = list(zip(*b))
+  27     return [[sum(x*y for x, y in zip(row, col)) % P for col in bt] for row in a]
+  28 
+  29 
+  30 def sub(a, b):
+  31     return [[(x-y) % P for x, y in zip(ar, br)] for ar, br in zip(a, b)]
+  32 
+  33 
+  34 def scale(a, t):
+  35     return [[x*t % P for x in row] for row in a]
+  36 
+  37 
+  38 def determinant(a):
+  39     b = [row[:] for row in a]
+  40     n = len(b)
+  41     out = 1
+  42     for c in range(n):
+  43         pivot = next((r for r in range(c, n) if b[r][c]), None)
+  44         if pivot is None:
+  45             return 0
+  46         if pivot != c:
+  47             b[pivot], b[c] = b[c], b[pivot]
+  48             out = -out
+  49         t = b[c][c]
+  50         out = out*t % P
+  51         it = inv(t)
+  52         for r in range(c+1, n):
+  53             q = b[r][c]*it % P
+  54             if q:
+  55                 b[r] = [(x-q*y) % P for x, y in zip(b[r], b[c])]
+  56     return out % P
+  57 
+  58 
+  59 def pivots(a):
+  60     b = [row[:] for row in a]
+  61     row = 0
+  62     answer = []
+  63     for c in range(len(b[0])):
+  64         pivot = next((r for r in range(row, len(b)) if b[r][c]), None)
+  65         if pivot is None:
+  66             continue
+  67         b[pivot], b[row] = b[row], b[pivot]
+  68         b[row] = [x*inv(b[row][c]) % P for x in b[row]]
+  69         for r in range(row+1, len(b)):
+  70             q = b[r][c]
+  71             if q:
+  72                 b[r] = [(x-q*y) % P for x, y in zip(b[r], b[row])]
+  73         answer.append(c)
+  74         row += 1
+  75         if row == len(b):
+  76             break
+  77     return answer
+  78 
+  79 
+  80 def solve(a, rhs):
+  81     n = len(a)
+  82     b = [row[:] + [v] for row, v in zip(a, rhs)]
+  83     for c in range(n):
+  84         pivot = next(r for r in range(c, n) if b[r][c])
+  85         b[pivot], b[c] = b[c], b[pivot]
+  86         t = inv(b[c][c])
+  87         b[c] = [v*t % P for v in b[c]]
+  88         for r in range(n):
+  89             if r != c:
+  90                 t = b[r][c]
+  91                 b[r] = [(x-t*y) % P for x, y in zip(b[r], b[c])]
+  92     return [row[-1] for row in b]
+  93 
+  94 
+  95 def cover(a, b, label):
+  96     axis, c, sign = label
+  97     out = []
+  98     for x in range(a):
+  99         for y in range(b):
+ 100             if axis == 'H':
+ 101                 out.append(((x+sign*(2*y+c)) % a)*b+y)
+ 102             else:
+ 103                 out.append(x*b+(y+sign*(2*x+c)) % b)
+ 104     return out
+ 105 
+ 106 
+ 107 def splice(p):
+ 108     seen = set()
+ 109     reps = []
+ 110     for v in range(len(p)):
+ 111         if v in seen:
+ 112             continue
+ 113         reps.append(v)
+ 114         w = v
+ 115         while w not in seen:
+ 116             seen.add(w)
+ 117             w = p[w]
+ 118         assert w == v
+ 119     q = p[:]
+ 120     if len(reps) > 1:
+ 121         for j, v in enumerate(reps):
+ 122             q[v] = p[reps[(j+1) % len(reps)]]
+ 123     return q, reps
+ 124 
+ 125 
+ 126 def green(p, weights):
+ 127     n = len(p)
+ 128     product = 1
+ 129     for w in weights:
+ 130         product = product*w % P
+ 131     guard = (1-product) % P
+ 132     assert guard
+ 133     out = [[0]*n for _ in range(n)]
+ 134     for source in range(n):
+ 135         dest, value = source, inv(guard)
+ 136         visited = set()
+ 137         for _ in range(n):
+ 138             assert dest not in visited
+ 139             visited.add(dest)
+ 140             out[dest][source] = value
+ 141             dest = p[dest]
+ 142             value = value*weights[dest] % P
+ 143         assert dest == source
+ 144     # Full inverse test by sparse left multiplication.
+ 145     for source, dest in enumerate(p):
+ 146         for c in range(n):
+ 147             assert (out[dest][c]-weights[dest]*out[source][c]) % P == int(dest == c)
+ 148     return out
+ 149 
+ 150 
+ 151 def root(n):
+ 152     assert (P-1) % n == 0
+ 153     z = pow(3, (P-1)//n, P)
+ 154     assert pow(z, n, P) == 1
+ 155     if n > 1:
+ 156         assert pow(z, n//2, P) == P-1
+ 157     return z
+ 158 
+ 159 
+ 160 def fourier(n):
+ 161     z = root(n)
+ 162     return [[pow(z, i*j, P) for j in range(n)] for i in range(n)]
+ 163 
+ 164 
+ 165 def bank(a, b, active):
+ 166     f = fourier(b)
+ 167     out = [[0]*(a*b) for _ in range(a*b)]
+ 168     for x in range(a):
+ 169         block = f if x in active else eye(b)
+ 170         for i in range(b):
+ 171             out[x*b+i][x*b:x*b+b] = block[i]
+ 172     return out
+ 173 
+ 174 
+ 175 def projection(a, b):
+ 176     return [((v//(2*b)) % a)*b+(v % (2*b)) % b for v in range(4*a*b)]
+ 177 
+ 178 
+ 179 def qleft(a, pi, n):
+ 180     out = [[0]*len(a[0]) for _ in range(n)]
+ 181     for v, row in enumerate(a):
+ 182         out[pi[v]] = [(x+y) % P for x, y in zip(out[pi[v]], row)]
+ 183     return out
+ 184 
+ 185 
+ 186 def qright(a, pi):
+ 187     return [[row[v] for v in pi] for row in a]
+ 188 
+ 189 
+ 190 def route_tests():
+ 191     rows = []
+ 192     dense = []
+ 193     for rectangular in (False, True):
+ 194         for r in range(1, 6):
+ 195             m = 1 << r
+ 196             a, b = ((2*m, m) if rectangular else (m, m))
+ 197             n = a*b
+ 198             pi = projection(a, b)
+ 199             support_sum, rank_bound_sum = 0, 0
+ 200             for label in LABELS:
+ 201                 ts, tl = cover(a, b, label), cover(2*a, 2*b, label)
+ 202                 ps, cs = splice(ts)
+ 203                 pl, cl = splice(tl)
+ 204                 assert all(pi[tl[v]] == ts[pi[v]] for v in range(4*n))
+ 205                 ends = [(pi[pl[v]], ps[pi[v]]) for v in range(4*n)]
+ 206                 support = sum(x != y for x, y in ends)
+ 207                 support_bound = len(cl)+4*len(cs)
+ 208                 rank_bound = len(cl)+len(cs)-2
+ 209                 assert support <= support_bound
+ 210                 support_sum += support_bound
+ 211                 rank_bound_sum += rank_bound
+ 212                 if n <= 16:
+ 213                     d = [[0]*(4*n) for _ in range(n)]
+ 214                     for v, (x, y) in enumerate(ends):
+ 215                         d[x][v] = (d[x][v]+1) % P
+ 216                         d[y][v] = (d[y][v]-1) % P
+ 217                     actual_rank = len(pivots(d))
+ 218                     assert actual_rank <= min(n-1, rank_bound)
+ 219                     tau = inv(3)
+ 220                     gs = green(ps, [tau]*n)
+ 221                     gl = green(pl, [tau]*(4*n))
+ 222                     lhs = sub(qleft(gl, pi, n), qright(gs, pi))
+ 223                     rhs = scale(mul(mul(gs, d), gl), tau)
+ 224                     assert lhs == rhs
+ 225                     ws = [v+2 for v in range(n)]
+ 226                     wl = [ws[v] for v in pi]
+ 227                     gws = green(ps, ws)
+ 228                     gwl = green(pl, wl)
+ 229                     weighted_d = [[ws[i]*x % P for x in row] for i, row in enumerate(d)]
+ 230                     assert sub(qleft(gwl, pi, n), qright(gws, pi)) == mul(mul(gws, weighted_d), gwl)
+ 231                     dense.append({'N':n,'label':label,'defect_support':support,
+ 232                                   'defect_rank':actual_rank,'rank_bound':rank_bound,
+ 233                                   'scalar_resolvent_full_entries':n*4*n,
+ 234                                   'weighted_resolvent_full_entries':n*4*n})
+ 235             if rectangular:
+ 236                 assert support_sum == 12*m*(3*r+8)
+ 237                 assert rank_bound_sum == 18*m*(r+3)-16
+ 238             else:
+ 239                 assert support_sum == 8*m*(3*r+7)
+ 240                 assert rank_bound_sum == 4*m*(3*r+8)-16
+ 241             rows.append({'N':n,'shape':'rectangle' if rectangular else 'square',
+ 242                          'support_bound_sum':support_sum,'rank_bound_sum':rank_bound_sum})
+ 243     n = 16
+ 244     bad_tau = root(4*n)
+ 245     assert pow(bad_tau, n, P) != 1 and pow(bad_tau, 4*n, P) == 1
+ 246     return {'structural_cases':rows,'full_resolvent_cases':dense,
+ 247             'guard_counterexample':{'N':n,'tau':bad_tau,'small_inverse_exists':True,'large_inverse_exists':False}}
+ 248 
+ 249 
+ 250 def folding_tests():
+ 251     local = []
+ 252     for m in (1, 2, 4, 8, 16, 32, 64):
+ 253         fm, fl = fourier(m), fourier(2*m)
+ 254         plus = [[(fl[i][j]+fl[i+m][j]) % P for j in range(2*m)] for i in range(m)]
+ 255         minus = [[(fl[i][j]-fl[i+m][j]) % P for j in range(2*m)] for i in range(m)]
+ 256         expected_plus = [[2*fm[i][j//2] % P if j % 2 == 0 else 0 for j in range(2*m)] for i in range(m)]
+ 257         expected_minus = [[2*pow(root(2*m),i,P)*fm[i][j//2] % P if j % 2 else 0 for j in range(2*m)] for i in range(m)]
+ 258         assert plus == expected_plus and minus == expected_minus
+ 259         s = [[(2*int(j == 2*i)-int(j % m == i)) % P for j in range(2*m)] for i in range(m)]
+ 260         minor = [[row[2*j] for j in range(m)] for row in s]
+ 261         det = determinant(minor)
+ 262         assert det == pow(2,m-1,P)
+ 263         naive = sub(plus, [[fm[i][j % m] for j in range(2*m)] for i in range(m)])
+ 264         assert naive == mul(fm,s)
+ 265         assert len(pivots(naive)) == m
+ 266         local.append({'m':m,'even_minor_determinant':det,'folding_defect_rank':m})
+ 267     global_rows = []
+ 268     for a,b in [(2,2),(4,2),(4,4),(8,4),(8,8)]:
+ 269         n = a*b
+ 270         active = set(range(a//2))
+ 271         lifted = active | {x+a for x in active}
+ 272         pi = projection(a,b)
+ 273         assert all(((v//(2*b)) in lifted) == ((pi[v]//b) in active) for v in range(4*n))
+ 274         delta = sub(qleft(bank(2*a,2*b,lifted),pi,n),qright(bank(a,b,active),pi))
+ 275         rank = len(pivots(delta))
+ 276         assert rank == b*len(active) == n//2
+ 277         fourier_delta = sub(qleft(fourier(4*n),pi,n),qright(fourier(n),pi))
+ 278         fourier_delta_rank = len(pivots(fourier_delta))
+ 279         assert fourier_delta_rank == n
+ 280         global_rows.append({'a':a,'b':b,'N':n,'active_small':sorted(active),
+ 281                             'active_large':sorted(lifted),'global_bank_defect_rank':rank,
+ 282                             'unnormalized_global_Fourier_defect_rank':fourier_delta_rank})
+ 283     return {'local':local,'global':global_rows}
+ 284 
+ 285 
+ 286 def hierarchical_step(a, b, label, ps):
+ 287     n = a*b
+ 288     ts = cover(a,b,label)
+ 289     tl = cover(2*a,2*b,label)
+ 290     pi = projection(a,b)
+ 291     eta = [0]*n
+ 292     for v in range(n):
+ 293         eta[ts[v]] = ps[v]
+ 294     hsmall = sum(x != y for x,y in zip(ps,ts))
+ 295     preliminary = []
+ 296     for w in tl:
+ 297         x,y = divmod(w,2*b)
+ 298         newx,newy = divmod(eta[(x % a)*b+(y % b)],b)
+ 299         preliminary.append((newx+a*(x//a))*(2*b)+newy+b*(y//b))
+ 300     assert sum(x != y for x,y in zip(preliminary,tl)) == 4*hsmall
+ 301     assert all(pi[preliminary[v]] == ps[pi[v]] for v in range(4*n))
+ 302     seen = set()
+ 303     selected = []
+ 304     lengths = []
+ 305     for v in range(4*n):
+ 306         if v in seen:
+ 307             continue
+ 308         w, members = v, []
+ 309         while w not in seen:
+ 310             seen.add(w)
+ 311             members.append(w)
+ 312             w = preliminary[w]
+ 313         assert w == v and len(members) % n == 0
+ 314         selected.append(min(t for t in members if pi[t] == 0))
+ 315         lengths.append(len(members))
+ 316     assert len(selected) <= 4
+ 317     selected.sort()
+ 318     pl = preliminary[:]
+ 319     if len(selected) > 1:
+ 320         for j,v in enumerate(selected):
+ 321             pl[v] = preliminary[selected[(j+1) % len(selected)]]
+ 322     assert all(pi[pl[v]] == ps[pi[v]] for v in range(4*n))
+ 323     assert len(splice(pl)[1]) == 1
+ 324     hlarge = sum(x != y for x,y in zip(pl,tl))
+ 325     assert hlarge <= 4*hsmall+4
+ 326     return pl, {'small_N':n,'label':label,'small_edits':hsmall,'large_edits':hlarge,
+ 327                 'premerge_cycle_lengths':lengths,'premerge_cycle_count':len(selected),
+ 328                 'exact_quotient':True,'hamiltonian':True}
+ 329 
+ 330 
+ 331 def hierarchical_tests():
+ 332     rows = []
+ 333     for rectangular in (False,True):
+ 334         a,b = ((4,2) if rectangular else (2,2))
+ 335         ps = [splice(cover(a,b,label))[0] for label in LABELS]
+ 336         for level in range(4):
+ 337             lifted = []
+ 338             for label,p in zip(LABELS,ps):
+ 339                 newp,row = hierarchical_step(a,b,label,p)
+ 340                 row.update({'base_shape':'rectangle' if rectangular else 'square','level':level+1})
+ 341                 rows.append(row)
+ 342                 lifted.append(newp)
+ 343             ps = lifted
+ 344             a,b = 2*a,2*b
+ 345     margins = []
+ 346     for n0,d0,coefficient in [(1<<17,7936,752),(1<<18,11264,15344)]:
+ 347         # Multiply the loss inequality by three to stay integral.
+ 348         for level in range(65):
+ 349             n = n0*4**level
+ 350             three_loss = 3*d0*4**level+16*(4**level-1)
+ 351             margin = 3*n//16-three_loss
+ 352             assert margin == coefficient*4**level+16 > 0
+ 353         margins.append({'seed_N':n0,'seed_loss_bound':d0,
+ 354                         'rational_margin_formula':f'{coefficient}*4^level+16',
+ 355                         'levels_checked':65})
+ 356     return {'instances':rows,'threshold_margin_controls':margins,
+ 357             'scope':'A new quotient-compatible splice family, not the original minimum-representative family or a Fourier coefficient lift.'}
+ 358 
+ 359 
+ 360 def seed_templates(n):
+ 361     k = n.bit_length()-1
+ 362     m = 1 << (k//2)
+ 363     a, b = ((2*m,m) if k % 2 else (m,m))
+ 364     permutations = [splice(cover(a,b,label))[0] for label in LABELS]
+ 365     greens = [green(p,[inv(j+2)]*n) for j,p in enumerate(permutations)]
+ 366     return permutations,greens
+ 367 
+ 368 
+ 369 def layer(greens, coefficients):
+ 370     n = len(greens[0])
+ 371     return [[sum(coefficients[t][i]*greens[t][i][j] for t in range(8)) % P
+ 372              for j in range(n)] for i in range(n)]
+ 373 
+ 374 
+ 375 def outer_gate(greens, prefix, target):
+ 376     gx = [mul(g,prefix) for g in greens]
+ 377     rows = []
+ 378     for i in range(len(prefix)):
+ 379         template = [g[i] for g in gx]
+ 380         columns = pivots(template)
+ 381         assert len(columns) == 8
+ 382         equations = [[template[j][c] for j in range(8)] for c in columns]
+ 383         coeff = solve(equations,[target[i][c] for c in columns])
+ 384         residuals = [(sum(coeff[j]*template[j][c] for j in range(8))-target[i][c]) % P
+ 385                      for c in range(len(prefix))]
+ 386         failures = [c for c,v in enumerate(residuals) if v]
+ 387         row = {'row':i,'pivot_columns':columns,'pivot_determinant':determinant(equations),
+ 388                'outer_coefficients':coeff,'failure_columns':failures,'residuals':residuals}
+ 389         if failures:
+ 390             selected = columns+[failures[0]]
+ 391             minor = [[line[c] for c in selected] for line in template+[target[i]]]
+ 392             det = determinant(minor)
+ 393             assert det
+ 394             row.update({'augmented_columns':selected,'augmented_minor':minor,'augmented_determinant':det})
+ 395         rows.append(row)
+ 396     return rows
+ 397 
+ 398 
+ 399 def seed_tests():
+ 400     # Deterministic primality verification validates the modular field.
+ 401     assert P > 2 and P % 2
+ 402     assert all(P % d for d in range(3, int(P**0.5)+1, 2))
+ 403     z = root(16)
+ 404     assert z == 929031873 and pow(z,8,P) == P-1
+ 405     ps,gs = seed_templates(16)
+ 406     assert len({tuple(p) for p in ps}) == 6
+ 407     b = bank(4,4,{0,1})
+ 408     ones = [[1]*16 for _ in range(8)]
+ 409     h = layer(gs,ones)
+ 410     prefix = mul(mul(h,b),h)
+ 411     det_prefix = determinant(prefix)
+ 412     assert det_prefix == 195063167
+ 413     target = fourier(16)
+ 414     rejected = outer_gate(gs,prefix,target)
+ 415     assert all(len(row['failure_columns']) == 8 for row in rejected)
+ 416     assert rejected[0]['augmented_determinant'] == 750393234
+ 417     rng = random.Random(348196)
+ 418     supplied = [[[rng.randrange(1,P) for _ in range(16)] for _ in range(8)] for _ in range(3)]
+ 419     hs = [layer(gs,c) for c in supplied]
+ 420     generated_prefix = mul(mul(hs[1],b),hs[0])
+ 421     assert determinant(generated_prefix)
+ 422     generated = mul(hs[2],generated_prefix)
+ 423     accepted = outer_gate(gs,generated_prefix,generated)
+ 424     assert all(not row['failure_columns'] for row in accepted)
+ 425     assert all(accepted[i]['outer_coefficients'] == [supplied[2][j][i] for j in range(8)] for i in range(16))
+ 426     changed = [row[:] for row in generated]
+ 427     changed[0][0] = (changed[0][0]+1) % P
+ 428     assert outer_gate(gs,generated_prefix,changed)[0]['failure_columns']
+ 429     def covariance_failures(a):
+ 430         return [(i,j) for i in range(16) for j in range(15) if (a[i][j+1]-pow(z,i,P)*a[i][j]) % P]
+ 431     assert not covariance_failures(target) and all(row[0] == 1 for row in target)
+ 432     twice = scale(target,2)
+ 433     assert not covariance_failures(twice) and all(row[0] != 1 for row in twice)
+ 434     diagnostics = []
+ 435     for n in (4,8,16,32,64):
+ 436         perms, greens = seed_templates(n)
+ 437         ranks = [len(pivots([g[i] for g in greens])) for i in range(n)]
+ 438         assert all(r == min(8,n) for r in ranks)
+ 439         diagnostics.append({'N':n,'distinct_cycles':len({tuple(p) for p in perms}),'row_template_ranks':ranks})
+ 440     return {'prime':P,'root16':z,'cycles':ps,'pole_denominators':list(range(2,10)),
+ 441             'parameters':384,'green_occurrences':24,'fixed_inner_entries':256,'free_outer_entries':128,
+ 442             'fixed_prefix_determinant':det_prefix,'fixed_prefix_rejection_rows':rejected,
+ 443             'generated_product_control':{'all_256_entries_pass':True,'all_128_outer_entries_recovered':True,'all_384_supplied_entries_nonzero':True},
+ 444             'seed_guard_control':'2F16 passes all 240 successor equations and fails all 16 seed equations.',
+ 445             'diagnostics':diagnostics,'scope':'Only the all-ones inner prefix is excluded; the 384-variable family remains open.'}
+ 446 
+ 447 
+ 448 def main():
+ 449     parser = argparse.ArgumentParser()
+ 450     parser.add_argument('--output',default='VERIFIED_RESULTS.json')
+ 451     args = parser.parse_args()
+ 452     result = {'status':'PASS','field':P,'route':route_tests(),'folding':folding_tests(),
+ 453               'hierarchical':hierarchical_tests(),'seed':seed_tests()}
+ 454     Path(args.output).write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 455     print(json.dumps({'status':'PASS','route_structural_cases':len(result['route']['structural_cases']),
+ 456                       'full_resolvent_cases':len(result['route']['full_resolvent_cases']),
+ 457                       'global_bank_cases':len(result['folding']['global']),
+ 458                       'hierarchical_instances':len(result['hierarchical']['instances']),
+ 459                       'N16_first_augmented_minor':result['seed']['fixed_prefix_rejection_rows'][0]['augmented_determinant']},sort_keys=True))
+ 460 
+ 461 
+ 462 if __name__ == '__main__':
+ 463     main()

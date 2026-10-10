@@ -1,0 +1,195 @@
+   1	#!/usr/bin/env python3
+   2	"""New independent checks; no uploaded project code is imported or executed.
+   3	
+   4	Exact checks use SymPy. Floating-point checks use NumPy. The proof is in PROOF.md;
+   5	these finite checks are not the basis of the all-size theorem.
+   6	"""
+   7	import json
+   8	import math
+   9	from pathlib import Path
+  10	import numpy as np
+  11	import sympy as sp
+  12	
+  13	RNG = np.random.default_rng(20261009)
+  14	RESULTS = {"seed": 20261009, "exact_fourier4": [], "numerical_perturbations": [],
+  15	           "product_checks": [], "scope_controls": {}}
+  16	
+  17	
+  18	def norm1(a):
+  19	    return float(np.linalg.norm(a, 1))
+  20	
+  21	
+  22	def kappa1(a):
+  23	    return norm1(a) * norm1(np.linalg.inv(a))
+  24	
+  25	
+  26	def rank_numeric(a, scale=1.0):
+  27	    singular_values = np.linalg.svd(a, compute_uv=False)
+  28	    tolerance = 2e-9 * max(scale, float(singular_values[0]) if len(singular_values) else 0.0)
+  29	    return int(np.sum(singular_values > tolerance))
+  30	
+  31	
+  32	def fourier(n):
+  33	    j = np.arange(n)
+  34	    return np.exp(-2j * np.pi * np.outer(j, j) / n) / math.sqrt(n)
+  35	
+  36	
+  37	def exact_checks():
+  38	    n = 4
+  39	    f = sp.Matrix(n, n, lambda i, j: sp.I ** (-i*j) / 2)
+  40	    assert f.conjugate().T * f == sp.eye(n)
+  41	    for r in range(n):
+  42	        for trial in range(3):
+  43	            if r:
+  44	                while True:
+  45	                    u = sp.Matrix(n, r, lambda i, j: int(RNG.integers(-3, 4)) + sp.I*int(RNG.integers(-2, 3)))
+  46	                    v = sp.Matrix(r, n, lambda i, j: int(RNG.integers(-3, 4)) + sp.I*int(RNG.integers(-2, 3)))
+  47	                    update = u*v / 97
+  48	                    if update.rank() == r and (f + update).det() != 0:
+  49	                        break
+  50	            else:
+  51	                update = sp.zeros(n)
+  52	            g = f + update
+  53	            gi = g.inv()
+  54	            inverse_difference = f.inv() - gi
+  55	            assert (inverse_difference - f.inv() * (g-f) * gi).applyfunc(sp.simplify) == sp.zeros(n)
+  56	            assert inverse_difference.rank() == r
+  57	            subset = list(range(r+1))
+  58	            witness_small = update[:, subset].nullspace()[0]
+  59	            x = sp.zeros(n, 1)
+  60	            for index, value in zip(subset, witness_small):
+  61	                x[index] = value
+  62	            assert x != sp.zeros(n, 1)
+  63	            assert (update*x).applyfunc(sp.simplify) == sp.zeros(n, 1)
+  64	            assert (g*x-f*x).applyfunc(sp.simplify) == sp.zeros(n, 1)
+  65	            # Norm scalar comparisons use evaluated exact entries; all rank,
+  66	            # inverse, and witness equalities above are symbolic exact checks.
+  67	            gn = np.array(g.evalf(35).tolist(), dtype=complex)
+  68	            gin = np.array(gi.evalf(35).tolist(), dtype=complex)
+  69	            lower = math.sqrt(n)/(r+1)
+  70	            assert norm1(gn) >= lower-1e-12
+  71	            assert norm1(gin) >= lower-1e-12
+  72	            assert norm1(gn)*norm1(gin) >= n/(r+1)**2-1e-12
+  73	            RESULTS["exact_fourier4"].append({"rank": r, "trial": trial,
+  74	                "symbolic_inverse_rank_and_witness": "PASS",
+  75	                "norm1": norm1(gn), "inverse_norm1": norm1(gin)})
+  76	
+  77	
+  78	def numerical_checks():
+  79	    for n in (2, 3, 4, 5, 8, 16, 32, 64):
+  80	        f = fourier(n)
+  81	        for r in sorted(set((0, 1, min(2, n-1), n//2, n-1))):
+  82	            for trial in range(3):
+  83	                if r:
+  84	                    u = (RNG.normal(size=(n,r)) + 1j*RNG.normal(size=(n,r))) / math.sqrt(n)
+  85	                    v = (RNG.normal(size=(r,n)) + 1j*RNG.normal(size=(r,n))) / math.sqrt(n)
+  86	                    update = (0.02, 0.3, 2.0)[trial] * (u @ v)
+  87	                else:
+  88	                    update = np.zeros((n,n), dtype=complex)
+  89	                g = f + update
+  90	                gi = np.linalg.inv(g)
+  91	                assert rank_numeric(update) <= r
+  92	                inverse_difference = f.conj().T - gi
+  93	                identity_rhs = f.conj().T @ update @ gi
+  94	                assert np.allclose(inverse_difference, identity_rhs, rtol=2e-8, atol=2e-8)
+  95	                assert rank_numeric(inverse_difference) <= r
+  96	                subset = RNG.permutation(n)[:r+1]
+  97	                _, _, vh = np.linalg.svd(update[:,subset], full_matrices=True)
+  98	                x = np.zeros(n, dtype=complex)
+  99	                x[subset] = vh[-1,:].conj()
+ 100	                assert np.linalg.norm(update @ x) < 1e-8
+ 101	                fx = f @ x
+ 102	                assert np.linalg.norm(fx, np.inf) <= math.sqrt((r+1)/n)*np.linalg.norm(x)+1e-10
+ 103	                assert np.linalg.norm(fx, 1) >= math.sqrt(n/(r+1))*np.linalg.norm(x)-1e-10
+ 104	                norm_lower = math.sqrt(n)/(r+1)
+ 105	                assert norm1(g) >= norm_lower-1e-10
+ 106	                assert norm1(gi) >= norm_lower-1e-10
+ 107	                assert norm1(g)*norm1(gi) >= n/(r+1)**2-1e-10
+ 108	                RESULTS["numerical_perturbations"].append({"n": n, "rank_budget": r,
+ 109	                    "trial": trial, "kappa1": norm1(g)*norm1(gi),
+ 110	                    "condition_lower_bound": n/(r+1)**2})
+ 111	
+ 112	
+ 113	def product_left(factors, n):
+ 114	    result = np.eye(n, dtype=complex)
+ 115	    for factor in factors:
+ 116	        result = factor @ result
+ 117	    return result
+ 118	
+ 119	
+ 120	def product_checks():
+ 121	    for n in (2, 4, 8, 16, 32):
+ 122	        tmat = 3*np.eye(n) - np.eye(n, k=1) - np.eye(n, k=-1)
+ 123	        for t in (0, 1, 2, 3):
+ 124	            for b in sorted(set((0, 1, t, t+2, n+1))):
+ 125	                tagged = []
+ 126	                for index in range(t):
+ 127	                    p = np.eye(n)[RNG.permutation(n)]
+ 128	                    bmat = p @ tmat @ p.T
+ 129	                    m = np.linalg.inv(bmat) + np.linalg.inv(tmat)/20
+ 130	                    if index % 2:
+ 131	                        m = np.linalg.inv(m)
+ 132	                    assert kappa1(m) <= 7+1e-10
+ 133	                    tagged.append((m, m))
+ 134	                for _ in range(b):
+ 135	                    u = RNG.normal(size=n) + 1j*RNG.normal(size=n)
+ 136	                    h = np.eye(n) - 2*np.outer(u,u.conj()) / np.vdot(u,u)
+ 137	                    assert rank_numeric(h-np.eye(n)) == 1
+ 138	                    assert np.allclose(h @ h, np.eye(n), atol=1e-10)
+ 139	                    tagged.append((h, np.eye(n)))
+ 140	                for _ in range(3):
+ 141	                    p = np.eye(n)[RNG.permutation(n)]
+ 142	                    q = np.diag(np.exp(1j*RNG.uniform(-np.pi, np.pi, size=n))) @ p
+ 143	                    assert abs(kappa1(q)-1) < 1e-12
+ 144	                    tagged.append((q,q))
+ 145	                scalar = (0.7+0.2j)*np.eye(n)
+ 146	                tagged.append((scalar,scalar))
+ 147	                RNG.shuffle(tagged)
+ 148	                aa = [pair[0] for pair in tagged]
+ 149	                cc = [pair[1] for pair in tagged]
+ 150	                a = product_left(aa,n)
+ 151	                g = product_left(cc,n)
+ 152	                telescope = np.zeros((n,n), dtype=complex)
+ 153	                for j in range(len(tagged)):
+ 154	                    left = product_left(aa[j+1:],n)
+ 155	                    right = product_left(cc[:j],n)
+ 156	                    telescope += left @ (aa[j]-cc[j]) @ right
+ 157	                assert np.allclose(a-g,telescope,atol=1e-9,rtol=1e-9)
+ 158	                actual_rank = rank_numeric(a-g,scale=max(norm1(a),norm1(g)))
+ 159	                assert actual_rank <= min(n,b)
+ 160	                assert kappa1(g) <= 7**t+1e-7
+ 161	                RESULTS["product_checks"].append({"n": n, "green_factors": t,
+ 162	                    "rank_one_factors": b, "observed_difference_rank": actual_rank,
+ 163	                    "retained_kappa1": kappa1(g), "retained_condition_upper_bound": 7**t})
+ 164	
+ 165	
+ 166	def scope_checks():
+ 167	    f = fourier(4)
+ 168	    tiny = 1e-6*np.eye(4)
+ 169	    assert rank_numeric(f-tiny) == 4
+ 170	    assert norm1(tiny) < math.sqrt(4)/(4+1)
+ 171	    assert kappa1(tiny) >= 4/(4+1)**2
+ 172	    diagonal = np.diag([1,2,4,8])
+ 173	    assert abs(kappa1(diagonal)-8) < 1e-12
+ 174	    for b in range(100):
+ 175	        assert (b+1)**2 <= 4**b <= 7**b
+ 176	    RESULTS["scope_controls"] = {
+ 177	        "full_rank_individual_norm_extension_is_false": True,
+ 178	        "large_rank_condition_bound_remains_true": True,
+ 179	        "arbitrary_diagonal_gain_condition": kappa1(diagonal),
+ 180	        "integer_count_inequality_checked_through_B": 99,
+ 181	    }
+ 182	
+ 183	
+ 184	if __name__ == "__main__":
+ 185	    exact_checks()
+ 186	    numerical_checks()
+ 187	    product_checks()
+ 188	    scope_checks()
+ 189	    RESULTS["summary"] = {"status": "PASS", "exact_fourier4_instances": len(RESULTS["exact_fourier4"]),
+ 190	        "numerical_low_rank_instances": len(RESULTS["numerical_perturbations"]),
+ 191	        "product_instances": len(RESULTS["product_checks"]),
+ 192	        "uploaded_code_imported_or_executed": False}
+ 193	    output = Path(__file__).with_name("results.json")
+ 194	    output.write_text(json.dumps(RESULTS,indent=2)+"\n")
+ 195	    print(json.dumps(RESULTS["summary"],indent=2))

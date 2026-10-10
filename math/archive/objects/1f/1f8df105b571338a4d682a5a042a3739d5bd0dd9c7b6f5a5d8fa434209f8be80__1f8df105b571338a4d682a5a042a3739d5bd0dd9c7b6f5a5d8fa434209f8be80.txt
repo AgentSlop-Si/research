@@ -1,0 +1,84 @@
+"""Independent 4x4 lower-column spectral-minor obstruction for n=8.
+
+No rational substitutions for V3, eta3, rho3; polynomial in just
+(t,h0,h1,h2,hl,beta). Its vanishing is necessary for any separated-rank1
+F8=BPC candidate satisfying the two spectral-support lemmas on this chart.
+"""
+import json, itertools
+from pathlib import Path
+from sympy.polys.rings import ring
+from sympy.polys.domains import GF
+from general_onion import build
+from dual_support import P8,primitive_root
+import random
+
+def det4(A):
+    out=A[0][0]-A[0][0]
+    for p in itertools.permutations(range(4)):
+        inversions=sum(p[i]>p[j] for i in range(4) for j in range(i+1,4))
+        term=A[0][p[0]]
+        for i in range(1,4):term*=A[i][p[i]]
+        out = out-term if inversions%2 else out+term
+    return out
+
+def build_polynomial(prime,root):
+    R,t,h0,h1,h2,hl,beta=ring('t,h0,h1,h2,hl,beta',GF(prime))
+    z=root%prime;xi=pow(z,-1,prime)
+    c1=(1+xi+pow(xi,2,prime))%prime
+    c2=(xi+pow(xi,2,prime)+pow(xi,3,prime))%prime
+    c3=pow(xi,3,prime)
+    hs=[h0,h1,h2]
+    for k in range(4): hs.append(c1*hs[k+2]-c2*hs[k+1]+c3*hs[k])
+    hs[6]=hl
+    # t*(z-1)*L[k] polynomial
+    def ll(k):
+        if k==7:return t*(z-1)
+        b_num=t-1+beta*(h0-1)
+        return (1-beta*h0)*(z-1)+b_num*(pow(xi,k,prime)-1)+beta*hs[k]*(z-1)
+    A=[]
+    for i in (4,5,6,7):
+        col1=sum((pow(z,i*k,prime)*hs[k] for k in range(3)),R.zero)
+        col2=sum((pow(z,i*k,prime)*ll(k) for k in range(4,8)),R.zero)
+        col3=R.one*pow(z,i*3,prime)
+        col4=sum((pow(z,i*k,prime)*hs[k] for k in range(7)),R.zero)+pow(z,7*i,prime)
+        A.append([col1,col2,col3,col4])
+    polynomial=det4(A)
+    return R,polynomial
+
+def validate(prime,root,samples=15):
+    R,poly=build_polynomial(prime,root)
+    assert poly!=0
+    rng=random.Random(71011+prime)
+    examples=[]
+    for case in range(samples):
+        params=[rng.randrange(1,prime) for _ in range(8)]
+        try:C,B,d=build(8,prime,root,P8,params)
+        except ZeroDivisionError:continue
+        t,h0,h1,h2,hl,beta,_,_=params
+        columns=[sum(pow(root,i*k,prime)*int(C[k,3]) for k in range(8))%prime for i in range(4,8)]
+        row0=[sum(pow(root,i*k,prime)*int(C[k,7]) for k in range(8))%prime for i in range(4,8)]
+        y=[sum(pow(root,i*k,prime)*int(C[k,0]) for k in range(8))%prime for i in range(4,8)]
+        # Compute 4x4 determinant directly (each entry sum of four templates)
+        hh=d['H'];LL=d['L']
+        M=[]
+        for i in range(4,8):
+            M.append([
+                sum(pow(root,i*k,prime)*int(hh[k]) for k in range(3))%prime,
+                sum(pow(root,i*k,prime)*int(LL[k]) for k in range(4,8))%prime,
+                pow(root,3*i,prime),row0[i-4]])
+        true_det=det4(M)%prime
+        pred=poly.evaluate(list(zip(R.gens,[t,h0,h1,h2,hl,beta]))) %prime
+        assert (true_det*t*(root-1)-pred)%prime==0,(true_det,pred)
+        examples.append(dict(params=params[:6],direct=int(true_det),polynomial=int(pred)))
+    return dict(field=prime,root=root,degree=max(sum(e) for e,c in poly.terms()),term_count=len(poly),verified=len(examples),
+                example=examples[0] if examples else None,polynomial=str(poly))
+
+if __name__=='__main__':
+    results=[]
+    for p in (12289,65537):
+        z=primitive_root(p,8)
+        for w in (z,pow(z,3,p)):
+            results.append(validate(p,w))
+    path=Path(__file__).with_name('spectral_minor_results.json')
+    path.write_text(json.dumps(results,indent=2)+'\n')
+    for v in results:print({k:v[k] for k in v if k!='polynomial'},flush=True)

@@ -1,0 +1,293 @@
+   1 """Phase 6: fully charged four-leg Fourier tensor and endpoint-gauge rigidity.
+   2 
+   3 Research-only exact field computations; no sub-FFT algorithm is claimed.
+   4 N = Q*M, x[t+Q*u], X[h+M*s].
+   5 T[s,h,t,u] = omega^(-h*t) * eta^(-h*u) * xi^(-s*t).
+   6 """
+   7 from __future__ import annotations
+   8 from math import gcd
+   9 from typing import Sequence
+  10 
+  11 
+  12 def is_prime(n: int) -> bool:
+  13     if n < 2:
+  14         return False
+  15     if n % 2 == 0:
+  16         return n == 2
+  17     d = 3
+  18     while d*d <= n:
+  19         if n % d == 0:
+  20             return False
+  21         d += 2
+  22     return True
+  23 
+  24 
+  25 def prime_factors(n: int) -> list[int]:
+  26     out = []
+  27     d = 2
+  28     while d * d <= n:
+  29         if n % d == 0:
+  30             out.append(d)
+  31             while n % d == 0:
+  32                 n //= d
+  33         d += 1
+  34     if n > 1:
+  35         out.append(n)
+  36     return out
+  37 
+  38 
+  39 def field_for_length(n: int) -> tuple[int, int]:
+  40     """Find a small prime field with a primitive n-th root, for testing only."""
+  41     for mult in range(1, 10000):
+  42         p = mult*n + 1
+  43         if not is_prime(p):
+  44             continue
+  45         pf = prime_factors(n)
+  46         for generator in range(2, p):
+  47             omega = pow(generator, (p-1)//n, p)
+  48             if pow(omega, n, p) == 1 and all(pow(omega,n//d,p) != 1 for d in pf):
+  49                 return p,omega
+  50     raise RuntimeError('field not found')
+  51 
+  52 
+  53 def matmul(A: Sequence[Sequence[int]],B: Sequence[Sequence[int]],p:int) -> list[list[int]]:
+  54     if not A:
+  55         return []
+  56     assert B and len(A[0]) == len(B)
+  57     return [[sum(A[i][k]*B[k][j] for k in range(len(B)))%p
+  58              for j in range(len(B[0]))] for i in range(len(A))]
+  59 
+  60 
+  61 def identity(n:int)->list[list[int]]:
+  62     return [[int(i==j) for j in range(n)] for i in range(n)]
+  63 
+  64 
+  65 def rank_mod(M: Sequence[Sequence[int]],p:int) -> int:
+  66     if not M:
+  67         return 0
+  68     a = [[x%p for x in row] for row in M]
+  69     R,C=len(a),len(a[0]); j=0
+  70     for col in range(C):
+  71         piv=next((i for i in range(j,R) if a[i][col]),None)
+  72         if piv is None:
+  73             continue
+  74         a[j],a[piv]=a[piv],a[j]
+  75         iv=pow(a[j][col],-1,p)
+  76         a[j][col:]=[z*iv%p for z in a[j][col:]]
+  77         for row in range(j+1,R):
+  78             v=a[row][col]
+  79             if v:
+  80                 for k in range(col,C):
+  81                     a[row][k]=(a[row][k]-v*a[j][k])%p
+  82         j+=1
+  83         if j==R:
+  84             break
+  85     return j
+  86 
+  87 
+  88 def invert_mod(M:Sequence[Sequence[int]],p:int)->list[list[int]]:
+  89     n=len(M)
+  90     assert all(len(row)==n for row in M)
+  91     a=[[z%p for z in row]+identity(n)[i] for i,row in enumerate(M)]
+  92     for col in range(n):
+  93         piv=next((i for i in range(col,n) if a[i][col]),None)
+  94         if piv is None:
+  95             raise ValueError('singular')
+  96         a[piv],a[col]=a[col],a[piv]
+  97         iv=pow(a[col][col],-1,p)
+  98         for j in range(col,2*n):
+  99             a[col][j]=a[col][j]*iv%p
+ 100         for i in range(n):
+ 101             if i==col:
+ 102                 continue
+ 103             c=a[i][col]
+ 104             if c:
+ 105                 for j in range(col,2*n):
+ 106                     a[i][j]=(a[i][j]-c*a[col][j])%p
+ 107     return [row[n:] for row in a]
+ 108 
+ 109 
+ 110 def dft_matrix(n:int,root:int,p:int,sign:int=-1)->list[list[int]]:
+ 111     return [[pow(root, (sign*i*j)%n,p) for j in range(n)] for i in range(n)]
+ 112 
+ 113 
+ 114 def fourier_tensor(q:int,m:int,p:int,omega:int)->list[list[list[list[int]]]]:
+ 115     n=q*m
+ 116     assert pow(omega,n,p)==1
+ 117     eta=pow(omega,q,p);xi=pow(omega,m,p)
+ 118     return [[[[pow(omega,(-h*t)%n,p)*pow(eta,(-h*u)%m,p)*pow(xi,(-s*t)%q,p)%p
+ 119                for u in range(m)] for t in range(q)] for h in range(m)] for s in range(q)]
+ 120 
+ 121 
+ 122 def flatten(T:list,which:str)->list[list[int]]:
+ 123     q=len(T);m=len(T[0]);
+ 124     if which=='output_input':
+ 125         return [[T[s][h][t][u] for t in range(q) for u in range(m)]
+ 126                 for s in range(q) for h in range(m)]
+ 127     if which=='crossed':
+ 128         return [[T[s][h][t][u] for h in range(m) for u in range(m)]
+ 129                 for s in range(q) for t in range(q)]
+ 130     if which=='alternating':
+ 131         return [[T[s][h][t][u] for h in range(m) for t in range(q)]
+ 132                 for s in range(q) for u in range(m)]
+ 133     raise ValueError(which)
+ 134 
+ 135 
+ 136 def cut_ranks(q:int,m:int,p:int,omega:int)->dict[str,int]:
+ 137     T=fourier_tensor(q,m,p,omega)
+ 138     return {k:rank_mod(flatten(T,k),p) for k in ('output_input','crossed','alternating')}
+ 139 
+ 140 
+ 141 def transform_legs(T:list,maps:dict[str,list[list[int]]],p:int)->list:
+ 142     """Independent invertible linear changes on any of the 4 external legs.
+ 143 
+ 144     T has axes s,h,t,u. This is deliberately straightforward O(N^2 * sum(dims))
+ 145     to audit invariants, NOT a fast executor.
+ 146     """
+ 147     import numpy as np
+ 148     arr=np.array(T,dtype='int64')
+ 149     order=('s','h','t','u')
+ 150     for axis,name in enumerate(order):
+ 151         if name not in maps:
+ 152             continue
+ 153         A=np.array(maps[name],dtype='int64')
+ 154         assert A.shape==(arr.shape[axis],arr.shape[axis])
+ 155         # move selected index to front, multiply, restore
+ 156         arr=np.moveaxis(arr,axis,0)
+ 157         arr=np.tensordot(A,arr,axes=(1,0))%p
+ 158         arr=np.moveaxis(arr,0,axis)
+ 159     return arr.tolist()
+ 160 
+ 161 
+ 162 def random_invertible(n:int,p:int,rng)->list[list[int]]:
+ 163     for _ in range(100):
+ 164         A=[[rng.randrange(p) for _ in range(n)] for _ in range(n)]
+ 165         if rank_mod(A,p)==n:
+ 166             return A
+ 167     raise RuntimeError('random GL sample failed')
+ 168 
+ 169 
+ 170 def nnz(M:Sequence[Sequence[int]])->int:
+ 171     return sum(int(x!=0) for row in M for x in row)
+ 172 
+ 173 
+ 174 def endpoint_gauges(q:int,m:int,p:int,omega:int,A:list[list[int]],B:list[list[int]]):
+ 175     """A acts on output digit s; B acts on input digit u (as tensor coordinate).
+ 176 
+ 177     Core[a,h,t,b] = (A F_q)[a,t] * omega^(-h*t) *
+ 178                     (F_m B^T)[h,b].
+ 179     """
+ 180     eta=pow(omega,q,p);xi=pow(omega,m,p)
+ 181     Fq=dft_matrix(q,xi,p)
+ 182     Fm=dft_matrix(m,eta,p)
+ 183     P=matmul(A,Fq,p)
+ 184     R=matmul(Fm,[[B[i][j] for i in range(m)] for j in range(m)],p)
+ 185     N=q*m
+ 186     tensor=[[[[P[a][t]*pow(omega,(-h*t)%N,p)*R[h][b]%p for b in range(m)]
+ 187                  for t in range(q)] for h in range(m)] for a in range(q)]
+ 188     return tensor,P,R
+ 189 
+ 190 
+ 191 def endpoint_sparse_core(q:int,m:int,p:int,omega:int):
+ 192     """The endpoint bases are inverse Fourier transforms up to diagonal/perm."""
+ 193     eta=pow(omega,q,p);xi=pow(omega,m,p)
+ 194     A=[[pow(xi,(a*s)%q,p)*pow(q,-1,p)%p for s in range(q)] for a in range(q)]
+ 195     B=[[pow(eta,(b*u)%m,p)*pow(m,-1,p)%p for u in range(m)] for b in range(m)]
+ 196     core,P,R=endpoint_gauges(q,m,p,omega,A,B)
+ 197     assert P==identity(q) and R==identity(m)
+ 198     return A,B,core
+ 199 
+ 200 
+ 201 def exact_dft(x:Sequence[int],p:int,omega:int)->list[int]:
+ 202     n=len(x)
+ 203     pw=[1]*n
+ 204     for j in range(1,n):
+ 205         pw[j]=pw[j-1]*omega%p
+ 206     return [sum(x[j]*pw[(-k*j)%n] for j in range(n))%p for k in range(n)]
+ 207 
+ 208 
+ 209 def prepared_powers(n:int,omega:int,p:int)->tuple[list[int],int]:
+ 210     """Fully charge the input-independent Nth-root table: n-1 multiplies."""
+ 211     roots=[1]*n
+ 212     for i in range(1,n):
+ 213         roots[i]=roots[i-1]*omega%p
+ 214     # Root order is part of the supplied input contract, not re-discovered online.
+ 215     return roots,n-1
+ 216 
+ 217 
+ 218 def fft_radix2_prepared(a:Sequence[int],roots:Sequence[int],p:int)->tuple[list[int],int]:
+ 219     """Standard DIT with all roots fetched from the charged global O(N) table.
+ 220 
+ 221     The input length n must divide the prepared root table length N, and n is
+ 222     a power of 2. Every butterfly is two adds and one scalar multiplication.
+ 223     """
+ 224     n=len(a);N=len(roots)
+ 225     if n<=0 or n&(n-1) or N%n:
+ 226         raise ValueError('length must be power of 2 and divide root-table length')
+ 227     if n==1:
+ 228         return [a[0]%p],0
+ 229     ev,be=fft_radix2_prepared(a[::2],roots,p)
+ 230     od,bo=fft_radix2_prepared(a[1::2],roots,p)
+ 231     ans=[0]*n
+ 232     stride=N//n
+ 233     for k in range(n//2):
+ 234         z=od[k]*roots[(-k*stride)%N]%p
+ 235         ans[k]=(ev[k]+z)%p
+ 236         ans[k+n//2]=(ev[k]-z)%p
+ 237     return ans,be+bo+n//2
+ 238 
+ 239 
+ 240 def charged_two_axis_fft(x:Sequence[int],q:int,m:int,p:int,omega:int)->tuple[list[int],dict]:
+ 241     """Exactly accounted classical Cooley-Tukey implementation (NOT a faster FFT).
+ 242 
+ 243     Supplied primitive Nth root omega. Roots generated in N-1 multiplications,
+ 244     no pow() or field inversions in any DFT/cross-twiddle inner loop.
+ 245     """
+ 246     if len(x)!=q*m or q<=0 or m<=0 or (q&(q-1)) or (m&(m-1)):
+ 247         raise ValueError('power-of-2 factors required')
+ 248     n=q*m
+ 249     roots,root_muls=prepared_powers(n,omega,p)
+ 250     C=[];butterflies=0
+ 251     for t in range(q):
+ 252         spectrum,b=fft_radix2_prepared([x[t+q*u] for u in range(m)],roots,p)
+ 253         C.append(spectrum);butterflies+=b
+ 254     out=[0]*n
+ 255     for h in range(m):
+ 256         temp=[C[t][h]*roots[(-h*t)%n]%p for t in range(q)]
+ 257         freq,b=fft_radix2_prepared(temp,roots,p);butterflies+=b
+ 258         for s in range(q):
+ 259             out[h+m*s]=freq[s]
+ 260     return out,{'butterflies':butterflies,
+ 261                 'butterfly_multiplies':butterflies,
+ 262                 'butterfly_addsubs':2*butterflies,
+ 263                 'cross_twiddle_multiplies':n,
+ 264                 'root_table_multiplies':root_muls,
+ 265                 'field_multiplies_total':butterflies+n+root_muls,
+ 266                 'field_addsubs_total':2*butterflies,
+ 267                 'scalar_arithmetic_total':3*butterflies+n+root_muls,
+ 268                 'root_table_storage':n,
+ 269                 'input_output_words':2*n,
+ 270                 'expected_butterflies':n*(q.bit_length()+m.bit_length()-2)//2}
+ 271 
+ 272 def crossed_partial_fourier(q:int,m:int,p:int,omega:int)->list[list[int]]:
+ 273     return [[pow(omega,(-h*t)%(q*m),p) for h in range(m)] for t in range(q)]
+ 274 
+ 275 
+ 276 def unitary_cut_singular_values(q:int,m:int):
+ 277     """Independent floating SVD to validate exact complex singular-spectrum lemma."""
+ 278     import numpy as np
+ 279     n=q*m
+ 280     s=np.arange(q).reshape(q,1,1,1)
+ 281     h=np.arange(m).reshape(1,m,1,1)
+ 282     t=np.arange(q).reshape(1,1,q,1)
+ 283     u=np.arange(m).reshape(1,1,1,m)
+ 284     T=np.exp(-2j*np.pi*(h*t/n+h*u/m+s*t/q))/np.sqrt(n)
+ 285     # flatten crossed (s,t) | (h,u)
+ 286     cross=np.transpose(T,(0,2,1,3)).reshape(q*q,m*m)
+ 287     alternative=np.transpose(T,(0,3,1,2)).reshape(n,n)
+ 288     direct=T.reshape(n,n)
+ 289     V=np.exp(-2j*np.pi*np.outer(np.arange(q),np.arange(m))/n)
+ 290     return {'direct':np.linalg.svd(direct,compute_uv=False),
+ 291             'alternative':np.linalg.svd(alternative,compute_uv=False),
+ 292             'crossed':np.linalg.svd(cross,compute_uv=False),
+ 293             'partial':np.linalg.svd(V,compute_uv=False)}

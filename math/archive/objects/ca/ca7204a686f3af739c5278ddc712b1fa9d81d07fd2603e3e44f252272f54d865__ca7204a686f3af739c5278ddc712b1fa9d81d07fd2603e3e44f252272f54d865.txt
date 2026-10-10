@@ -1,0 +1,29 @@
+"""Closed-form exact radix-2 butterfly accounting for folded Galois descent.
+Does not claim these counts are universal lower bounds for an arbitrary FFT.
+"""
+from phase15_executor import is_pow2
+
+
+def costs(N,B):
+    assert is_pow2(N) and is_pow2(B) and 8<=B<N<=B*B
+    L=N//B
+    b=B.bit_length()-1;h=L.bit_length()-1
+    base=(N//2)*b
+    folding=(N-B)//2
+    orbit=(B//2)+(N//2)*(h-1)
+    total=base+folding+orbit
+    assert total==(N//2)*(N.bit_length()-1)
+    sparsity_A=N*(B+(B//2)*h)
+    sparsity_R=N+(N//2)*h
+    assert sparsity_A==B*sparsity_R
+    return dict(N=N,B=B,L=L,log_B=b,log_L=h,
+                base_butterflies=base,folding_butterflies=folding,
+                orbit_butterflies=orbit,total_butterflies=total,
+                residual_naive_A_nnz=sparsity_A,R_nnz=sparsity_R,
+                R_forward_inverse_butterflies=folding,
+                base_fraction=base/total,orbit_fraction=orbit/total)
+
+if __name__=='__main__':
+    import json
+    for N,B in ((64,8),(128,16),(256,16),(512,32),(1024,32),(4096,64),(65536,256),(1048576,1024)):
+        print(json.dumps(costs(N,B)))

@@ -1,0 +1,139 @@
+   1 #!/usr/bin/env python3
+   2 """Independent exact witness, barrier, and operation-count audit for Phase 10."""
+   3 import hashlib
+   4 import json
+   5 import math
+   6 import random
+   7 import time
+   8 from phase10_rational import P,Count,ntt,root_table,make_spectral_recurrent_example,phase10_transform
+   9 from test_phase10 import rank_mod
+  10 
+  11 
+  12 def matrix_audit(n=128,m=8,d=2,seed=204):
+  13     k=n//m
+  14     x,q,f=make_spectral_recurrent_example(k,m,d,seed,force_roots=True)
+  15     y,cert,ctr=phase10_transform(x,m,d,rng=random.Random(101),return_certificate=True)
+  16     assert cert['accepted']
+  17     # Independent O(N^2) evaluation instead of same NTT implementation.
+  18     tab=root_table(n)
+  19     independent=[sum(x[t]*tab[(-j*t)%n] for t in range(n))%P for j in range(n)]
+  20     assert y==independent
+  21     C=[[x[b*m+t] for t in range(m)] for b in range(k)]
+  22     full_rank=rank_mod(C)
+  23     hankel_size=n//2
+  24     hankel_rank=rank_mod([[x[i+j] for j in range(hankel_size)]
+  25                             for i in range(hankel_size)])
+  26     nonzero_x=sum(z!=0 for z in x)
+  27     # Verify the stronger Phase 9-negative-control property. Fit a separate
+  28     # stationary dense circulant C1 from first transition and then inspect
+  29     # each residual e_(t)=v_(t+1)-C1*v_t.
+  30     assert all(f[0][ell] for ell in range(k))
+  31     lam=[f[1][ell]*pow(f[0][ell],P-2,P)%P for ell in range(k)]
+  32     residual_spectra=[]
+  33     per_transition_support=[]
+  34     for t in range(1,m-1):
+  35         E=[(f[t+1][ell]-lam[ell]*f[t][ell])%P for ell in range(k)]
+  36         e=ntt(E,False)
+  37         per_transition_support.append({'t':t,
+  38             'spectral':sum(z!=0 for z in E),
+  39             'spatial':sum(z!=0 for z in e)})
+  40         residual_spectra.append(E)
+  41     innovation_column_rank=rank_mod([
+  42         [residual_spectra[t][ell] for t in range(m-2)]
+  43         for ell in range(k)])
+  44     # Check every local Green phase active after Phase 7 dechirp.
+  45     amodes=[]
+  46     for b in range(k):
+  47         row=[]
+  48         for t in range(m):
+  49             phase=(t*(t-1)//2 +m*b*t)%n
+  50             row.append(x[b*m+t]*tab[phase]%P)
+  51         amodes.append(ntt(row,True))
+  52     occupied=sum(any(amodes[b][i] for b in range(k)) for i in range(m))
+  53     return {'n':n,'k':k,'m':m,'d':d,'seed':seed,'field':P,
+  54         'input_sha256':hashlib.sha256(','.join(map(str,x)).encode()).hexdigest(),
+  55         'output_sha256':hashlib.sha256(','.join(map(str,y)).encode()).hexdigest(),
+  56         'input_nonzeros':nonzero_x,'polyphase_rank':full_rank,
+  57         'maximum_polyphase_rank':m,
+  58         'hankel_rank':hankel_rank,'maximum_hankel_rank':hankel_size,
+  59         'occupied_green_phase_modes':occupied,
+  60         'phase9_one_step_innovation_rank':innovation_column_rank,
+  61         'maximum_phase9_innovation_rank':m-2,
+  62         'phase9_one_step_innovation_support':per_transition_support,
+  63         'exact_full_dft_mismatches':sum(a!=b for a,b in zip(y,independent)),
+  64         'singular_denominators_handled':cert['singular_outputs'],
+  65         'counted_field_ops_per_input':ctr.total()/n}
+  66 
+  67 
+  68 def asymptotic_scaling():
+  69     records=[]
+  70     for n in (256,512,1024,2048,4096,8192,16384,32768,65536,131072):
+  71         m=1<<(int(math.log2(n)).bit_length()-1) # overwritten below: floor power2 of log2(n)
+  72         lg=n.bit_length()-1
+  73         m=1<<(lg.bit_length()-1)
+  74         k=n//m
+  75         d=2
+  76         assert m>=2*d
+  77         x,_,_=make_spectral_recurrent_example(k,m,d,919+n)
+  78         c=Count()
+  79         ts=time.perf_counter()
+  80         y,cert,c=phase10_transform(x,m,d,rounds=3,
+  81                         rng=random.Random(505+n),counter=c,return_certificate=True)
+  82         elapsed=time.perf_counter()-ts
+  83         assert cert['accepted']
+  84         baseline_counter=Count()
+  85         reference=ntt(x,True,baseline_counter)
+  86         assert y==reference
+  87         records.append({'n':n,'k':k,'m':m,'d':d,'ops':c.total(),
+  88             'counted_field_ops_per_input':round(c.total()/n,4),
+  89             'baseline_ntt_ops_per_input':round(baseline_counter.total()/n,4),
+  90             'ops_ratio_vs_ntt':round(c.total()/baseline_counter.total(),4),
+  91             'learned_max_order':cert['max_order'],
+  92             'singular_outputs':cert['singular_outputs'],
+  93             'prototype_seconds':round(elapsed,4)})
+  94     return records
+  95 
+  96 
+  97 def probabilistic_model():
+  98     # q^-K(M-2d) holds CONDITIONALLY on any prefix for which a deterministic
+  99     # learned recurrence specifies the rest; this is an exact counting result.
+ 100     m=8;d=2;k=16
+ 101     exponent=k*(m-2*d)
+ 102     return {'n':m*k,'k':k,'m':m,'d':d,
+ 103         'remaining_unrestricted_field_coordinates':exponent,
+ 104         'accept_probability_conditional_on_prefix':f'{P}^(-{exponent})',
+ 105         'log10_probability':round(-exponent*math.log10(P),3),
+ 106         'note':'For any fixed first 2d columns, a chosen deterministic continuation specifies exactly one suffix. If no order-d model fits the prefix, probability is zero.'}
+ 107 
+ 108 
+ 109 def main():
+ 110     witness=matrix_audit()
+ 111     assert witness['input_nonzeros']==witness['n']
+ 112     assert witness['polyphase_rank']==witness['m']
+ 113     assert witness['hankel_rank']==witness['maximum_hankel_rank']
+ 114     assert witness['occupied_green_phase_modes']==witness['m']
+ 115     assert witness['phase9_one_step_innovation_rank']==witness['m']-2
+ 116     assert all(e['spectral']==witness['k'] and e['spatial']==witness['k']
+ 117                for e in witness['phase9_one_step_innovation_support'])
+ 118     assert witness['exact_full_dft_mismatches']==0
+ 119     scaling=asymptotic_scaling()
+ 120     out={'status':'conditional exact algorithm; no general worst-case speedup',
+ 121          'witness':witness,'scaling':scaling,
+ 122          'prefix_rarity_obstruction':probabilistic_model(),
+ 123          'finite_field_warning':'Fixed GF(2013265921) only supports power-of-two lengths <=2^27; unbounded asymptotics require an appropriate exact arithmetic field/root model.',
+ 124          'membership_warning':'Randomized one-sided error certification, not deterministic for arbitrary inputs. Rejected inputs need conventional FFT fallback.'}
+ 125     with open('AUDIT_RESULTS.json','w') as f:json.dump(out,f,indent=2)
+ 126     print('HERO #0 PHASE 10: EXACT ALGEBRA AUDIT PASSED')
+ 127     print('N128 witness:',json.dumps({k:v for k,v in witness.items() if k in
+ 128           ('input_nonzeros','polyphase_rank','hankel_rank','occupied_green_phase_modes',
+ 129           'phase9_one_step_innovation_rank','exact_full_dft_mismatches',
+ 130           'singular_denominators_handled')},sort_keys=True))
+ 131     print('Random-input accepted-family probability exponent:',
+ 132           probabilistic_model()['log10_probability'])
+ 133     for v in scaling:
+ 134         print('N=%-6d M=%-2d d=%d counted_ops/N=%7.2f baseline=%7.2f ratio=%4.2f wall=%.3fs' %
+ 135               (v['n'],v['m'],v['d'],v['counted_field_ops_per_input'],
+ 136                v['baseline_ntt_ops_per_input'],v['ops_ratio_vs_ntt'],v['prototype_seconds']))
+ 137 
+ 138 
+ 139 if __name__=='__main__':main()

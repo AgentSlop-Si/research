@@ -1,0 +1,188 @@
+   1 """Self-contained exact finite-field scan macro experiments.
+   2 
+   3 Valid only when n is a power of 4, and n divides modulus-1; no cached input.
+   4 A bidirectional-sum scan expresses the 4-point DFT as one constant-width
+   5 macro-stage. This is radix-4 FFT in a different representation, NOT novel.
+   6 """
+   7 from __future__ import annotations
+   8 from dataclasses import dataclass
+   9 
+  10 P = 998244353
+  11 G = 3
+  12 ORDER4 = (0, 2, 1, 3)
+  13 
+  14 
+  15 def root_n(n: int, p=P, g=G) -> int:
+  16     if n < 2 or (n & (n - 1)) or (p - 1) % n:
+  17         raise ValueError('power-of-two length and root-compatible prime required')
+  18     w = pow(g, (p-1)//n, p)
+  19     if pow(w, n//2, p) == 1:
+  20         raise ValueError('root must be primitive')
+  21     return w
+  22 
+  23 
+  24 def direct_dft(x, p=P, g=G):
+  25     n=len(x)
+  26     w=root_n(n,p,g)
+  27     return [sum(x[j] * pow(w,(k*j)%n,p) for j in range(n))%p for k in range(n)]
+  28 
+  29 
+  30 def rank_mod(a, p=P):
+  31     if not a: return 0
+  32     r=0; z=[[t%p for t in row] for row in a]
+  33     nr=len(z);nc=len(z[0])
+  34     for j in range(nc):
+  35         i=next((q for q in range(r,nr) if z[q][j]),None)
+  36         if i is None: continue
+  37         z[r],z[i]=z[i],z[r]
+  38         v=pow(z[r][j],-1,p)
+  39         z[r]=[v*t%p for t in z[r]]
+  40         for h in range(r+1,nr):
+  41             f=z[h][j]
+  42             if f: z[h]=[(a-f*b)%p for a,b in zip(z[h],z[r])]
+  43         r+=1
+  44         if r==nr: break
+  45     return r
+  46 
+  47 
+  48 def dft_matrix(n, p=P, g=G):
+  49     w=root_n(n,p,g)
+  50     return [[pow(w,k*j%n,p) for j in range(n)] for k in range(n)]
+  51 
+  52 
+  53 def ranks_at_all_cuts(matrix, row_order, col_order, p=P):
+  54     n=len(matrix);out=[]
+  55     for s in range(1,n):
+  56         up=rank_mod([[matrix[i][j] for j in col_order[s:]] for i in row_order[:s]],p)
+  57         down=rank_mod([[matrix[i][j] for j in col_order[:s]] for i in row_order[s:]],p)
+  58         out.append((up,down))
+  59     return out
+  60 
+  61 
+  62 @dataclass(frozen=True)
+  63 class Scan4Plan:
+  64     p: int
+  65     input_order: tuple[int, ...]
+  66     lower_p: tuple[int, ...]
+  67     lower_q: tuple[int, ...]
+  68     upper_u: tuple[int, ...]
+  69     upper_v: tuple[int, ...]
+  70     diagonal: tuple[int, ...]
+  71 
+  72     def evaluate(self, data):
+  73         if len(data)!=4: raise ValueError('four values required')
+  74         p=self.p
+  75         x=[data[i]%p for i in self.input_order]
+  76         low=[0]*4; pref=0
+  77         for i in range(4):
+  78             low[i]=(self.lower_p[i]*pref)%p
+  79             pref=(pref+self.lower_q[i]*x[i])%p
+  80         high=[0]*4; suffix=0
+  81         for i in range(3,-1,-1):
+  82             high[i]=(self.upper_u[i]*suffix)%p
+  83             suffix=(suffix+self.upper_v[i]*x[i])%p
+  84         reordered=[(self.diagonal[i]*x[i]+low[i]+high[i])%p for i in range(4)]
+  85         out=[0]*4
+  86         for i,j in enumerate(self.input_order): out[j]=reordered[i]
+  87         return out
+  88 
+  89 
+  90 def make_scan4_plan(p=P, g=G) -> Scan4Plan:
+  91     w=root_n(4,p,g)
+  92     a=[[pow(w,(i*j)%4,p) for j in ORDER4] for i in ORDER4]
+  93     # Strictly-lower part has rank-one completion in this 4-point ordering.
+  94     lp=[0]+[a[i][0] for i in range(1,4)]
+  95     lq=[1]+[a[3][j]*pow(lp[3],-1,p)%p for j in range(1,4)]
+  96     # Strictly-upper part has another rank-one completion.
+  97     uu=[a[i][3] for i in range(3)]+[0]
+  98     uv=[0]+[a[0][j]*pow(uu[0],-1,p)%p for j in range(1,4)]
+  99     assert all(a[i][j] == lp[i]*lq[j]%p for i in range(4) for j in range(i))
+ 100     assert all(a[i][j] == uu[i]*uv[j]%p for i in range(4) for j in range(i+1,4))
+ 101     d=[a[i][i] for i in range(4)]
+ 102     return Scan4Plan(p,ORDER4,tuple(lp),tuple(lq),tuple(uu),tuple(uv),tuple(d))
+ 103 
+ 104 
+ 105 def reverse_base4(i:int,digits:int)->int:
+ 106     result=0
+ 107     for _ in range(digits):
+ 108         result=(result<<2)|(i&3)
+ 109         i>>=2
+ 110     return result
+ 111 
+ 112 
+ 113 def fft_via_scan4(values, p=P, g=G):
+ 114     """Convenience alias for power-of-four-only radix-4 scan realization."""
+ 115     n=len(values);m=n
+ 116     while m>1 and m%4==0: m//=4
+ 117     if n<4 or m!=1: raise ValueError('power of four required')
+ 118     result,counts=fft_via_mixed_scan_macros(values,p,g)
+ 119     return result,{**counts, 'macro_levels':counts['macro_stages']}
+ 120 
+ 121 
+ 122 def fft_via_mixed_scan_macros(values, p=P, g=G):
+ 123     """All power-of-two N: first radix 2 (when needed), then radix 4.
+ 124 
+ 125     This emits all N exact outputs of a FRESH vector. It is a known
+ 126     mixed-radix FFT with its 4-point codelets expressed as bidirectional
+ 127     prefix/suffix scans. All layout movements and twiddles are charged.
+ 128     """
+ 129     n=len(values)
+ 130     if n<2 or n&(n-1) or (p-1)%n:
+ 131         raise ValueError('power-of-two n>=2, with supported root required')
+ 132     L=n.bit_length()-1
+ 133     radices=([2] if L%2 else [])+[4]*(L//2)
+ 134     w=root_n(n,p,g)
+ 135     # O(N) prefix-expansion generator (avoid O(N log N) per-index digit reversal).
+ 136     pairs=[(0,0)];stride=1;perm_steps=0
+ 137     for radix in radices:
+ 138         pairs=[(i+digit*stride, j*radix+digit)
+ 139                for i,j in pairs for digit in range(radix)]
+ 140         perm_steps+=len(pairs)
+ 141         stride*=radix
+ 142     permutation=[0]*n
+ 143     for i,j in pairs: permutation[i]=j
+ 144     data=[int(values[permutation[i]])%p for i in range(n)]
+ 145     stats={'length':n, 'radix_stages':tuple(radices),
+ 146            'macro_stages':len(radices),'bidirectional_passes_per_element':0,
+ 147            'scan4_calls':0,'radix2_calls':0,
+ 148            'scan_additions_upper':0,'scan_multiplications_upper':0,
+ 149            'twiddle_multiplications_upper':0,
+ 150            'twiddle_preparation_multiplications_upper':0,
+ 151            'permutation_moves':n, 'permutation_index_steps':perm_steps,
+ 152            'root_power_calls':22, 'modular_power_mult_upper':
+ 153                  2*((p-1)//n).bit_length()+2*(n//2).bit_length()+
+ 154                  2*((p-1)//4).bit_length()+2*(2).bit_length()+
+ 155                  4*(p-2).bit_length()+64}
+ 156     plan=make_scan4_plan(p,g)
+ 157     span=1
+ 158     for r in radices:
+ 159         span*=r;stride=span//r
+ 160         stage_root=pow(w,n//span,p)
+ 161         stats['root_power_calls']+=1
+ 162         stats['modular_power_mult_upper']+=2*(n//span).bit_length()
+ 163         stats['bidirectional_passes_per_element']+=2
+ 164         for start in range(0,n,span):
+ 165             tw=1
+ 166             for j in range(stride):
+ 167                 current=[data[start+j+stride*t] for t in range(r)]
+ 168                 twist=[current[0]]
+ 169                 power=1
+ 170                 for t in range(1,r):
+ 171                     power=power*tw%p
+ 172                     twist.append(current[t]*power%p)
+ 173                     stats['twiddle_multiplications_upper']+=2
+ 174                 if r==4:
+ 175                     result=plan.evaluate(twist)
+ 176                     stats['scan4_calls']+=1
+ 177                     stats['scan_additions_upper']+=16
+ 178                     stats['scan_multiplications_upper']+=20
+ 179                     stats['permutation_moves']+=16
+ 180                 else:
+ 181                     result=[(twist[0]+twist[1])%p,(twist[0]-twist[1])%p]
+ 182                     stats['radix2_calls']+=1
+ 183                     stats['scan_additions_upper']+=2
+ 184                     stats['permutation_moves']+=4
+ 185                 for t in range(r): data[start+j+stride*t]=result[t]
+ 186                 tw=tw*stage_root%p
+ 187                 stats['twiddle_preparation_multiplications_upper']+=1
+ 188     return data,stats

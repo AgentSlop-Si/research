@@ -1,0 +1,314 @@
+   1	"""Fresh audit checker, authored 2026-10-09.
+   2	Never imports, executes, or evaluates uploaded Python. Reads uploaded files only
+   3	as bytes/JSON for provenance; all mathematics below is independently implemented.
+   4	Finite exact checks supplement the analytic report, not replace its proofs.
+   5	"""
+   6	from pathlib import Path
+   7	from itertools import product, permutations, combinations
+   8	from random import Random
+   9	import hashlib
+  10	import json
+  11	import argparse
+  12	
+  13	parser=argparse.ArgumentParser(description=__doc__)
+  14	parser.add_argument('--source',type=Path,help='Optional uploaded checkpoint directory, read only for provenance hashes; never imported or executed.')
+  15	parser.add_argument('--provenance-only',action='store_true',help='With --source, check recorded source hashes without rerunning mathematical checks.')
+  16	args=parser.parse_args()
+  17	if args.provenance_only and args.source is None:
+  18	    parser.error('--provenance-only requires --source')
+  19	OUT=Path(__file__).resolve().parent
+  20	
+  21	def provenance(base):
+  22	    manifest={str(f.relative_to(base)):hashlib.sha256(f.read_bytes()).hexdigest()
+  23	        for name in ('fft_bidirectional_graph_research','fft_bidirectional_extension_research','fft_macro_review_research')
+  24	        for f in sorted((base/name).iterdir()) if f.is_file()}
+  25	    claims=[]
+  26	    def check_hash(rel,expected):
+  27	        actual=manifest[rel]
+  28	        claims.append({'path':rel,'expected':expected,'actual':actual,'matches':expected==actual})
+  29	    graph=json.loads((base/'fft_bidirectional_graph_research/results.json').read_text())
+  30	    check_hash('fft_bidirectional_graph_research/affine_cycle.py',graph['source_sha256'])
+  31	    ind=json.loads((base/'fft_bidirectional_graph_research/independent_results.json').read_text())
+  32	    check_hash('fft_bidirectional_graph_research/affine_cycle.py',ind['source_sha256'])
+  33	    check_hash('fft_bidirectional_graph_research/run_audit.py',ind['author_audit_sha256'])
+  34	    for result_name in ('results.json','review_edge_results.json'):
+  35	        rec=json.loads((base/'fft_bidirectional_extension_research'/result_name).read_text())
+  36	        for name,h in rec['source_sha256'].items():
+  37	            check_hash('fft_bidirectional_extension_research/'+name,h)
+  38	    assert all(x['matches'] for x in claims)
+  39	    (OUT/'source_manifest.json').write_text(json.dumps({'scope':'Optional provenance-only static byte/JSON reads; no source execution.', 'files':manifest,'recorded_hash_checks':claims},indent=2)+'\n')
+  40	    print(json.dumps({'provenance_status':'PASS','recorded_hashes_checked':len(claims)}))
+  41	
+  42	if args.source is not None:
+  43	    provenance(args.source)
+  44	if args.provenance_only:
+  45	    raise SystemExit(0)
+  46	rng=Random(9102026)
+  47	
+  48	def eye(n): return [[int(i==j) for j in range(n)] for i in range(n)]
+  49	def mm(a,b,p):
+  50	    bt=list(zip(*b))
+  51	    return [[sum(x*y for x,y in zip(row,col))%p for col in bt] for row in a]
+  52	def mv(a,x,p): return [sum(v*w for v,w in zip(row,x))%p for row in a]
+  53	def minus(a,b,p): return [[(x-y)%p for x,y in zip(ra,rb)] for ra,rb in zip(a,b)]
+  54	def rank(a,p):
+  55	    if not a: return 0
+  56	    a=[list(row) for row in a];r=0
+  57	    for c in range(len(a[0])):
+  58	        k=next((k for k in range(r,len(a)) if a[k][c]%p),None)
+  59	        if k is None: continue
+  60	        a[k],a[r]=a[r],a[k]
+  61	        inv=pow(a[r][c],-1,p)
+  62	        a[r]=[v*inv%p for v in a[r]]
+  63	        for k in range(r+1,len(a)):
+  64	            scale=a[k][c]
+  65	            a[k]=[(x-scale*y)%p for x,y in zip(a[k],a[r])]
+  66	        r+=1
+  67	        if r==len(a): break
+  68	    return r
+  69	
+  70	def inverse(a,p):
+  71	    n=len(a);m=[list(row)+e for row,e in zip(a,eye(n))]
+  72	    for c in range(n):
+  73	        k=next((k for k in range(c,n) if m[k][c]%p),None)
+  74	        if k is None: return None
+  75	        m[k],m[c]=m[c],m[k];v=pow(m[c][c],-1,p)
+  76	        m[c]=[x*v%p for x in m[c]]
+  77	        for k in range(n):
+  78	            if k!=c:
+  79	                v=m[k][c];m[k]=[(x-v*y)%p for x,y in zip(m[k],m[c])]
+  80	    return [row[n:] for row in m]
+  81	
+  82	def root(n,p):
+  83	    return next(w for w in range(2,p) if pow(w,n,p)==1 and len({pow(w,j,p) for j in range(n)})==n)
+  84	
+  85	def fourier(n,p,w): return [[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+  86	def perm(pi): return [[int(j==pi[i]) for j in range(len(pi))] for i in range(len(pi))]
+  87	def orbit(pi):
+  88	    o=[];j=0;seen=set()
+  89	    while j not in seen: seen.add(j);o.append(j);j=pi[j]
+  90	    assert j==0 and len(o)==len(pi)
+  91	    return o
+  92	
+  93	def weighted_system(pi,coeff,p):
+  94	    m=eye(len(pi))
+  95	    for i,j in enumerate(pi): m[i][j]=(m[i][j]-coeff[i])%p
+  96	    return m
+  97	
+  98	def closed_cycle(pi,d,rhs,p):
+  99	    # Direct expanded numerator; recover forward by division. Zero edges use
+ 100	    # independent dense elimination, solely a reference for the zero case.
+ 101	    if not all(d):
+ 102	        inv=inverse(weighted_system(pi,d,p),p)
+ 103	        return None if inv is None else mv(inv,rhs,p)
+ 104	    order=orbit(pi);numerator=0;weight=1
+ 105	    for i in order:
+ 106	        numerator=(numerator+weight*rhs[i])%p
+ 107	        weight=weight*d[i]%p
+ 108	    if weight==1:return None
+ 109	    z=[0]*len(pi);z[0]=numerator*pow(1-weight,-1,p)%p
+ 110	    for i in order[:-1]:z[pi[i]]=(z[i]-rhs[i])*pow(d[i],-1,p)%p
+ 111	    assert (z[order[-1]]-d[order[-1]]*z[0]-rhs[order[-1]])%p==0
+ 112	    return z
+ 113	
+ 114	def fft_reference(x,w,p):
+ 115	    # Recursive decimation, independently coded.
+ 116	    n=len(x)
+ 117	    if n==1:return list(x)
+ 118	    e=fft_reference(x[::2],w*w%p,p);o=fft_reference(x[1::2],w*w%p,p)
+ 119	    lo=[];hi=[];tw=1
+ 120	    for a,b in zip(e,o):
+ 121	        v=tw*b%p;lo.append((a+v)%p);hi.append((a-v)%p);tw=tw*w%p
+ 122	    return lo+hi
+ 123	
+ 124	stats={}
+ 125	# Full affine intertwining and source/target cycle determinants.
+ 126	cases=0;accepted=0;singular=0
+ 127	for p,n in ((17,4),(17,8),(41,4),(41,8),(97,4),(97,8),(97,16),(97,32)):
+ 128	    w0=root(n,p)
+ 129	    for w in (w0,pow(w0,-1,p)):
+ 130	        f=fourier(n,p,w)
+ 131	        for a,b,c in ((5,1,1),(9,3,5),(-7,-3,-1),(1,1,1)):
+ 132	            ai=pow(a,-1,n);src=[(a*j+c)%n for j in range(n)];tgt=[ai*(k+b)%n for k in range(n)]
+ 133	            orbit(src);orbit(tgt)
+ 134	            m=[[int(j==src[i])*pow(w,b*i%n,p)%p for j in range(n)] for i in range(n)]
+ 135	            mh=[[int(j==tgt[i])*pow(w,-c*tgt[i]%n,p)%p for j in range(n)] for i in range(n)]
+ 136	            assert mm(f,m,p)==mm(mh,f,p)
+ 137	            for lam in (0,1,2,3,5):
+ 138	                dc=[lam*pow(w,b*j%n,p)%p for j in range(n)]
+ 139	                dt=[lam*pow(w,-c*tgt[k]%n,p)%p for k in range(n)]
+ 140	                prod=1
+ 141	                for v in dt:prod=prod*v%p
+ 142	                assert prod == -pow(lam,n,p)%p
+ 143	                sm=weighted_system(src,dc,p);inv=inverse(sm,p)
+ 144	                assert (inv is None)==((1+pow(lam,n,p))%p==0)
+ 145	                if inv is None:singular+=1;continue
+ 146	                u=[0]*n
+ 147	                for j in rng.sample(range(n),min(2,n)):u[j]=rng.randrange(1,p)
+ 148	                x=mv(inv,u,p);v=mv(f,u,p)
+ 149	                y=closed_cycle(tgt,dt,v,p)
+ 150	                assert y==mv(f,x,p)
+ 151	                assert mv(weighted_system(tgt,dt,p),y,p)==v
+ 152	                accepted+=1
+ 153	            cases+=1
+ 154	stats['affine_operator_matrix_cases']=cases
+ 155	stats['affine_dense_gaussian_source_cases']=accepted
+ 156	stats['affine_singular_determinant_cases']=singular
+ 157	
+ 158	# Majority schedule and arithmetic-count equations, exhaustive ratio words.
+ 159	words=0;resets_hist={}
+ 160	for n in (4,8,16):
+ 161	    for bad in range(n):
+ 162	        ratios=[2]*n;ratios[bad]=3
+ 163	        votes=0;candidate=None;comparisons=0
+ 164	        for v in ratios:
+ 165	            if votes==0:candidate=v;votes=1
+ 166	            else:comparisons+=1;votes += 1 if v==candidate else -1
+ 167	        assert candidate==2
+ 168	        total=n+(n+2*comparisons+2)+2*n+(2*n+n)+(5*n+3)
+ 169	        assert total <=14*n+3
+ 170	        if bad==0:assert comparisons==n-2 and total==14*n+1
+ 171	        words+=1
+ 172	stats['one_defect_majority_positions']=words
+ 173	
+ 174	# Large exact new-family benchmarks, independent outputs vs recursive FFT.
+ 175	bench=[];p=65537
+ 176	for n in (1024,4096,8192,32768):
+ 177	    w=pow(3,(p-1)//n,p)  # Same primitive root as the submitted p=65537 fixture.
+ 178	    assert pow(w,n,p)==1 and pow(w,n//2,p)!=1
+ 179	    lam=next(v for v in range(2,p) if (1+pow(v,n,p))%p)
+ 180	    src=[(5*j+1)%n for j in range(n)];tgt=[pow(5,-1,n)*(k+1)%n for k in range(n)]
+ 181	    ds=[lam*pow(w,j,p)%p for j in range(n)];dt=[lam*pow(w,-j%n,p)%p for j in tgt]
+ 182	    order=orbit(src);x=[0]*n;x[0]=pow(1+pow(lam,n,p),-1,p);v=x[0]
+ 183	    for j in reversed(order[1:]):v=v*ds[j]%p;x[j]=v
+ 184	    assert all(x)
+ 185	    residual=[(x[j]-ds[j]*x[src[j]])%p for j in range(n)]
+ 186	    assert residual==[1]+[0]*(n-1)
+ 187	    y=closed_cycle(tgt,dt,[1]*n,p)
+ 188	    assert y==fft_reference(x,w,p)
+ 189	    bench.append(dict(N=n,lambda_value=lam,nonzero_input_entries=n,affine_scalar_bill=14*n+1,
+ 190	                      specified_radix_scalar_bill=n+3*n*(n.bit_length()-1)//2))
+ 191	stats['large_independent_benchmarks']=bench
+ 192	# Verify advertised separation witness using dense Gaussian source construction.
+ 193	n=32;w=pow(3,(p-1)//n,p);s=[(5*j+1)%n for j in range(n)];ds=[2*pow(w,j,p)%p for j in range(n)]
+ 194	x=mv(inverse(weighted_system(s,ds,p),p),[1]+[0]*31,p)
+ 195	rr=[[x[j],pow(w,j,p)*x[j]%p,x[j+1],pow(w,j,p)*x[j+1]%p] for j in range(n-1)]
+ 196	stats['separation_witness']={'rank':rank(rr,p),'untwisted_defects':sum(x[5*j%n]!=x[j] for j in range(n)),'nonzeros':sum(bool(z) for z in x)}
+ 197	assert stats['separation_witness']=={'rank':4,'untwisted_defects':28,'nonzeros':32}
+ 198	
+ 199	# Independent generator sandwich construction; T derived densely then compared
+ 200	# with analytic entries. Apply by upper/lower triangular substitution.
+ 201	p=101;count=0
+ 202	for n in (2,3,4,7,11):
+ 203	    for _ in range(25):
+ 204	        pp=[rng.randrange(1,p) for _ in range(n)];vv=[rng.randrange(1,p) for _ in range(n)]
+ 205	        qq,uu,dd=[[rng.randrange(p) for _ in range(n)] for z in range(3)]
+ 206	        aa=[0]+[pp[i]*pow(pp[i-1],-1,p)%p for i in range(1,n)]
+ 207	        bb=[0]+[vv[i]*pow(vv[i-1],-1,p)%p for i in range(1,n)]
+ 208	        a=[[dd[i] if i==j else pp[i]*qq[j]%p if i>j else uu[i]*vv[j]%p for j in range(n)] for i in range(n)]
+ 209	        l=eye(n);r=eye(n)
+ 210	        for i in range(1,n):l[i][i-1]=-aa[i]%p;r[i-1][i]=-bb[i]%p
+ 211	        t=mm(mm(l,a,p),r,p)
+ 212	        assert all(not t[i][j] for i in range(n) for j in range(n) if abs(i-j)>1)
+ 213	        md=[dd[0]]+[(dd[i]-aa[i]*uu[i-1]*vv[i])%p for i in range(1,n)]
+ 214	        lower=[0]+[(pp[i]*qq[i-1]-aa[i]*dd[i-1])%p for i in range(1,n)]
+ 215	        for i in range(n):
+ 216	            assert t[i][i]==(md[i]-bb[i]*lower[i])%p
+ 217	            if i:assert t[i][i-1]==lower[i]
+ 218	            if i+1<n:assert t[i][i+1]==((uu[i]-(aa[i]*uu[i-1] if i else 0))*vv[i+1]-bb[i+1]*md[i])%p
+ 219	        assert mm(mm(inverse(l,p),t,p),inverse(r,p),p)==a
+ 220	        x=[rng.randrange(p) for i in range(n)];z=x[:]
+ 221	        for i in reversed(range(n-1)):z[i]=(z[i]+bb[i+1]*z[i+1])%p
+ 222	        y=mv(t,z,p)
+ 223	        for i in range(1,n):y[i]=(y[i]+aa[i]*y[i-1])%p
+ 224	        assert y==mv(a,x,p)
+ 225	        count+=1
+ 226	stats['sandwich_generator_cases']=count
+ 227	zero_cases=0
+ 228	for bits in product((0,1),repeat=6):
+ 229	    n=4;l=eye(n);r=eye(n)
+ 230	    for i in range(1,n):l[i][i-1]=-bits[i-1]%p;r[i-1][i]=-bits[i+2]%p
+ 231	    t=[[rng.randrange(p) if abs(i-j)<=1 else 0 for j in range(n)] for i in range(n)]
+ 232	    a=mm(mm(inverse(l,p),t,p),inverse(r,p),p)
+ 233	    for k in range(1,n):
+ 234	        assert rank([row[k:] for row in a[:k]],p)<=1
+ 235	        assert rank([row[:k] for row in a[k:]],p)<=1
+ 236	    zero_cases+=1
+ 237	stats['zero_transition_converse_cases']=zero_cases
+ 238	
+ 239	# Sharp component inverse-support examples.
+ 240	sharp=[]
+ 241	for b in range(1,9):
+ 242	    n=2*b+1;l=eye(n);r=eye(n);t=[[4*int(i==j) for j in range(n)] for i in range(n)]
+ 243	    for i in range(1,n):
+ 244	        l[i][i-1]=-2%p;r[i-1][i]=-3%p
+ 245	        if i not in (1,b+1):t[i][i-1]=t[i-1][i]=1
+ 246	    ti=inverse(t,p);assert ti is not None
+ 247	    ai=mm(mm(r,ti,p),l,p);support=max(sum(bool(v) for v in row) for row in ai)
+ 248	    assert support==2*b+1;sharp.append({'b':b,'support':support})
+ 249	stats['sharp_component_examples']=sharp
+ 250	# The arbitrary permutation displacement identity is combinatorial.
+ 251	count=0
+ 252	for n in range(2,8):
+ 253	    for pi in permutations(range(n)):
+ 254	        crossing=sum(sum(pi[i]>=k for i in range(k)) for k in range(1,n))
+ 255	        assert 2*crossing==sum(abs(i-j) for i,j in enumerate(pi));count+=1
+ 256	stats['exhaustive_permutation_movement_cases']=count
+ 257	
+ 258	# Nonuniform rigidity, including zero rows and non-dyadic length.
+ 259	count=0
+ 260	for p,n in ((7,3),(5,4)):
+ 261	    w=root(n,p);f=fourier(n,p,w)
+ 262	    choices=[[0]*n]+[[v if j==i else 0 for j in range(n)] for i in range(n) for v in range(1,p)]
+ 263	    # Exhaust N3; deterministic broad N4 sample.
+ 264	    arrays=product(choices,repeat=n) if n==3 else ([rng.choice(choices) for i in range(n)] for _ in range(5000))
+ 265	    for s in arrays:
+ 266	        ss=[sum(bool(v) for v in row) for row in s];rr=rank(minus(f,s,p),p)
+ 267	        assert n<=min(ss)+rr*(max(ss)+1);count+=1
+ 268	stats['nonuniform_rigidity_cases']=count
+ 269	count=0
+ 270	for n,p in ((3,7),(4,17),(8,17)):
+ 271	    f=fourier(n,p,root(n,p))
+ 272	    for m in range(1,n+1):
+ 273	        for start in range(n):
+ 274	            rows=[(start+i)%n for i in range(m)]
+ 275	            for cols in combinations(range(n),m):
+ 276	                assert rank([[f[i][j] for j in cols] for i in rows],p)==m;count+=1
+ 277	stats['cyclic_vandermonde_minors']=count
+ 278	# Support bound and telescoping for random interleaved inverse words.
+ 279	count=0
+ 280	for n in (3,4,8,16):
+ 281	    p=97;f=fourier(n,p,root(n,p))
+ 282	    for t in range(1,6):
+ 283	        for budget in range(4):
+ 284	            for repeat in range(5):
+ 285	                factors=[]
+ 286	                for _ in range(t):
+ 287	                    a=eye(n);upper=rng.randrange(2)
+ 288	                    for i in range(n):
+ 289	                        a[i][i]=rng.randrange(1,p);j=i+1 if upper else i-1
+ 290	                        if 0<=j<n:a[i][j]=rng.randrange(p)
+ 291	                    factors.append(('scan',a))
+ 292	                for _ in range(budget):
+ 293	                    while True:
+ 294	                        u=[rng.randrange(p) for i in range(n)];v=[rng.randrange(p) for i in range(n)]
+ 295	                        if (1+sum(a*b for a,b in zip(u,v)))%p:break
+ 296	                    factors.append(('broadcast',[[(int(i==j)+u[i]*v[j])%p for j in range(n)] for i in range(n)]))
+ 297	                rng.shuffle(factors);word=eye(n);s=eye(n)
+ 298	                for kind,a in factors:
+ 299	                    pi=list(range(n));rng.shuffle(pi);m=perm(pi)
+ 300	                    word=mm(mm(word,m,p),a,p);s=mm(s,m,p)
+ 301	                    if kind=='scan':s=mm(s,a,p)
+ 302	                sizes=[sum(bool(v) for v in row) for row in s]
+ 303	                assert max(sizes)<=2**t and min(sizes)<=2**(t-1)
+ 304	                assert rank(minus(word,s,p),p)<=budget
+ 305	                rr=rank(minus(f,s,p),p);assert n<=min(sizes)+rr*(max(sizes)+1)
+ 306	                count+=1
+ 307	stats['interleaved_word_cases']=count
+ 308	stats['N64_boundary_budgets']=[max(0,-((-(64-2**(t-1)))//(2**t+1))) if t else 32 for t in range(8)]
+ 309	assert stats['N64_boundary_budgets']==[32,21,13,7,4,2,1,0]
+ 310	
+ 311	stats['status']='PASS'
+ 312	stats['method']='Standalone independent mathematical checker; no uploaded code imported or executed. Optional --source is provenance-only.'
+ 313	(OUT/'independent_results.json').write_text(json.dumps(stats,indent=2)+'\n')
+ 314	print(json.dumps(stats,indent=2))

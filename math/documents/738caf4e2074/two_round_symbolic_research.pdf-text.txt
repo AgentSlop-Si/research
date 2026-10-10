@@ -1,0 +1,206 @@
+Two-round symbolic sharing: exact negative
+result
+Research pass: 8 October 2026
+
+
+
+Result
+The tested sharing idea does not improve ordinary two-round synthetic butterflies. For the smallest instance (length t = 4,
+polynomial degree r = 2), exhaustive enumeration of 6,561 pair partitions finds one optimal pair-partition assignment: 16
+additions/subtractions, exactly the staged baseline. Ten exact configurations, covering 8 to 256 real scalar inputs, give the
+same conclusion. This is not a uniqueness claim about all optimal circuits.
+
+There is also a uniform, restricted lower-bound argument: two genuine consecutive butterfly layers, with any signed
+permutation between them and disjoint first-layer pairs meeting in each second-layer butterfly, require at least 2N
+additions in the cancellation-free signed-sum grammar defined below. The ordinary layers attain 2N. This is not a lower
+bound for general linear circuits, Fourier transforms, or algorithms allowing cancellation and more general coefficients.
+
+No improved recursive exponent, novel FFT algorithm, or evidence that a breakthrough is close follows from this
+experiment.
+
+
+
+Exact object and baseline
+Work over R_r = Q[y]/(y^r + 1); the same coefficient identity extends to real or complex inputs. Multiplication by a power
+of y is a signed coefficient permutation. The normalized butterfly maps (a,b) to ((a+b)/2,(a-b)/2). Two consecutive
+decimation-in-frequency rounds are expanded on all N = tr scalar coefficients. The imaginary components of complex
+inputs are independent identical copies, so scalar counts double for complex coefficients.
+
+The source specification is the pinned OpenAI transform construction [1]. The implementation checks its entire
+untruncated transform against the defining Fourier sum, including bit-reversed stored order. Each two-round fragment is
+then checked as an exact linear operator, with normalization 1/4.
+
+The baseline is the ordinary staged butterfly circuit, with N first-layer and N second-layer additions. Both compared exact
+circuits defer their common normalization to the output; this prevents counting deferred scaling as a sharing
+improvement. The dense 3N-addition expansion is not the baseline.
+
+The local grammar permits binary additions/subtractions with disjoint input supports, fanout and sharing of equal signed
+sums, free global sign equivalence for the lower bound, and a final common 1/4 scaling. It permits arbitrary pairing and
+arbitrary depth of useful subexpressions. It excludes cancellation, intermediate coefficients other than +/-1, nonlinear
+operations, lookup tables, and transformations of the frame compiler.
+
+
+
+Why the restricted lower bound holds
+Every output has four distinct input coordinates with coefficients +/-1 before normalization. The unnormalized transform
+rows are mutually orthogonal because the layers are Hadamard butterflies and signed permutations.
+1. A useful two-input signed sum occurs in at most two outputs. If both inputs come from one original butterfly pair, that
+relative-sign form is one first-layer value, which feeds one second-layer butterfly and hence two outputs. If they come
+from two original pairs A and B, every containing output has exactly support A union B. Normalize the selected two signs
+to a fixed orientation. Pairwise orthogonality would require the remaining two signs of every two such rows to be
+opposite. At most two rows can satisfy that condition.
+
+2. A useful three-input signed sum occurs in at most one output. Any two containing outputs would have the same two
+original pairs and the same four-input support. Agreement on three signs leaves their dot product nonzero, even after
+global sign normalization.
+
+3. Final outputs are distinct up to sign by orthogonality. A cancellation-free four-leaf binary tree has three additions.
+Across N outputs, only pair nodes can share, and each can be used at most twice. Equivalently, if k outputs use a three-
+plus-one split, at least k triple nodes and ceil((2N-k)/2) pair nodes are required, in addition to N final nodes. Their sum is
+at least 2N.
+
+All support and sign hypotheses are checked exhaustively for every tested matrix. The proof applies uniformly to the
+stated two-layer topology; the finite tests do not establish global optimality outside this grammar. The proof is an
+elementary argument supplied with this experiment, with no priority or publication-novelty claim.
+
+
+
+Finite results
+The tested (t, r, starting stage) configurations are:
+
+   (4,2,0), (4,4,0), (4,8,0)
+   (8,4,0), (8,4,1), (8,8,0)
+   (16,8,0), (16,8,1), (16,8,2), (16,16,0)
+
+The respective baseline/optimal addition counts are 16, 32, 64, 64, 64, 128, 256, 256, 256, and 512. Every case has
+maximum pair incidence two and maximum triple incidence one.
+
+The smallest case enumerates all three partitions into pairs for each of eight outputs, hence 3^8 = 6,561 assignments.
+Counts of assignments by number of distinct pair nodes are: 8:1, 10:32, 12:384, 14:2,048, 16:4,096. Eight final output
+additions are charged separately. The sole optimal pair partition reproduces the original first-layer pairing. Larger cases
+use the exact incidence certificate rather than falsely claiming an exhaustive general circuit search.
+
+
+
+Dirty scratch: emitted word, not an assumption
+The cancellation-free DAG is lifted into an invertible rational mixer L, with one physical role per outgoing edge except the
+first-input/output pivot identification at each addition. It has c+q = 3N scratch roles. Additive copies and signed shears
+operate on arbitrary initial scratch; no used scratch is assumed zero.
+
+With V injecting the source into input roles and J extracting output roles, the complete chronological word is:
+
+L; subtract J/4 from target; L inverse; add V source; L; add J/4 to target; L inverse; subtract V source.
+
+Its exact map is (x, target, scratch) -> (x, target + Mx/4, scratch), where M is the unnormalized two-round matrix. The full
+emitted word is replayed on every symbolic source, target and dirty-scratch basis column. This is an additive-output
+implementation, not the source framework's signed-role permutation interface. This is the standard transparent-
+computation idea related to the already published shared-computation construction [2], not a new restoration technique.
+
+For the smallest instance, both baseline and candidate have:
+
+   8 real inputs and 8 target accumulators
+   24 scratch roles; full 40-by-40 state operator checked
+   32 mixer shears; four mixer traversals
+   160 total shears, including source copies, injections and all cleanup
+   16 quarter-scaled target updates, each charging a dyadic shift as well as an addition; no general scalar multiplications
+   320 scalar operand reads and 160 destination writes for those shears
+   160 instruction fetches, each carrying operation/address data
+
+Across the suite these counts scale as 3N scratch, 5N total roles and 20N shears. No separate negation gates occur in the
+emitted tested words. Signs are carried in signed shears. This lifting is a verified implementation and comparison
+convention, not a claim of optimal dirty-workspace compilation.
+
+
+
+Routing, preparation and precision
+In the ordinary read-only-input arithmetic DAG, 2N additions entail 4N operand reads and 2N result writes; final scaling
+adds N reads and N writes. Thus the common charged arithmetic/scaling traffic is 8N scalar accesses. Signed twiddles are
+compiled into operand references for both competitors. A separately materialized twiddle would incur one coefficient
+read and one write per moved coefficient; exact per-case counts are retained in summary.json. The smallest instance has
+one nonidentity two-coefficient record twiddle, adding two reads and two writes if materialized.
+
+The lifted implementation charges every data shear and all restoration, but uses random-access register addressing. Each
+address requires O(log N) bits and each emitted instruction must be read. Circuit generation, exhaustive search, certificate
+writing, and descriptor construction are preparation work; none is advertised as free or as a uniform fast transform
+algorithm. Fixed-tape layout conversion, scans, routing and source-framework descriptors are not implemented. No fixed-
+tape speedup is inferred from these access counts.
+
+Exact dyadic evaluation of two normalized rounds needs two additional fractional bits when input components lie on the
+2^-p grid. The replay also records the maximum induced row l1 norm over every intermediate dirty-lift state: 14 in all ten
+cases, with coefficient denominators at most four. If all initial source, target and scratch components have magnitude at
+most B, every intermediate component has magnitude at most 14B. This gives an explicit local precision bound;
+unrestricted arbitrary scratch still has exact restoration, but its storage cost depends on its input magnitude and precision.
+No rounding occurs during the full-state proof.
+
+
+
+Rounded interfaces are different
+Exact matrix equality cannot justify moving truncation across a layer. At p = 1, take real constant-polynomial inputs (1,
+1/2, 1/2, 0), with other coefficients zero. Each input lies in the unit disk. Two rounds with toward-zero truncation to the
+half-integer grid at each boundary return all zeros. Evaluating both rounds exactly and truncating once returns DC
+coefficient 1/2.
+
+Thus Q_p(L2 Q_p(L1 x)) differs from Q_p(L2 L1 x). A fused algorithm could still be a valid approximation with a fresh error
+proof, but would not be bit-for-bit identical to the rounded interface. Each exact normalized synthetic round is
+contractive, so a once-rounded two-round map has the elementary one-truncation error bound; the staged
+implementation has two possible truncation contributions. This local observation does not establish compatibility with the
+full recursive precision argument.
+
+
+
+Why no recurrence claim is available
+The CrocSwap recursive certificate is based on physical roles and frame-edge child ranks, not the number of scalar
+additions. In weighted form, for dimension m, role count W and n_t children of rank t, a proposed saving a requires the
+strict inequality
+
+Psi(a) = sum_t (n_t/W) (t/m)^(1-a) < 1.
+This experiment supplies neither the rational projector/common-frame assignments, all-role endpoint identities nor a
+resulting rank histogram n_t for its dirty lift. Consequently Psi is not defined for this candidate and no source moment test
+was evaluated; it would be incorrect to report that the moment test failed. It also does not supply the source-framework
+tape-layout, uniform compilation, complete precision or final assembly obligations. Those are the precise missing
+interface. The scalar network reproduces its baseline cost anyway; there is no candidate improvement to amplify.
+
+
+
+Reproduce
+Requirements: Python 3.11 or later; standard library only. No external repository, package installation, network,
+randomized test, or numerical tolerance is needed.
+
+Run from this directory:
+python3 experiment.py
+
+python3 verify_results.py
+
+python3 -m unittest -v test_experiment.py
+
+The experiment regenerates results/summary.json and ten full-state certificates. verify_results.py is an independently
+written emitted-word and incidence replayer and does not import experiment.py. Seven unit tests include deliberate
+missing-cleanup and wrong-injection-sign faults, forbidden cancellation, and the rounded counterexample. All checks
+passed in this pass. These are exact arithmetic and finite proof checks, not a formally verified theorem prover or
+reproduction of the complete upstream framework.
+
+
+
+Sources and attribution
+[1] OpenAI, pinned synthetic-transform specification, commit adc7f1241b42e322a6451854ab7e4b4c146bf78a, section
+06-transforms.tex. The source attributes polynomial synthetic transforms to Nussbaumer/Quandalle and Harvey/van der
+Hoeven.
+
+https://github.com/openai/math/blob/adc7f1241b42e322a6451854ab7e4b4c146bf78a/preprints/Integer-multiplication-
+below-n-log-n-September-23-2026/build/sections/06-transforms.tex
+
+[2] CrocSwap, historical shared-computation DAG patch, pinned commit
+56b66d58297deca1d7dd130247d720e960f77a37. Its shared-sum motif, restoration and frame accounting are prior work;
+this experiment does not reproduce or improve its published witness.
+https://github.com/CrocSwap/integer-mult-bounds/blob/56b66d58297deca1d7dd130247d720e960f77a37/patches/h46-
+dag-63.patch
+
+[3] CrocSwap, weighted pair-assembly certificate and conditional-scope statement, same pinned commit. These supply
+the recursive acceptance criterion, not an endorsement of this local experiment.
+
+https://github.com/CrocSwap/integer-mult-bounds/blob/56b66d58297deca1d7dd130247d720e960f77a37/research/
+pair-assembly/verify.py
+
+https://github.com/CrocSwap/integer-mult-bounds/tree/56b66d58297deca1d7dd130247d720e960f77a37#evidence-
+and-limits
+

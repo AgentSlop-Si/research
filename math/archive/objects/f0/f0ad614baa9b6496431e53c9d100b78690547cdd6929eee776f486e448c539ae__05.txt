@@ -1,0 +1,171 @@
+   1 #!/usr/bin/env python3
+   2 from fractions import Fraction as Q
+   3 from pathlib import Path
+   4 import json
+   5 import argparse
+   6 import hashlib
+   7 
+   8 def trim(a):
+   9     a=list(a)
+  10     while a and a[-1]==0:a.pop()
+  11     return a
+  12 
+  13 def pa(a,b):
+  14     return trim([(a[i] if i<len(a) else 0)+(b[i] if i<len(b) else 0) for i in range(max(len(a),len(b)))])
+  15 
+  16 def pn(a):return [-x for x in a]
+  17 def pm(a,b):
+  18     c=[Q(0)]*(max(0,len(a)+len(b)-1))
+  19     for i,x in enumerate(a):
+  20         for j,y in enumerate(b):c[i+j]+=x*y
+  21     return trim(c)
+  22 def pd(a,b):
+  23     a=trim(a);b=trim(b)
+  24     if not b:raise ZeroDivisionError
+  25     q=[Q(0)]*max(0,len(a)-len(b)+1)
+  26     while len(a)>=len(b):
+  27         j=len(a)-len(b); t=a[-1]/b[-1];q[j]=t
+  28         a=pa(a,pn([0]*j+[t*x for x in b]))
+  29     return trim(q),a
+  30 
+  31 def pinv(a,m):
+  32     r0,r1=list(m),trim(a); s0,s1=[],[Q(1)]
+  33     while r1:
+  34         q,r=pd(r0,r1);r0,r1=r1,r;s0,s1=s1,pa(s0,pn(pm(q,s1)))
+  35     if len(r0)!=1:raise ZeroDivisionError('nonunit base field')
+  36     return pd([x/r0[0] for x in s0],m)[1]
+  37 
+  38 class K:
+  39     modulus=[Q(1)]*5
+  40     def __init__(self,a=0):
+  41         if isinstance(a,K):self.a=a.a;return
+  42         a=list(a) if isinstance(a,(tuple,list)) else [a]
+  43         a=pd([Q(x) for x in a],self.modulus)[1]
+  44         self.a=tuple(a+[Q(0)]*(4-len(a)))
+  45     def __add__(self,b):return K(pa(self.a,K(b).a))
+  46     __radd__=__add__
+  47     def __neg__(self):return K(pn(self.a))
+  48     def __sub__(self,b):return self+-K(b)
+  49     def __rsub__(self,b):return K(b)+-self
+  50     def __mul__(self,b):return K(pm(self.a,K(b).a))
+  51     __rmul__=__mul__
+  52     def inv(self):return K(pinv(self.a,self.modulus))
+  53     def __truediv__(self,b):return self*K(b).inv()
+  54     def __rtruediv__(self,b):return K(b)*self.inv()
+  55     def __eq__(self,b):return self.a==K(b).a
+  56     def __bool__(self):return any(self.a)
+  57     def __pow__(self,n):
+  58         if n<0:return self.inv()**(-n)
+  59         out=K(1); a=self
+  60         while n:
+  61             if n&1:out=out*a
+  62             a=a*a;n//=2
+  63         return out
+  64     def serial(self):return [str(x) for x in self.a]
+  65     def __repr__(self):return str(self.serial())
+  66 
+  67 class E:
+  68     p0=None;p1=None
+  69     def __init__(self,a=0,b=0):
+  70         if isinstance(a,E):self.a,self.b=a.a,a.b
+  71         else:self.a,self.b=K(a),K(b)
+  72     def __add__(self,y):
+  73         y=E(y);return E(self.a+y.a,self.b+y.b)
+  74     __radd__=__add__
+  75     def __neg__(self):return E(-self.a,-self.b)
+  76     def __sub__(self,y):return self+-E(y)
+  77     def __rsub__(self,y):return E(y)+-self
+  78     def __mul__(self,y):
+  79         y=E(y)
+  80         return E(self.a*y.a-self.p0*self.b*y.b,self.a*y.b+self.b*y.a-self.p1*self.b*y.b)
+  81     __rmul__=__mul__
+  82     def norm(self):return self.a*self.a-self.p1*self.a*self.b+self.p0*self.b*self.b
+  83     def inv(self):
+  84         norm=self.norm()
+  85         if not norm:raise ZeroDivisionError('quadratic algebra denominator nonunit')
+  86         return E((self.a-self.p1*self.b)/norm,-self.b/norm)
+  87     def __truediv__(self,y):return self*E(y).inv()
+  88     def __rtruediv__(self,y):return E(y)*self.inv()
+  89     def __eq__(self,y):
+  90         y=E(y);return self.a==y.a and self.b==y.b
+  91     def __bool__(self):return bool(self.a) or bool(self.b)
+  92     def __pow__(self,n):
+  93         if n<0:return self.inv()**(-n)
+  94         out=E(1);a=self
+  95         while n:
+  96             if n&1:out=out*a
+  97             a=a*a;n//=2
+  98         return out
+  99     def serial(self):return {'constant':self.a.serial(),'delta':self.b.serial()}
+ 100 
+ 101 z=K([0,1]); g=1+2*(z**2+z**3)
+ 102 assert z**5==1 and z!=1 and g*g==5
+ 103 B=[[(z**(i*j)-g*z**(-3*(i+j)**2)+(5*g*z**(-3*i*i) if i==j else 0))/(1+5*g) for j in range(5)] for i in range(5)]
+ 104 Binv=[[(z**(-i*j))/5+(z**(3*i*i) if i==j else 0) for j in range(5)] for i in range(5)]
+ 105 for i in range(5):
+ 106  for j in range(5):
+ 107   assert sum(B[i][k]*Binv[k][j] for k in range(5))==int(i==j)
+ 108   assert sum(Binv[i][k]*B[k][j] for k in range(5))==int(i==j)
+ 109 a,b,c,e,f,h=B[0][1],B[0][2],B[1][2],B[1][3],B[1][4],B[2][3]
+ 110 assert B[0][4]==a and B[0][3]==b and B[3][4]==c and B[2][4]==e
+ 111 A,Cb,C,D=c/(a*b),e/(a*b),f/(a*a),h/(b*b)
+ 112 p2=Cb*Cb-C*D
+ 113 p1=-2*A*Cb+A*C+A*D+Cb*C+Cb*D-2*C*D
+ 114 p0=(Cb-C)**2
+ 115 assert p2 and p0
+ 116 E.p0=p0/p2;E.p1=p1/p2
+ 117 print('constants',A,Cb,C,D)
+ 118 print('monic polynomial', E.p0,E.p1)
+ 119 disc=E.p1*E.p1-4*E.p0
+ 120 print('discriminant',disc)
+ 121 assert disc
+ 122 xdelta=E(0,1)
+ 123 assert xdelta*xdelta+E(E.p1)*xdelta+E(E.p0)==0
+ 124 A,Cb,C,D=E(A),E(Cb),E(C),E(D)
+ 125 t=(C*xdelta+(A+Cb)*xdelta*xdelta)/(C*(xdelta+2)-(A+Cb))
+ 126 print('t',t.serial())
+ 127 for name,x in [('delta',xdelta),('t',t),('t-1',t-1),('t+1',t+1)]:
+ 128  print('guard',name,x.norm())
+ 129  assert x.norm()
+ 130 kappa=(t+xdelta*xdelta)/C
+ 131 x=(t-xdelta)/kappa
+ 132 r=[None,x,(A-x)/xdelta,(Cb-x)/xdelta,(C-x)/xdelta]
+ 133 zpar=kappa/(1+t)
+ 134 u=[E(1)]+[E(B[0][i])*r[i] for i in range(1,5)]
+ 135 v=[zpar/t]+[E(B[0][i])-zpar*u[i] for i in range(1,5)]
+ 136 for i in range(5):
+ 137  for j in range(i+1,5):
+ 138   assert u[i]*v[j]+t*v[i]*u[j]==E(B[i][j]),('offdiag',i,j)
+ 139 diag=[E(B[i][i])-(1+t)*u[i]*v[i] for i in range(5)]
+ 140 # Direct Green inverse formula and full target identity.
+ 141 G0=[[E(1 if i<=j else 0)+ (t if i>j else 0) for j in range(5)] for i in range(5)]
+ 142 G0=[[x/(1-t) for x in row] for row in G0]
+ 143 G1=[[(E(1) if i<=j else 1/t)/(1-1/t) for j in range(5)] for i in range(5)]
+ 144 for i in range(5):
+ 145  for j in range(5):
+ 146   val=(1-t)*u[i]*G0[i][j]*v[j]+(t-1)*v[i]*G1[i][j]*u[j]+(diag[i] if i==j else 0)
+ 147   assert val==E(B[i][j]),('target',i,j)
+ 148   w0=t if i==4 else E(1);w1=1/t if i==4 else E(1)
+ 149   assert G0[i][j]-w0*G0[(i+1)%5][j]==E(int(i==j))
+ 150   assert G1[i][j]-w1*G1[(i+1)%5][j]==E(int(i==j))
+ 151 print('PASS 25 entries, both Green inverses, 10 off-diagonals')
+ 152 result={'status':'PASS','base_field':'Q[zeta]/(1+zeta+zeta²+zeta³+zeta⁴)','extension_polynomial_monic':{'constant':E.p0.serial(),'linear':E.p1.serial(),'quadratic':K(1).serial()},'discriminant':disc.serial(),'pole_t':t.serial(),'delta':xdelta.serial(),'u':[x.serial() for x in u],'v':[x.serial() for x in v],'diagonal_correction':[x.serial() for x in diag],'target':[[x.serial() for x in row] for row in B],'guards':{name:x.norm().serial() for name,x in [('delta',xdelta),('t',t),('t-1',t-1),('t+1',t+1),('kappa',kappa),('t_denominator',C*(xdelta+2)-(A+Cb))]},'verified_full_target_entries':25,'verified_inverse_entries':50,'verified_forced_target_inverse_entries':50}
+ 153 # Irreducible quadratic reduction at the accepted N5 arithmetic place.
+ 154 def residue(a, p=241, root=91):
+ 155     return sum((x.numerator * pow(x.denominator, -1, p) % p) * pow(root, i, p) for i,x in enumerate(a.a)) % p
+ 156 assert residue(E.p1)==30 and residue(E.p0)==124
+ 157 assert residue(disc)==163 and pow(163,120,241)==240
+ 158 trace_t=2*t.a-E.p1*t.b
+ 159 assert t*t-E(trace_t)*t+1==0 and t.norm()==1
+ 160 result['pole_polynomial_monic']={'constant':K(1).serial(),'linear':(-trace_t).serial(),'quadratic':K(1).serial()}
+ 161 result['guard_norm_residues_mod_241']={name:residue(x.norm()) for name,x in [('delta',xdelta),('t',t),('t-1',t-1),('t+1',t+1),('kappa',kappa),('t_denominator',C*(xdelta+2)-(A+Cb))]}
+ 162 assert all(result['guard_norm_residues_mod_241'].values())
+ 163 result['irreducible_reduction']={'prime':241,'zeta_residue':91,'delta_polynomial':[124,30,1],'discriminant':163,'Euler_criterion':240}
+ 164 # All four primitive embeddings are covered by base-field automorphisms.
+ 165 result['endpoint_nonzero_norms']={name:[x.norm().serial() for x in values] for name,values in [('u',u),('v',v),('diagonal_correction',diag)]}
+ 166 assert all(x.norm() for values in [u,v,diag] for x in values)
+ 167 result['guard_scope']='Every recorded guard norm is a nonzero element of Q(zeta5), so it is nonzero under every primitive embedding and at both roots of the separable quadratic.'
+ 168 parser=argparse.ArgumentParser();parser.add_argument('--out-dir',default=str(Path(__file__).resolve().parent));args=parser.parse_args()
+ 169 output=Path(args.out_dir);output.mkdir(parents=True,exist_ok=True)
+ 170 path=output/'EXACT_THREE_GREEN_RESULTS.json';path.write_text(json.dumps(result,indent=2)+'\n')
+ 171 print('result_sha256',hashlib.sha256(path.read_bytes()).hexdigest())

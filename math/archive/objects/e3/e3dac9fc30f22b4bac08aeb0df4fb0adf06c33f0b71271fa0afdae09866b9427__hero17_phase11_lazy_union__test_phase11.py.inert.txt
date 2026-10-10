@@ -1,0 +1,231 @@
+import random
+import unittest
+from phase11 import (
+    LazySpectralUnion, direct_dft, direct_residue_projector,
+    symbols_for_levels, mat_rank, prime_root_for_power_two,
+    rational_mask_difference_rank, rational_degree_rank_lower_bound,
+    direct_difference_matrix, sharp_rational_rank_witness, poly_product_linear,
+    apply_one_pole_green,
+)
+
+
+class Phase11Tests(unittest.TestCase):
+    def test_01_fresh_arbitrary_exact(self):
+        rng=random.Random(111)
+        for n in (2,4,8,16,32,64,128,256):
+            p,w=prime_root_for_power_two(n)
+            for _ in range(3):
+                x=[rng.randrange(p) for _ in range(n)]
+                y,_=LazySpectralUnion(n,p,w).transform(x)
+                self.assertEqual(y,direct_dft(x,p,w))
+
+    def test_02_projector_lazy_reconstruction(self):
+        rng=random.Random(112)
+        for n in (8,16,32,64):
+            p,w=prime_root_for_power_two(n)
+            x=[rng.randrange(p) for _ in range(n)]
+            engine=LazySpectralUnion(n,p,w)
+            _,_,levels=engine.transform(x,capture=True)
+            for d,m,state in levels:
+                for r in rng.sample(range(d),min(3,d)):
+                    expected=direct_residue_projector(x,p,w,d,r)
+                    for j in range(n):
+                        self.assertEqual(engine.projector_sample((d,m,state),r,j),expected[j])
+
+    def test_03_symbolic_states_unique(self):
+        for n in (2,4,8,16,32,64,128):
+            p,w=prime_root_for_power_two(n)
+            allforms=[]
+            for d,m,forms in symbols_for_levels(n,p,w):
+                self.assertEqual(len(forms),n)
+                self.assertEqual(len(set(forms)),n)
+                self.assertTrue(all(len(x)==d for x in forms))
+                allforms+=forms
+            self.assertEqual(len(set(allforms)),len(allforms))
+
+    def test_04_every_level_full_linear_rank(self):
+        for n in (2,4,8,16,32):
+            p,w=prime_root_for_power_two(n)
+            for d,m,forms in symbols_for_levels(n,p,w):
+                A=[[0]*n for _ in range(n)]
+                for i,form in enumerate(forms):
+                    for j,c in form:A[i][j]=c
+                self.assertEqual(mat_rank(A,p),n)
+
+    def test_05_charged_stage_counts(self):
+        for n in (2,4,8,16,32,64,128,256,1024):
+            p,w=prime_root_for_power_two(n)
+            e=LazySpectralUnion(n,p,w)
+            _,L=e.transform([0]*n)
+            depth=n.bit_length()-1
+            self.assertEqual(L['levels'],depth)
+            self.assertEqual(L['butterflies'],n*depth//2)
+            self.assertEqual(L['online_adds'],n*depth)
+            self.assertEqual(L['online_muls'],n*depth//2)
+            self.assertEqual(L['state_reads'],n*depth)
+            self.assertEqual(L['state_writes'],n*(depth+1))
+            self.assertEqual(L['output_writes'],n)
+            self.assertEqual(e.prep['table_writes'],n)
+
+    def test_06_root_contract(self):
+        p,w=prime_root_for_power_two(16)
+        with self.assertRaises(ValueError):LazySpectralUnion(16,p,1)
+        with self.assertRaises(ValueError):LazySpectralUnion(12,p,w)
+        with self.assertRaises(ValueError):LazySpectralUnion(16,p,pow(w,2,p))
+
+    def test_07_nontrivial_rational_rank_gate(self):
+        rng=random.Random(113)
+        for n in (16,32,64):
+            p,w=prime_root_for_power_two(n)
+            mask=set(range(n//2))
+            for d in (1,2,3):
+                for _ in range(8):
+                    pn=[rng.randrange(p) for _ in range(d+1)]
+                    qn=[1]+[rng.randrange(p) for _ in range(d)]
+                    if pn==[0]*(d+1) or pn==qn: continue
+                    rank,_=rational_mask_difference_rank(n,p,w,mask,pn,qn)
+                    self.assertGreaterEqual(rank,n-2*d)
+
+    def test_08_explicit_operator_matrix_rank(self):
+        rng=random.Random(114)
+        for n in (4,8,16):
+            p,w=prime_root_for_power_two(n)
+            mask=set(rng.sample(range(n),n//2))
+            for d in (0,1,2):
+                for _ in range(4):
+                    pn=[rng.randrange(p) for _ in range(d+1)]
+                    qn=[1]+[rng.randrange(p) for _ in range(d)]
+                    expected,values=rational_mask_difference_rank(n,p,w,mask,pn,qn)
+                    A=direct_difference_matrix(n,p,w,mask,values)
+                    self.assertEqual(mat_rank(A,p),expected)
+
+    def test_09_sharp_witnesses(self):
+        rng=random.Random(115)
+        for n in (8,16,32,64):
+            p,w=prime_root_for_power_two(n)
+            for _ in range(2):
+                mask=set(rng.sample(range(n),n//2))
+                for d in (1,2,3):
+                    P,Q,rank=sharp_rational_rank_witness(n,p,w,mask,d)
+                    self.assertEqual(rank,n-2*d)
+                    self.assertEqual(len(P),d+1)
+                    self.assertEqual(len(Q),d+1)
+                    self.assertEqual(rational_mask_difference_rank(n,p,w,mask,P,Q)[0],rank)
+
+    def test_10_constant_green_filters(self):
+        for n in (8,16,32):
+            p,w=prime_root_for_power_two(n)
+            K=set(range(n//4))
+            self.assertEqual(rational_mask_difference_rank(n,p,w,K,[0],[1])[0],len(K))
+            self.assertEqual(rational_mask_difference_rank(n,p,w,K,[1],[1])[0],n-len(K))
+            self.assertEqual(rational_degree_rank_lower_bound(n,len(K),2,True),len(K))
+
+    def test_11_exhaustive_degree_one_over_f17(self):
+        p=17;n=8;w=pow(3,2,p)
+        K=set(range(4))
+        choices=[(1,0)]+[(q0,1) for q0 in range(p)]
+        best=p; best_nonconstant=p; tested=0
+        for q0,q1 in choices:
+            for a in range(p):
+                for b in range(p):
+                    pn=[a,b];qn=[q0,q1]
+                    try:rank,_=rational_mask_difference_rank(n,p,w,K,pn,qn)
+                    except ValueError:continue
+                    tested+=1
+                    best=min(best,rank)
+                    if (a,b)!=(0,0) and (a,b)!=(q0,q1):
+                        best_nonconstant=min(best_nonconstant,rank)
+                        self.assertGreaterEqual(rank,6)
+        self.assertEqual(best,4)
+        self.assertEqual(best_nonconstant,6)
+        self.assertGreater(tested,1000)
+
+    def test_12_high_degree_sparse_shift_escapes_barrier(self):
+        rng=random.Random(116)
+        n=32;p,w=prime_root_for_power_two(n)
+        x=[rng.randrange(p) for _ in range(n)]
+        inv2=pow(2,-1,p)
+        y=[(x[j]+x[(j+n//2)%n])*inv2%p for j in range(n)]
+        target=direct_residue_projector(x,p,w,2,0)
+        self.assertEqual(y,target)
+        # (I+S^(n/2))/2 has degree n/2 in S, but only two taps.
+
+    def test_13_composed_short_green_rational(self):
+        rng=random.Random(117)
+        for n in (16,32):
+            p,w=prime_root_for_power_two(n)
+            K=set(range(n//2))
+            for _ in range(10):
+                # Product (a+bS)/(c+dS) times (e+fS)/(g+hS)
+                pn=[1]
+                qn=[1]
+                for _ in range(2):
+                    a,b=[rng.randrange(p) for _ in range(2)]
+                    c,d=1,rng.randrange(p)
+                    pn=[pn[0]*a%p,(pn[0]*b+pn[-1]*a)%p,pn[-1]*b%p] if len(pn)>1 else [a,b]
+                    qn=[qn[0]*c%p,(qn[0]*d+qn[-1]*c)%p,qn[-1]*d%p] if len(qn)>1 else [c,d]
+                rank,_=rational_mask_difference_rank(n,p,w,K,pn,qn)
+                self.assertGreaterEqual(rank,n-4)
+
+    def test_14_one_scalar_per_mask_has_linear_information_rank(self):
+        n=16;p,w=prime_root_for_power_two(n)
+        # Fourier-coordinate measurement e_0^T P_K, i.e. normalized sum of
+        # the selected Fourier coefficients. Four masks label all frequencies
+        # uniquely, but the four scalar measurements have rank <=4.
+        rows=[[int(bool(k&(1<<bit))) for k in range(n)] for bit in range(4)]
+        self.assertEqual(len(set(zip(*rows))),n)
+        self.assertEqual(mat_rank(rows,p),4)
+        self.assertLess(mat_rank(rows,p),n)
+        self.assertEqual(mat_rank([[int(j==k) for k in range(n)] for j in range(n)],p),n)
+
+    def test_15_dense_one_pole_green_linear_executor_and_full_rank_gap(self):
+        rng=random.Random(118)
+        for n in (8,16,32,64,128,256):
+            p,w=prime_root_for_power_two(n)
+            alpha=2
+            if pow(alpha,n,p)==1:alpha=3
+            x=[rng.randrange(p) for _ in range(n)]
+            y,L=apply_one_pole_green(x,p,alpha)
+            self.assertLess(L['online_muls']+L['online_adds'],5*n)
+            self.assertEqual(L['output_writes'],n)
+            for j in range(n):
+                self.assertEqual((y[j]-alpha*y[(j+1)%n])%p,x[j])
+            # Independent full transform of the recurrence's Fourier symbol.
+            X=direct_dft(x,p,w)
+            Y=direct_dft(y,p,w)
+            for k in range(n):
+                z=pow(w,k,p)
+                self.assertEqual(Y[k]*(1-alpha*z)%p,X[k])
+            # Every Fourier eigenvalue of R=(I-alpha*S)^-1 differs
+            # from both zero and one; rank gap to every mask is n.
+            for K in (set(range(n//2)),{0},set(range(0,n,2))):
+                rank,_=rational_mask_difference_rank(n,p,w,K,[1],[1,(-alpha)%p])
+                self.assertEqual(rank,n)
+
+    def test_16_full_rank_correction_still_applies_in_linear_work(self):
+        rng=random.Random(119)
+        for n in (8,16,32,64):
+            p,w=prime_root_for_power_two(n)
+            alpha=2
+            x=[rng.randrange(p) for _ in range(n)]
+            green,L=apply_one_pole_green(x,p,alpha)
+            inv2=pow(2,-1,p)
+            direct_even=[(x[j]+x[(j+n//2)%n])*inv2%p for j in range(n)]
+            D=[(a-b)%p for a,b in zip(direct_even,green)]
+            # Full-rank D despite O(n) apply. In the Fourier basis the
+            # diagonal entries are 1_even - 1/(1-alpha*w^k), all nonzero.
+            X=direct_dft(x,p,w)
+            DT=direct_dft(D,p,w)
+            for k in range(n):
+                z=pow(w,k,p)
+                den=(1-alpha*z)%p
+                multiplier=(int(k%2==0)-pow(den,-1,p))%p
+                self.assertNotEqual(multiplier,0)
+                self.assertEqual(DT[k],X[k]*multiplier%p)
+            rank,values=rational_mask_difference_rank(n,p,w,set(range(0,n,2)),[1],[1,-alpha%p])
+            self.assertEqual(rank,n)
+            if n<=16:
+                self.assertEqual(mat_rank(direct_difference_matrix(n,p,w,set(range(0,n,2)),values),p),n)
+
+
+if __name__=='__main__':unittest.main()

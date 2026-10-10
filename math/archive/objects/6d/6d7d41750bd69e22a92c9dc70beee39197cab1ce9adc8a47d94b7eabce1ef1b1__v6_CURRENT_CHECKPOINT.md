@@ -1,0 +1,296 @@
+# Current Fourier research checkpoint
+
+All uploaded batches through18:07 UTC are now independently audited, including the previously pending17:42 Phase21/v11 supplement. Two newer Library-discovered checkpoints are under separate review and are not included as verified findings. There is still no new exact arbitrary-input all-output sub-N-log-N evaluator established by this project.
+
+9 October 2026. This resolves the previously pending 17:42 batch. Paths in this section are relative to additions/1742/. The independently verified18:07 results remain included below. The new evidence does not establish a fully charged exact arbitrary-input all-output transform below N log N.
+
+## Provenance and exact F8 status
+
+The new mathematical sources are Phase21 Weyl–Green research and all-length fused v11. The third archive is the same triple-intersection source bytes as the 17:17 upload. This was checked by the explicit Library identity, a fresh separate retrieval, raw-byte comparison and all 214 recursive members, not by filename. Preserve every prior exact F8 residual, resultant, saturation/corner condition and exceptional chart.
+
+The complete batch contains 671 recursive member occurrences, 487 unique member hashes and 29 byte-new text/data/source-program contents versus the declared prior union; all 815 embedded checksum entries pass. Phase21's nested Phase20 and v11's unit-step core are unchanged. No uploaded source program or binary was executed.
+
+## Phase21 exact representations and sharper barriers
+
+- The Weyl chirp identity, flat dense Green example, common-Weyl pole budget q≥N/2 with arbitrary outside diagonal scales, weighted same-order sum/product bound Q≥N/2, and full-rank cheap commutator example are correct in their stated even-length domains.
+- Wraparound cross-ratios sharpen the common-generator coefficient form: the otherwise geometric multiplier rho must satisfy rho^N=1.
+- The degree-N/2 Prony polynomial is independently reconstructed. Nonzero derivative/forbidden-pole resultants certify matching N/2-pole complex representations for all supplied dyadic lengths4..8192, plus18 listed non-dyadic lengths. These are finite characteristic-zero certificates; the uniform N/2-pole claim remains open.
+- A new uniform construction proves h≤minimum common-Weyl pole count≤h+1 for every even N=2h≥4. The pencil zP_h+tP_(h−1) preserves the required moments; consecutive coprimality and a finite bad-parameter count guarantee a valid integer t in {1,…,4h}. This is a representation existence result, not a runtime improvement. See `prony_extension/PROOF_OR_OBSTRUCTION.md`; symbolic degree8 and67finite-size controls independently pass.
+- Every arbitrarily ordered weighted-cycle inverse has cross-cut rank exactly equal to the number of nonzero directed cycle edges crossing into the row half. Products/sums add this budget; masks cost zero; inserted permutations have their own crossing cost. Exact Fourier requires total budget≥N/2. Reverse direction alone still costs one and does not escape.
+- For Fourier halfblock C, let v_N=tr(CC*−(CC*)²)=O(log N). A rank-q candidate block with q<N/4 has spectral error≥sqrt(max(0,1−v_N/(N/4−q))). The floor tends to1 for q=o(N), and for q≤(1/4−epsilon)N. An explicit odd-harmonic upper bound on v_N makes this quantitative.
+- Term/crossing counts remain representation restrictions, not unrestricted shared-evaluator runtime lower bounds. Many same-order terms with a genuinely efficient shared evaluation are not excluded.
+
+See `phase21_audit/PHASE21_AUDIT.md` and the explicit modular certificates.
+
+## Fused all-length approximation and numerical qualifications
+
+- Clenshaw streaming and Neumann block/local Bessel fusion are algebraically valid. Fixed-H storage is O(N); R decoder/short-FFT/output passes remain, so total shrinking-error work stays O(RN).
+- H=0 fusion admits the sharper deterministic bias tau_R+Delta, Delta=pi(M−1)/Q, independent of an additional R multiplier. Its variance envelope remains (M/N)(1+tau_R)²||x||²; Delta enters the deterministic bias.
+- G_(-h)=(-1)^h G_h, so only H+1 independent local channels per block remain. L fixed rows retain rank at most L(H+1)K, regardless of R; uniform exact summary-only recovery requires L(H+1)K≥N and, with a full input block, L(H+1)≥M.
+- The source's full-row floating-point hypothesis does not automatically certify rounded fused summaries. A summary-decoder contract, summable uniform coefficient majorants, explicit summary/Clenshaw rounding and charged phase/Bessel generation are necessary. The independent sufficient ledger preserves the proposed leading precision order once those stronger contracts are met; it does not certify the uploaded SciPy/NumPy implementation or fixed binary64.
+- A specified certified Bessel series generator can keep preparation within O(RN) arithmetic in the theorem regime, but its cost is not free and is not contained in the advertised O(N+RK) input-traversal saving. Bit cost, exponent range, integer overflow and robust classification/radius errors remain charged.
+- The separate frozen-block rational-Taylor variant uses unweighted block summaries, O(N+RK) input-side arithmetic and O(RN) decoder work. Its deterministic bias is Delta+eta+|rho|^R/R! with |rho−pi|≤eta. This is a charged approximate exact-arithmetic variant; its fused numerical path still needs a summary-level contract.
+
+See `v11_audit/V11_AUDIT.md` and `v11_audit/FP_CONTRACT_REVIEW.md`. Keep fixed-input simultaneous-output guarantees distinct from uniform operator accuracy and exact all-input recovery.
+
+## Combined next target
+
+The old complete chirp bank still reduces to Cooley–Tukey under its known evaluator, and the exact near-grid correction still has rank N/gcd(N,Q). Fusion does not change those exact statements. Any proposed speedup must supply a scalable exact identity, complete exception coverage and a fully charged shared evaluator. Classical identities and finite prototype tests are not novelty or production-certification evidence.
+
+
+# Retained checkpoint including18:07 results
+
+The historical pending references below describe the previous version; the17:42 review is now complete as stated above.
+
+Verified updates include the 18:07 UTC Phase22 and bilateral uploads and the previous master through 17:17 UTC. The separate 17:42 mathematical supplement remains pending; its hashes are used only for provenance comparison. No new exact arbitrary-input all-output sub-N-log-N evaluator has been established.
+
+9 October 2026. This addition can be merged into the authoritative master through 17:17 without waiting for the separate 17:42 mathematical supplement, which remains pending unless independently finalized. All paths here are relative to additions/1807/. No exact arbitrary-fresh-input, all-output sub-N-log-N evaluator has been established.
+
+## New exact structural facts
+
+- Phase22's real one-mask connected-Gram obstruction is sound. A stronger exact characterization is available: for real invertible A, existence of real invertible B and one nonzero complex diagonal Q in F=A Q P B is equivalent to J A=A E for a diagonal reflection-parity matrix E with entries ±1. This characterizes the left factor when the right factor is free, not a specified pair or a fast evaluator. Positive real left Green sums fail it.
+- The bilinear finite-field Gram screen is necessary for fixed A,B and every middle Q,P. The 24 sample vetoes and 12 deliberately valid recoveries are independently reproduced. Zero-diagonal/collision branches remain inconclusive; Gram equality and one calibrated entry are insufficient for Fourier equality.
+- F=H Q C is an exact cheap parity/axis extraction with C a real orthogonal cosine/sine residual. C still requires at least N(log2 N-1)/2 two-coordinate unitary gates in that restricted model. The sparse covariance and full first column uniquely specify the linear C, but do not evaluate Cx cheaply.
+- The finite-field covariance test requires a fixed deterministic linear oracle and independent uniform challenges. It uses one seed call plus two calls per challenge. The uploaded apply_R repeats modular exponentiation, so its advertised linear overhead is not met as written; an independently specified consecutive-power recurrence repairs the coefficient/application count. Root/field setup and precision remain separate costs.
+- The all-length tail-rank theorem gives min(t,N-1-max(pi[-t:])) <= r_lower(C)+r_upper(B), with a mirror prefix inequality. It covers general quasiseparable ranks in the fixed endpoint order. The unchanged tail (1,2,5) is excluded for every N>=9 with two rank-one stages, but N=8 remains open.
+- For a constant rank sum s, every suffix/prefix inequality reduces exactly to the corresponding first/last s+1 boundary test. At s=2, 28,584 of 40,320 N=8 permutations pass. A closed-form count and the disjoint-boundary uniform-permutation bound P(pass)<= (s+1)^4/[N(N-1)] are proved. Passing is only necessary.
+- The inherited 11-by-9 rank gate has no independent extra maximal minors: 45 vanish identically and the remaining 10 are constant multiples of Dhat=-DB DH. All 55 were independently reconstructed. Rank<=8 is exactly DB DH=0 within this rescaled polynomial family; original feasibility equations and all exceptional branches remain required.
+- DB's homogenized coefficient matrix has exact rank four, with the nonzero 11251 modulo 12289 witness reproduced, so the quadric is absolutely irreducible in characteristic zero. Its unique affine singular point has h0=h1=0, so it is smooth on the inherited regular h0!=0 chart. Its zero locus is not excluded.
+- The six-column auxiliary boundary gate has rank 4+rank([[U3,-L3],[U4,-L4]]) for N>=9. Its leading determinant is -(U3 L4-U4 L3) times the six-node Vandermonde. N=8 remains a genuine rank-deficient exception. The report supplies the direct proof absent from the source's referenced proof file.
+
+Reports and reproducible evidence: `TWO_LATEST_AUDIT.md`, `phase22_audit/`, `bilateral_audit/`, `tail_screen_extension/`.
+
+## Provenance
+
+Two new outer source archives; 691 recursive member occurrences; 507 distinct contents; 34 byte-new text/data/source-program contents against the declared source union through 17:42. All 833 embedded checksum entries pass. The embedded Phase21 and triple-intersection archives exactly match prior sources. No uploaded executable, source program or bytecode was run. The supplementary archive contains full inert sources, source identities, explicit hash comparison data and independently authored checks.
+
+No unrestricted lower bound, new exact transform or novelty claim follows from these results. The earlier verified exact residual systems, exception coverage and model limitations remain in force. The 17:42 Prony, cycle-crossing and fused-summary additions keep their separate pending/completed status; their source hashes are used here only for deduplication, and this audit does not promote them automatically.
+
+
+# Retained checkpoint through 17:17 UTC
+
+Current through the three archives received at 17:17 UTC on 9 October 2026. The three newer uploads received at 17:42 UTC are being audited separately and are not included as verified results here. No new exact arbitrary-input, all-output sub-N-log-N transform has been established by this project.
+
+9 October 2026. Verified additions through the 17:17 UTC upload. All report paths in this latest section are relative to additions/1717/. Earlier residual systems and exception coverage remain preserved below.
+
+## Current answer
+
+The new materials do not establish an unrestricted, fully charged exact all-output transform below N log N. They give a genuine characteristic-zero slice exclusion in the fixed F8 search, stronger restricted approximation obstructions, complete Weyl certification tools, and an all-integer-length randomized approximate lift. An independently specified rational-Taylor variant closes the source's Bessel coefficient-preparation gap at the arithmetic level and supplies a conditional precision ledger.
+
+## Exact F8 structural chart
+
+- The new 11-by-9 multi-column gate has rank at most eight for the intended invertible globally separated inverse-stage/final-stage factorization. The source's standalone theorem needs the nonzero-column/invertibility hypothesis. If the fourth output multiplier is zero, invertibility forces the projected four-row basis to have rank at most two, so its cofactor vector is zero; no new nonzero multiplier guard is needed.
+- On `h0 Delta T != 0`, an exactly reconstructed 250-term degree-eight minor is `Dhat=-DB DH`, with nine-term quadratic DB and 105-term sextic DH. All 924 exported cyclotomic coefficient vectors match.
+- `Res_h6(W,Dhat)` at `h0=1,h1=h2=0` reduces to 6 modulo `(17,zeta8-9)`. This nonzero exact resultant proves the specified regular complex slice has no factorization. It does not exclude other base points or denominator branches.
+- The nonzero 37-term and 476-term eliminated resultants constrain the base to a proper hypersurface union. The necessary four-structural-variable locus has dimension at most two, not proven empty.
+- A new exact refinement proves the base where W is identically zero in h6 has at most 12 points. A degree-six elimination resultant and a fixed nonzero quadratic leading coefficient certify this. Its free-h6 stratum has dimension at most one; the overall dimension bound remains two.
+- Independent GF(17) enumeration reproduces 4,596 candidates and ranks 9/8/7/6 with counts 3,266/1,203/125/2. Another 630 invertible exact positive controls pass, including zero-column multipliers and zero diagonal entries.
+
+The gate/resultants are necessary additions, not replacements for the complete Fourier equations. Keep the old saturation/corner conditions, all excluded branches and the full separated-generator lift. Report and scripts: `triple_audit/`.
+
+## Green Phases19 and20
+
+- Full Weyl duality `MZ=DM`, `MD=Z^-1M` identifies the scalar Fourier family at every integer length; one scalar calibration gives F. The sharp Frobenius residual gap is `2 sin(pi/N)`. Small raw residuals at increasing N do not imply fixed accuracy.
+- A fixed linear finite-field oracle can be checked in `1+3h` calls. If its stacked residual rank is rho, independent uniform tests pass with exact probability `p^(-h rho)`. This is not a linearity test, a characteristic-zero proof, or a cheaper evaluator of the candidate.
+- Projective root/histogram tests are necessary, not sufficient. Sylvester Hadamards pass every pair histogram and fail Fourier equivalence. The complete anchored-grid criterion extends to arbitrary N; the independent implementation uses a gcd-unit pivot, while the source implementation is dyadic.
+- A stronger conditioning-free inverse-support bound is proved: one inverse row of support s implies `||M-F||_2>=sqrt(1-s/N)`. Pure inverse products with support bound s^t therefore have error at least `sqrt(max(0,1-s^t/N))`. Sums do not inherit inverse sparsity.
+- A stronger common-frame stationary bound is proved: rank commutator at most r<N implies error at least `cos((2 floor(r/2)+1)pi/(2N))`. For t stages of q stationary path Green terms, r<=2qt, so the floor tends to one when qt=o(N). Arbitrary masks and independent path permutations require separate treatment.
+- Newly supplied nested Phase19 independently verifies fixed-middle-monomial signatures, the banded inverse one-norm bound `(b/a^2)[1+2w(b/a)^2]`, resulting gain/conditioning budgets, and the one-Harper-middle-monomial exclusion. Call/stage counts do not prove an unrestricted scalar-operation lower bound for shared computation.
+- The real-core and one-complex-mask axis-count restrictions are correct under their distinct assumptions. Dense positive controls do not supply a fast transform.
+
+Reports: `phase19_audit/`, `phase20_audit/`. Exact source-family reconstructions at N=8,16,32 match. Larger source experiments are preserved as source-reported and were not rerun.
+
+## Exact bridge and phase-aware Green extension
+
+- For fixed a, beta_h=beta_0+hK gives M orthogonal block projectors P_h/M whose sum is I. Averaging the complete row bank therefore gives exactly F. Fewer than M rank-K row sketches cannot determine every arbitrary input from that linear transcript alone, even with nonlinear decoding. The exact/adaptive/randomized scope is made explicit in the bridge report.
+- The straightforward complete bank costs O(NM+N log K); at M=Theta(log N) this is Theta(N log N). Shared local analysis gives the ordinary N log M plus N log K factorization scale. No universal shared-evaluator lower bound follows from these schedules.
+- The exact near-grid residual matrix has Vandermonde rank N/gcd(N,Q), with Q the dyadic lift length. An exact separated correction needs at least that many terms; at odd N its rank is N. Completing the beta bank for each short approximate term computes the truncated center exactly without removing its bias. Different nonseparable corrections remain outside this obstruction.
+- A new independently reviewed phase-aware displacement obstruction permits products of sums of c D^a P B^-1 P^-1 D^b, with constant-coefficient path denominators, integer linear phases and independent affine conjugations P. Common-frame displacement costs at most rho=2 per inverse; affine-conjugated paths cost at most rho=4.
+- For b expanded branches and d distinct total phases, exact Fourier equality requires `N<=d(1+sum r_branch)<=d(1+rho t b)<=b+rho t b^2`. Fixed summand bound q>=2 therefore forces t=Omega(log N), without conditioning assumptions. One branch forces t>=(N-1)/rho. A common phase at even N improves the exact rank target to N and admits the same cosine spectral-error bound.
+- Arbitrary diagonals, arbitrary path permutations, independent left/right affine factors and bare affine-multiplier wiring are outside that grammar. The reviewer gives a nearly full-rank bare-affine counterexample. This is an architectural stage bound, not an unrestricted scalar-operation lower bound.
+
+Reports: `astra_exact_bridge/` and independent `twisted_bound_review/REVIEW.md`.
+
+## All-length approximation and charged variant
+
+- The v10 dyadic near-grid Bessel/Chebyshev lift is algebraically valid. Using the same state for all rank terms preserves per-output variance `(M/N)(1+tau_R)^2 ||x||_2^2`, without an R multiplier. Its deterministic bias is at most `tau_R ||x||_2` per coordinate.
+- This is a fixed-input randomized simultaneous-output approximation, not arbitrary exact recovery. It does not automatically preserve the previous sparse-spectrum exact promise after input weighting.
+- The uploaded prototype uses Theta(RN) Chebyshev storage, uncharged/uncertified special-function evaluations and floating grid indices. Naive forward Bessel recurrence is an unstable repair. N=1 needs its direct case. The endpoint failure target N^(-a) is vacuous at a=0 unless multiplied by a fixed constant below one.
+- The independent rational-Taylor variant generates a rational rho approximating pi via finite Machin sums, with certified error eta, and tail `eta+|rho|^R/R!`. Streamed powers/factorial recurrences and exact integer indices charge coefficient generation in O(RN+log(1/eta)) arithmetic work for a fixed number of random rows, with O(N) arithmetic storage.
+- Under the inherited specified dyadic row/root contract, its deterministic rounding ledger covers weights, coefficients, row error, cancellation, sum, normalizer and robust classification/radii. It is conditional implementation mathematics, not certification of the uploaded binary64 code. Growing rational/floating bit costs and exponent range remain charged.
+
+Reports: `lift_audit/`, `taylor_extension/`. Independent full-state covariance controls through Q=32 agree numerically; 6,240 exact-rational finite-precision recurrence checks pass. Numerical controls corroborate proofs without certifying a production evaluator.
+
+## Provenance and reproduction
+
+The batch adds 77 new byte contents versus the declared source union through 16:46: 73 text/data files, three bytecode files and one new nested Phase19 archive. There are 656 recursive member occurrences, 472 unique hashes and 799 passing embedded checksum entries. Full sources, Library identities, hashes, fresh independent scripts and portable rerun records are preserved. Uploaded code and bytecode were never executed.
+
+Main synthesis: `THREE_LATEST_AUDIT.md`. Source inventory: `SOURCE_PROVENANCE.md` and JSON records. No publication-priority or chat-only completeness claim is made.
+
+
+# Retained detailed checkpoint through 16:46 UTC
+
+The following earlier results remain valid within their stated models. The latest section above and additions/1717/ supersede its frontier descriptions where indicated.
+
+9 October 2026. Includes the baseline master, the 14:50 and 15:20 additions, the three archives received at 16:28 UTC, and the spectral-determinant archive received at 16:46 UTC. Original dated inventories and audits remain preserved.
+
+## Goal and present answer
+
+The target remains an independently justified exact Fourier transform for every fresh arbitrary input and every output coordinate, with genuinely sub-N-log-N charged work. Root/coefficient preparation, routing, conversions, workspace, precision where claimed, and explicit outputs count.
+
+The project has not established that target. Nor do its restricted obstructions prove an unrestricted Fourier arithmetic lower bound. Approximation, sparse-spectrum exact recovery, Boolean inputs, finite-field controls, pair-unitary circuits, additive Green sums and unrestricted complex arithmetic are different models.
+
+## 1. Exact algebraic route: a 12-equation regular target, with exceptions retained
+
+The fixed-permutation F8 two-separated-generator-stage problem retains its independently reconstructed older formulations:
+
+- 30 quartics in 26 variables for an inverse-stage regular chart.
+- 25 sextics in 21 variables after Fourier-support elimination; on the nonzero-t chart, primitive cancellation gives four cubics, six quartics, one quintic and fourteen sextics.
+- 176 quadratics in 184 variables for the complete separated-generator lift, including zero-anchor corners.
+
+The 16:28 dual-support/onion source gives two further reductions on smaller explicit open loci:
+
+- First lower-column and upper-row elimination: 20 polynomials in 16 variables, degree at most 9.
+- A second column gives a three-character recurrence; a second row eliminates the remaining interior generators. For n>=6 and the specified first three permutation entries, the selected conditions have an eight-parameter rational reconstruction, with (n-4)(n-5) remaining identities. At n=8 this leaves 12 rational equations in eight parameters.
+
+Neither statement solves those remaining equations or proves inconsistency. The eight parameters do not parametrize complete Fourier factorizations without the residual conditions.
+
+The new reconstruction requires nonzero first-row prefix expressions S, second-row elimination determinants Delta, and a boundary 2-by-2 determinant. These join the previous nonzero denominators, second-stage anchors, det(C), and inverse-stage corner conditions. The independent audit supplies a characteristic-zero Q(zeta8) exceptional partial point with S1=0 and all required old determinant/corner conditions nonzero, certified through a valid mod-97 reduction. It proves the new S exclusion is substantive, but fails the remaining equations and is not a full factorization.
+
+The old normalization fixes diag(A), while the inverse chart fixes diag(A^-1); they are not interchangeable. The exact example A=(7/6)I-(1/6)J has diagonal one but inverse (6/7)I-(6/7)J has zero diagonal. The earlier regular-chart saturation product had degree 59, with a degree-60 reciprocal equation. Clearing denominators in the newer rational system likewise cannot silently discard excluded branches. An independently exported 3,750-node exact rational circuit records the eight-variable F8 target and 29 nonzero guards.
+
+The older unsaturated sextics contain a spurious all-ones-matrix beta-line. Neither the original rank-60-to-61 local jet obstruction nor the newer reduced chart excludes F8 globally. The complete lift remains necessary for exception coverage.
+
+### Latest exact-branch refinement: spectral determinant and adjacent tail
+
+The 16:46 audit independently matches the 45-term quartic Q, three degree-seven upper resultants, a five-variable necessary determinant circuit, and the 31-term cubic W. All 898 polynomial coefficients match. These necessary projections supplement the twelve residual equations; they are not sufficient replacements. A nonzero Jacobian witness establishes algebraic independence, not emptiness or the codimension of the zero fiber.
+
+The adjacent-column tail lemma is useful on excluded onion branches: separated tails, invertibility and the actual upper-stage rank constraint force two tail recurrences without dividing by S or Delta. Substitution into the normalized lower-generator formula still requires its own assumptions. Solving the tail recurrences introduces a new nonzero affine pivot; its zero branch remains open. Full factorization of W is undetermined.
+
+A fresh GF(17), z=9 enumeration reproduces 78,608 h tuples and zero full-B successes among 2,546 invertible candidates; 1,927 also meet every final corner guard. Of 12,358 reconstruction rejects, 710 have alpha=0 and dependent columns, while 11,648 are omitted denominator branches. The search retains zero beta-coefficient and singular gamma cases where permitted. This is a finite-field open-branch exclusion, not a complex-field or extension-field exclusion. No valid exact F8 factorization or characteristic-zero nonexistence certificate was found.
+
+Full report and exact certificates: `additions/1646/SPECTRAL_DETERMINANT_AUDIT.md`. Retain all twelve residuals, the nonzero guards and the complete lift for broader exception coverage.
+
+## 2. Approximate chirp route: unit-step decoding and sharper variance
+
+The inherited v7/v8 dyadic construction used two output cycles and covariance (2M/N) times a rank K(M-1)/2 projector. The specified v8 gauge decoder already had a complete independent numerical contract in the 15:20 audit.
+
+v9 replaces the quadratic phase with the integer-valued binomial phase a*t*(t-1)/2. For N=p^L=KM, with K and M powers of the same prime, M>=2 and K>=M, a unit step gives one output cycle. A parity-dependent linear phase makes its monodromy -1, so one balanced scan supplies both total and prefixes, including the seed.
+
+For each output the exact one-row error covariance is
+
+Q_m = (M/N) Pi_m,
+
+where Pi_m is an orthogonal projector of rank N-K. At output zero,
+
+Q_0[n,n'] = (M delta[n=n'] - 1[n congruent to n' mod K])/N.
+
+Thus its nullspace is the K-periodic input subspace; other outputs have the corresponding diagonal modulation. This is an explicit covariance/error-nullspace statement, not an arbitrary-input exact-transform construction. At M=1 the covariance is zero, so its norm is zero rather than M/N.
+
+The same three shifted grids and Boyer–Moore counters give simultaneous all-output error at most
+
+(5/sqrt(2)) g sqrt(M/N) ||x||2
+
+with failure at most 2N exp(-R D(1/2 || 1/g^2)), under the exact-arithmetic quantization contract and its stated parameter range. The deterministic radius improves by sqrt(2) compared with the preceding construction. Work per row remains O(N+K log K); streaming storage is O(N) words.
+
+Claims obtained by choosing M=Theta(log N) require a fixed or bounded prime, or explicit prime-dependent constants. A nearby power of an unbounded prime need not be Theta(log N); prime N has no nontrivial admissible M under K>=M. Mixed-prime lengths do not inherit the projector theorem merely from K>=M.
+
+For the specified dyadic implementation, the earlier explicit bound transfers:
+
+row numerical error <= 800 sqrt(NM) log2(N) u ||x||2,
+
+provided 8u log2(N)<=0.01 and the same certified-root/normalizer, exact-index, range, pairwise-summary and normalized radix-2 short-FFT contract holds. The v9 seed charges half the total-scan error plus prefix error deterministically; no independence assumption is needed. Odd prime powers still need an explicit certified short-FFT constant.
+
+Taking u <= theta g/[800 N log2(N)] bounds deterministic numerical error by a chosen fraction of the stochastic radius. Certified norms and inflated grid radii preserve the failure argument. This theorem covers the specified implementation, not the uploaded NumPy/native prototypes or arbitrary fixed IEEE precision. Root setup, exact represented-grid classification, bit cost, exponent range and input/output bits remain charged. Space is O(N) words, not bits. Source benchmark timings are source-reported and were not rerun. The source's short-FFT input-error contract needs a separate input-perturbation term when exact summaries cancel; the independent theorem supplies it. Its default constant 64 is not certified. Native summaries are sequential, timings omit root/plan setup, and the saved five-row benchmark parameters have a vacuous generic all-output confidence bound.
+
+### Two bounded extensions, with different guarantees
+
+An independent exact structured-input corollary is available for a fixed input with at most h nonzero Fourier coefficients. For prime-power N, a row's off-diagonal Fourier interaction requires m-j congruent to a*d mod K for some 0<|d|<M. Its diagonal equals one, and the interaction probability is at most 2M/K. Consequently exact-value Boyer–Moore on R=2s-1 rows recovers every output exactly except with probability at most
+
+N binom(2s-1,s) (2hM/K)^s.
+
+This uses exact arithmetic, exact complex equality, a sparse-spectrum promise and charged root/short-FFT primitives. It is not an exact dense-input or finite-precision result. For fixed h and fixed prime, choosing M=Theta(log N) and three rows gives O(N) arithmetic work and O(h^2 log^4(N)/N) failure. This is a restricted sparse-Fourier corollary, not a novelty claim or the unrestricted project target.
+
+For arbitrary composite N=KM with 2<=M<=K, the projector shortcut fails, but an independent masked-shell proof gives a usable variance bound. Let D(N,M) count divisors g of N with g<M and let L=ceil(log2 M). Then
+
+||Q|| <= [(M-1)/phi(N)] min{D(N,M), 2(L+1)^2}.
+
+The extension provides a sharper computable shell-count bound as well. Substituting the proved variance proxy into the robust decoder gives a composite-length approximation with an explicit accuracy loss. Factorization and phi/divisor preparation are charged: trial division takes O(sqrt(N)) word divisions for array length N, so these need not be hidden oracles. Linear work per row still requires an appropriate divisor M near log N; no uniform all-integer-length speed theorem follows. The stronger tested inequality ||Q||<=M/phi(N) remains a conjecture. Numerical sweeps and exact rational-entry checks do not prove it.
+
+## 3. Independently ordered Green sums: a broader restricted obstruction
+
+The newly included nested Phase17 studies the additive architecture
+
+A = sum_r L_r P_r^-1 B_r^-1 P_r R_r,
+
+where each B_r is invertible with half-bandwidth w_r in its own order, P_r conjugates both row and column labels of that summand, and L_r,R_r are diagonal. Put W=sum_r w_r. Coefficients may be complex, nonunitary, noncommuting and ill-conditioned.
+
+A common separator exists in all q orders with equal group size at least
+
+m* = ceil(floor(N/2) / 2^(q-1)).
+
+The uploaded weaker floor(N/2^q) bound remains valid. Across this separator A has rank at most W. Every normalized Fourier submatrix of size m has squared Frobenius norm m^2/N and operator norm at most one. Hence exact equality requires m*^2<=WN. When m*>W and m*^2>WN, the uniform operator-norm error is at least
+
+sqrt((m*^2/N-W)/(m*-W)).
+
+For bounded bandwidth this forces logarithmically many summands, but does not prove a scalar-operation lower bound for shared-state evaluation. It does not cover arbitrary products of sums or arbitrary non-diagonal outside mixers. The independently permuted row/column case is covered by the separate weaker separator extension below.
+
+A bounded independent synthesis combines the sharper separator with the complex prime-order DFT's full-spark theorem: for prime N, exact equality requires N<=2^q W+1. In particular, two tridiagonal Green summands are excluded for every prime N>=11. This uses characteristic-zero Chebotarev theory, not arbitrary finite-field full-spark. It improves the uploaded prime monotone-chain threshold, with no publication-priority claim.
+
+A second independent extension closes the source's proposed escape through distinct row and column permutations inside each summand. Sorted row/column position lists always admit strictly separated subsets of size floor(m/2), even if their original label sets overlap. Iterating gives m=floor(N/2^q), so the original all-length rank and spectral-gap bounds also hold for sum_r L_r P_r^-1 B_r^-1 Q_r R_r with independent P_r,Q_r. For prime N this gives N<=2^q(W+1)-1. The stronger ceil-rounded matched-order bound is not claimed here; two tridiagonal terms with independent endpoints are excluded at prime N>=13.
+
+Products of Green sums can escape the additive crosscut bound. Passing that rank test is necessary architectural progress, not evidence of correct Fourier coefficients or a low-cost transform.
+
+## 4. Harper and phase coherence: exact certificates, no fast executor
+
+Phase18 adds a sparse self-dual operator H=T+V, where T is the cyclic nearest-neighbor shift sum and V is the cosine diagonal. For N divisible by four, the even and odd reflection sectors are irreducible Jacobi matrices, each with one zero mode. Fourier acts differently on those two zero lines, so no scalar rational function of H with an invertible denominator equals F.
+
+Adding reflection parity gives a correct polynomial representation with exact degrees N/2 and N/2-2. The top even coefficient is 1/(2 sqrt(N)). Direct sparse Horner application is quadratic; degree alone is not an unrestricted arithmetic lower bound.
+
+For even N>=4, the joint commutant of T and V is span{I,J}. Therefore the exact sparse intertwining identities MT=VM and MV=TM force M=F(aI+bJ); calibrating M e_1=F e_1 fixes M=F. These are useful symbolic certification targets. Exhaustively probing them is not a faster black-box equality algorithm.
+
+For fixed invertible outside factors A,B, Weyl covariance of A Q P B forces A^-1 D A and B Z B^-1 to be monomially similar. Diagonal multisets and directed two-cycle products give necessary vetoes for every intermediate diagonal Q and permutation P at once. A veto for sampled fixed factors is not an all-parameter exclusion. Modular nonzero witnesses lift only when the relevant root map and inverses/denominators reduce correctly.
+
+The real eigenbasis identity F=O Lambda O^T with a four-phase diagonal Lambda is a positive algebraic control. No fast O application is provided; allowing its growing coefficient field also explains why it does not contradict the earlier single-mask field-descent obstruction.
+
+## 5. Unitary route and earlier filters retained
+
+- Phase15's exact normalized Fourier factorization uses N log2(N)/2 pair-unitary gates. Its Fourier-bank costs are not removed by further optimizing the already-linear fold.
+- Phase16 compiles a full path/Haar–Green stage into at most (11N/2)-8 pair-unitary gates, giving at least N log2(N)/(11N-16) stages for exact F. Adaptive prefix pivoting repairs a generic degenerate-column pivot issue. Parameter preparation is not automatically linear-time.
+- Entropy continuity retains logarithmic stage count for exactly unitary approximants with fixed error below one in the stated operator or normalized-Frobenius norms. Zero-initialized ancillas do not remove the pair-unitary count; nonunitary/shared-state circuits remain outside this result.
+- Common-order noncommuting tridiagonal resolvents retain additive expanded-expression cut-rank budgets. This is a consequence of inverse rank and rank subadditivity, not a general Fourier lower bound.
+- Products with inverse-stage row sparsities s_j require product(s_j)>=N. Dense inverses and sums need separate analysis.
+- Common-base rational functions, low-cut-rank local-port solves, field descent and Galois phase-support tests retain their original stated scopes.
+- Quadratic polynomial decoding of a deficient fixed linear sketch cannot recover every Boolean input's full linear target; worst-case randomized success is at most 3/4. Cubic interpolation escapes that restriction without supplying a faster transform. Realification and conjugate-bin symmetry remain explicit.
+
+## 6. Why the branches do not collapse into one claim
+
+The chirp result is a fixed-input probabilistic coordinate-error guarantee with a nonlinear robust decoder. The Green-sum bound concerns uniform operator-norm approximation by a particular linear architecture. The unitary entropy theorem concerns reversible two-coordinate gates. The polynomial/rational reductions characterize specified algebraic charts. A success or obstruction in one is not automatically transferable to the others.
+
+Dense support, high cut rank, fast individual solves, correct covariance, small polynomial systems and exact small examples each address only part of the target. A candidate exact algorithm still needs complete identities for arbitrary input and size, exception handling, and a fully charged evaluator.
+
+## Decisive next results
+
+1. Solve or exclude the explicitly saturated 12-equation F8 regular system, then cover every excluded branch using the complete lift. Numerical residuals and finite-field infeasibility alone do not settle the complex problem.
+2. For a noncommuting product candidate, prove the two sparse intertwining identities symbolically and calibrate one vector, while verifying that its architecture and total cost escape the applicable rank and entropy restrictions.
+3. Implement the specified certified dyadic v9 numerical contract before claiming an end-to-end practical guarantee. A precision theorem does not certify the uploaded benchmark binary.
+
+## Source and evidence record
+
+The baseline remains a dated snapshot of 349 Library items and 528 canonical text contents. The 14:50 and 15:20 additions contribute respectively 50 and 58 byte-new contents relative to their declared predecessor sets. The 16:28 batch contributes 90 relative to all preceding member and top-level source hashes: 88 text/data contents, one new nested Phase17 archive stream and one compiled binary. Two other nested archives match previously supplied top-level archives and are inherited. Its 562 recursive member occurrences have 381 unique hashes, and all 714 embedded hash entries pass.
+
+The 16:46 addition has 194 recursive member occurrences, 180 unique byte contents and 29 byte-new contents relative to the declared preceding union; all 490 embedded checksum entries pass. Its nested predecessor exactly matches the 16:28 dual-support archive.
+
+Uploaded code and the compiled binary were not executed. Independent proof reconstructions, fresh check scripts, finite-field controls, numerical stress tests and source-reported claims are labeled separately. No publication-priority claim is made. Chat-only account coverage remains unverified.
+
+## Navigation
+
+- Latest determinant audit and exact/finite-field checks: additions/1646/.
+- Three-branch fusion, source inventory, full proofs and checks: additions/1628/.
+- Previous precision, inverse-support and Phase16 audit: additions/1520/.
+- Previous jet and streaming comparison-only audit: additions/1450/.
+- Baseline catalog and 528 source texts: library/.
+- Earlier baseline checkpoint: checkpoint_history/baseline_CURRENT_CHECKPOINT.md.
+- Earlier exact/real/Boolean corrections and route map: prior_synthesis/, boolean/, phase14/ and nonlinear/.
+- Chat-only coverage limits: CONVERSATIONS.md.
+

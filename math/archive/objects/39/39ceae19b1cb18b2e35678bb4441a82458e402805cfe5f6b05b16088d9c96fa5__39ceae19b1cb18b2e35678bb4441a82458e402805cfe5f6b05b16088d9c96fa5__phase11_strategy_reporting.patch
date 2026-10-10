@@ -1,0 +1,23 @@
+--- upstream/fresh_factor.py
++++ phase11/fresh_factor.py
+@@ -5,7 +5,7 @@
+ The modular fallback uses an NTT and handles arbitrary fresh inputs.
+ """
+ from __future__ import annotations
+-from dataclasses import dataclass
++from dataclasses import dataclass, replace
+ from math import prod
+ from typing import Sequence
+ 
+@@ -319,6 +319,11 @@
+     if mode not in ('auto','structured','ntt'):
+         raise ValueError('invalid mode')
+     method=plan.method if mode=='auto' else ('structured' if mode=='structured' else 'ntt')
++    # The planner's preference can be overridden by mode. Return the strategy
++    # actually selected by this call, while retaining its work estimates.
++    # For integer inputs, 'ntt' denotes the exact_crt strategy, which may use
++    # its documented schoolbook fallback if the available primes are insufficient.
++    plan=replace(plan,method=method)
+     if method=='structured':
+         return sparse_product_and_recover(a,b,plan.qa,plan.qb,mod),plan
+     if mod is None:

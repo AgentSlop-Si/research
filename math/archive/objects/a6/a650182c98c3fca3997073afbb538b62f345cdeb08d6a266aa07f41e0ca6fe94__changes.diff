@@ -1,0 +1,302 @@
+--- original/arbitrary_output.py
++++ hardened/arbitrary_output.py
+@@ -18,6 +18,8 @@
+ from dataclasses import dataclass
+ from typing import Iterable, Sequence
+ import math
++import hashlib
++from modular_phase import phase_row
+ import time
+ import numpy as np
+ 
+@@ -108,9 +110,9 @@
+         if k<1 or self.n%k: raise ValueError('radix must be a positive divisor of n')
+         self.k=k; self.m=self.n//self.k
+         self.residue=np.asarray(self.bins % self.k,dtype=np.intp)
+-        mm=np.arange(self.m,dtype=np.float64)
+-        # phase[t,m] corresponds to requested global bin bins[t].
+-        self.phase=np.exp((-2j*np.pi/self.n)*np.outer(self.bins.astype(np.float64),mm))
++        mm=np.arange(self.m,dtype=np.int64)
++        # Reduce exact integer products before converting to float angles.
++        self.phase=np.stack([phase_row(self.n,int(b),mm) for b in self.bins])
+     @property
+     def plan_bytes(self):
+         return int(self.phase.nbytes+self.bins.nbytes+self.residue.nbytes)
+@@ -162,6 +164,7 @@
+         self.backend=backend; self.max_plan_bytes=int(max_plan_bytes)
+         if self.q<1: raise ValueError('bins must be nonempty')
+         self.calibration_ms=0.0; self.candidates=[]; self.sample_result=None
++        self._sample_fingerprint=None
+         full=FullFFTBinPlan(n,bins,backend=backend)
+         if sample is None:
+             # Prefer a radix >= q when possible so the phase table is O(N),
+@@ -180,6 +183,7 @@
+         if a.shape!=(self.n,): raise ValueError('sample has wrong length')
+         reps=max(1,int(reps))
+         t_cal=time.perf_counter_ns()
++        self._sample_fingerprint=hashlib.blake2b(np.ascontiguousarray(a).tobytes(),digest_size=32).digest()
+         # Full-FFT timing and result.
+         full.execute(a)
+         vals=[]; full_result=None
+@@ -216,10 +220,13 @@
+ 
+     def project_stream_with_sample(self,sample,basis_vectors):
+         """Use the already-computed calibration output for the first basis row."""
+-        if self.sample_result is None:
+-            first=self.execute(sample)
++        a=np.asarray(sample,dtype=np.complex128)
++        if a.shape!=(self.n,): raise ValueError('sample has wrong length')
++        fingerprint=hashlib.blake2b(np.ascontiguousarray(a).tobytes(),digest_size=32).digest()
++        if self.sample_result is not None and fingerprint==self._sample_fingerprint:
++            first=self.sample_result.copy()
+         else:
+-            first=self.sample_result.copy()
++            first=self.execute(a)
+         rows=[first]
+         rows.extend(self.execute(row) for row in basis_vectors)
+         return np.ascontiguousarray(np.stack(rows))
+@@ -228,6 +235,7 @@
+ 
+ def productive_radices(n:int,q:int,max_plan_bytes=128*1024*1024,limit=4) -> list[int]:
+     """Radices worth trying when every trial will process a real basis row."""
++    if int(limit)<=0: return []
+     ds=[d for d in _divisors(int(n)) if d<int(n)]
+     if not ds: return []
+     targets=[]
+--- original/multi_view.py
++++ hardened/multi_view.py
+@@ -16,6 +16,7 @@
+ from collections import deque
+ from typing import Mapping, Sequence, Iterable
+ import numpy as np
++from modular_phase import phase_row
+ 
+ 
+ @dataclass
+@@ -61,7 +62,7 @@
+         self._union_loc={int(v):i for i,v in enumerate(self.union_bins)}
+         proj=np.asarray(basis_projection,dtype=np.complex128)
+         if proj.ndim!=2 or proj.shape[1]!=self.u:raise ValueError('basis_projection must be (r,u)')
+-        self.projection=np.ascontiguousarray(proj); self.r=proj.shape[0]
++        self.projection=np.array(proj,dtype=np.complex128,order='C',copy=True); self.r=proj.shape[0]
+         if coefficients is None:self.coefficients=np.zeros(self.r,dtype=np.complex128)
+         else:
+             c=np.asarray(coefficients,dtype=np.complex128)
+@@ -74,7 +75,8 @@
+             pp=list(dict.fromkeys(int(x) for x in prepared_positions))
+             if any(j<0 or j>=self.n for j in pp):raise ValueError('bad prepared position')
+             self._prepared_row={j:i for i,j in enumerate(pp)}
+-            self._prepared_phase=np.exp((-2j*np.pi/self.n)*np.outer(np.asarray(pp,float),self.union_bins.astype(float)))
++            self._prepared_phase=(np.stack([phase_row(self.n,j,self.union_bins) for j in pp])
++                                  if pp else np.empty((0,self.u),np.complex128))
+         self.version=0; self.events=deque(); self.event_capacity=None if event_capacity is None else max(0,int(event_capacity))
+         self.promote_after=None if promote_after is None else max(1,int(promote_after))
+         self.views={}
+@@ -87,7 +89,7 @@
+     def _phase_view(self,j:int,idx:np.ndarray):
+         row=self._prepared_row.get(j)
+         if row is not None and self._prepared_phase is not None:return self._prepared_phase[row,idx]
+-        return np.exp((-2j*np.pi*j/self.n)*self.union_bins[idx].astype(float))
++        return phase_row(self.n,j,self.union_bins[idx])
+ 
+     def _rebuild(self,idx):
+         y=np.asarray(self.coefficients@self.projection[:,idx],dtype=np.complex128)
+@@ -109,7 +111,7 @@
+         row=self._prepared_row.get(j)
+         if row is not None and v.phase_cache is not None:return v.phase_cache[row]
+         if row is not None and self._prepared_phase is not None:return self._prepared_phase[row,v.indices]
+-        return np.exp((-2j*np.pi*j/self.n)*v.bins.astype(float))
++        return phase_row(self.n,j,v.bins)
+ 
+     def _rebuild_view(self,v:ViewState):
+         bp=v.basis_cache if v.basis_cache is not None else self.projection[:,v.indices]
+@@ -129,12 +131,14 @@
+         if not names:return {}
+         if len(names)==1:return {names[0]:self.query(names[0])}
+         d=self.r+len(self.sparse)
+-        indiv=0
++        indiv=0; stale_names=[]
+         for name in names:
+             v=self.views[name];H=self.version-v.version
+             if H==0:continue
+-            indiv += len(v.indices)*min(H,max(1,d))
+-        batch_idx=np.asarray(sorted(set(int(i) for name in names for i in self.views[name].indices)),dtype=np.intp)
++            stale_names.append(name)
++            work=min(H,max(1,d)) if self._history_available(v) else max(1,d)
++            indiv += len(v.indices)*work
++        batch_idx=np.asarray(sorted(set(int(i) for name in stale_names for i in self.views[name].indices)),dtype=np.intp)
+         batch_cost=len(batch_idx)*max(1,d)
+         # When everyone is already current, simply return caches.
+         if indiv==0:return {name:self.views[name].cached.copy() for name in names}
+@@ -142,12 +146,14 @@
+             y=self._rebuild(batch_idx)
+             pos={int(idx):j for j,idx in enumerate(batch_idx)}
+             out={}
+-            for name in names:
++            for name in stale_names:
+                 v=self.views[name]
+                 take=np.asarray([pos[int(i)] for i in v.indices],dtype=np.intp)
+                 v.cached=np.ascontiguousarray(y[take]);v.backlog=self.version-v.version;v.version=self.version;v.strategy='batch_rebuild'
+                 v.query_count+=1; self._maybe_promote(v)
+                 out[name]=v.cached.copy()
++            for name in names:
++                if name not in out: out[name]=self.views[name].cached.copy()
+             return out
+         return {name:self.query(name) for name in names}
+ 
+@@ -192,8 +198,12 @@
+         if H>max(1,d) or not self._history_available(v):
+             v.cached=self._rebuild_view(v);v.strategy='rebuild';v.backlog=H;v.version=self.version
+             return v.cached.copy()
+-        for ver,kind,key,delta in self.events:
+-            if ver<=v.version:continue
++        # Visit only the recent suffix, then restore chronological arithmetic order.
++        recent=[]
++        for event in reversed(self.events):
++            if event[0]<=v.version: break
++            recent.append(event)
++        for ver,kind,key,delta in reversed(recent):
+             if kind=='c':
+                 row=v.basis_cache[key] if v.basis_cache is not None else self.projection[key,v.indices]
+                 v.cached += delta*row
+@@ -212,4 +222,7 @@
+         views=sum(v.indices.nbytes+v.bins.nbytes+v.cached.nbytes +
+                   (0 if v.basis_cache is None else v.basis_cache.nbytes) +
+                   (0 if v.phase_cache is None else v.phase_cache.nbytes) for v in self.views.values())
+-        return int(self.projection.nbytes+self.coefficients.nbytes+phase+views+len(self.sparse)*24)
++        # Numeric payload lower bound, not total Python heap/RSS.
++        # Include event version/key/delta/kind payload and union-bin array.
++        return int(self.projection.nbytes+self.coefficients.nbytes+self.union_bins.nbytes+
++                   phase+views+len(self.sparse)*24+len(self.events)*(8+8+16+1))
+--- original/modular_phase.py
++++ hardened/modular_phase.py
+@@ -0,0 +1,25 @@
++"""Fourier phase rows with exact integer exponent reduction before float conversion."""
++import numpy as np
++
++_SAFE_N = 3037000499  # floor(sqrt(int64 max)); products of residues fit below this.
++
++
++def phase_row(n, multiplier, indices):
++    """Return exp(-2 pi i * multiplier * indices / n), reducing modulo n first.
++
++    The object-integer path prevents overflow for very large logical periods.
++    It is slower, but selected-frequency callers need not allocate length-n data.
++    """
++    n = int(n)
++    if n < 1:
++        raise ValueError('n must be positive')
++    a = np.asarray(indices)
++    if a.ndim != 1:
++        raise ValueError('indices must be one-dimensional')
++    multiplier = int(multiplier) % n
++    if n <= _SAFE_N:
++        residues = (np.asarray(a, dtype=np.int64) % n * multiplier) % n
++    else:
++        residues = np.fromiter(((int(k) % n * multiplier) % n for k in a),
++                               dtype=np.float64, count=len(a))
++    return np.exp((-2j * np.pi / n) * residues.astype(np.float64))
+--- original/tests/test_hardening.py
++++ hardened/tests/test_hardening.py
+@@ -0,0 +1,101 @@
++import collections
++import unittest
++import numpy as np
++from arbitrary_output import ArbitraryBinsDFTPlan, AutoOutputPlan, ProductiveProjectionPlanner
++from multi_view import SharedProjectedFourierStore, union_frequency_sets
++from modular_phase import phase_row
++
++
++class CountDeque(collections.deque):
++    visited = 0
++    def __iter__(self):
++        for row in super().__iter__():
++            self.visited += 1
++            yield row
++    def __reversed__(self):
++        for row in super().__reversed__():
++            self.visited += 1
++            yield row
++
++
++class TestHardening(unittest.TestCase):
++    def test_phase_reduction_cancellation(self):
++        n = 65536
++        got = ArbitraryBinsDFTPlan(n, [n-1]).execute(np.ones(n))
++        self.assertLess(abs(got[0]), 1e-8)
++
++    def test_phase_reduction_above_int64_product(self):
++        n = 10**12 + 39
++        bins = np.array([0, 1, n//2, n-2, n-1], dtype=np.int64)
++        j = n-3
++        want = np.array([np.exp(-2j*np.pi*((j*int(k)) % n)/n) for k in bins])
++        np.testing.assert_allclose(phase_row(n, j, bins), want, rtol=1e-14, atol=1e-14)
++        for prepared in (None, [j]):
++            st = SharedProjectedFourierStore(n, bins, np.empty((0, len(bins))),
++                                            {'v': bins}, prepared_positions=prepared)
++            st.add_point(j, 1)
++            np.testing.assert_allclose(st.query('v'), want, rtol=1e-14, atol=1e-14)
++
++    def test_different_or_mutated_calibration_sample(self):
++        rng = np.random.default_rng(71)
++        a = rng.normal(size=128)
++        bins = [0, 17, 127]
++        p = AutoOutputPlan(128, bins, sample=a, reps=1)
++        b = rng.normal(size=128)
++        np.testing.assert_allclose(p.project_stream_with_sample(b, [a])[0], np.fft.fft(b)[bins], atol=1e-9)
++        a[:] += 4
++        np.testing.assert_allclose(p.project_stream_with_sample(a, [])[0], np.fft.fft(a)[bins], atol=1e-9)
++
++    def test_zero_productive_trials(self):
++        p = ProductiveProjectionPlanner(128, [1], max_pruned_trials=0)
++        p.project([np.ones(128), np.ones(128)], expected_count=2)
++        self.assertEqual(len(p.stats.trials), 1)
++
++    def test_recent_suffix_only(self):
++        st = SharedProjectedFourierStore(8, [0], np.ones((2, 1)), {'v': [0]})
++        for _ in range(10000): st.add_coefficient(0, 1)
++        st.query('v')
++        st.events = CountDeque(st.events)
++        st.add_coefficient(0, 1)
++        self.assertEqual(st.query('v')[0], 10001)
++        self.assertLessEqual(st.events.visited, 2)
++
++    def test_replay_preserves_chronological_order(self):
++        # A reversed AXPY sequence gives 0 instead of 1 in this example.
++        st = SharedProjectedFourierStore(8, [0], np.ones((4, 1)), {'v': [0]})
++        for d in (1e16, -1e16, 1): st.add_coefficient(0, d)
++        self.assertEqual(st.query('v')[0], 1)
++
++    def test_fusion_accounts_for_lost_history(self):
++        st = SharedProjectedFourierStore(8, [0], np.ones((10, 1)), {'a': [0], 'b': [0]}, event_capacity=0)
++        st.add_coefficient(0, 1)
++        result = st.query_many(['a', 'b'])
++        self.assertEqual(result['a'][0], 1)
++        self.assertEqual(st.views['a'].strategy, 'batch_rebuild')
++
++    def test_fusion_omits_current_bins(self):
++        st = SharedProjectedFourierStore(8, list(range(8)), np.ones((4,8)),
++                                        {'a':[0], 'b':[0], 'current':list(range(8))}, event_capacity=0)
++        st.add_coefficient(0, 1)
++        st.query('current')
++        result = st.query_many(['a', 'b', 'current'])
++        self.assertEqual(st.views['a'].strategy, 'batch_rebuild')
++        np.testing.assert_array_equal(result['current'], np.ones(8))
++
++    def test_projection_owns_compact_storage(self):
++        full = np.ones(65536, np.complex128)
++        proj = full[:4][None, :]
++        st = SharedProjectedFourierStore(65536, [0,1,2,3], proj, {'v':[0]}, [1])
++        self.assertTrue(st.projection.flags.owndata)
++        full[:] = 100
++        st.add_coefficient(0, 1)
++        self.assertEqual(st.query('v')[0], 2)
++
++    def test_numeric_payload_counts_events(self):
++        st = SharedProjectedFourierStore(8, [0], np.ones((1,1)), {'v':[0]})
++        before = st.storage_bytes
++        for _ in range(20): st.add_coefficient(0, 1)
++        self.assertGreater(st.storage_bytes, before)
++
++
++if __name__ == '__main__': unittest.main()

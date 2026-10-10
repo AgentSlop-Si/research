@@ -1,0 +1,312 @@
+0001 #!/usr/bin/env python3
+0002 """Independent v13 audit. No source checkpoint code is imported or executed.
+0003 Run: python independent_v13_audit.py [output.json]
+0004 Only Python standard library and NumPy are used. Exact finite-field checks
+0005 are kept distinct from complex floating-point identity controls.
+0006 """
+0007 import hashlib
+0008 import itertools
+0009 import json
+0010 import math
+0011 import sys
+0012 from pathlib import Path
+0013 import numpy as np
+0014 
+0015 
+0016 def factors(n):
+0017     out=[]
+0018     d=2
+0019     while d*d<=n:
+0020         if n%d==0:
+0021             out.append(d)
+0022             while n%d==0:n//=d
+0023         d+=1
+0024     if n>1:out.append(n)
+0025     return out
+0026 
+0027 
+0028 def root(n,p):
+0029     assert p>1 and all(p%d for d in range(2,math.isqrt(p)+1))
+0030     assert (p-1)%n==0
+0031     for a in range(1,p):
+0032         if pow(a,n,p)==1 and all(pow(a,n//q,p)!=1 for q in factors(n)):
+0033             return a
+0034     raise AssertionError('root missing')
+0035 
+0036 
+0037 def phase(g,M,a,b,r,u):
+0038     return (a*u*(u-1)//2+(a*M*r+b)*u)%g
+0039 
+0040 
+0041 def local_modular(g,M,a,b,p,z):
+0042     """Independently evaluate the unnormalized recurrence for every basis input.
+0043     The forcing and anti-periodic closure are derived from the phase's
+0044     first difference, rather than calling the supplied checker or decoder.
+0045     """
+0046     K=g//M
+0047     B=[[0]*g for _ in range(g)]
+0048     P=[[0]*g for _ in range(g)]
+0049     for n in range(g):
+0050         r,u=divmod(n,M)
+0051         c=pow(z,phase(g,M,a,b,r,u),p)
+0052         H=[c*pow(z,(-j*M*r)%g,p)%p for j in range(K)]
+0053         terms=[]
+0054         gauges=[]
+0055         for j in range(g):
+0056             k=(a*j)%g
+0057             gauge=pow(z,(a*j*(j-1)//2+b*j)%g,p)
+0058             boundary=pow(z,(-M*(k+b)-a*M*(M-1)//2)%g,p)
+0059             forcing=(H[k%K]-boundary*H[(k+a*M)%K])%p
+0060             terms.append(forcing*pow(gauge,-1,p)%p)
+0061             gauges.append(gauge)
+0062         assert pow(z,(a*g*(g-1)//2+b*g)%g,p)==p-1
+0063         value=sum(terms)*pow(2,-1,p)%p
+0064         prefix=0
+0065         for j in range(g):
+0066             B[(a*j)%g][n]=gauges[j]*(value-prefix)%p
+0067             prefix=(prefix+terms[j])%p
+0068         for v in range(M):
+0069             P[r*M+v][n]=pow(z,(phase(g,M,a,b,r,u)-phase(g,M,a,b,r,v))%g,p)
+0070         for k in range(g):
+0071             expected=sum(P[r*M+v][n]*pow(z,(-k*(r*M+v))%g,p) for v in range(M))%p
+0072             assert B[k][n]==expected
+0073     return B,P
+0074 
+0075 
+0076 def modular_rank(A,p):
+0077     A=[r[:] for r in A]
+0078     nr=len(A); nc=len(A[0]); row=0
+0079     for col in range(nc):
+0080         pivot=next((i for i in range(row,nr) if A[i][col]%p),None)
+0081         if pivot is None:continue
+0082         A[row],A[pivot]=A[pivot],A[row]
+0083         inv=pow(A[row][col],-1,p)
+0084         A[row]=[v*inv%p for v in A[row]]
+0085         for i in range(nr):
+0086             if i!=row and A[i][col]%p:
+0087                 c=A[i][col]
+0088                 A[i]=[(a-c*b)%p for a,b in zip(A[i],A[row])]
+0089         row+=1
+0090         if row==nr:break
+0091     return row
+0092 
+0093 
+0094 def exact_case(N,p,M):
+0095     g=N&-N; m=N//g; K=g//M
+0096     z=root(N,p); zg=pow(z,m,p)
+0097     if g==1:
+0098         assert M==1
+0099         return dict(N=N,p=p,M=M,degenerate_odd=True,primitive_root_verified=True)
+0100     assert M<=K and g%M==0 and not M&(M-1)
+0101     all_B=[]; all_P=[]; reversed_disagreements=0; local_entries=0
+0102     for s in range(m):
+0103         a=(2*s+1)%g; b=(3*s+1)%g
+0104         bank=[]; projectors=[]
+0105         for t in range(M):
+0106             B,P=local_modular(g,M,a,(b+t*K)%g,p,zg)
+0107             assert modular_rank(P,p)==K
+0108             bank.append(B); projectors.append(P)
+0109             if t==0:
+0110                 for q in range(g):
+0111                     r,u=divmod(q,M)
+0112                     for k in range(g):
+0113                         reversed_value=sum(pow(zg,(phase(g,M,a,b,r,v)-phase(g,M,a,b,r,u)-k*(r*M+v))%g,p) for v in range(M))%p
+0114                         reversed_disagreements+=(B[k][q]!=reversed_value)
+0115         for i in range(g):
+0116             for j in range(g):
+0117                 assert sum(P[i][j] for P in projectors)%p==(M if i==j else 0)
+0118                 local_entries+=1
+0119         for length in range(1,M+1):
+0120             partial=[[sum(P[i][j] for P in projectors[:length])%p for j in range(g)] for i in range(g)]
+0121             assert modular_rank(partial,p)==length*K
+0122         all_B.append(bank);all_P.append(projectors)
+0123     one_row_entries=0; bank_entries=0
+0124     for n in range(N):
+0125         q,s=divmod(n,m)
+0126         r,u=divmod(q,M)
+0127         for k in range(N):
+0128             k1=k%g
+0129             total=0
+0130             for t in range(M):
+0131                 actual=all_B[s][t][k1][q]*pow(z,(-k*s)%N,p)%p
+0132                 expected=sum(all_P[s][t][r*M+v][q]*pow(z,(-k*((r*M+v)*m+s))%N,p) for v in range(M))%p
+0133                 assert actual==expected
+0134                 total+=actual
+0135                 one_row_entries+=1
+0136             assert total*pow(M,-1,p)%p==pow(z,(-k*n)%N,p)
+0137             bank_entries+=1
+0138     bad_spacing=False
+0139     if M>1:
+0140         bad=sum(pow(zg,t*(K+1),p) for t in range(M))%p
+0141         assert bad!=0
+0142         bad_spacing=True
+0143         assert reversed_disagreements>0
+0144     return dict(N=N,G=g,m=m,p=p,M=M,primitive_root=z,
+0145                 executor_entries_verified=one_row_entries,
+0146                 completed_bank_entries_verified=bank_entries,
+0147                 local_identity_entries_verified=local_entries,
+0148                 reversed_one_row_phase_disagreements=reversed_disagreements,
+0149                 wrong_spacing_rejected=bad_spacing)
+0150 
+0151 
+0152 def fourier(n):
+0153     j=np.arange(n)
+0154     return np.exp(-2j*np.pi*j[:,None]*j[None,:]/n)/math.sqrt(n)
+0155 
+0156 
+0157 def local_projector(g,M,a,b):
+0158     P=np.zeros((g,g),complex)
+0159     for r in range(g//M):
+0160         s=np.exp(2j*np.pi*np.array([phase(g,M,a,b,r,u) for u in range(M)])/g)
+0161         P[r*M:(r+1)*M,r*M:(r+1)*M]=np.outer(s.conj(),s)
+0162     return P
+0163 
+0164 
+0165 def cov_integer(g,M):
+0166     H=np.zeros((g,g),dtype=np.int64)
+0167     for i in range(g):
+0168         di=set(range(i%M-M+1,i%M+1))-{0}
+0169         for j in range(g):
+0170             dj=set(range(j%M-M+1,j%M+1))-{0}
+0171             for d in di&dj:
+0172                 c=d*(j-i)%g
+0173                 H[i,j]+=1 if c==0 else (-1 if c==g//2 else 0)
+0174     assert np.array_equal(H,H.T)
+0175     assert np.array_equal(H@H,M*H)
+0176     assert int(np.trace(H))==g*(M-1)
+0177     for i in range(g):
+0178         for j in range(g):
+0179             if i%M!=j%M:assert H[i,j]==0
+0180     return H
+0181 
+0182 
+0183 def dyadic_covariance():
+0184     exact=[]; numeric=[]
+0185     for g in (2,4,8,16,32,64,128):
+0186         for M in (1,2,4,8):
+0187             if M*M>g:continue
+0188             H=cov_integer(g,M)
+0189             exact.append(dict(G=g,M=M,nonzero_rank=0 if M==1 else g-g//M))
+0190     for g,M in ((4,2),(8,2),(16,2),(16,4),(32,4)):
+0191         F=fourier(g); I=np.eye(g); H=cov_integer(g,M)
+0192         E=np.array([F@(local_projector(g,M,a,b)-I) for a in range(1,g,2) for b in range(g)])
+0193         mean_error=float(np.max(abs(E.mean(axis=0))))
+0194         residual=0.
+0195         for k in range(g):
+0196             empirical=E[:,k,:].conj().T@E[:,k,:]/len(E)
+0197             d=np.exp(2j*np.pi*k*np.arange(g)/g)
+0198             predicted=d[:,None]*(H/g)*d.conj()[None,:]
+0199             residual=max(residual,float(np.max(abs(empirical-predicted))))
+0200         assert mean_error<2e-13 and residual<2e-13
+0201         numeric.append(dict(G=g,M=M,states=len(E),all_outputs=True,mean_residual=mean_error,covariance_residual=residual))
+0202     return dict(exact_integer_projector_cases=exact,exhaustive_complex_ensemble_cases=numeric)
+0203 
+0204 
+0205 def gf_multiply(x,y,L,poly):
+0206     z=0
+0207     while y:
+0208         if y&1:z^=x
+0209         y>>=1;x<<=1
+0210         if x&(1<<L):x^=poly
+0211     return z
+0212 
+0213 
+0214 def pairwise_extension(g,m,M,L,poly):
+0215     assert g==1<<L and m<=g
+0216     schedules=np.array([[gf_multiply(A,s,L,poly)^B for s in range(m)] for A in range(g) for B in range(g)])
+0217     for s in range(m):
+0218         assert np.all(np.bincount(schedules[:,s],minlength=g)==g)
+0219         for t in range(s):
+0220             assert np.all(np.bincount(schedules[:,s]*g+schedules[:,t],minlength=g*g)==1)
+0221     rng=np.random.default_rng(74013+g+m)
+0222     x=rng.normal(size=g*m)+1j*rng.normal(size=g*m)
+0223     cols=x.reshape(g,m); F=fourier(g); Fm=fourier(m)
+0224     omega=np.exp(-2j*np.pi*np.arange(g)[:,None]*np.arange(m)[None,:]/(g*m))
+0225     target=fourier(g*m)@x
+0226     H=cov_integer(g,M)
+0227     prediction=[]
+0228     for k in range(g):
+0229         d=np.exp(2j*np.pi*k*np.arange(g)/g)
+0230         Q=d[:,None]*(H/g)*d.conj()[None,:]
+0231         prediction.append(sum((cols[:,s].conj()@Q@cols[:,s]).real for s in range(m))/m)
+0232     prediction=np.tile(prediction,m)
+0233     errors=[]
+0234     for a in range(1,g,2):
+0235         cache=np.array([[F@local_projector(g,M,a,b)@cols[:,s] for b in range(g)] for s in range(m)])
+0236         for betas in schedules:
+0237             stages=np.column_stack([cache[s,betas[s],:] for s in range(m)])
+0238             y=((stages*omega)@Fm.T).T.reshape(g*m)
+0239             errors.append(y-target)
+0240     errors=np.array(errors)
+0241     actual=np.mean(abs(errors)**2,axis=0)
+0242     residual=float(np.max(abs(actual-prediction)))
+0243     assert residual<1e-11
+0244     assert np.max(abs(errors.mean(axis=0)))<1e-12
+0245     # Identical full-state reuse has the advertised m-fold worst-direction variance.
+0246     w=np.zeros(g,complex)
+0247     w[::M]=np.exp(2j*np.pi*np.arange(g//M)/(g//M))/math.sqrt(g//M)
+0248     shared_errors=[]
+0249     for a in range(1,g,2):
+0250         for b in range(g):
+0251             shared_errors.append(math.sqrt(m)*(F@(local_projector(g,M,a,b)-np.eye(g))@w)[0])
+0252     shared_var=float(np.mean(abs(np.array(shared_errors))**2))
+0253     baseline=M/g
+0254     assert abs(shared_var/baseline-m)<1e-12
+0255     return dict(G=g,m=m,M=M,enumerated_shared_slope_hash_states=len(errors),
+0256                 pairwise_beta_counts_exact=True,covariance_max_residual=residual,
+0257                 common_full_state_variance_ratio=shared_var/baseline,
+0258                 random_bits_this_construction=3*L-1,
+0259                 random_bits_independent_full_states=m*(2*L-1))
+0260 
+0261 
+0262 def conditioning_control(g,m,M):
+0263     N=g*m; F=fourier(N)
+0264     bank=[]
+0265     for t in range(M):
+0266         P=np.zeros((N,N),complex)
+0267         for s in range(m):
+0268             ids=np.arange(g)*m+s
+0269             P[np.ix_(ids,ids)]=local_projector(g,M,2*s+1,(s+t*(g//M))%g)
+0270         bank.append(F@P)
+0271     stack=np.vstack(bank)/M
+0272     residual=float(np.max(abs(stack.conj().T@stack-np.eye(N))))
+0273     assert residual<1e-12
+0274     assert np.max(abs(sum(bank)/M-F))<1e-12
+0275     singular=np.linalg.svd(bank[0],compute_uv=False)
+0276     assert np.max(abs(singular[:N//M]-M))<1e-11
+0277     assert np.max(abs(singular[N//M:]))<1e-11
+0278     # A shared twiddle table is downstream of each local sketch. Its error
+0279     # cancels the M amplification exactly on averaging the complete bank.
+0280     rng=np.random.default_rng(882)
+0281     x=rng.normal(size=N)+1j*rng.normal(size=N)
+0282     twiddle=np.exp(-2j*np.pi*np.arange(g)[:,None]*np.arange(m)[None,:]/N)
+0283     delta=(rng.normal(size=(g,m))+1j*rng.normal(size=(g,m)))*1e-4
+0284     distorted=twiddle+delta
+0285     fg=fourier(g);fm=fourier(m)
+0286     rows=[]
+0287     for t in range(M):
+0288         local=np.column_stack([fg@local_projector(g,M,2*s+1,(s+t*(g//M))%g)@x[s::m] for s in range(m)])
+0289         rows.append(((local*distorted)@fm.T).T.reshape(N))
+0290     aggregate=sum(rows)/M
+0291     composed=(((fg@x.reshape(g,m))*distorted)@fm.T).T.reshape(N)
+0292     assert np.max(abs(aggregate-composed))<1e-12
+0293     actual=np.linalg.norm(aggregate-F@x)
+0294     bound=float(np.max(abs(delta))*np.linalg.norm(x))
+0295     assert actual<=bound+1e-12
+0296     return dict(N=N,G=g,m=m,M=M,normalized_stack_gram_error=residual,
+0297                 common_twiddle_error_norm=float(actual),common_twiddle_error_bound=bound)
+0298 
+0299 
+0300 def main():
+0301     result={'scope':'Independent mathematics and independently authored execution checks; no checkpoint program imported or executed.',
+0302             'finite_field':[exact_case(*case) for case in [(24,97,2),(40,641,2),(48,97,4),(80,641,4),(96,97,4),(160,641,4),(64,257,8),(12,97,1),(7,29,1),(1,3,1)]],
+0303             'covariance':dyadic_covariance(),
+0304             'constructive_shared_randomness':[pairwise_extension(8,3,2,3,0b1011),pairwise_extension(16,5,4,4,0b10011)],
+0305             'conditioning':[conditioning_control(8,3,2),conditioning_control(16,3,4),conditioning_control(16,5,4)]}
+0306     result['checker_sha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+0307     out=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).with_name('CHECK_RESULTS.json')
+0308     out.write_text(json.dumps(result,indent=2)+'\n')
+0309     print(json.dumps(result,indent=2))
+0310 
+0311 
+0312 if __name__=='__main__':main()

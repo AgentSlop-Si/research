@@ -1,0 +1,94 @@
+"""Exact Fourier spectral-minor polynomial in Z[z]/(z^4+1), n=8.
+
+Reproduces a necessary 4x4 determinant for separated-generator
+F8 = B P A with C=A^-1 on the two-column spectral-support chart.
+This is not a feasibility certificate for the full factorization.
+"""
+from __future__ import annotations
+import itertools,json,hashlib
+from pathlib import Path
+from inverse_quartic import ZERO,ONE,cadd,cneg,cpowroot,poly_constant,poly_var,padd,pscale,pmul,sum_polys,poly_eval
+from column_minor import build_polynomial
+from dual_support import primitive_root
+
+N=8
+# monomial indices: t,h0,h1,h2,hl,beta
+
+def scalar_integer(n):return poly_constant((n,0,0,0))
+def sub(a,b):return padd(a,b,-1)
+def rootmul(a,k):return pscale(a,cpowroot(k))
+def det4(M):
+    out={}
+    for per in itertools.permutations(range(4)):
+        inv=sum(per[i]>per[j] for i in range(4) for j in range(i+1,4))
+        term=M[0][per[0]]
+        for i in range(1,4):term=pmul(term,M[i][per[i]])
+        out=padd(out,term,-1 if inv%2 else 1)
+    return out
+
+def make_exact():
+    t,h0,h1,h2,hl,beta=[poly_var(i) for i in range(6)]
+    one=poly_constant()
+    # hs[i] is exactly the extrapolated three-mode sequence, including i=6,7.
+    xi=lambda k:cpowroot(-k)
+    c1=cadd(cadd(one[()],xi(1)),xi(2))
+    c2=cadd(cadd(xi(1),xi(2)),xi(3))
+    c3=xi(3)
+    hs=[h0,h1,h2]
+    for k in range(4):
+        hs.append(padd(padd(pscale(hs[k+2],c1),pscale(hs[k+1],c2),-1),pscale(hs[k],c3)))
+    H=hs[:6]+[hl]
+    zminus1=cadd(cpowroot(1),(-1,0,0,0))
+    bnum=padd(sub(t,one),pmul(beta,sub(h0,one)))
+    # t*(z-1)*L_i, with L7=1.
+    def lhat(i):
+        if i==7:return pscale(t,zminus1)
+        U=pscale(sub(one,pmul(beta,h0)),zminus1)
+        U=padd(U,pscale(bnum,cadd(xi(i),(-1,0,0,0))))
+        U=padd(U,pscale(pmul(beta,H[i]),zminus1))
+        return U
+    M=[]
+    for i in range(4,8):
+        yhead=sum_polys([rootmul(H[k],i*k) for k in range(3)])
+        ytail=sum_polys([rootmul(lhat(k),i*k) for k in range(4,8)])
+        yspike=poly_constant(cpowroot(3*i))
+        ylast=sum_polys([rootmul(H[k],i*k) for k in range(7)]+[poly_constant(cpowroot(7*i))])
+        M.append([yhead,ytail,yspike,ylast])
+    Q=det4(M)
+    assert Q
+    # Split Q = A*t+B*beta+C, with A,B,C on the remaining 4 coordinates.
+    A={};B={};CC={}
+    for mon,coef in Q.items():
+        assert (0 in mon)+(5 in mon)<=1 and mon.count(0)<=1 and mon.count(5)<=1
+        rem=tuple(j for j in mon if j not in (0,5))
+        if 0 in mon:A[rem]=coef
+        elif 5 in mon:B[rem]=coef
+        else:CC[rem]=coef
+    assert len(Q)==len(A)+len(B)+len(CC)
+    assert B
+    return Q,A,B,CC
+
+def export():
+    Q,A,B,C=make_exact()
+    out={
+      'field':'Z[z]/(z^4+1)','root_convention':'z^8=1, z^4=-1',
+      'parameters':['t','h0','h1','h2','hl','beta'],
+      'equation':'Q(t,h0,h1,h2,hl,beta)=0 is necessary; Q=t*A(h)+beta*B(h)+C(h)',
+      'scope':'fixed P8, nonzero t and nonzero FFT lower B pivot, separated rank-one chart plus Fourier-support recurrence',
+      'Q_term_count':len(Q),'A_term_count':len(A),'B_term_count':len(B),'C_term_count':len(C),
+      'Q_max_degree':max(len(k) for k in Q),
+      'coefficient_encoding':'each term = [indices of multiplied parameters, [c0,c1,c2,c3]], sum coeff*(z^i)',
+      'terms':[[list(k),list(v)] for k,v in sorted(Q.items(),key=lambda kv:(len(kv[0]),kv[0]))]
+    }
+    for p in (12289,65537):
+        w=primitive_root(p,8)
+        for omega in (w,pow(w,3,p)):
+            RR,poly=build_polynomial(p,omega)
+            mapped={tuple(sorted([j for j in range(6) for _ in range(m[j])])):int(c)%p for m,c in poly.terms()}
+            ours={k:sum(coef[i]*pow(omega,i,p) for i in range(4))%p for k,coef in Q.items()}
+            assert ours==mapped, (p,omega,len(ours),len(mapped))
+    dst=Path(__file__).with_name('exact_spectral_minor.json')
+    dst.write_text(json.dumps(out,indent=2)+'\n')
+    print('EXACT',len(Q),'term counts',len(A),len(B),len(C),'max degree',out['Q_max_degree'])
+    print('sha256',hashlib.sha256(dst.read_bytes()).hexdigest());return out
+if __name__=='__main__':export()

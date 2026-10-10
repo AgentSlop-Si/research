@@ -1,0 +1,173 @@
+   1 #!/usr/bin/env python3
+   2 """Hero #0: Bessel/Fourier operator bridge and exact Cauchy minors.
+   3 
+   4 No unconditional O(N) FFT is claimed here. Uses NumPy FFT only as a
+   5 correctness oracle; dense spectral differentiation is not an O(N) primitive.
+   6 """
+   7 import json
+   8 import math
+   9 from pathlib import Path
+  10 import numpy as np
+  11 from scipy.special import jv
+  12 import mpmath as mp
+  13 
+  14 MOD = 998244353
+  15 GEN = 3
+  16 
+  17 
+  18 def rank_mod(matrix, p=MOD):
+  19     a = [[int(x) % p for x in row] for row in matrix]
+  20     if not a:
+  21         return 0
+  22     nr, nc = len(a), len(a[0]); rank = 0
+  23     for col in range(nc):
+  24         pivot = next((i for i in range(rank, nr) if a[i][col] != 0), None)
+  25         if pivot is None:
+  26             continue
+  27         a[rank], a[pivot] = a[pivot], a[rank]
+  28         inv = pow(a[rank][col], p - 2, p)
+  29         a[rank] = [(x * inv) % p for x in a[rank]]
+  30         for i in range(rank + 1, nr):
+  31             if a[i][col]:
+  32                 factor = a[i][col]
+  33                 a[i] = [(v - factor * w) % p for v, w in zip(a[i], a[rank])]
+  34         rank += 1
+  35         if rank == min(nr, nc):
+  36             break
+  37     return rank
+  38 
+  39 
+  40 def make_A_exact(K):
+  41     """A = U diag(0,...,K-1) U^-1 over F_p; U is DFT matrix."""
+  42     assert (MOD - 1) % K == 0
+  43     zeta = pow(GEN, (MOD-1)//K, MOD)
+  44     assert pow(zeta,K,MOD)==1 and (K==1 or pow(zeta,K//2,MOD)!=1)
+  45     roots = [pow(zeta,i,MOD) for i in range(K)]
+  46     invK = pow(K,MOD-2,MOD)
+  47     coeff = []
+  48     for d in range(K):
+  49         q = pow(zeta,d,MOD)
+  50         val = 0; power = 1
+  51         for b in range(K):
+  52             val = (val+b*power)%MOD
+  53             power = power*q % MOD
+  54         coeff.append(val*invK % MOD)
+  55     A = [[coeff[(i-j)%K] for j in range(K)] for i in range(K)]
+  56     return A, roots
+  57 
+  58 
+  59 def check_exact_cauchy(K, rng):
+  60     A, roots = make_A_exact(K)
+  61     inv2 = pow(2, MOD - 2, MOD)
+  62     for i in range(K):
+  63         for j in range(K):
+  64             expected = ((K - 1) * inv2) % MOD if i == j else roots[j] * pow((roots[i]-roots[j]) % MOD, MOD-2, MOD) % MOD
+  65             assert A[i][j] == expected, (K,i,j,A[i][j],expected)
+  66     checked=0
+  67     for t in range(1, min(K//2, 9)):
+  68         for trial in range(6):
+  69             perm = rng.permutation(K)
+  70             I = sorted(map(int,perm[:t])); J = sorted(map(int,perm[t:2*t]))
+  71             minor = [[A[i][j] for j in J] for i in I]
+  72             assert rank_mod(minor)==t, (K,t,I,J)
+  73             checked+=1
+  74     for s in (1,2,3):
+  75         for trial in range(3):
+  76             S=[[0]*K for _ in range(K)]
+  77             for i in range(K):
+  78                 js=rng.choice(K,size=s,replace=False)
+  79                 for j in js:
+  80                     S[i][int(j)] = int(rng.integers(1,MOD))
+  81             residual = [[(A[i][j]-S[i][j])%MOD for j in range(K)] for i in range(K)]
+  82             r=rank_mod(residual)
+  83             assert K <= (s+2)*(r+1)-1, (K,s,r)
+  84     return {'K':K,'exact_entries':K*K,'disjoint_cauchy_minors':checked,'sparse_rank_tests':9}
+  85 
+  86 
+  87 def normalized_fft(y):
+  88     return np.fft.fft(y,norm='ortho')
+  89 
+  90 
+  91 def apply_H_oracle(Y):
+  92     """H=U diag(0,1,1/2,...,1/(K-1)) U^-1.
+  93 
+  94     This intentionally performs TWO FFTs and IS NOT a fast O(K) solution.
+  95     """
+  96     K=len(Y)
+  97     z=np.fft.ifft(Y,norm='ortho')
+  98     coeff=np.zeros(K,dtype=float)
+  99     coeff[1:] = 1 / np.arange(1,K)
+ 100     return normalized_fft(z*coeff)
+ 101 
+ 102 
+ 103 def check_bessel_recurrence(K, rng, orders=6):
+ 104     lam=math.pi/K
+ 105     g=rng.standard_normal(K)+1j*rng.standard_normal(K)
+ 106     z=lam*np.arange(K)
+ 107     true=[normalized_fft(g*jv(r,z)) for r in range(orders+1)]
+ 108     computed=[true[0],true[1]]
+ 109     for r in range(1,orders):
+ 110         nxt=(2*r/lam)*apply_H_oracle(computed[-1])-computed[-2]
+ 111         if r==1:
+ 112             # Bessel J_1(z)/z tends to 1/2 at z=0.
+ 113             nxt=nxt + (g[0]/np.sqrt(K))*np.ones(K)
+ 114         computed.append(nxt)
+ 115     errors=[float(np.max(np.abs(a-b))) for a,b in zip(computed,true)]
+ 116     scale=max(float(np.linalg.norm(g)), 1e-15)
+ 117     return {'K':K,'orders':orders,'max_absolute_error':max(errors),
+ 118             'max_error_per_input_l2':max(errors)/scale,'per_order':errors}
+ 119 
+ 120 
+ 121 
+ 122 def check_bessel_mp(K=16, orders=6, dps=65):
+ 123     """Independent high-precision direct-matrix oracle for the exact cycle."""
+ 124     mp.mp.dps=dps
+ 125     rt=mp.sqrt(K); pi=mp.pi; i=mp.j
+ 126     omega=mp.exp(-2*pi*i/K)
+ 127     F=[[omega**(k*b)/rt for b in range(K)] for k in range(K)]
+ 128     Fi=[[omega**(-b*k)/rt for k in range(K)] for b in range(K)]
+ 129     g=[mp.mpc((b%7)-3,(b%5)-2) for b in range(K)]
+ 130     def mat_vec(M,v):
+ 131         return [mp.fsum(M[t][j]*v[j] for j in range(K)) for t in range(K)]
+ 132     base=[mat_vec(F,[g[b]*mp.besselj(r,pi*b/K) for b in range(K)]) for r in range(orders+1)]
+ 133     weights=[mp.mpf(0)]+[mp.mpf(1)/b for b in range(1,K)]
+ 134     def H(y):
+ 135         z=mat_vec(Fi,y)
+ 136         return mat_vec(F,[weights[b]*z[b] for b in range(K)])
+ 137     vals=[base[0],base[1]]
+ 138     for r in range(1,orders):
+ 139         q=[(2*r*K/pi)*a-b for a,b in zip(H(vals[-1]),vals[-2])]
+ 140         if r==1:
+ 141             q=[v+g[0]/rt for v in q]
+ 142         vals.append(q)
+ 143     error=max(abs(a-b) for x,y in zip(vals,base) for a,b in zip(x,y))
+ 144     assert error < mp.mpf(10)**(-(dps-25)), error
+ 145     return {'K':K,'orders':orders,'digits':dps,'max_abs_error':mp.nstr(error,10)}
+ 146 
+ 147 def odd_grid_test(N):
+ 148     Q=1 << (N-1).bit_length()
+ 149     assert N%2==1 and math.gcd(N,Q)==1
+ 150     # Avoid floating rounding: residue class of Q*k mod N.
+ 151     distinct={((Q*k)%N) for k in range(N)}
+ 152     assert len(distinct)==N
+ 153     return {'N':N,'Q':Q,'distinct_fractional_offsets':len(distinct)}
+ 154 
+ 155 
+ 156 def main():
+ 157     rng=np.random.default_rng(20261009)
+ 158     exact=[check_exact_cauchy(n,rng) for n in [8,16,32,64]]
+ 159     numerical=[check_bessel_recurrence(n,rng,6) for n in [8,16,32,64,128]]
+ 160     precise=[check_bessel_mp(n,6,65) for n in [8,16,32]]
+ 161     grid=[odd_grid_test(n) for n in [15,17,23,31,37,63,127]]
+ 162     assert max(x['per_order'][2] for x in numerical)<1e-11
+ 163     results={'status':'verified identities and restricted no-go only; NO O(N) FFT',
+ 164              'exact_cauchy':exact,'bessel_recurrence':numerical,'mp_bessel_recurrence':precise,
+ 165              'odd_length_grid':grid,'modulus':MOD}
+ 166     here=Path(__file__).resolve().parent
+ 167     (here/'results.json').write_text(json.dumps(results,indent=2),encoding='utf8')
+ 168     print(json.dumps({'checks':'PASSED','exact_sizes':[x['K'] for x in exact],
+ 169                       'max_bessel_relative_to_input_l2':max(x['max_error_per_input_l2'] for x in numerical),
+ 170                       'odd_grid_sizes':[x['N'] for x in grid], 'high_precision_cycle':precise},indent=2))
+ 171 
+ 172 if __name__=='__main__':
+ 173     main()

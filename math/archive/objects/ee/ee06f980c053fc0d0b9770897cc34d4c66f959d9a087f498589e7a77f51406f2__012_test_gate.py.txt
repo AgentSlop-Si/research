@@ -1,0 +1,123 @@
+"""Regression tests: central-bit partition depth bound for bit-reversed scan networks."""
+import unittest, random, math
+from central_partition import (bitrev,partition,primitive_root_of_unity,det_mod,
+    rank_mod,stage,matmul,product_rank)
+
+PRIMES=(12289,65537)
+
+
+def Fourier_block(n,p,R,C):
+    root=primitive_root_of_unity(n,p)
+    pw=[pow(root,j,p) for j in range(n)]
+    return [[pw[(i*j)%n] for j in C] for i in R]
+
+
+def runs(A):
+    return 1+sum(A[i]!=A[i-1]+1 for i in range(1,len(A)))
+
+
+def transitions(n,A):
+    aset=set(A)
+    return sum((i in aset)!=(i+1 in aset) for i in range(n-1))
+
+
+class FourierDepthBarrier(unittest.TestCase):
+    def test_partition_and_bitrev_invariance(self):
+        for k in range(2,13):
+            n=1<<k;A,B,cap,description=partition(n);p=bitrev(n)
+            self.assertEqual(len(A),n//2)
+            self.assertEqual(len(B),n//2)
+            self.assertEqual(set(A)|set(B),set(range(n)))
+            self.assertFalse(set(A)&set(B))
+            self.assertEqual({p[i] for i in A},set(A))
+            self.assertEqual({p[i] for i in B},set(B))
+            self.assertEqual(transitions(n,A),cap)
+            if k%2:
+                m=k//2;self.assertEqual(cap,2**(m+1)-1)
+            else:
+                m=k//2;self.assertEqual(cap,2**m)
+
+    def test_all_four_fourier_blocks_nonzero_two_fields(self):
+        for n in (4,8,16,32,64,128,256):
+            A,B,_,_=partition(n)
+            for p in PRIMES:
+                for R in (A,B):
+                    for C in (A,B):
+                        with self.subTest(n=n,p=p,R=R[0],C=C[0]):
+                            self.assertNotEqual(det_mod(Fourier_block(n,p,R,C),p),0)
+
+    def test_odd_radix_block_identity(self):
+        rng=random.Random(81723)
+        for n in (8,32,128,512):
+            k=n.bit_length()-1; m=k//2;L=1<<m
+            for p in PRIMES:
+                w=primitive_root_of_unity(n,p);xi=pow(w,2*L,p)
+                for trial in range(120):
+                    z,a,u,widx,b,v=(rng.randrange(L),rng.randrange(L),rng.randrange(2),
+                                    rng.randrange(L),rng.randrange(L),rng.randrange(2))
+                    i=2*L*z+L*u+a;j=2*L*widx+L*v+b
+                    lhs=pow(w,i*j,p)
+                    rhs=pow(xi,z*b+a*widx,p)*pow(w,(L*u+a)*(L*v+b),p)%p
+                    self.assertEqual(lhs,rhs)
+
+    def test_even_radix_block_identity_and_2by2(self):
+        rng=random.Random(8723)
+        for n in (16,64,256,1024):
+            k=n.bit_length()-1;q=1<<(k//2-1)
+            for p in PRIMES:
+                w=primitive_root_of_unity(n,p);xi=pow(w,4*q,p)
+                for trial in range(100):
+                    z,a,u,widx,b,v=(rng.randrange(q),rng.randrange(q),rng.randrange(4),
+                                    rng.randrange(q),rng.randrange(q),rng.randrange(4))
+                    i=4*q*z+q*u+a;j=4*q*widx+q*v+b
+                    lhs=pow(w,i*j,p)
+                    rhs=pow(xi,z*b+a*widx,p)*pow(w,(q*u+a)*(q*v+b),p)%p
+                    self.assertEqual(lhs,rhs)
+                for rowu in ((0,3),(1,2)):
+                    for colv in ((0,3),(1,2)):
+                        # Factor in every local 2x2 determinant is nonzero
+                        rr=(rowu[1]-rowu[0])*(colv[1]-colv[0])*q*q
+                        self.assertNotEqual(pow(w,rr,p),1)
+
+    def test_single_stage_bound_including_zero_generators(self):
+        for n in (8,16,32,64):
+            A,B,cap,_=partition(n)
+            for p in PRIMES:
+                for seed in range(4):
+                    S=stage(n,p,seed+n)
+                    if seed==0:
+                        for i in range(n):
+                            S[i][i]=0
+                    if seed==1:
+                        for i in range(n):
+                            for j in range(n):
+                                if i<j:S[i][j]=0
+                    self.assertLessEqual(rank_mod([[S[i][j] for j in B] for i in A],p),cap)
+                    self.assertLessEqual(rank_mod([[S[i][j] for j in A] for i in B],p),cap)
+
+    def test_multistage_cross_rank(self):
+        for n in (16,32,64):
+            _,_,cap,_=partition(n)
+            for p in PRIMES:
+                for t in (2,3,4):
+                    actual=product_rank(n,p,t)
+                    self.assertLessEqual(actual,t*cap)
+
+    def test_general_rank_two_stage(self):
+        for n in (16,32,64):
+            A,B,cap,_=partition(n)
+            for p in PRIMES:
+                S1=stage(n,p,409+n);S2=stage(n,p,509+n)
+                S=[[(x+y)%p for x,y in zip(row1,row2)] for row1,row2 in zip(S1,S2)]
+                self.assertLessEqual(rank_mod([[S[i][j] for j in B] for i in A],p),2*cap)
+
+    def test_depth_table_and_first_four_stage_exclusion(self):
+        expected={32:3,64:4,128:5,256:8,512:9,1024:16,2048:17}
+        for n,k in expected.items():
+            _,_,cap,_=partition(n)
+            self.assertEqual((n//2+cap-1)//cap,k)
+            if n>=128:self.assertLess(4*cap,n//2)
+        self.assertEqual(4*partition(64)[2],64//2)
+
+
+if __name__=='__main__':unittest.main(verbosity=2)

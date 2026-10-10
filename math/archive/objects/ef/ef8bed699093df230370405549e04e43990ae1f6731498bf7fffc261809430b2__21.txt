@@ -1,0 +1,79 @@
+1: """Construct explicit local + interstage diagonal gauge tangent directions.
+2: Demonstrates they explain every generic tangent null vector before saturation.
+3: """
+4: import random,tempfile,subprocess,json
+5: from pathlib import Path
+6: import numpy as np
+7: from multistage_jacobian import materialize
+8: HERE=Path(__file__).resolve().parent
+9: 
+10: def bitrev(n):
+11:   m=(n-1).bit_length();return [int(format(i,f'0{m}b')[::-1],2) for i in range(n)]
+12: 
+13: def stage_idx(stage,term,i,n):
+14:   offsets={'d':0,'L':1,'V':2,'U':3,'W':4}
+15:   return stage*(5*n)+offsets[term]*n+i
+16: 
+17: def gauges(n,t,par,perms,p):
+18:   params=t*5*n
+19:   allcols=[]
+20:   for s in range(t):
+21:     # inactive scalar generator coordinates
+22:     for term,i in [('L',0),('V',n-1),('U',n-1),('W',0)]:
+23:       v=np.zeros(params,dtype=np.int64)
+24:       v[stage_idx(s,term,i,n)]=1
+25:       allcols.append(v)
+26:     # internal scale of rank-one lower and upper generator pairs
+27:     for plus,minus in [('L','V'),('U','W')]:
+28:       v=np.zeros(params,dtype=np.int64)
+29:       for i in range(n):
+30:         v[stage_idx(s,plus,i,n)]=int(par[s][plus][i,0])
+31:         v[stage_idx(s,minus,i,n)]=-int(par[s][minus][i,0])
+32:       allcols.append(v)
+33:   # interstage diagonal gauge: row scale in stage s,
+34:   # paired with inverse column scale in stage s+1 after permutation.
+35:   for s in range(t-1):
+36:     inv=[0]*n
+37:     for row,prior in enumerate(perms[s]):inv[prior]=row
+38:     for i in range(n):
+39:       j=inv[i]
+40:       v=np.zeros(params,dtype=np.int64)
+41:       for term in ('d','L','U'):
+42:         val=int(par[s][term][i] if term=='d' else par[s][term][i,0])
+43:         v[stage_idx(s,term,i,n)]+=val
+44:       for term in ('d','V','W'):
+45:         val=int(par[s+1][term][j] if term=='d' else par[s+1][term][j,0])
+46:         v[stage_idx(s+1,term,j,n)]-=val
+47:       allcols.append(v)
+48:   return np.array(allcols,dtype=np.int64).T%p
+49: 
+50: def rank_cpp(M,p):
+51:   with tempfile.TemporaryDirectory() as tmp:
+52:     file=Path(tmp)/'matrix.dat';M.astype(np.int32).tofile(file)
+53:     out=subprocess.check_output([str(HERE/'rankmod'),str(file),str(M.shape[0]),str(M.shape[1]),str(p)],text=True)
+54:   return int(out.split('rank=')[1].split()[0])
+55: 
+56: def run(n,t,p=12289,seed=99017):
+57:   perms=[bitrev(n)]*(t-1)
+58:   _,J,pars,mats=materialize(n,t,perms,seed,p)
+59:   G=gauges(n,t,pars,perms,p)
+60:   expected=6*t+(t-1)*n
+61:   assert G.shape==(5*n*t,expected)
+62:   killed=(J@G)%p
+63:   assert not np.any(killed), ('nonzero gauge tangent',int(np.count_nonzero(killed)))
+64:   rg=rank_cpp(G,p);rj=rank_cpp(J,p)
+65:   assert rg==expected
+66:   nullity=J.shape[1]-rj
+67:   return {'n':n,'t':t,'field':p,'jacobian_rank':rj,'jacobian_nullity':nullity,
+68:           'gauge_directions':expected,'independent_gauges':rg,
+69:           'all_gauges_killed_by_jacobian':True,
+70:           'gauge_complete':expected==nullity}
+71: 
+72: if __name__=='__main__':
+73:   results=[]
+74:   for n,t in [(8,2),(8,3),(16,4),(16,5),(32,8),(32,9)]:
+75:     for p in (12289,65537):
+76:       item=run(n,t,p)
+77:       results.append(item)
+78:       print(json.dumps(item),flush=True)
+79:   (HERE/'GAUGE_RESULTS.json').write_text(json.dumps(results,indent=2)+'\n')

@@ -1,0 +1,445 @@
+   1	"""Phase 6: persistent, relation-aware circular convolution.
+   2	
+   3	A signal is an exact *formal* combination of shifted basis signals and sparse
+   4	impulses. Cached core convolutions allow its product with another such signal
+   5	to be queried or materialized without new Fourier transforms.
+   6	
+   7	The algebraic identities are exact. The numpy/scipy implementation uses
+   8	float64/complex128 and therefore offers numerical rather than bit-exact
+   9	circular convolution. DynamicBitProduct below is separately *exact*.
+  10	
+  11	This is a structured/dynamic workload algorithm, NOT a new worst-case
+  12	sub-N-log-N algorithm for fresh arbitrary convolution.
+  13	"""
+  14	from __future__ import annotations
+  15	
+  16	from collections import Counter, OrderedDict
+  17	from dataclasses import dataclass
+  18	import math
+  19	from time import perf_counter_ns
+  20	from typing import Sequence
+  21	
+  22	import numpy as np
+  23	try:
+  24	    from scipy import fft as scipy_fft
+  25	except ImportError:
+  26	    from numpy import fft as scipy_fft
+  27	
+  28	from cost_aware_fft import Base, RelationFFT, SpectralState
+  29	
+  30	
+  31	def _finite_scalar(v):
+  32	    a = float(v)
+  33	    if not math.isfinite(a):
+  34	        raise ValueError('nonfinite scalar')
+  35	    return a
+  36	
+  37	
+  38	@dataclass(frozen=True)
+  39	class Snapshot:
+  40	    """Immutable relation metadata; bases themselves are immutable."""
+  41	    n: int
+  42	    terms: tuple[tuple[Base, int, float], ...]
+  43	    edits: tuple[tuple[int, float], ...]
+  44	
+  45	    @classmethod
+  46	    def from_state(cls, state: SpectralState):
+  47	        if not isinstance(state, SpectralState):
+  48	            raise TypeError('expected Phase-5 SpectralState')
+  49	        return cls(state.n,
+  50	                   tuple((base, int(shift)%state.n, _finite_scalar(c))
+  51	                         for (base, shift), c in state.terms.items() if c),
+  52	                   tuple((int(p), _finite_scalar(d)) for p,d in state.edits.items() if d))
+  53	
+  54	    def signal(self):
+  55	        y = np.zeros(self.n, dtype=np.float64)
+  56	        for base,s,c in self.terms:
+  57	            if s:
+  58	                _roll_add(y, base.signal, s, c)
+  59	            else:
+  60	                y += c*base.signal
+  61	        for p,d in self.edits:
+  62	            y[p] += d
+  63	        return y
+  64	
+  65	
+  66	def _roll_add(out: np.ndarray, x: np.ndarray, shift: int, coeff: float):
+  67	    """out += coeff * roll(x, shift) without allocating a rolled N-array."""
+  68	    n = out.size
+  69	    s = int(shift) % n
+  70	    if s == 0:
+  71	        out += coeff*x
+  72	    else:
+  73	        out[s:] += coeff*x[:n-s]
+  74	        out[:s] += coeff*x[n-s:]
+  75	
+  76	
+  77	class RelationalConvolver:
+  78	    """Evaluate convolution of two persistent spectral snapshots.
+  79	
+  80	    - core cache: LRU over unordered base pairs, bounded in bytes;
+  81	    - terms: arbitrary real scalars and circular shifts;
+  82	    - impulses: known sparse changes;
+  83	    - outputs: point, selected Fourier bins, dense FFT baseline, or
+  84	      time-domain reconstruction from reused basis convolutions.
+  85	
+  86	    The 'reuse' first call must create core spectra/products if uncached.
+  87	    That cost is charged in the cold benchmark. `auto` uses a conservative
+  88	    cost heuristic to avoid making additional base convolution calls when
+  89	    there are many terms or edits.
+  90	    """
+  91	    def __init__(self, max_core_bytes=128*1024**2):
+  92	        self.max_core_bytes = int(max_core_bytes)
+  93	        if self.max_core_bytes < 0:
+  94	            raise ValueError('max_core_bytes must be >= 0')
+  95	        self._cores = OrderedDict()
+  96	        self._bytes = 0
+  97	        self.stats = Counter()
+  98	        self._sparse_thresholds = {}  # trained length -> maximum reused-edit count
+  99	        self.training_receipts = []
+ 100	
+ 101	    @staticmethod
+ 102	    def _key(b1, b2):
+ 103	        # Object identity: input bases are immutable; cache holds strong refs.
+ 104	        if b1 is b2:
+ 105	            return b1,b2
+ 106	        return (b1,b2) if id(b1)<id(b2) else (b2,b1)
+ 107	
+ 108	    def core(self, b1: Base, b2: Base):
+ 109	        if len(b1.signal) != len(b2.signal):
+ 110	            raise ValueError('base length mismatch')
+ 111	        key = self._key(b1,b2)
+ 112	        if key in self._cores:
+ 113	            self.stats['core_hits'] += 1
+ 114	            self._cores.move_to_end(key)
+ 115	            return self._cores[key]
+ 116	        self.stats['core_misses'] += 1
+ 117	        n=len(b1.signal)
+ 118	        c=np.asarray(scipy_fft.irfft(b1.spectrum*b2.spectrum, n=n), dtype=np.float64)
+ 119	        c.flags.writeable = False
+ 120	        if c.nbytes <= self.max_core_bytes:
+ 121	            self._cores[key]=c
+ 122	            self._bytes+=c.nbytes
+ 123	            while self._bytes > self.max_core_bytes:
+ 124	                _,evicted=self._cores.popitem(last=False)
+ 125	                self._bytes-=evicted.nbytes
+ 126	                self.stats['core_evictions']+=1
+ 127	        return c
+ 128	
+ 129	    def memory_report(self):
+ 130	        return {'core_cache_bytes':self._bytes, 'core_cache_budget':self.max_core_bytes,
+ 131	                'cached_core_pairs':len(self._cores)}
+ 132	
+ 133	    def calibrate_sparse(self, reference: SpectralState, fixed_kernel: SpectralState,
+ 134	                         k_values=(1, 2, 4, 8, 16, 32), repeats=4, seed=123):
+ 135	        """Measure prepared-kernel FFT vs reused output over varying edits.
+ 136	
+ 137	        Calibration and core construction are fully charged and reported,
+ 138	        although per-request decisions use the cached warm-cutoff later.
+ 139	        Intended only for *many* future related requests with this same
+ 140	        length, representation class and similar memory environment.
+ 141	        """
+ 142	        a=Snapshot.from_state(reference)
+ 143	        b=Snapshot.from_state(fixed_kernel)
+ 144	        if len(a.terms)!=1 or a.edits or len(b.terms)!=1 or b.edits:
+ 145	            raise ValueError('calibration requires two unedited single-base states')
+ 146	        if a.n!=b.n or repeats<2:
+ 147	            raise ValueError('incompatible bases or too few repeats')
+ 148	        if a.terms[0][1:]!=(0,1.0) or b.terms[0][1:]!=(0,1.0):
+ 149	            raise ValueError('calibration requires unshifted unit-coefficient bases')
+ 150	        rng=np.random.default_rng(seed)
+ 151	        t_calibration=perf_counter_ns()
+ 152	        t_init=perf_counter_ns()
+ 153	        self.core(a.terms[0][0],b.terms[0][0])
+ 154	        init_ms=(perf_counter_ns()-t_init)/1e6
+ 155	        scores=[]
+ 156	        for k in sorted(set(int(k) for k in k_values)):
+ 157	            if not (1<=k<=a.n):
+ 158	                continue
+ 159	            state=reference.fork()
+ 160	            for p in rng.choice(a.n,size=k,replace=False):
+ 161	                state.edit(int(p),float(rng.normal()))
+ 162	            view=self.product(state,fixed_kernel)
+ 163	            expected=view.full('prepared')
+ 164	            observed=view.full('reuse')
+ 165	            np.testing.assert_allclose(observed,expected,rtol=1e-8,atol=1e-7)
+ 166	            times={}
+ 167	            for method in ('prepared','reuse'):
+ 168	                values=[]
+ 169	                for _ in range(repeats):
+ 170	                    start=perf_counter_ns()
+ 171	                    view.full(method)
+ 172	                    values.append((perf_counter_ns()-start)/1e6)
+ 173	                times[method]=float(np.median(values))
+ 174	            scores.append({'k':k,'prepared_ms':times['prepared'],'reuse_ms':times['reuse'],
+ 175	                           'speedup':times['prepared']/times['reuse']})
+ 176	        cutoff=0
+ 177	        for row in scores:
+ 178	            if row['speedup'] >= 1.05:
+ 179	                cutoff=row['k']
+ 180	            else:
+ 181	                break
+ 182	        self._sparse_thresholds[a.n]=cutoff
+ 183	        receipt={'n':a.n,'cutoff':cutoff,
+ 184	                 'calibration_ms_excluding_basis_registration':(perf_counter_ns()-t_calibration)/1e6,
+ 185	                 'core_initialization_ms':init_ms,'scores':scores}
+ 186	        self.training_receipts.append(receipt)
+ 187	        return receipt
+ 188	
+ 189	    def product(self, left: SpectralState, right: SpectralState):
+ 190	        l=Snapshot.from_state(left)
+ 191	        r=Snapshot.from_state(right)
+ 192	        if l.n != r.n:
+ 193	            raise ValueError('circular convolution requires equal signal lengths')
+ 194	        return ConvolutionView(self,l,r)
+ 195	
+ 196	
+ 197	class ConvolutionView:
+ 198	    def __init__(self, engine: RelationalConvolver, left: Snapshot, right: Snapshot):
+ 199	        self.engine=engine
+ 200	        self.left=left
+ 201	        self.right=right
+ 202	        self.n=left.n
+ 203	        self.last_method=None
+ 204	        # These indexes are built once per persistent view, rather than
+ 205	        # at every time-coefficient query.
+ 206	        self._left_lookup=dict(left.edits)
+ 207	        self._right_lookup=dict(right.edits)
+ 208	
+ 209	    @property
+ 210	    def relation_size(self):
+ 211	        la,ra=self.left,self.right
+ 212	        p,q=len(la.terms),len(ra.terms)
+ 213	        a,b=len(la.edits),len(ra.edits)
+ 214	        return p*q+p*b+a*q, a*b
+ 215	
+ 216	    def at(self, index: int):
+ 217	        """One time-domain convolution coefficient, no dense output."""
+ 218	        j=int(index)
+ 219	        if not 0 <= j < self.n:
+ 220	            raise IndexError('time-domain convolution index out of bounds')
+ 221	        a,b=self.left,self.right
+ 222	        n=self.n
+ 223	        total=0.0
+ 224	        for x,s,c in a.terms:
+ 225	            for y,t,d in b.terms:
+ 226	                total += c*d*self.engine.core(x,y)[(j-s-t)%n]
+ 227	        for x,s,c in a.terms:
+ 228	            for t,d in b.edits:
+ 229	                total += c*d*x.signal[(j-s-t)%n]
+ 230	        for t,d in a.edits:
+ 231	            for x,s,c in b.terms:
+ 232	                total += c*d*x.signal[(j-s-t)%n]
+ 233	        # Complete sparse-sparse pair using an indexed hash join:
+ 234	        # sum over p in editsA where (j-p) mod n occurs in editsB.
+ 235	        if len(a.edits) <= len(b.edits):
+ 236	            for p,da in a.edits:
+ 237	                total += da*self._right_lookup.get((j-p)%n,0.0)
+ 238	        else:
+ 239	            for p,db in b.edits:
+ 240	                total += db*self._left_lookup.get((j-p)%n,0.0)
+ 241	        return total
+ 242	
+ 243	    @staticmethod
+ 244	    def _spectral_bins_for(s:Snapshot, frequencies):
+ 245	        q=np.asarray(frequencies, dtype=np.int64)
+ 246	        n=s.n
+ 247	        result=np.zeros(len(q),dtype=np.complex128)
+ 248	        for base,shift,c in s.terms:
+ 249	            result+=c*base.spectrum[q]*np.exp(-2j*np.pi*((q*shift)%n)/n)
+ 250	        for p,d in s.edits:
+ 251	            result+=d*np.exp(-2j*np.pi*((q*p)%n)/n)
+ 252	        return result
+ 253	
+ 254	    def frequency_bins(self, frequencies:Sequence[int]):
+ 255	        """Selected circular-convolution frequency bins; no full spectrum."""
+ 256	        q=np.asarray(list(frequencies),dtype=np.int64)
+ 257	        if np.any((q<0)|(q>self.n//2)):
+ 258	            raise IndexError('rfft frequency index out of range')
+ 259	        return self._spectral_bins_for(self.left,q)*self._spectral_bins_for(self.right,q)
+ 260	
+ 261	    @staticmethod
+ 262	    def _fixed_base(s):
+ 263	        if len(s.edits) or len(s.terms)!=1:
+ 264	            return None
+ 265	        base,shift,c=s.terms[0]
+ 266	        return base if shift==0 and c==1.0 else None
+ 267	
+ 268	    def full(self,method='auto'):
+ 269	        if method not in ('auto','reuse','native','prepared'):
+ 270	            raise ValueError('unknown method')
+ 271	        n=self.n
+ 272	        la,ra=self.left,self.right
+ 273	        reuse_units,pair_impulses=self.relation_size
+ 274	        if method=='auto':
+ 275	            # Native libraries win for many edits; use explicitly trained
+ 276	            # thresholds where available. A prepared fixed-kernel FFT is the
+ 277	            # fair fallback for one fixed operand (not two fresh FFTs).
+ 278	            cached = all(self.engine._key(x,y) in self.engine._cores
+ 279	                         for x,_,_ in la.terms for y,_,_ in ra.terms)
+ 280	            fixed_right = self._fixed_base(ra)
+ 281	            fixed_left = self._fixed_base(la)
+ 282	            k=max(len(la.edits),len(ra.edits))
+ 283	            if (fixed_right or fixed_left) and len(la.terms)==1 and len(ra.terms)==1:
+ 284	                cutoff=self.engine._sparse_thresholds.get(n,2 if n>=16384 else 0)
+ 285	                method='reuse' if k<=cutoff and (cached or n>=8192) else 'prepared'
+ 286	            else:
+ 287	                method=('reuse' if ((reuse_units<=3 and pair_impulses<=max(2,n//128))
+ 288	                                     and (cached or n>=8192)) else 'native')
+ 289	        self.last_method=method
+ 290	        if method=='prepared':
+ 291	            left_base=self._fixed_base(la)
+ 292	            right_base=self._fixed_base(ra)
+ 293	            if right_base is not None:
+ 294	                out=np.asarray(scipy_fft.irfft(scipy_fft.rfft(la.signal())*right_base.spectrum,n=n),dtype=np.float64)
+ 295	            elif left_base is not None:
+ 296	                out=np.asarray(scipy_fft.irfft(left_base.spectrum*scipy_fft.rfft(ra.signal()),n=n),dtype=np.float64)
+ 297	            else:
+ 298	                raise ValueError('prepared strategy requires one unedited unshifted basis')
+ 299	            self.engine.stats['prepared_convolutions']+=1
+ 300	            return out
+ 301	        if method=='native':
+ 302	            A=la.signal(); B=ra.signal()
+ 303	            out=np.asarray(scipy_fft.irfft(scipy_fft.rfft(A)*scipy_fft.rfft(B),n=n),dtype=np.float64)
+ 304	            self.engine.stats['native_convolutions']+=1
+ 305	            return out
+ 306	        out=np.zeros(n,dtype=np.float64)
+ 307	        for x,s,c in la.terms:
+ 308	            for y,t,d in ra.terms:
+ 309	                _roll_add(out,self.engine.core(x,y),s+t,c*d)
+ 310	        for x,s,c in la.terms:
+ 311	            for t,d in ra.edits:
+ 312	                _roll_add(out,x.signal,s+t,c*d)
+ 313	        for p,d in la.edits:
+ 314	            for y,t,c in ra.terms:
+ 315	                _roll_add(out,y.signal,p+t,c*d)
+ 316	        for p,d in la.edits:
+ 317	            for q,c in ra.edits:
+ 318	                out[(p+q)%n]+=d*c
+ 319	        self.engine.stats['reuse_convolutions']+=1
+ 320	        return out
+ 321	
+ 322	
+ 323	class DynamicBitProduct:
+ 324	    """Exact nonnegative integer product maintained under known bit flips.
+ 325	
+ 326	    This maintains *an existing product*; it does not make a fresh arbitrary
+ 327	    integer multiplication linear-time. All operations use Python big ints.
+ 328	    """
+ 329	    def __init__(self, a:int, b:int, bit_capacity:int|None=None):
+ 330	        self.a=int(a)
+ 331	        self.b=int(b)
+ 332	        if min(self.a,self.b)<0:
+ 333	            raise ValueError('only nonnegative integers supported')
+ 334	        self.bit_capacity=(max(1,self.a.bit_length(),self.b.bit_length())
+ 335	                           if bit_capacity is None else int(bit_capacity))
+ 336	        if self.bit_capacity<1 or max(self.a.bit_length(),self.b.bit_length())>self.bit_capacity:
+ 337	            raise ValueError('invalid capacity')
+ 338	        self.product=self.a*self.b
+ 339	        self.events=0
+ 340	
+ 341	    def fork(self):
+ 342	        other=object.__new__(DynamicBitProduct)
+ 343	        other.a=self.a
+ 344	        other.b=self.b
+ 345	        other.product=self.product
+ 346	        other.bit_capacity=self.bit_capacity
+ 347	        other.events=self.events
+ 348	        return other
+ 349	
+ 350	    def flip(self,operand:str,index:int):
+ 351	        t=int(index)
+ 352	        if not 0<=t<self.bit_capacity:
+ 353	            raise IndexError('bit position outside capacity')
+ 354	        if operand=='a':
+ 355	            was_set=(self.a>>t)&1
+ 356	            sign=1-2*was_set
+ 357	            self.a ^= (1<<t)
+ 358	            self.product += sign * (self.b<<t)
+ 359	        elif operand=='b':
+ 360	            was_set=(self.b>>t)&1
+ 361	            sign=1-2*was_set
+ 362	            self.b ^= (1<<t)
+ 363	            self.product += sign * (self.a<<t)
+ 364	        else:
+ 365	            raise ValueError("operand must be 'a' or 'b'")
+ 366	        self.events+=1
+ 367	        return self.product
+ 368	
+ 369	    def verify(self):
+ 370	        return self.product==self.a*self.b
+ 371	
+ 372	class ConvolutionSubscription:
+ 373	    """Maintain Q selected time-domain convolution values under known edits.
+ 374	
+ 375	    If the opposite operand consists of r basis terms and a sparse dictionary,
+ 376	    each subscribed edit costs O(Q*(r+1)) time, independent of the number
+ 377	    of previous edits. The constructor first evaluates Q coefficients and
+ 378	    may compile base-base core convolutions (FFT initialization charged).
+ 379	
+ 380	    Consecutive events may change EITHER operand, with current opposite side
+ 381	    always used in the delta formula. This is stronger than a fixed kernel.
+ 382	    """
+ 383	    def __init__(self, view:ConvolutionView, positions:Sequence[int]):
+ 384	        self.engine=view.engine
+ 385	        self.n=view.n
+ 386	        self.indices=np.asarray(list(positions),dtype=np.int64)
+ 387	        if np.any((self.indices<0)|(self.indices>=self.n)):
+ 388	            raise IndexError('subscribed time index out of range')
+ 389	        self.left_terms=view.left.terms
+ 390	        self.right_terms=view.right.terms
+ 391	        self.left_edits=dict(view.left.edits)
+ 392	        self.right_edits=dict(view.right.edits)
+ 393	        self._values=np.asarray([view.at(int(q)) for q in self.indices],dtype=np.float64)
+ 394	        self.events=0
+ 395	
+ 396	    def _evaluate_other_at(self, indices, terms, edits):
+ 397	        result=np.zeros(len(indices),dtype=np.float64)
+ 398	        for base,shift,c in terms:
+ 399	            result += c*base.signal[(indices-shift)%self.n]
+ 400	        # Indexed lookup instead of scanning every old edit.
+ 401	        for i,q in enumerate(indices):
+ 402	            result[i] += edits.get(int(q),0.0)
+ 403	        return result
+ 404	
+ 405	    def edit(self,side:str,position:int,delta:float):
+ 406	        p=int(position); d=_finite_scalar(delta)
+ 407	        if not 0<=p<self.n:
+ 408	            raise IndexError('edit position out of range')
+ 409	        if side=='left':
+ 410	            target=self.left_edits
+ 411	            other_terms=self.right_terms
+ 412	            other_edits=self.right_edits
+ 413	        elif side=='right':
+ 414	            target=self.right_edits
+ 415	            other_terms=self.left_terms
+ 416	            other_edits=self.left_edits
+ 417	        else:
+ 418	            raise ValueError("side must be 'left' or 'right'")
+ 419	        if d:
+ 420	            samples=self._evaluate_other_at((self.indices-p)%self.n, other_terms, other_edits)
+ 421	            self._values += d*samples
+ 422	            total=target.get(p,0.)+d
+ 423	            if not math.isfinite(total):
+ 424	                raise ValueError('edit overflow')
+ 425	            if total == 0.:
+ 426	                target.pop(p,None)
+ 427	            else:
+ 428	                target[p]=total
+ 429	        self.events+=1
+ 430	        return self
+ 431	
+ 432	    def values(self, copy=True):
+ 433	        result=self._values.copy() if copy else self._values.view()
+ 434	        if not copy:
+ 435	            result.flags.writeable=False
+ 436	        return result
+ 437	
+ 438	    def snapshot_view(self):
+ 439	        left=Snapshot(self.n, self.left_terms, tuple(self.left_edits.items()))
+ 440	        right=Snapshot(self.n, self.right_terms, tuple(self.right_edits.items()))
+ 441	        return ConvolutionView(self.engine,left,right)
+ 442	
+ 443	
+ 444	def subscribe_convolution(view:ConvolutionView, positions:Sequence[int]):
+ 445	    return ConvolutionSubscription(view,positions)

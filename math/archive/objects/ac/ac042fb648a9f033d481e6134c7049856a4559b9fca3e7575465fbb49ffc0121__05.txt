@@ -1,0 +1,468 @@
+   1	"""Lazy relation-aware Fourier state.
+   2	
+   3	This module deliberately separates *metadata ingestion* from spectrum
+   4	materialization.  A state represents
+   5	
+   6	    S = sum_i alpha_i * B_i + DFT(delta),
+   7	
+   8	where B_i are already-computed dense spectra and ``delta`` is a sparse
+   9	set of known time-domain point edits supplied by the producer.
+  10	
+  11	Point edits are O(1) expected-time dictionary updates.  A query for q
+  12	frequency bins costs O(q*(r+k)) arithmetic for r dense basis terms and k
+  13	pending edit locations, without touching all N spectrum entries.  Dense
+  14	materialization is explicit and can choose direct rank-one updates or the
+  15	factorized sparse transform in ``hybrid_sparse``.
+  16	
+  17	This is an engineering/data-structure result, not a new worst-case FFT
+  18	upper bound.  The algebra is exact in exact arithmetic; NumPy/SciPy paths
+  19	are floating-point implementations.
+  20	"""
+  21	from __future__ import annotations
+  22	
+  23	from dataclasses import dataclass
+  24	from typing import Iterable, Sequence
+  25	import math
+  26	import numpy as np
+  27	
+  28	from hybrid_sparse import normalize_changes, sparse_dft, SparsePlan
+  29	
+  30	try:
+  31	    from scipy.fft import fft as _native_fft
+  32	except ImportError:
+  33	    from numpy.fft import fft as _native_fft
+  34	
+  35	
+  36	@dataclass(frozen=True)
+  37	class MaterializationPlan:
+  38	    n: int
+  39	    dense_terms: int
+  40	    pending_edits: int
+  41	    method: str
+  42	    sparse_plan: SparsePlan | None
+  43	    estimated_direct_phase_values: int
+  44	    estimated_factorized_values: int
+  45	
+  46	
+  47	def _as_spectrum(x: Sequence[complex], n: int | None = None) -> np.ndarray:
+  48	    a = np.asarray(x, dtype=np.complex128)
+  49	    if a.ndim != 1 or a.size < 1:
+  50	        raise ValueError("spectrum must be a nonempty 1-D array")
+  51	    if n is not None and a.size != n:
+  52	        raise ValueError("spectrum length mismatch")
+  53	    if not np.isfinite(a.real).all() or not np.isfinite(a.imag).all():
+  54	        raise ValueError("spectrum must be finite")
+  55	    return a
+  56	
+  57	
+  58	def _normalize_bins(n: int, bins: Sequence[int]) -> np.ndarray:
+  59	    idx = np.asarray(bins)
+  60	    if idx.ndim != 1:
+  61	        raise ValueError("bins must be one-dimensional")
+  62	    if not np.issubdtype(idx.dtype, np.integer):
+  63	        # Permit Python integer lists that NumPy may infer unusually, but no floats.
+  64	        if any(not isinstance(v, (int, np.integer)) for v in bins):
+  65	            raise ValueError("bins must contain integers")
+  66	        idx = idx.astype(np.int64)
+  67	    idx = idx.astype(np.int64, copy=False)
+  68	    if np.any(idx < 0) or np.any(idx >= n):
+  69	        raise ValueError("frequency bin outside spectrum")
+  70	    return idx
+  71	
+  72	
+  73	def direct_sparse_correction(n: int, edits: dict[int, complex], *, chunk_bins: int = 65536) -> np.ndarray:
+  74	    """Materialize DFT(delta) by direct phase accumulation.
+  75	
+  76	    Work is O(N*k), but memory is bounded by O(chunk_bins*k) rather than
+  77	    allocating a full N-by-k matrix.  This is often faster than the
+  78	    factorized Python prototype for very small k.
+  79	    """
+  80	    if n < 1:
+  81	        raise ValueError("n must be positive")
+  82	    if not edits:
+  83	        return np.zeros(n, dtype=np.complex128)
+  84	    pos = np.fromiter(edits.keys(), dtype=np.float64, count=len(edits))
+  85	    val = np.fromiter(edits.values(), dtype=np.complex128, count=len(edits))
+  86	    out = np.empty(n, dtype=np.complex128)
+  87	    scale = -2j * np.pi / n
+  88	    chunk_bins = max(1, int(chunk_bins))
+  89	    for start in range(0, n, chunk_bins):
+  90	        stop = min(n, start + chunk_bins)
+  91	        freq = np.arange(start, stop, dtype=np.float64)
+  92	        phases = np.exp(scale * np.multiply.outer(freq, pos))
+  93	        out[start:stop] = phases @ val
+  94	    return out
+  95	
+  96	
+  97	class LazySpectrum:
+  98	    """Deferred Fourier state with producer-supplied relation metadata.
+  99	
+ 100	    The object owns no time-domain base vector.  Dense terms are spectra
+ 101	    that were already computed elsewhere.  Pending edits are exact metadata
+ 102	    describing additions in the time domain.
+ 103	
+ 104	    ``add_edit`` / ``add_edits`` do not scan N values and do not materialize
+ 105	    any spectrum.  ``bins`` is the preferred operation when a downstream
+ 106	    consumer needs only a subset of frequencies.
+ 107	    """
+ 108	
+ 109	    def __init__(self, n: int, *, dense_terms: Iterable[tuple[complex, Sequence[complex]]] = (), edits: Iterable[tuple[int, complex]] = ()):
+ 110	        n = int(n)
+ 111	        if n < 1:
+ 112	            raise ValueError("n must be positive")
+ 113	        self.n = n
+ 114	        self._terms: list[tuple[complex, np.ndarray]] = []
+ 115	        for coefficient, spectrum in dense_terms:
+ 116	            self.add_dense_term(coefficient, spectrum)
+ 117	        self._edits: dict[int, complex] = {}
+ 118	        self.add_edits(edits)
+ 119	
+ 120	    @classmethod
+ 121	    def from_spectrum(cls, spectrum: Sequence[complex]) -> "LazySpectrum":
+ 122	        s = _as_spectrum(spectrum)
+ 123	        return cls(s.size, dense_terms=[(1.0 + 0j, s)])
+ 124	
+ 125	    @classmethod
+ 126	    def from_basis(cls, basis_spectra: np.ndarray, coefficients: Sequence[complex], *, edits: Iterable[tuple[int, complex]] = ()) -> "LazySpectrum":
+ 127	        basis = np.asarray(basis_spectra, dtype=np.complex128)
+ 128	        coeff = np.asarray(coefficients, dtype=np.complex128)
+ 129	        if basis.ndim != 2 or coeff.ndim != 1 or basis.shape[0] != coeff.size or basis.shape[1] < 1:
+ 130	            raise ValueError("basis_spectra must have shape (r,n), coefficients shape (r,)")
+ 131	        terms = [(complex(coeff[i]), basis[i]) for i in range(coeff.size) if coeff[i] != 0]
+ 132	        return cls(basis.shape[1], dense_terms=terms, edits=edits)
+ 133	
+ 134	    @property
+ 135	    def pending_count(self) -> int:
+ 136	        return len(self._edits)
+ 137	
+ 138	    @property
+ 139	    def dense_term_count(self) -> int:
+ 140	        return len(self._terms)
+ 141	
+ 142	    @property
+ 143	    def pending_edits(self) -> dict[int, complex]:
+ 144	        return dict(self._edits)
+ 145	
+ 146	    def add_dense_term(self, coefficient: complex, spectrum: Sequence[complex]) -> None:
+ 147	        c = complex(coefficient)
+ 148	        if not (math.isfinite(c.real) and math.isfinite(c.imag)):
+ 149	            raise ValueError("coefficient must be finite")
+ 150	        if c == 0:
+ 151	            return
+ 152	        s = _as_spectrum(spectrum, self.n)
+ 153	        # Keep a reference intentionally: cached spectra can be shared across
+ 154	        # many lazy expressions.  Callers should treat them as immutable.
+ 155	        self._terms.append((c, s))
+ 156	
+ 157	    def add_edit(self, index: int, delta: complex) -> None:
+ 158	        if not isinstance(index, (int, np.integer)) or not 0 <= int(index) < self.n:
+ 159	            raise ValueError("edit index outside signal")
+ 160	        z = complex(delta)
+ 161	        if not (math.isfinite(z.real) and math.isfinite(z.imag)):
+ 162	            raise ValueError("edit must be finite")
+ 163	        j = int(index)
+ 164	        if z == 0:
+ 165	            return
+ 166	        new = self._edits.get(j, 0j) + z
+ 167	        if new == 0:
+ 168	            self._edits.pop(j, None)
+ 169	        else:
+ 170	            self._edits[j] = new
+ 171	
+ 172	    def add_edits(self, edits: Iterable[tuple[int, complex]]) -> None:
+ 173	        for j, v in edits:
+ 174	            self.add_edit(j, v)
+ 175	
+ 176	    def bins(self, bins: Sequence[int]) -> np.ndarray:
+ 177	        """Evaluate only selected Fourier bins, preserving order/duplicates.
+ 178	
+ 179	        If q bins are requested, this performs O(q*r) dense-term reads and
+ 180	        O(q*k) phase arithmetic.  It does not touch the other N-q bins.
+ 181	        """
+ 182	        idx = _normalize_bins(self.n, bins)
+ 183	        out = np.zeros(idx.size, dtype=np.complex128)
+ 184	        for c, s in self._terms:
+ 185	            out += c * s[idx]
+ 186	        if self._edits and idx.size:
+ 187	            pos = np.fromiter(self._edits.keys(), dtype=np.float64, count=len(self._edits))
+ 188	            val = np.fromiter(self._edits.values(), dtype=np.complex128, count=len(self._edits))
+ 189	            phase = np.exp((-2j * np.pi / self.n) * np.multiply.outer(idx.astype(np.float64), pos))
+ 190	            out += phase @ val
+ 191	        return out
+ 192	
+ 193	    def _dense_terms_materialized(self) -> np.ndarray:
+ 194	        out = np.zeros(self.n, dtype=np.complex128)
+ 195	        for c, s in self._terms:
+ 196	            out += c * s
+ 197	        return out
+ 198	
+ 199	    def choose_dense_method(self, *, direct_k_threshold: int = 8) -> str:
+ 200	        """Simple deterministic planner for the current Python backends.
+ 201	
+ 202	        Factorized sparse_dft is asymptotically better than O(N*k), but its
+ 203	        Python/SciPy setup cost is substantial.  Keep direct phase updates for
+ 204	        tiny k; use the grouped factorization otherwise when N is a power of 2.
+ 205	        """
+ 206	        k = self.pending_count
+ 207	        if k == 0:
+ 208	            return "none"
+ 209	        if k <= int(direct_k_threshold):
+ 210	            return "direct"
+ 211	        if self.n & (self.n - 1):
+ 212	            return "direct"
+ 213	        return "factorized"
+ 214	
+ 215	    def materialize(self, *, method: str = "auto", direct_k_threshold: int = 8, commit: bool = False, backend: str = "scipy") -> tuple[np.ndarray, MaterializationPlan]:
+ 216	        """Return a dense spectrum and an explicit accounting plan.
+ 217	
+ 218	        ``commit=True`` compacts the expression into one dense cached term and
+ 219	        clears pending edits.  This is useful at natural synchronization points.
+ 220	        """
+ 221	        if method == "auto":
+ 222	            method = self.choose_dense_method(direct_k_threshold=direct_k_threshold)
+ 223	        if method not in ("none", "direct", "factorized", "native"):
+ 224	            raise ValueError("method must be auto, none, direct, factorized or native")
+ 225	        k = self.pending_count
+ 226	        if method == "none" and k:
+ 227	            raise ValueError("pending edits require a correction method")
+ 228	
+ 229	        out = self._dense_terms_materialized()
+ 230	        sparse_plan = None
+ 231	        if k:
+ 232	            if method == "direct":
+ 233	                correction = direct_sparse_correction(self.n, self._edits)
+ 234	            elif method == "factorized":
+ 235	                correction, sparse_plan = sparse_dft(self.n, self._edits.items(), backend=backend, return_plan=True)
+ 236	            elif method == "native":
+ 237	                delta = np.zeros(self.n, dtype=np.complex128)
+ 238	                for j, v in self._edits.items():
+ 239	                    delta[j] = v
+ 240	                correction = _native_fft(delta)
+ 241	            else:
+ 242	                raise AssertionError("unreachable")
+ 243	            out += correction
+ 244	
+ 245	        # A rough operation-volume proxy, not a runtime prediction.
+ 246	        b = 1 << (max(1, k)-1).bit_length() if k else 1
+ 247	        est_factorized = self.n + (self.n // b) * b * max(1, int(math.log2(b))) if k else 0
+ 248	        plan = MaterializationPlan(
+ 249	            n=self.n,
+ 250	            dense_terms=len(self._terms),
+ 251	            pending_edits=k,
+ 252	            method=method,
+ 253	            sparse_plan=sparse_plan,
+ 254	            estimated_direct_phase_values=self.n * k,
+ 255	            estimated_factorized_values=est_factorized,
+ 256	        )
+ 257	
+ 258	        if commit:
+ 259	            self._terms = [(1.0 + 0j, out)]
+ 260	            self._edits.clear()
+ 261	        return out, plan
+ 262	
+ 263	    def compact(self, **kwargs) -> MaterializationPlan:
+ 264	        """Materialize once, store the result as the sole base spectrum."""
+ 265	        _, plan = self.materialize(commit=True, **kwargs)
+ 266	        return plan
+ 267	
+ 268	    def shared_dense_bytes(self) -> int:
+ 269	        """Bytes referenced by dense terms (may be shared with other states)."""
+ 270	        return sum(s.nbytes for _, s in self._terms)
+ 271	
+ 272	    def private_metadata_bytes_lower_bound(self) -> int:
+ 273	        """Conservative payload-only lower bound, excluding Python dict overhead."""
+ 274	        # int64 index + complex128 delta + complex128 coefficient per dense term
+ 275	        return self.pending_count * (8 + 16) + self.dense_term_count * 16
+ 276	
+ 277	class PreparedBinView:
+ 278	    """Prepared partial-spectrum view for a known editable support.
+ 279	
+ 280	    This is the partial-output analogue of precomputing full N-length phase
+ 281	    vectors.  For q requested bins and k allowed edit positions it stores only
+ 282	    q*k phases, so memory is O(qk), independent of N.
+ 283	    """
+ 284	    def __init__(self, base_spectrum: Sequence[complex], positions: Sequence[int], bins: Sequence[int]):
+ 285	        base = _as_spectrum(base_spectrum)
+ 286	        self.n = int(base.size)
+ 287	        self.bins_index = _normalize_bins(self.n, bins)
+ 288	        pos_list = [int(p) for p in positions]
+ 289	        if len(set(pos_list)) != len(pos_list):
+ 290	            raise ValueError("positions must be unique")
+ 291	        if any(p < 0 or p >= self.n for p in pos_list):
+ 292	            raise ValueError("edit position outside signal")
+ 293	        self.positions = np.asarray(pos_list, dtype=np.int64)
+ 294	        self._slot = {p:i for i,p in enumerate(pos_list)}
+ 295	        self._delta = np.zeros(len(pos_list), dtype=np.complex128)
+ 296	        self._base = np.asarray(base[self.bins_index], dtype=np.complex128).copy()
+ 297	        if self.bins_index.size and self.positions.size:
+ 298	            self._phase = np.exp(
+ 299	                (-2j*np.pi/self.n) *
+ 300	                np.multiply.outer(self.bins_index.astype(np.float64), self.positions.astype(np.float64))
+ 301	            )
+ 302	        else:
+ 303	            self._phase = np.zeros((self.bins_index.size,self.positions.size), dtype=np.complex128)
+ 304	
+ 305	    def add_edit(self, index: int, delta: complex) -> None:
+ 306	        try:
+ 307	            slot = self._slot[int(index)]
+ 308	        except (KeyError, ValueError):
+ 309	            raise ValueError("edit index is not in prepared support") from None
+ 310	        z=complex(delta)
+ 311	        if not (math.isfinite(z.real) and math.isfinite(z.imag)):
+ 312	            raise ValueError("edit must be finite")
+ 313	        self._delta[slot] += z
+ 314	
+ 315	    def values(self) -> np.ndarray:
+ 316	        if self.positions.size:
+ 317	            return self._base + self._phase @ self._delta
+ 318	        return self._base.copy()
+ 319	
+ 320	    @property
+ 321	    def phase_bytes(self) -> int:
+ 322	        return int(self._phase.nbytes)
+ 323	
+ 324	    @property
+ 325	    def full_phase_cache_equivalent_bytes(self) -> int:
+ 326	        """Bytes for k separate full complex N-bin phase vectors."""
+ 327	        return int(self.positions.size * self.n * np.dtype(np.complex128).itemsize)
+ 328	
+ 329	class BufferedSpectrum(LazySpectrum):
+ 330	    """LazySpectrum with threshold compaction for mixed update/query streams.
+ 331	
+ 332	    Distinct pending edit locations are kept sparse until ``flush_threshold``.
+ 333	    At that point they are folded into the dense cached spectrum.  This is a
+ 334	    square-root-decomposition style engineering tradeoff: larger thresholds
+ 335	    make updates cheaper but selected-bin queries more expensive.
+ 336	    """
+ 337	    def __init__(self, n: int, *, flush_threshold: int, flush_method: str = "native", dense_terms=(), edits=()):
+ 338	        if int(flush_threshold) < 1:
+ 339	            raise ValueError("flush_threshold must be positive")
+ 340	        self.flush_threshold = int(flush_threshold)
+ 341	        self.flush_method = flush_method
+ 342	        self.flush_count = 0
+ 343	        super().__init__(n, dense_terms=dense_terms, edits=edits)
+ 344	        if self.pending_count >= self.flush_threshold:
+ 345	            self._threshold_flush()
+ 346	
+ 347	    @classmethod
+ 348	    def from_spectrum(cls, spectrum: Sequence[complex], *, flush_threshold: int, flush_method: str = "native") -> "BufferedSpectrum":
+ 349	        s=_as_spectrum(spectrum)
+ 350	        return cls(s.size,flush_threshold=flush_threshold,flush_method=flush_method,dense_terms=[(1+0j,s)])
+ 351	
+ 352	    def _threshold_flush(self) -> None:
+ 353	        self.compact(method=self.flush_method)
+ 354	        self.flush_count += 1
+ 355	
+ 356	    def add_edit(self,index:int,delta:complex) -> None:
+ 357	        super().add_edit(index,delta)
+ 358	        if self.pending_count >= self.flush_threshold:
+ 359	            self._threshold_flush()
+ 360	
+ 361	    def add_edits(self,edits:Iterable[tuple[int,complex]]) -> None:
+ 362	        for j,v in edits:
+ 363	            self.add_edit(j,v)
+ 364	
+ 365	
+ 366	def threshold_cost_proxy(n: int, q: int, updates_per_query: float, threshold: int, *, backend: str = "native", exact_dft_alpha: float = 1.0) -> float:
+ 367	    """Dimensionless steady-state work proxy per update.
+ 368	
+ 369	    Assumes mostly distinct pending positions.  A flush every B updates costs C,
+ 370	    and a q-bin query every H updates sees about B/2 pending edits on average:
+ 371	
+ 372	        cost/update ~ C/B + q*B/(2H).
+ 373	
+ 374	    ``native`` uses C=N log2 N. ``hybrid`` uses
+ 375	    C=N*(1+log2(B+1)^alpha), matching the parameterized sparse-correction
+ 376	    shape up to constants.  This is a planner heuristic, not a wall-clock model.
+ 377	    """
+ 378	    n=int(n);q=int(q);B=int(threshold);H=float(updates_per_query)
+ 379	    if n<1 or q<1 or B<1 or H<=0: raise ValueError("positive parameters required")
+ 380	    if backend=='native':
+ 381	        C=n*max(1.0,math.log2(n))
+ 382	    elif backend=='hybrid':
+ 383	        C=n*(1.0+max(1.0,math.log2(B+1))**float(exact_dft_alpha))
+ 384	    else: raise ValueError("backend must be native or hybrid")
+ 385	    return C/B + q*B/(2.0*H)
+ 386	
+ 387	
+ 388	def suggest_flush_threshold(n: int, q: int, updates_per_query: float, *, backend: str = "native", exact_dft_alpha: float = 1.0, max_threshold: int | None = None) -> int:
+ 389	    """Choose a power-of-two threshold minimizing ``threshold_cost_proxy``."""
+ 390	    n=int(n)
+ 391	    if max_threshold is None: max_threshold=n
+ 392	    top=max(1,min(n,int(max_threshold)))
+ 393	    candidates=[]
+ 394	    b=1
+ 395	    while b<top:
+ 396	        candidates.append(b);b*=2
+ 397	    candidates.append(top)
+ 398	    return min(candidates,key=lambda B:threshold_cost_proxy(n,q,updates_per_query,B,backend=backend,exact_dft_alpha=exact_dft_alpha))
+ 399	
+ 400	@dataclass(frozen=True)
+ 401	class RuntimeThresholdCalibration:
+ 402	    n: int
+ 403	    q: int
+ 404	    updates_per_query: float
+ 405	    probe_k: int
+ 406	    flush_ms: float
+ 407	    empty_query_ms: float
+ 408	    probe_query_ms: float
+ 409	    phase_pair_ms: float
+ 410	    raw_threshold: float
+ 411	    threshold: int
+ 412	
+ 413	
+ 414	def calibrate_runtime_threshold(base_spectrum: Sequence[complex], q: int, updates_per_query: float, *, probe_k: int = 64, reps: int = 5, max_threshold: int | None = None) -> RuntimeThresholdCalibration:
+ 415	    """Empirically calibrate the buffer threshold for the current machine.
+ 416	
+ 417	    The steady-state model is
+ 418	
+ 419	        time/update ~= F/B + P*q*B/(2H),
+ 420	
+ 421	    where F is one dense native compaction, P is time per pending-edit/bin
+ 422	    phase contribution, and H is updates per selected-bin query.  Its optimum is
+ 423	
+ 424	        B* = sqrt(2 F H / (P q)).
+ 425	
+ 426	    This calibration is intentionally local/hardware-specific; it turns the
+ 427	    asymptotic tradeoff into a practical planner rather than pretending Python
+ 428	    operation counts predict FFT library wall time.
+ 429	    """
+ 430	    import time
+ 431	    base=_as_spectrum(base_spectrum)
+ 432	    n=base.size;q=int(q);H=float(updates_per_query);probe_k=int(probe_k);reps=int(reps)
+ 433	    if q<1 or q>n or H<=0 or probe_k<1 or reps<1: raise ValueError("invalid calibration parameters")
+ 434	    probe_k=min(probe_k,n)
+ 435	    if max_threshold is None:max_threshold=n
+ 436	    # Deterministic, spread-out bins/support to reduce accidental cache/path quirks.
+ 437	    bins=np.unique(np.linspace(0,n-1,q,dtype=np.int64))
+ 438	    # unique may shrink only when q>n, rejected above; still use actual size below.
+ 439	    qeff=bins.size
+ 440	    positions=np.unique(np.linspace(0,n-1,probe_k,dtype=np.int64))
+ 441	    probe_k=positions.size
+ 442	    edits=[(int(j),complex(0.5 + (i % 7)*0.03125, -0.125 + (i % 5)*0.015625)) for i,j in enumerate(positions)]
+ 443	
+ 444	    empty=LazySpectrum.from_spectrum(base)
+ 445	    probe=LazySpectrum.from_spectrum(base);probe.add_edits(edits)
+ 446	
+ 447	    def median_ms(fn):
+ 448	        vals=[]
+ 449	        for _ in range(reps):
+ 450	            t0=time.perf_counter_ns();fn();vals.append((time.perf_counter_ns()-t0)/1e6)
+ 451	        return float(np.median(vals))
+ 452	
+ 453	    empty_q=median_ms(lambda:empty.bins(bins))
+ 454	    probe_q=median_ms(lambda:probe.bins(bins))
+ 455	    # Fresh probe each time because commit mutates state.
+ 456	    def do_flush():
+ 457	        s=LazySpectrum.from_spectrum(base);s.add_edits(edits);s.materialize(method='native')
+ 458	    flush=median_ms(do_flush)
+ 459	    phase_total=max(probe_q-empty_q,1e-9)
+ 460	    P=phase_total/(qeff*probe_k)
+ 461	    raw=math.sqrt((2.0*flush*H)/(P*qeff))
+ 462	    raw=max(1.0,min(float(max_threshold),raw))
+ 463	    # Round to nearest power of two, while respecting the cap.
+ 464	    lo=2**int(math.floor(math.log2(raw))) if raw>=1 else 1
+ 465	    hi=min(int(max_threshold),lo*2)
+ 466	    threshold=lo if abs(raw-lo)<=abs(hi-raw) else hi
+ 467	    threshold=max(1,min(int(max_threshold),int(threshold)))
+ 468	    return RuntimeThresholdCalibration(n,qeff,H,probe_k,flush,empty_q,probe_q,P,raw,threshold)

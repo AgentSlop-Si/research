@@ -1,0 +1,45 @@
+{
+  "mathematical_scope": "The 459-line module supplies finite-field primality/root search, exact Gaussian rank, monotone and balanced separation witnesses, tridiagonal solves and cut extraction, determinant polynomials, prime- and power-of-two Fourier cut certificates, a noncommutativity witness, and adversarial separation controls. For powers of two, reduction modulo X^(N/2)+1 is exactly the cyclotomic reduction. For prime N and determinant size at least 2, the coefficient sum at X=1 vanishes, so a nonzero reduced degree<N polynomial cannot be a nonzero multiple of Phi_N. Balanced separation preserves earlier separations by taking subsets and retains at least half of each color at every new order. The complex Fourier cut rank bound is rank(F[R,C])>=|R||C|/N, from Frobenius norm and operator norm of normalized Fourier submatrices. With m²>qN this excludes sums of q separated inverse-tridiagonal cuts, regardless of sampled Green coefficients.",
+  "input_and_guard_coverage": "Permutation checks are present in common_monotone_subseq and balanced_separation_witness. Public helper domains remain partial: field_for_root lacks order>=2 checks (order=0 divides by zero; order=1 finds only w=1, skips it and raises); at_least uses a floor and may return a prime below its requested minimum. rank_mod assumes prime modulus and integer-coercible rectangular data; shape is an assert. make_tridiagonal assumes n>0 and sufficiently large ell, does not reject the first zero pivot, and n=1 can return a zero diagonal modulo ell. The solver assumes nonempty matching dimensions and nonzero leading pivots. green_submatrix assumes a bijective label order, valid row/column labels and matching gauges. add_matrices silently truncates mismatched shapes using zip. balanced separation assumes nonempty surviving colors; N=0/1 reaches max/min of empty data. q>=1 is not explicitly validated in certificate entrypoints. Assertions dominate mathematical preconditions.",
+  "cost_and_scaling": "Primality is trial division O(sqrt(ell)); root candidate search tries only 2..299. LIS/LDS is O(N²), iterated for each order. Balanced separation sorts surviving labels and validates permutations, O(qN log N) as a safe bound. Rank elimination is cubic for dense square minors. Each selected Green column solves a length-N tridiagonal, O(N) field operations plus inversions. Determinant polynomial generation enumerates m! permutations with O(m²) inversion counting per permutation: factorial growth in q+1, with no work guard. Full-density mode stores N² entries and adds q dense matrices. These verification costs must not be mistaken for the Green apply cost.",
+  "test_evidence": "Phase17 supplies 22 discovery/direct tests: exact rank/solves, randomized monotone chains, concrete prime and composite witnesses, chirp identities, balanced separation, sampled noncommutativity, approximation-gap dependency, product escape, adversarial cuts and primitive roots. No broad invalid-input suite or zero-pivot test. The main block at lines 283–284 runs only the early three prime examples; later power-two/balanced helpers are defined afterward and are not automatically exercised by that main call.",
+  "dependency_identity": "Pure standard library. Imported downstream as green_sum_cert by three assigned modules/tests. No CAS. Approximation-gap tests are external to this hash and need separate dependency inspection.",
+  "findings": [
+    {
+      "severity": "high",
+      "lines": "182–190, 219–261, 287–334",
+      "finding": "A parameterized-looking certificate interface has unbounded factorial determinant expansion in q+1; this is usable for the tiny illustrated q values, not a scalable large-q routine."
+    },
+    {
+      "severity": "medium",
+      "lines": "29–57, 123–155, 174–175, 364–394",
+      "finding": "Several exposed helper domains are not guarded; malformed dimensions can truncate silently or fail late, and empty color sets trigger max/min errors."
+    },
+    {
+      "severity": "medium",
+      "lines": "397–437",
+      "finding": "The analytic Fourier rank floor is a complex-field theorem, not a universal lower bound in every finite characteristic. A single unlucky prime can make the modular rank assert fail; unlike the power-two witness routine this path does not retry. Passing is valid finite-field evidence; failure is not a complex counterexample."
+    },
+    {
+      "severity": "info",
+      "lines": "288–292, 397–422",
+      "finding": "Composite witness code correctly labels concrete-order scope. The balanced additive theorem is broader, but depends on m²>qN and inverse-tridiagonal separated-cut structure; it does not rule out products of Green sums."
+    }
+  ],
+  "acceptance_boundary": "Accept the finite-field and algebraic witness machinery subject to its domains, and the separated-cut proof within the additive architecture. No execution result is certified by this read; no general FFT lower bound follows.",
+  "sha256": "8137aead5088f288737b3175e8ce41a4a83ecf7b028314d458e45896bdcfdea7",
+  "filename": "green_sum_cert.py",
+  "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/fft_green_phase17_nonunitary_sum/green_sum_cert.py",
+  "bytes": 16936,
+  "lines": 459,
+  "full_source_read": true,
+  "read_range": {
+    "first_line": 1,
+    "last_line": 459,
+    "all_lines_read": true
+  },
+  "source_executed": false,
+  "source_imported": false,
+  "source_compiled": false,
+  "source_syntax_parsed": false
+}

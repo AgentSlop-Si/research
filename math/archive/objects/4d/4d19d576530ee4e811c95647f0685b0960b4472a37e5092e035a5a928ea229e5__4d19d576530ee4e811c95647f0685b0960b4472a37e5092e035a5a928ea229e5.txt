@@ -1,0 +1,128 @@
+"""Generate finite-field, numerical, graph spectral, and counting audit."""
+from __future__ import annotations
+import json,math,random
+from pathlib import Path
+import numpy as np
+from transverse_green import (
+    FIELD,graphs_polarized,network_block,fblock,rank_mod,
+    prefix_gate,graph_gap_lower_bound,graph_gap_numeric,
+    transverse_error_bound,cut_budget,root,modular_dft,run_network,
+    graphs_mixed_original,
+)
+from weyl_gate import weyl_certificate
+
+HERE=Path(__file__).resolve().parent
+
+
+def exhaustive_cut_gate_16(graphs):
+    # Independently verify every subset (2^16 of them) with vectorized masks.
+    n=16
+    masks=np.arange(1<<n,dtype=np.uint32)
+    cap=np.zeros(len(masks),dtype=np.int32)
+    for g in graphs:
+        for i,j in enumerate(g.pi):
+            if g.weights[i]!=0:
+                cap+=((masks>>i)&1).astype(np.int32)*(1-((masks>>j)&1).astype(np.int32))
+    sizes=np.fromiter((int(i).bit_count() for i in range(1<<n)),dtype=np.int16,count=1<<n)
+    required=np.minimum(sizes,n-sizes)
+    nontrivial=(sizes>0)&(sizes<n)
+    gap=cap[nontrivial]-required[nontrivial]
+    assert (gap>=0).all()
+    return {'subsets_checked':int(nontrivial.sum()),
+            'minimal_capacity_slack':int(gap.min()),
+            'smallest_capacity':int(cap[nontrivial].min())}
+
+
+def unitary_block_singulars(s,x,yp):
+    n=s*s
+    w=np.exp(-2j*np.pi/n)
+    # Unit-normalized length N Fourier (F_N/s)
+    B=np.array([[w**((x*s+y)*(xp*s+yp))/s for xp in range(s)]
+                for y in range(s)],dtype=complex)
+    return np.linalg.svd(B,compute_uv=False)
+
+
+def sharp_q_s_paths_exact(s,q=FIELD):
+    # An explicit sum of s axis-polarized paths reproduces F_N/s exactly.
+    # For path a:
+    # X_a[(x,z),(x',z')] = delta(z,z') delta(x',a) omega_s^(x z')
+    # Y_a[(x,y),(u,z)] = delta(x,u) (1/s) omega_s^(y a)omega_N^(y z).
+    n=s*s;wn=root(n,q);ws=pow(wn,s,q);invs=pow(s,-1,q)
+    num=0
+    for x in range(s):
+      for y in range(s):
+       for xp in range(s):
+        for yp in range(s):
+         value=sum((int(xp==a)*invs*pow(ws,x*yp+y*a,q)*pow(wn,y*yp,q))%q
+                   for a in range(s))%q
+         truth=invs*pow(wn,(x*s+y)*(xp*s+yp),q)%q
+         assert value==truth
+         num+=1
+    return {'s':s,'N':n,'path_count':s,'exact_fourier_entries_checked':num}
+
+
+def run():
+    result={'theorem':'Cartesian-product expander cut passes, but polarized transverse block rank <=1',
+            'graph_spectral_lower_bound':graph_gap_lower_bound(),
+            'exact_certificates':[],'numerical':{},'sharp_path_count':[]}
+    for t in [2,4,8]:
+        s=t*t;n=s*s
+        layers=graphs_polarized(t)
+        gate=prefix_gate(layers)
+        assert not gate['failed_prefixes']
+        record={'t':t,'s':s,'N':n,'resolvents_per_layer':list(map(len,layers)),
+                'prefix_capacity':gate,
+                'transverse_exact_ranks':[]}
+        if t<=4:
+            for x,yp in [(0,1),(s-1,s-2),(s//2,s//3)]:
+                A=network_block(layers,s,x,yp)
+                B=fblock(n,x,yp)
+                a=rank_mod(A);b=rank_mod(B)
+                assert a==1 and b==s
+                record['transverse_exact_ranks'].append({'output_x':x,'input_y':yp,
+                    'network_rank':a,'fourier_rank':b})
+        if t==2:
+            record['every_subset_gate']=exhaustive_cut_gate_16(layers[0]+layers[1])
+            record['randomized_weyl_rejection']=weyl_certificate(
+                lambda x:run_network(layers,x),n,rounds=3)
+        else:
+            rng=random.Random(20261010+t)
+            graphlist=layers[0]+layers[1]
+            cap_slack=[]
+            for k in range(100):
+                size=rng.randint(1,n-1)
+                R=set(rng.sample(range(n),size))
+                cap=cut_budget(graphlist,R)
+                assert cap>=min(size,n-size)
+                cap_slack.append(cap-min(size,n-size))
+            record['sampled_cuts_min_slack']=min(cap_slack)
+        record['numeric_fiber_gap']=graph_gap_numeric(t) if t<=8 else None
+        assert record['numeric_fiber_gap']>=graph_gap_lower_bound()-1.e-7
+        result['exact_certificates'].append(record)
+    for s in [2,4,8,16]:
+        sigma=unitary_block_singulars(s,x=1,yp=s-1)
+        expected=1/math.sqrt(s)
+        assert np.max(abs(sigma-expected))<1.e-10
+        result['numerical'][str(s)]={'s':s,'N':s*s,
+            'singular_max_deviation':float(np.max(abs(sigma-expected))),
+            'one_path_relative_Frobenius_and_operator_lower_bound':transverse_error_bound(s),
+            'two_path_bound':transverse_error_bound(s,2)}
+    result['sharp_path_count']=[sharp_q_s_paths_exact(s) for s in [2,4,8]]
+    mixed=graphs_mixed_original(4,copies=3)
+    result['phase13_mixed_axis_scope_control']=[
+        {'output_x':x,'input_yprime':yp,'transverse_rank':rank_mod(network_block(mixed,4,x,yp))}
+        for x,yp in [(0,1),(1,2),(3,0)]
+    ]
+    assert all(z['transverse_rank']==4 for z in result['phase13_mixed_axis_scope_control'])
+    result['rook_product_generic_codimension']={
+        str(s):s*s*(s-1)*(s-3) for s in [4,8,16]
+    }
+    numerical=HERE/'NUMERICAL_AUDIT.json'
+    if numerical.exists():
+        result['independent_complex_network_test']=json.loads(numerical.read_text())
+    with open(HERE/'RESULTS.json','w') as f:json.dump(result,f,indent=2)
+    return result
+
+if __name__=='__main__':
+    d=run()
+    print(json.dumps(d,indent=2))

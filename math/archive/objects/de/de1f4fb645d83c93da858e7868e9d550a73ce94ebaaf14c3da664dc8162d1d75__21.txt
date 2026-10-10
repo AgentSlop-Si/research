@@ -1,0 +1,110 @@
+   1	#!/usr/bin/env python3
+   2	"""Exact bounded common-pole sector-span certificate, newly authored here."""
+   3	from pathlib import Path
+   4	import sys,json,random,time
+   5	import sympy as sp
+   6	HERE=Path(__file__).resolve().parent
+   7	sys.path.insert(0,str(HERE))
+   8	sys.path.insert(0,str(HERE.parent/'seed_compatibility_gate'))
+   9	from check_n16_outer_gate import PRIME as P,LABELS,pivots,green
+  10	from check_lift_defects import cover_and_splice
+  11	from check_hierarchical_lift import lift
+  12	T=sp.Symbol('t')
+  13	
+  14	def determinant_monomials(entries):
+  15	    """Subset DP for det([s_ij*t^q_ij]), producing exact integer coefficients."""
+  16	    n=len(entries);state={0:{0:1}}
+  17	    for r in range(n):
+  18	        nxt={}
+  19	        for mask,poly in state.items():
+  20	            for c in range(n):
+  21	                if mask>>c&1:continue
+  22	                sign,exponent=entries[r][c]
+  23	                if (mask>>(c+1)).bit_count()%2:sign=-sign
+  24	                dest=nxt.setdefault(mask|1<<c,{})
+  25	                for power,coefficient in poly.items():
+  26	                    dest[power+exponent]=dest.get(power+exponent,0)+sign*coefficient
+  27	        state={mask:{p:c for p,c in poly.items() if c} for mask,poly in nxt.items()}
+  28	    return sp.Poly.from_dict({(p,):c for p,c in state[(1<<n)-1].items()},T,domain=sp.ZZ)
+  29	
+  30	def sparse(poly):
+  31	    assert all(c.q == 1 for m,c in poly.terms())
+  32	    return [[m[0],int(c)] for m,c in sorted(poly.terms())]
+  33	
+  34	def guard_factors(poly):
+  35	    """Return exact decomposition into t-powers and factors dividing t^64-1."""
+  36	    p=poly.monic();valuation=0;layers=[]
+  37	    while p.degree()>0 and p.eval(0)==0:p=p.exquo(sp.Poly(T,T));valuation+=1
+  38	    bad=sp.Poly(T**64-1,T)
+  39	    while p.degree()>0:
+  40	        f=sp.gcd(p,bad)
+  41	        if f.degree()==0:return None
+  42	        p=p.exquo(f);layers.append(sparse(f))
+  43	    return {'zero_valuation':valuation,'root_of_unity_layers':layers}
+  44	
+  45	def main():
+  46	    begun=time.time();routes=[];positions=[];records=[]
+  47	    for label in LABELS:
+  48	        t,p,_=cover_and_splice(4,4,label);_,q,_=lift(t,p,4,4,label)
+  49	        assert all(q[(v+32)%64]==(q[v]+32)%64 for v in range(64))
+  50	        pos=[0]*64;v=0
+  51	        for k in range(64):pos[v]=k;v=q[v]
+  52	        assert v==0 and sorted(pos)==list(range(64))
+  53	        assert all((pos[(v+32)%64]-pos[v])%64==32 for v in range(64))
+  54	        positions.append(pos)
+  55	        quotient=[q[k]%32 for k in range(32)]
+  56	        signs=[1 if q[k]<32 else -1 for k in range(32)]
+  57	        seen=set();v=0;hol=1
+  58	        for k in range(32):seen.add(v);hol*=signs[v];v=quotient[v]
+  59	        assert len(seen)==32 and v==0 and hol==-1
+  60	        routes.append({'label':list(label),'successor':q,'sector_successor':quotient,'minus_sector_edge_signs':signs,'minus_holonomy':hol})
+  61	    assert routes[0]['sector_successor']==routes[1]['sector_successor']
+  62	    for i in range(32):
+  63	        rowrec={'physical_row':i,'sectors':{}}
+  64	        for sigma in (-1,1):
+  65	            rows=list(range(8)) if sigma==-1 else [0,2,3,4,5,6,7]
+  66	            es=[[(sigma**(((positions[j][i]-positions[j][k])%64)//32),(positions[j][i]-positions[j][k])%32) for k in range(32)] for j in rows]
+  67	            ev=[[sign*pow(pow(2,-1,P),exponent,P)%P for sign,exponent in row] for row in es]
+  68	            gcd=None;minors=[];decomp=None
+  69	            for attempt in range(4 if sigma==-1 else 1):
+  70	                permutation=list(range(32))
+  71	                if attempt:random.Random(10936+1000*i+10*sigma+attempt).shuffle(permutation)
+  72	                cols=[permutation[k] for k in pivots([[row[c] for c in permutation] for row in ev])]
+  73	                assert len(cols)==len(rows)
+  74	                polynomial=determinant_monomials([[row[c] for c in cols] for row in es])
+  75	                assert polynomial.eval(sp.Rational(1,2))!=0
+  76	                # Independently check the DP sign convention against exact Sympy determinant at t=2.
+  77	                at_two=sp.Matrix([[sign*2**exponent for sign,exponent in [row[c] for c in cols]] for row in es]).det()
+  78	                assert polynomial.eval(2)==at_two
+  79	                minors.append({'term_rows':rows,'physical_columns':cols,'determinant_polynomial':sparse(polynomial)})
+  80	                gcd=polynomial.monic() if gcd is None else sp.gcd(gcd,polynomial).monic()
+  81	                decomp=guard_factors(gcd)
+  82	                if decomp is not None:break
+  83	            if sigma==-1:
+  84	                assert decomp is not None,(i,sigma,sp.factor(gcd.as_expr()))
+  85	                rowrec['sectors'][str(sigma)]={'certified_rank':len(rows),'pole_scope':'all nonzero t with t^64 != 1','minors':minors,'monic_gcd':sparse(gcd),'guard_factorization':decomp}
+  86	            else:
+  87	                rowrec['sectors'][str(sigma)]={'certified_rank':7,'pole_scope':'t=1/2 only; rank <=7 at every legal common t','minors':minors,'monic_gcd':[], 'guard_factorization':None}
+  88	        records.append(rowrec)
+  89	        print(i,[(s,len(rowrec['sectors'][s]['minors']),len(rowrec['sectors'][s]['monic_gcd'])) for s in ('-1','1')],flush=True)
+  90	    pa=routes[0]['successor'];pb=routes[1]['successor'];inv=[0]*64
+  91	    for i,v in enumerate(pa):inv[v]=i
+  92	    relative=[inv[pb[v]] for v in range(64)];seen=set();relative_cycles=[]
+  93	    for i in range(64):
+  94	        if i in seen:continue
+  95	        cycle=[];v=i
+  96	        while v not in seen:seen.add(v);cycle.append(v);v=relative[v]
+  97	        assert v==i;relative_cycles.append(cycle)
+  98	    assert sorted(map(len,relative_cycles))==[1]*32+[2]*16
+  99	    ga,gb=green(pa,2),green(pb,2)
+ 100	    K=[[(x-y)%P for x,y in zip(ra,rb)] for ra,rb in zip(ga,gb)]
+ 101	    assert len(pivots(K))==16
+ 102	    assert all(any(row) for row in K)
+ 103	    assert all((K[i][k]+K[i][k+32])%P==0 for i in range(64) for k in range(32))
+ 104	    assert all(K[i+32]==[(-v)%P for v in K[i]] for i in range(32))
+ 105	    result={'status':'PASS_ALL_NONZERO_LEGAL_COMMON_POLES','pole_guard':'t != 0 and t^64 != 1','field':'complex numbers (exact certificate over Q[t])','routes':routes,'relative_H0_permutation_cycles':relative_cycles,'rank_of_H0_difference':16,'rows':records,'symmetry':'row i+32 is +/- row i in the corresponding sector','minus_rank':8,'plus_rank_at_half':7,'plus_coefficient_kernel_at_half':[1,-1,0,0,0,0,0,0],'minor_count':sum(len(r['sectors'][str(s)]['minors']) for r in records for s in (-1,1))}
+ 106	    path=HERE/'COMMON_POLE_SPAN_CERTIFICATE.json'
+ 107	    if '--verify' in sys.argv:assert json.loads(path.read_text())==result
+ 108	    else:path.write_text(json.dumps(result,indent=2)+'\n')
+ 109	    print(json.dumps({**{k:result[k] for k in ('status','minor_count')},'seconds':round(time.time()-begun,3)}),flush=True)
+ 110	if __name__=='__main__':main()

@@ -1,0 +1,91 @@
+   1	"""Build an AOT C++ kernel from *symbolic degrees only*, never input values.
+   2	
+   3	RUN ONLY DURING BUILD/DEPLOYMENT. Runtime code never invokes a compiler.
+   4	The distributed sample shape comes from F=A*A*B+A*B+B*B+C*D.
+   5	"""
+   6	from pathlib import Path
+   7	import json
+   8	import subprocess
+   9	import time
+  10	
+  11	ROOT=Path(__file__).resolve().parent
+  12	MANIFEST=ROOT/'shape_manifest.json'
+  13	
+  14	DEFAULT_SHAPE={
+  15	  'name':'a2b_ab_b2_cd',
+  16	  'dense': [[0,1],[1,0],[1,1],[2,0]],
+  17	  'sparse': [[0,2],[2,1]],
+  18	}
+  19	
+  20	def safe_degree_pairs(pairs):
+  21	    if type(pairs)!=list or len(pairs)>16:
+  22	        raise ValueError('invalid shape')
+  23	    out=[]
+  24	    for pair in pairs:
+  25	        if type(pair)!=list or len(pair)!=2 or any(type(x)!=int or x<0 or x>8 for x in pair):
+  26	            raise ValueError('invalid degree pair')
+  27	        out.append(tuple(pair))
+  28	    if len(out)!=len(set(out)):
+  29	        raise ValueError('duplicate degree pair')
+  30	    return out
+  31	
+  32	
+  33	def coefficient_expr(a,b):
+  34	    parts=['alpha']*a+['beta']*b
+  35	    return '*'.join(parts) if parts else '1.0'
+  36	
+  37	
+  38	def generate_source(shape):
+  39	    ds=safe_degree_pairs(shape['dense'])
+  40	    ss=safe_degree_pairs(shape['sparse'])
+  41	    result=['// Auto-generated OFFLINE from validated degree lists; no input values are embedded.',
+  42	            '#include <cstdint>', '#include <cmath>',
+  43	            'extern "C" int fft10_shape_eval(',
+  44	            '  int64_t n, const double* base, const double* dense,',
+  45	            '  const int64_t* sparse_positions, const double* sparse_weights,',
+  46	            '  int64_t pa, double alpha, int64_t pb, double beta,',
+  47	            '  const int64_t* indices, int64_t q_count, double* out) {',
+  48	            '  if(n<2 || q_count<0 || !base || !out || pa<0 || pa>=n || pb<0 || pb>=n)',
+  49	            '    return 1;',
+  50	            '  if(!std::isfinite(alpha) || !std::isfinite(beta)) return 2;',
+  51	            '  if(!indices && q_count!=n) return 3;']
+  52	    if ds:result+=['  if(!dense) return 4;']
+  53	    if ss:result+=['  if(!sparse_positions || !sparse_weights) return 5;']
+  54	    for j,(a,b) in enumerate(ds):
+  55	        result += [f'  const int64_t shift{j}=static_cast<int64_t>((static_cast<__int128>({a})*pa+static_cast<__int128>({b})*pb)%n);',
+  56	                   f'  const double scale{j}={coefficient_expr(a,b)};']
+  57	    result += ['  for(int64_t r=0;r<q_count;++r) {',
+  58	               '    const int64_t q=indices?indices[r]:r;',
+  59	               '    if(q<0||q>=n)return 6;']
+  60	    for j,_ in enumerate(ds):
+  61	        result += [f'    int64_t j{j}=q-shift{j}; if(j{j}<0)j{j}+=n;']
+  62	    expression='base[q]'+''.join(f'+scale{j}*dense[{j}*n+j{j}]' for j in range(len(ds)))
+  63	    result += [f'    out[r]={expression};','  }']
+  64	    for j,(a,b) in enumerate(ss):
+  65	        result += [f'  const int64_t sp{j}=static_cast<int64_t>((static_cast<__int128>(sparse_positions[{j}])+static_cast<__int128>({a})*pa+static_cast<__int128>({b})*pb)%n);',
+  66	                   f'  const double sv{j}=sparse_weights[{j}]*({coefficient_expr(a,b)});']
+  67	        result += ([f'  if(!indices)out[sp{j}]+=sv{j};',
+  68	                    f'  else for(int64_t r=0;r<q_count;++r)if(indices[r]==sp{j})out[r]+=sv{j};'])
+  69	    result += ['  return 0;','}']
+  70	    return '\n'.join(result)+'\n'
+  71	
+  72	
+  73	def build(shape=DEFAULT_SHAPE):
+  74	    ds=safe_degree_pairs(shape['dense']);ss=safe_degree_pairs(shape['sparse'])
+  75	    if type(shape.get('name'))!=str or not shape['name'].replace('_','').isalnum():
+  76	        raise ValueError('invalid name')
+  77	    src=ROOT/'native_shape_a2b.cpp'
+  78	    lib=ROOT/'libfft_phase10_shape.so'
+  79	    src.write_text(generate_source(shape))
+  80	    t=time.perf_counter()
+  81	    command=['g++','-O3','-std=c++17','-fPIC','-shared','-fno-fast-math','-o',str(lib),str(src)]
+  82	    subprocess.run(command,check=True)
+  83	    elapsed=time.perf_counter()-t
+  84	    manifest={'shape':shape,'native_library':lib.name,'native_source':src.name,
+  85	              'build_command':' '.join(command),'offline_compile_seconds':elapsed,
+  86	              'runtime_compilation':False}
+  87	    MANIFEST.write_text(json.dumps(manifest,indent=2)+'\n')
+  88	    print(f'Specialized AOT library: {lib.name}, {lib.stat().st_size} bytes, built in {elapsed:.3f}s')
+  89	    return lib
+  90	
+  91	if __name__=='__main__':build()

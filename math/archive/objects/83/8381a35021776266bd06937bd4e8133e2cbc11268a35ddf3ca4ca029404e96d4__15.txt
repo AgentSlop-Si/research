@@ -1,0 +1,221 @@
+   1 #!/usr/bin/env python3
+   2 """New exact changed-interface checks; imports no uploaded or prior program."""
+   3 import json
+   4 from pathlib import Path
+   5 
+   6 P = 65537
+   7 
+   8 
+   9 def z(n, m=None):
+  10     return [[0] * (n if m is None else m) for _ in range(n)]
+  11 
+  12 
+  13 def eye(n):
+  14     a = z(n)
+  15     for i in range(n):
+  16         a[i][i] = 1
+  17     return a
+  18 
+  19 
+  20 def add(a, b, sign=1):
+  21     return [[(v + sign * w) % P for v, w in zip(r, s)] for r, s in zip(a, b)]
+  22 
+  23 
+  24 def scale(a, c):
+  25     return [[v * c % P for v in row] for row in a]
+  26 
+  27 
+  28 def mm(a, b):
+  29     c = z(len(a), len(b[0]))
+  30     sb = [[(j, v) for j, v in enumerate(row) if v] for row in b]
+  31     for i, row in enumerate(a):
+  32         for k, v in enumerate(row):
+  33             if v:
+  34                 for j, w in sb[k]:
+  35                     c[i][j] += v * w
+  36         c[i] = [v % P for v in c[i]]
+  37     return c
+  38 
+  39 
+  40 def kron(a, b):
+  41     out = z(len(a) * len(b), len(a[0]) * len(b[0]))
+  42     for i, row in enumerate(a):
+  43         for j, v in enumerate(row):
+  44             if v:
+  45                 for r, br in enumerate(b):
+  46                     for s, w in enumerate(br):
+  47                         out[i * len(b) + r][j * len(b[0]) + s] = v * w % P
+  48     return out
+  49 
+  50 
+  51 def root(n):
+  52     return pow(3, (P - 1) // n, P)
+  53 
+  54 
+  55 def fourier(n, inverse=False):
+  56     w = pow(root(n), -1, P) if inverse else root(n)
+  57     norm = pow(n, -1, P) if inverse else 1
+  58     return [[norm * pow(w, i * j, P) % P for j in range(n)] for i in range(n)]
+  59 
+  60 
+  61 def shift(n, step=1):
+  62     a = z(n)
+  63     for j in range(n):
+  64         a[(j + step) % n][j] = 1
+  65     return a
+  66 
+  67 
+  68 def diag(values):
+  69     a = z(len(values))
+  70     for i, v in enumerate(values):
+  71         a[i][i] = v % P
+  72     return a
+  73 
+  74 
+  75 def transpose_grid(m):
+  76     a = z(m * m)
+  77     for r in range(m):
+  78         for s in range(m):
+  79             a[s * m + r][r * m + s] = 1
+  80     return a
+  81 
+  82 
+  83 def degree(a):
+  84     return {'nnz': sum(bool(v) for row in a for v in row),
+  85             'row': max(sum(bool(v) for v in row) for row in a),
+  86             'column': max(sum(bool(v) for v in row) for row in zip(*a))}
+  87 
+  88 
+  89 def basic(m):
+  90     n = m * m
+  91     k = transpose_grid(m)
+  92     b, bi = kron(eye(m), fourier(m)), kron(eye(m), fourier(m, True))
+  93     ell = kron(fourier(m), eye(m))
+  94     delta = diag([pow(root(n), r * s, P) for r in range(m) for s in range(m)])
+  95     qmat = mm(delta, ell)
+  96     return n, k, b, bi, ell, delta, qmat
+  97 
+  98 
+  99 def relocated_controls():
+ 100     rows = []
+ 101     for m in (2, 4, 8, 16):
+ 102         n, k, b, bi, ell, delta, qmat = basic(m)
+ 103         f, s, d, si = fourier(n), shift(n), diag([pow(root(n), j, P) for j in range(n)]), shift(n, -1)
+ 104         assert mm(k, mm(b, qmat)) == f
+ 105         actions = []
+ 106         for x, y in ((s, d), (d, si)):
+ 107             a = mm(k, mm(y, k))
+ 108             t = mm(bi, mm(a, b))
+ 109             assert mm(a, b) == mm(b, t)
+ 110             assert mm(t, qmat) == mm(qmat, x)
+ 111             assert mm(k, a) == mm(y, k)
+ 112             assert degree(a)['row'] == degree(a)['column'] == 1
+ 113             assert degree(t)['row'] == degree(t)['column'] == 1
+ 114             actions.append((a, t))
+ 115         expected_t1 = z(n)
+ 116         expected_t2 = z(n)
+ 117         for bank_index in range(m):
+ 118             for j in range(m):
+ 119                 expected_t1[bank_index * m + (j + 1) % m][bank_index * m + j] = pow(root(n), bank_index, P)
+ 120                 out_bank = (bank_index - 1) % m
+ 121                 expected_t2[out_bank * m + j][bank_index * m + j] = pow(root(m), j, P) if bank_index == 0 else 1
+ 122         assert actions[0][1] == expected_t1
+ 123         assert actions[1][1] == expected_t2
+ 124         rows.append({'M': m, 'N': n, 'P_degree': degree(k), 'Q_degree': degree(qmat), 'all_four_action_degrees': 1,
+ 125                      'Q_possible_as_two_zero_mask_layers_by_support': m <= 4})
+ 126     return rows
+ 127 
+ 128 
+ 129 def swap_controls():
+ 130     rows = []
+ 131     for m in (2, 4, 8, 16):
+ 132         n, k, b, bi, ell, delta, unused = basic(m)
+ 133         baseline_p = mm(ell, delta)
+ 134         a, bb = 0, m
+ 135         g = eye(n)
+ 136         g[a][a] = g[bb][bb] = 0
+ 137         g[a][bb] = g[bb][a] = 1
+ 138         c = mm(b, mm(g, bi))
+ 139         u = [(b[i][a] - b[i][bb]) % P for i in range(n)]
+ 140         w = [(bi[a][j] - bi[bb][j]) % P for j in range(n)]
+ 141         rank_one = [[(int(i == j) - u[i] * w[j]) % P for j in range(n)] for i in range(n)]
+ 142         assert c == rank_one and mm(c, c) == eye(n)
+ 143         assert sum(bool(v) for v in u) == sum(bool(v) for v in w) == 2 * m
+ 144         new_p, new_q = mm(baseline_p, c), mm(g, k)
+ 145         assert mm(new_p, mm(b, new_q)) == fourier(n)
+ 146         action_stats = []
+ 147         for x in (shift(n), diag([pow(root(n), j, P) for j in range(n)])):
+ 148             t0 = mm(k, mm(x, k))
+ 149             t = mm(g, mm(t0, g))
+ 150             amat = mm(b, mm(t, bi))
+ 151             assert mm(amat, b) == mm(b, t)
+ 152             action_stats.append(degree(amat))
+ 153         assert action_stats[1]['row'] > 1
+ 154         rows.append({'M': m, 'N': n, 'gauge_nontrivial_vector_supports': [2 * m, 2 * m],
+ 155                      'gauge_matrix_degree': degree(c), 'changed_A_degrees': action_stats,
+ 156                      'involution_and_exact_factorization': True})
+ 157     return rows
+ 158 
+ 159 
+ 160 def clock_coset_controls():
+ 161     rows = []
+ 162     for m in (2, 4, 8):
+ 163         n, _, b, bi, _, _, _ = basic(m)
+ 164         exponents = []
+ 165         for bank_index in range(m):
+ 166             residue = m - 1 - bank_index
+ 167             slope = 2 * bank_index + 1
+ 168             for j in range(m):
+ 169                 exponents.append((residue + m * slope * j) % n)
+ 170         assert len(set(exponents)) == n
+ 171         t = diag([pow(root(n), e, P) for e in exponents])
+ 172         a = mm(b, mm(t, bi))
+ 173         assert degree(a)['row'] == degree(a)['column'] == 1
+ 174         rows.append({'M': m, 'all_active_blocks_monomial': True, 'raw_coset_permutation_verified': True})
+ 175     return rows
+ 176 
+ 177 
+ 178 def sixteen_point_factors():
+ 179     m = 4
+ 180     n, k, b, _, ell, delta, qmat = basic(m)
+ 181     eh, el = diag([1, 1, -1, -1]), diag([1, -1, 1, -1])
+ 182     ph, pl = z(4), z(4)
+ 183     for j in range(4):
+ 184         ph[j ^ 2][j] = 1
+ 185         pl[j ^ 1][j] = 1
+ 186     d4, k2 = diag([1, 1, 1, root(4)]), transpose_grid(2)
+ 187     a4, c4 = mm(add(eh, ph), d4), mm(add(el, pl), k2)
+ 188     assert mm(a4, c4) == fourier(4)
+ 189     h1terms = [kron(mm(term, k2), eye(4)) for term in (el, pl)]
+ 190     h2terms = [mm(delta, kron(mm(term, d4), eye(4))) for term in (eh, ph)]
+ 191     half = pow(2, -1, P)
+ 192     h3terms, h4terms = [scale(eye(n), half)] * 2, [scale(k, half)] * 2
+ 193     terms = [h1terms, h2terms, h3terms, h4terms]
+ 194     for pair in terms:
+ 195         for term in pair:
+ 196             assert degree(term) == {'nnz': n, 'row': 1, 'column': 1}
+ 197     h1, h2, h3, h4 = [add(*pair) for pair in terms]
+ 198     assert mm(h2, h1) == qmat
+ 199     assert mm(h4, h3) == k
+ 200     assert mm(h4, mm(h3, mm(b, mm(h2, h1)))) == fourier(n)
+ 201     return {'N': n, 'M': m, 'paired_layers': 4, 'nonsingular_monomial_summands': 8,
+ 202             'zero_mask_denominator_guards': [1] * 8,
+ 203             'exact_F_16_identity': True,
+ 204             'bank_transforms_charged': {'count': 4, 'length': 4},
+ 205             'Q_butterfly_layers_charged': 2,
+ 206             'extension_to_M_greater_than_4_by_zero_mask_layers': False}
+ 207 
+ 208 
+ 209 def main():
+ 210     result = {'field': P, 'relocated_interface': relocated_controls(),
+ 211               'coordinate_swap_gauges': swap_controls(),
+ 212               'clock_cosets': clock_coset_controls(),
+ 213               'explicit_admissible_control': sixteen_point_factors(),
+ 214               'all_exact_assertions_passed': True,
+ 215               'scope': 'Only the N=16 control is claimed as an explicit permitted four-layer construction; no growing-size speedup.'}
+ 216     Path(__file__).with_name('CHANGED_INTERFACE_CONTROLS.json').write_text(json.dumps(result, indent=2) + '\n')
+ 217     print(json.dumps(result, indent=2))
+ 218 
+ 219 
+ 220 if __name__ == '__main__':
+ 221     main()

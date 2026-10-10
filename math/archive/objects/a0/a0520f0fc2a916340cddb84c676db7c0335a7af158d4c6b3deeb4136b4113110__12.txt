@@ -1,0 +1,44 @@
+0001 #!/usr/bin/env python3
+0002 """Fast post-change safety/ownership tests without paying calibration costs."""
+0003 import json
+0004 from pathlib import Path
+0005 import numpy as np
+0006 import adaptive_fft as af
+0007 
+0008 def error(f,kind):
+0009     try:f()
+0010     except kind:return
+0011     raise AssertionError('Expected '+str(kind))
+0012 
+0013 n=4096;x=np.zeros(n,np.uint8)
+0014 p=af.BinaryFFTPlan(n,method='codelet8')
+0015 assert p.calibration_count==0 and p.calibration['elapsed_ms']==0
+0016 assert np.all(p.execute(x)==0)
+0017 random_x=np.random.default_rng(917).integers(0,2,n,dtype=np.uint8)
+0018 np.testing.assert_allclose(p.execute(random_x),np.fft.fft(random_x),atol=2e-9,rtol=2e-11)
+0019 assert p.calibration_count==0
+0020 unaligned=np.ndarray((n,),np.complex128,buffer=bytearray(n*16+1),offset=1)
+0021 assert unaligned.flags.c_contiguous and not unaligned.flags.aligned
+0022 error(lambda:p.execute(x,out=unaligned),ValueError)
+0023 for invalid in [4096.,True,8,4095]:error(lambda v=invalid:af.get_plan(v),ValueError)
+0024 for dt in [np.float64,np.int64,np.float32]:error(lambda d=dt:p.execute(x.astype(d)),TypeError)
+0025 out=np.full(n,4+3j,np.complex128);bad=x.copy();bad[-1]=255
+0026 error(lambda:p.execute(bad,out=out),ValueError);assert np.all(out==4+3j)
+0027 error(lambda:p.execute(np.zeros(8192,np.uint8)[::2]),ValueError)
+0028 error(lambda:p.execute(out.view(np.uint8)[:n],out=out),ValueError)
+0029 saved=p.execute(x);p.execute(np.ones(n,np.uint8));assert np.all(saved==0)
+0030 assert p.execute(x,out=out) is out
+0031 p.close();p.close();error(lambda:p.execute(x),RuntimeError)
+0032 # Length validation must occur even when a same-length cache entry exists.
+0033 cp=af.get_plan(16)
+0034 error(lambda:af.get_plan(16.),ValueError)
+0035 assert af.get_plan(16) is cp
+0036 oldcount=cp.calibration_count
+0037 for _ in range(20):cp.execute(np.ones(16,np.uint8))
+0038 assert cp.calibration_count==oldcount
+0039 cp.close();replacement=af.get_plan(16);assert replacement is not cp
+0040 assert not replacement.closed
+0041 af.clear_plan_cache();assert not replacement.closed;replacement.close()
+0042 result={'passed':True,'checks':['aligned output required','integer length validated before cache','no implicit dtype conversion','binary validation before output writes','reject noncontiguous input and overlapping buffers','outputs independently owned','out buffer reuse','double close safe','closed plan rejection','closed cached plan replaced','clear cache preserves held references','explicit fixed method skips calibration','normal execution never retunes']}
+0043 Path(__file__).with_name('api_guard_results.json').write_text(json.dumps(result,indent=2)+'\n')
+0044 print(json.dumps(result))

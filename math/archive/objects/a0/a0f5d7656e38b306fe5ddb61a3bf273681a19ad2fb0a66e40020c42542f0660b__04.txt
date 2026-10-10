@@ -1,0 +1,205 @@
+   1	"""Relation-aware, lazy Fourier-state prototype (research, not a novel DFT theorem).
+   2	
+   3	A dynamic input is represented by (base_signal, base_rfft, sparse_pending).
+   4	The input producer supplies exact edited indices and real-valued deltas.
+   5	The implementation uses floating-point SciPy rfft for practicality; mathematical
+   6	identities are exact only in ideal arithmetic.
+   7	"""
+   8	from __future__ import annotations
+   9	
+  10	import cmath
+  11	import math
+  12	from dataclasses import dataclass
+  13	from typing import Iterable
+  14	
+  15	import numpy as np
+  16	from scipy import fft
+  17	from phase import phases_tiled
+  18	
+  19	
+  20	class LazyRealFFT:
+  21	    def __init__(self, signal: Iterable[float]):
+  22	        self.base_signal = np.asarray(signal, dtype=np.float64).copy()
+  23	        if self.base_signal.ndim != 1 or not self.base_signal.size:
+  24	            raise ValueError("need a nonempty real one-dimensional signal")
+  25	        self.n = self.base_signal.size
+  26	        self.base_spectrum = fft.rfft(self.base_signal)
+  27	        self.base_signal.flags.writeable = False
+  28	        self.base_spectrum.flags.writeable = False
+  29	        self.pending: dict[int, float] = {}
+  30	        self.events = 0
+  31	
+  32	    def fork(self):
+  33	        """Share immutable base FFT and signal, copy only the pending edits.
+  34	
+  35	        O(k) metadata to fork a version with k pending positions, O(1) if
+  36	        forking an unedited base. No FFT is recomputed.
+  37	        """
+  38	        clone = object.__new__(LazyRealFFT)
+  39	        clone.n = self.n
+  40	        clone.base_signal = self.base_signal
+  41	        clone.base_spectrum = self.base_spectrum
+  42	        clone.pending = self.pending.copy()
+  43	        clone.events = self.events
+  44	        return clone
+  45	
+  46	    @property
+  47	    def distinct_edits(self):
+  48	        return len(self.pending)
+  49	
+  50	    def edit(self, position: int, delta: float):
+  51	        """Expected O(1) dictionary update; no Fourier arithmetic or dense write."""
+  52	        position = int(position)
+  53	        if not (0 <= position < self.n):
+  54	            raise IndexError("position outside signal")
+  55	        delta = float(delta)
+  56	        if not math.isfinite(delta):
+  57	            raise ValueError("edit must be finite")
+  58	        self.events += 1
+  59	        new = self.pending.get(position, 0.0) + delta
+  60	        if new == 0:
+  61	            self.pending.pop(position, None)
+  62	        else:
+  63	            self.pending[position] = new
+  64	
+  65	    def frequency(self, q: int) -> complex:
+  66	        """O(k) exact-formula frequency query, k = distinct pending positions."""
+  67	        q = int(q)
+  68	        if not (0 <= q <= self.n // 2):
+  69	            raise IndexError("rfft frequency index out of range")
+  70	        z = complex(self.base_spectrum[q])
+  71	        for position, delta in self.pending.items():
+  72	            angle = -2 * math.pi * ((position * q) % self.n) / self.n
+  73	            z += delta * cmath.exp(1j * angle)
+  74	        return z
+  75	
+  76	    def frequencies(self, indices: Iterable[int]) -> np.ndarray:
+  77	        """Evaluate selected frequencies, O(Q*k) vector operations."""
+  78	        qs = np.asarray(list(indices), dtype=np.int64)
+  79	        if np.any(qs < 0) or np.any(qs > self.n//2):
+  80	            raise IndexError("rfft frequency index out of range")
+  81	        out = self.base_spectrum[qs].copy()
+  82	        for position, delta in self.pending.items():
+  83	            angle = -2*np.pi*((qs*position) % self.n)/self.n
+  84	            out += delta * np.exp(1j*angle)
+  85	        return out
+  86	
+  87	    def materialize_direct(self, tiled: bool = True) -> np.ndarray:
+  88	        """O(N*k) arithmetic: explicitly produce every frequency."""
+  89	        out = self.base_spectrum.copy()
+  90	        for position, delta in self.pending.items():
+  91	            if tiled:
+  92	                phase = phases_tiled(self.n, position)
+  93	            else:
+  94	                qs = np.arange(out.size, dtype=np.int64)
+  95	                phase = np.exp((-2j*np.pi/self.n)*((qs*position) % self.n))
+  96	            out += delta*phase
+  97	        # The real-input transform has real DC and, for even lengths, Nyquist.
+  98	        out[0] = out[0].real
+  99	        if self.n % 2 == 0:
+ 100	            out[-1] = out[-1].real
+ 101	        return out
+ 102	
+ 103	    def signal(self):
+ 104	        out = self.base_signal.copy()
+ 105	        for position, delta in self.pending.items():
+ 106	            out[position] += delta
+ 107	        return out
+ 108	
+ 109	    def materialize_fresh(self):
+ 110	        """O(N log N) production fallback, including pending-application copies."""
+ 111	        return fft.rfft(self.signal())
+ 112	
+ 113	    def materialize(self, direct_threshold: int = 0):
+ 114	        if self.distinct_edits <= direct_threshold:
+ 115	            return self.materialize_direct()
+ 116	        return self.materialize_fresh()
+ 117	
+ 118	    def commit(self, direct_threshold: int = 0):
+ 119	        """Replace base with latest signal and spectrum; clear pending deltas."""
+ 120	        new_base = self.signal()
+ 121	        new_spec = self.materialize(direct_threshold=direct_threshold)
+ 122	        new_base.flags.writeable = False
+ 123	        new_spec.flags.writeable = False
+ 124	        self.base_signal = new_base
+ 125	        self.base_spectrum = new_spec
+ 126	        self.pending.clear()
+ 127	
+ 128	
+ 129	@dataclass
+ 130	class PreparedDenseFFT:
+ 131	    """Dense spectrum after EVERY event, when position known and recurring."""
+ 132	    n: int
+ 133	    position: int
+ 134	    spectrum: np.ndarray
+ 135	    phase: np.ndarray
+ 136	
+ 137	    @classmethod
+ 138	    def from_signal(cls, signal, position):
+ 139	        a = np.asarray(signal, dtype=np.float64)
+ 140	        n = a.size
+ 141	        if not (0 <= position < n):
+ 142	            raise ValueError('bad position')
+ 143	        phase = phases_tiled(n, position)
+ 144	        return cls(n, position, fft.rfft(a), phase)
+ 145	
+ 146	    def edit(self, delta):
+ 147	        # Allocate one temporary, return a dense spectrum after the update.
+ 148	        self.spectrum += delta*self.phase
+ 149	        return self.spectrum
+ 150	
+ 151	
+ 152	def exact_modular_check(n: int = 16, prime: int = 998244353, generator: int = 3):
+ 153	    """Exact integer check of lazy Fourier identities over a prime field."""
+ 154	    assert (prime - 1) % n == 0
+ 155	    w = pow(generator, (prime - 1)//n, prime)
+ 156	    assert pow(w, n, prime) == 1
+ 157	    assert all(pow(w, n//f, prime) != 1 for f in [2] if n>1)
+ 158	    a = [(7*i*i+11*i+3)%prime for i in range(n)]
+ 159	    updates = [(1 % n, 17), (5 % n, 24), (1 % n, -9), (n-1, 6)]
+ 160	    def dft(seq):
+ 161	        return [sum(seq[j]*pow(w,j*q,prime) for j in range(n))%prime for q in range(n)]
+ 162	    spec0 = dft(a)
+ 163	    adjusted = a[:]
+ 164	    for p,d in updates:
+ 165	        adjusted[p] = (adjusted[p] + d)%prime
+ 166	    actual = dft(adjusted)
+ 167	    updated = []
+ 168	    for q in range(n):
+ 169	        y = spec0[q]
+ 170	        for p,d in updates:
+ 171	            y += d*pow(w,p*q,prime)
+ 172	        updated.append(y%prime)
+ 173	    assert actual == updated, (actual, updated)
+ 174	    return True
+ 175	
+ 176	class TrackedFrequencies:
+ 177	    """Maintain a fixed subscribed set of Q rFFT outputs, O(Q) per known edit.
+ 178	
+ 179	    Input producer gives edit positions; only subscribed frequencies are
+ 180	    materialized. Initial rFFT provides the starting Q values.
+ 181	    """
+ 182	    def __init__(self, signal: Iterable[float], frequency_indices: Iterable[int],
+ 183	                 positions: Iterable[int] = ()):
+ 184	        a=np.asarray(signal, dtype=np.float64)
+ 185	        if a.ndim!=1 or not a.size:
+ 186	            raise ValueError('bad signal')
+ 187	        self.n=a.size
+ 188	        self.qs=np.asarray(list(frequency_indices),dtype=np.int64)
+ 189	        if (self.qs<0).any() or (self.qs>self.n//2).any():
+ 190	            raise IndexError('bad frequency')
+ 191	        self.spec=fft.rfft(a)[self.qs].copy()
+ 192	        self.phases = {}
+ 193	        for p in positions:
+ 194	            self.prepare(p)
+ 195	
+ 196	    def prepare(self,p):
+ 197	        p=int(p)
+ 198	        if p<0 or p>=self.n: raise IndexError('bad position')
+ 199	        self.phases[p]=np.exp(-2j*np.pi*((self.qs*p)%self.n)/self.n)
+ 200	
+ 201	    def edit(self,p,delta):
+ 202	        if p not in self.phases:
+ 203	            self.prepare(p)
+ 204	        self.spec += float(delta)*self.phases[p]
+ 205	        return self.spec

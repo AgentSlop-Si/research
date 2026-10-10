@@ -1,0 +1,127 @@
+0001 #include <algorithm>
+0002 #include <array>
+0003 #include <chrono>
+0004 #include <cmath>
+0005 #include <complex>
+0006 #include <cstdint>
+0007 #include <iomanip>
+0008 #include <iostream>
+0009 #include <random>
+0010 #include <stdexcept>
+0011 #include <utility>
+0012 #include <vector>
+0013 
+0014 extern "C" {
+0015 typedef double fftw_complex[2];
+0016 typedef struct fftw_plan_s *fftw_plan;
+0017 fftw_plan fftw_plan_dft_1d(int n, fftw_complex *in, fftw_complex *out, int sign, unsigned flags);
+0018 void fftw_execute_dft(const fftw_plan p, fftw_complex *in, fftw_complex *out);
+0019 void fftw_destroy_plan(fftw_plan p);
+0020 }
+0021 static constexpr unsigned FFTW_ESTIMATE_ = (1u << 6);
+0022 static constexpr int FFTW_FORWARD_ = -1;
+0023 using C = std::complex<double>;
+0024 using Clock = std::chrono::steady_clock;
+0025 static double elapsed_ms(Clock::time_point t0){return std::chrono::duration<double,std::milli>(Clock::now()-t0).count();}
+0026 static bool is_pow2(size_t n){return n && !(n&(n-1));}
+0027 
+0028 struct Term { size_t index; C value; };
+0029 struct SparseResult {
+0030     std::vector<C> values;
+0031     uint64_t butterflies = 0;
+0032     uint64_t written = 0;
+0033 };
+0034 
+0035 // Input-pruned radix-2 DIT FFT.  The support list contains only nonzero input
+0036 // coordinates in this node, indexed 0..n-1.  Empty subtrees are never visited.
+0037 static SparseResult sparse_fft_rec(size_t n, const std::vector<Term>& support){
+0038     if(support.empty()) return {};
+0039     if(n==1){
+0040         SparseResult r; r.values.assign(1, support.front().value); r.written=1; return r;
+0041     }
+0042     std::vector<Term> ev, od;
+0043     ev.reserve(support.size()); od.reserve(support.size());
+0044     for(const auto &t:support){
+0045         if(t.index&1) od.push_back({t.index>>1,t.value});
+0046         else ev.push_back({t.index>>1,t.value});
+0047     }
+0048     SparseResult E=sparse_fft_rec(n/2,ev);
+0049     SparseResult O=sparse_fft_rec(n/2,od);
+0050     SparseResult R;
+0051     R.values.resize(n);
+0052     R.butterflies=E.butterflies+O.butterflies+n/2;
+0053     R.written=E.written+O.written+n;
+0054     constexpr double PI=3.141592653589793238462643383279502884;
+0055     C w(1,0), step=std::polar(1.0,-2.0*PI/double(n));
+0056     const bool haveE=!E.values.empty(), haveO=!O.values.empty();
+0057     for(size_t k=0;k<n/2;++k){
+0058         C u=haveE?E.values[k]:C(0,0);
+0059         C v=haveO?(w*O.values[k]):C(0,0);
+0060         R.values[k]=u+v;
+0061         R.values[k+n/2]=u-v;
+0062         w*=step;
+0063     }
+0064     return R;
+0065 }
+0066 
+0067 static SparseResult sparse_fft(size_t n, std::vector<Term> support){
+0068     if(!is_pow2(n)) throw std::invalid_argument("N power of two required");
+0069     // Combine duplicate coordinates so k means actual support size.
+0070     std::sort(support.begin(),support.end(),[](auto&a,auto&b){return a.index<b.index;});
+0071     std::vector<Term> c; c.reserve(support.size());
+0072     for(auto &t:support){
+0073         if(t.index>=n) throw std::out_of_range("support index");
+0074         if(!c.empty() && c.back().index==t.index) c.back().value+=t.value;
+0075         else c.push_back(t);
+0076     }
+0077     c.erase(std::remove_if(c.begin(),c.end(),[](const Term&t){return t.value==C(0,0);}),c.end());
+0078     return sparse_fft_rec(n,c);
+0079 }
+0080 
+0081 class FFTWComplex {
+0082     int n_;
+0083     std::vector<std::array<double,2>> in_, out_;
+0084     fftw_plan plan_{};
+0085 public:
+0086     explicit FFTWComplex(int n):n_(n),in_(n),out_(n){
+0087         plan_=fftw_plan_dft_1d(n_,reinterpret_cast<fftw_complex*>(in_.data()),reinterpret_cast<fftw_complex*>(out_.data()),FFTW_FORWARD_,FFTW_ESTIMATE_);
+0088         if(!plan_) throw std::runtime_error("fftw plan failed");
+0089     }
+0090     ~FFTWComplex(){if(plan_)fftw_destroy_plan(plan_);}
+0091     void run_sparse(size_t n,const std::vector<Term>& s){
+0092         std::fill(in_.begin(),in_.end(),std::array<double,2>{0,0});
+0093         for(auto&t:s){in_[t.index][0]+=t.value.real();in_[t.index][1]+=t.value.imag();}
+0094         fftw_execute_dft(plan_,reinterpret_cast<fftw_complex*>(in_.data()),reinterpret_cast<fftw_complex*>(out_.data()));
+0095     }
+0096     const auto& out()const{return out_;}
+0097 };
+0098 
+0099 static double maxerr(const std::vector<C>& a,const std::vector<std::array<double,2>>& b){
+0100     double e=0; for(size_t i=0;i<a.size();++i)e=std::max(e,std::abs(a[i]-C(b[i][0],b[i][1]))); return e;
+0101 }
+0102 static double median(std::vector<double> v){std::sort(v.begin(),v.end());return v[v.size()/2];}
+0103 
+0104 int main(int argc,char**argv){
+0105     size_t n=argc>1?std::stoull(argv[1]):65536; int reps=argc>2?std::stoi(argv[2]):7;
+0106     if(!is_pow2(n)) throw std::invalid_argument("N power of two");
+0107     std::mt19937_64 rng(0x51A45EEDULL+n);
+0108     std::uniform_real_distribution<double> dv(-1.0,1.0);
+0109     FFTWComplex fftw((int)n);
+0110     std::cout<<"N,k,pruned_ms,fftw_ms,speedup,butterflies,written,max_err\n";
+0111     for(size_t k=1;k<=std::min<size_t>(4096,n/2);k<<=1){
+0112         std::vector<Term> s; s.reserve(k);
+0113         size_t start=rng()%n, stride=((rng()%(n/2))*2+1);
+0114         for(size_t j=0;j<k;++j)s.push_back({(start+j*stride)&(n-1),C(dv(rng),0)});
+0115         // Correctness warmup.
+0116         auto got=sparse_fft(n,s); fftw.run_sparse(n,s); double err=maxerr(got.values,fftw.out());
+0117         if(err>5e-6) throw std::runtime_error("correctness err "+std::to_string(err));
+0118         std::vector<double> tp,tf; tp.reserve(reps);tf.reserve(reps); uint64_t butterflies=got.butterflies,written=got.written;
+0119         for(int r=0;r<reps;++r){
+0120             auto t0=Clock::now(); auto z=sparse_fft(n,s); tp.push_back(elapsed_ms(t0));
+0121             volatile double sink=z.values[(r*997u)%n].real(); (void)sink;
+0122             t0=Clock::now(); fftw.run_sparse(n,s); tf.push_back(elapsed_ms(t0));
+0123         }
+0124         double a=median(tp),b=median(tf);
+0125         std::cout<<n<<","<<k<<","<<std::fixed<<std::setprecision(6)<<a<<","<<b<<","<<(b/a)<<","<<butterflies<<","<<written<<","<<std::scientific<<err<<"\n";
+0126     }
+0127 }

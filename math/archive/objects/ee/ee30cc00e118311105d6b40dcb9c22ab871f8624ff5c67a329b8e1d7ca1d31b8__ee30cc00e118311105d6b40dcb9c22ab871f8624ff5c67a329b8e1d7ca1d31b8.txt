@@ -1,0 +1,17 @@
+"""Independent larger exact finite-field checks (full FFT and inverse residual)."""
+from phase15_executor import folded_galois_fft,fft_radix2,precompute_residual,P
+from haar_coherence import inverse_residual
+import random,json
+if __name__=='__main__':
+    for N,B in ((4096,64),(8192,128),(16384,128)):
+        rng=random.Random(1500+N+B)
+        x=[rng.randrange(P) for _ in range(N)]
+        y,s=folded_galois_fft(x,B)
+        benchmark,c=fft_radix2(x)
+        assert y==benchmark
+        assert s.full_butterflies==c
+        residual,_,_=precompute_residual(x,B)
+        assert inverse_residual(residual,B)==x
+        print(json.dumps(dict(N=N,B=B,b=B.bit_length()-1,
+             full_dft_matches_independent_radix2=True,
+             residual_inverse_exact=True,butterflies=c)))

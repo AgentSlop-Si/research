@@ -1,0 +1,149 @@
+   1 #!/usr/bin/env python3
+   2 """New standalone exact controls for the original q=r*m bank orientation."""
+   3 import json
+   4 from pathlib import Path
+   5 
+   6 FIELD = 65537
+   7 
+   8 
+   9 def zero(n):
+  10     return [[0] * n for _ in range(n)]
+  11 
+  12 
+  13 def eye(n):
+  14     a = zero(n)
+  15     for j in range(n):
+  16         a[j][j] = 1
+  17     return a
+  18 
+  19 
+  20 def mm(a, b):
+  21     n = len(a)
+  22     c = zero(n)
+  23     sb = [[(j, v) for j, v in enumerate(row) if v] for row in b]
+  24     for i, row in enumerate(a):
+  25         for k, v in enumerate(row):
+  26             if v:
+  27                 for j, w in sb[k]:
+  28                     c[i][j] += v * w
+  29         c[i] = [v % FIELD for v in c[i]]
+  30     return c
+  31 
+  32 
+  33 def root(n):
+  34     return pow(3, (FIELD - 1) // n, FIELD)
+  35 
+  36 
+  37 def fourier(n):
+  38     return [[pow(root(n), i * j, FIELD) for j in range(n)] for i in range(n)]
+  39 
+  40 
+  41 def bank(m, q, active):
+  42     a = zero(m * q)
+  43     for b in range(q):
+  44         for t in range(m):
+  45             for s in range(m):
+  46                 a[b * m + t][b * m + s] = pow(root(m), t * s, FIELD) if b in active else int(t == s)
+  47     return a
+  48 
+  49 
+  50 def batch(m, q):
+  51     a = zero(m * q)
+  52     for t in range(q):
+  53         for s in range(q):
+  54             for g in range(m):
+  55                 a[t * m + g][s * m + g] = pow(root(q), t * s, FIELD)
+  56     return a
+  57 
+  58 
+  59 def twiddle(m, q, inverse=False):
+  60     a = zero(m * q)
+  61     w = pow(root(m * q), -1, FIELD) if inverse else root(m * q)
+  62     for b in range(q):
+  63         for s in range(m):
+  64             a[b * m + s][b * m + s] = pow(w, b * s, FIELD)
+  65     return a
+  66 
+  67 
+  68 def conversion(m, r):
+  69     q, n = r * m, r * m * m
+  70     packing, recovery = zero(n), zero(n)
+  71     ir = pow(r, -1, FIELD)
+  72     for g in range(m):
+  73         for h in range(r):
+  74             for s in range(m):
+  75                 packing[(h + r * s) * m + g][(g * r + h) * m + s] = 1
+  76             for t in range(m):
+  77                 for u in range(r):
+  78                     recovery[(g * r + h) * m + t][(t + m * u) * m + g] = ir * pow(root(q), (-t * h) % q, FIELD) * pow(root(r), (-h * u) % r, FIELD) % FIELD
+  79     assert all(sum(row) == 1 for row in packing)
+  80     assert all(sum(row) == 1 for row in zip(*packing))
+  81     assert sum(bool(x) for row in recovery for x in row) == r * n
+  82     return packing, recovery
+  83 
+  84 
+  85 def cover(pmat, m, q, start, length):
+  86     n = m * q
+  87     recovered = zero(n)
+  88     inverse_delta = twiddle(m, q, True)
+  89     count = (q + length - 1) // length
+  90     for part in range(count):
+  91         low, high = part * length, min((part + 1) * length, q)
+  92         a = (start - low) % q
+  93         masked_shift = zero(n)
+  94         for b in range(low, high):
+  95             for s in range(m):
+  96                 masked_shift[((b + a) % q) * m + s][b * m + s] = 1
+  97         term = mm(pmat, mm(inverse_delta, masked_shift))
+  98         for u in range(q):
+  99             phase = pow(root(q), (-a * u) % q, FIELD)
+ 100             for s in range(m):
+ 101                 i = u * m + s
+ 102                 recovered[i] = [(v + phase * w) % FIELD for v, w in zip(recovered[i], term[i])]
+ 103     return recovered, count
+ 104 
+ 105 
+ 106 def check(m, radix):
+ 107     q, n = radix * m, radix * m * m
+ 108     ell = batch(m, q)
+ 109     packing, recovery = conversion(m, radix)
+ 110     expected_bank = bank(m, q, set(range(q)))
+ 111     assert mm(recovery, mm(ell, packing)) == expected_bank
+ 112     stride = zero(n)
+ 113     for b in range(q):
+ 114         for s in range(m):
+ 115             stride[b * m + s][b + q * s] = 1
+ 116     cases = []
+ 117     for start, length in sorted({(0, q), (0, q // 2), (q - 1, q // 2), (q - 1, max(1, q // 2 - 1))}):
+ 118         active = {(start + h) % q for h in range(length)}
+ 119         c = bank(m, q, set(range(q)) - active)
+ 120         pmat = mm(ell, mm(twiddle(m, q), c))
+ 121         recovered_ell, calls = cover(pmat, m, q, start, length)
+ 122         assert recovered_ell == ell
+ 123         recovered_bank = mm(recovery, mm(recovered_ell, packing))
+ 124         assert recovered_bank == expected_bank
+ 125         active_bank = eye(n)
+ 126         for b in active:
+ 127             for t in range(m):
+ 128                 active_bank[b * m + t] = recovered_bank[b * m + t][:]
+ 129         assert mm(pmat, mm(active_bank, stride)) == fourier(n)
+ 130         cases.append({'active_start': start, 'active_length': length, 'batch_P_calls': calls,
+ 131                       'full_F_N_P_calls': calls + 1})
+ 132     return {'m': m, 'q': q, 'N': n, 'inverse_small_radix': radix,
+ 133             'inverse_small_radix_transform_count': n // radix,
+ 134             'unchanged_bank_dimensions': [q, m], 'packing_nonzeros': n,
+ 135             'recovery_nonzeros': radix * n, 'cases': cases}
+ 136 
+ 137 
+ 138 def main():
+ 139     rows = [check(m, radix) for m, radix in ((2, 2), (4, 2), (8, 2), (2, 4), (4, 4))]
+ 140     result = {'field': FIELD, 'bank_conversion_cases': len(rows),
+ 141               'full_F_N_reconstruction_cases': sum(len(r['cases']) for r in rows),
+ 142               'all_exact_assertions_passed': True, 'results': rows,
+ 143               'scope': 'Original q=r*m orientation retained; no P evaluator or FFT speedup constructed.'}
+ 144     Path(__file__).with_name('ORIGINAL_ORIENTATION_CONTROLS.json').write_text(json.dumps(result, indent=2) + '\n')
+ 145     print(json.dumps(result, indent=2))
+ 146 
+ 147 
+ 148 if __name__ == '__main__':
+ 149     main()

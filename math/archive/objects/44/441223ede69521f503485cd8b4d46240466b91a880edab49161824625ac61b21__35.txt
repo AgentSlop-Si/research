@@ -1,0 +1,102 @@
+   1 """Finite-field identity checks for rational BM fusion, not timing claims."""
+   2 import random,json
+   3 from pathlib import Path
+   4 p=97
+   5 
+   6 def root(n):
+   7  return next(x for x in range(1,p) if pow(x,n,p)==1 and (n==1 or pow(x,n//2,p)!=1))
+   8 def trim(a):
+   9  while len(a)>1 and a[-1]==0:a.pop()
+  10  return a
+  11 
+  12 def add(a,b):
+  13  c=[0]*max(len(a),len(b))
+  14  for i,x in enumerate(a):c[i]=(c[i]+x)%p
+  15  for i,x in enumerate(b):c[i]=(c[i]+x)%p
+  16  return trim(c)
+  17 def scale(a,x):return trim([v*x%p for v in a])
+  18 def mul(a,b):
+  19  c=[0]*(len(a)+len(b)-1)
+  20  for i,x in enumerate(a):
+  21   for j,y in enumerate(b):c[i+j]=(c[i+j]+x*y)%p
+  22  return trim(c)
+  23 def mod(a,q):
+  24  a=a[:]; inv=pow(q[-1],-1,p)
+  25  while len(a)>=len(q):
+  26   i=len(a)-len(q);c=a[-1]*inv%p
+  27   for j,v in enumerate(q):a[i+j]=(a[i+j]-c*v)%p
+  28   trim(a)
+  29  return a
+  30 
+  31 def modpow(a,n,q):
+  32  z=[1]
+  33  while n:
+  34   if n&1:z=mod(mul(z,a),q)
+  35   a=mod(mul(a,a),q);n//=2
+  36  return z
+  37 
+  38 def peval(a,t):
+  39  z=0
+  40  for x in reversed(a):z=(z*t+x)%p
+  41  return z
+  42 
+  43 def num(bs,ws):
+  44  z=[0]
+  45  for i,b in enumerate(bs):
+  46   v=[b]
+  47   for j,w in enumerate(ws):
+  48    if i!=j:v=mul(v,[1,-w%p])
+  49   z=add(z,v)
+  50  return z
+  51 
+  52 def recover(ys,lam,om):
+  53  n=len(ys)
+  54  return [sum(v*pow(om,(-j*r)%n,p) for j,v in enumerate(ys))*pow(n,-1,p)*pow(lam,-r,p)%p for r in range(n)]
+  55 
+  56 def split(vals,lam,om):
+  57  n=len(vals);h=n//2;e=[];o=[]
+  58  for j in range(h):
+  59   x=lam*pow(om,j,p)%p
+  60   e.append((vals[j]+vals[j+h])*pow(2,-1,p)%p)
+  61   o.append((vals[j]-vals[j+h])*pow(2*x,-1,p)%p)
+  62  return e,o
+  63 
+  64 rng=random.Random(20261009);counts=dict(cases=0,modular_corrections=0,parity_leaf_values=0,corrected_decoded_coefficients=0)
+  65 for L in [1,2,4,8]:
+  66  for h in range(6):
+  67   S=L*2**h
+  68   if S>32:continue
+  69   B=2**h;om=root(S)
+  70   for _ in range(30):
+  71    lam=rng.randrange(1,p);c=pow(lam,S,p)
+  72    allowed=[w for w in range(1,p) if (1-c*pow(w,S,p))%p]
+  73    k=rng.randint(1,min(L,len(allowed)));ws=rng.sample(allowed,k);bs=[rng.randrange(p) for w in ws]
+  74    q=[1]
+  75    for w in ws:q=mul(q,[1,-w%p])
+  76    P=num(bs,ws);rs=modpow([(-x)%p for x in q[1:]],S,q)
+  77    H=add(P,scale(mod(mul(P,rs),q),-c%p))
+  78    bprime=[b*(1-c*pow(w,S,p))%p for b,w in zip(bs,ws)]
+  79    assert H==num(bprime,ws);counts['modular_corrections']+=1
+  80    grid=[lam*pow(om,j,p)%p for j in range(S)]
+  81    raw=[peval(P,t)*pow(peval(q,t),-1,p)%p for t in grid]
+  82    corr=[peval(H,t)*pow(peval(q,t),-1,p)%p for t in grid]
+  83    states={0:(raw,corr)};ll=lam;oo=om
+  84    for d in range(h):
+  85     nxt={}
+  86     for r,(a,b) in states.items():
+  87      a0,a1=split(a,ll,oo);b0,b1=split(b,ll,oo)
+  88      nxt[r]=(a0,b0);nxt[r+2**d]=(a1,b1)
+  89     states=nxt;ll=ll*ll%p;oo=oo*oo%p
+  90    answer=[None]*S
+  91    for r,(rawleaf,correctleaf) in states.items():
+  92     for j,v in enumerate(rawleaf):
+  93      y=ll*pow(oo,j,p)%p
+  94      target=sum(b*pow(w,r,p)*pow((1-pow(w,B,p)*y)%p,-1,p) for b,w in zip(bs,ws))%p
+  95      assert v==target;counts['parity_leaf_values']+=1
+  96     coeff=recover(correctleaf,ll,oo)
+  97     for m,v in enumerate(coeff):answer[r+B*m]=v
+  98    target=[sum(b*pow(w,m,p) for b,w in zip(bs,ws))%p for m in range(S)]
+  99    assert answer==target
+ 100    counts['corrected_decoded_coefficients']+=S;counts['cases']+=1
+ 101 res={'status':'passed','field_prime':p,'counts':counts,'limitation':'Direct polynomial arithmetic and quadratic DFT checks certify identities only, not fast running times.'}
+ 102 Path(__file__).with_name('oversampled_subtree_checks.json').write_text(json.dumps(res,indent=2)+'\n');print(json.dumps(res,indent=2))

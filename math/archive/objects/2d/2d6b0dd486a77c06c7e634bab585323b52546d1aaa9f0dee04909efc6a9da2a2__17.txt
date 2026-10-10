@@ -1,0 +1,113 @@
+1: """Bounded independent implementation repros; no writes to reviewed sources."""
+2: import argparse
+3: import json
+4: import sys
+5: import tracemalloc
+6: import warnings
+7: from pathlib import Path
+8: 
+9: import numpy as np
+10: from scipy import fft
+11: 
+12: p = argparse.ArgumentParser()
+13: p.add_argument('--source', type=Path, default=Path(__file__).parent/'original_copy')
+14: args = p.parse_args()
+15: sys.path.insert(0, str(args.source.resolve()))
+16: from cost_aware_fft import RelationFFT, sparse_from_known_changes
+17: from persistent_chain import ChainEngine
+18: from relational_convolution import RelationalConvolver, subscribe_convolution
+19: 
+20: def emit(name, **values):
+21:     print(json.dumps(dict(case=name, **values)), flush=True)
+22: 
+23: x=np.arange(8.)
+24: want=fft.rfft(x+np.eye(1,8,1)[0]*2.)
+25: got=sparse_from_known_changes(fft.rfft(x),8,[(1,2.)],method='auto')
+26: emit('spectrum_only_auto', actual_dc=float(got[0].real), expected_dc=float(want[0].real),
+27:      max_abs_error=float(np.max(abs(got-want))))
+28: 
+29: e=RelationFFT(max_temp_bytes=256)
+30: s=e.register(np.arange(16.)).edit(3,1.)
+31: try:
+32:     profile=e.calibrate(s,repeats=2)
+33:     emit('calibration_budget', completed=True, methods=list(profile.median_seconds))
+34: except MemoryError as exc:
+35:     emit('calibration_budget', completed=False, error=str(exc))
+36: 
+37: e=RelationFFT()
+38: s=e.register(np.arange(8.)).edit(1,2.)
+39: for cached in (False,True):
+40:     if cached:s.spectrum('native',cache_output=True)
+41:     for method in ('reuse','zero','linear'):
+42:         try:
+43:             s.spectrum(method)
+44:             emit('invalid_method_cache_bypass', cached=cached, method=method, accepted=True)
+45:         except ValueError:
+46:             emit('invalid_method_cache_bypass', cached=cached, method=method, accepted=False)
+47: 
+48: e=RelationFFT(max_phase_bytes=32784)
+49: phase=e._phase_vector(4096,7,2049)
+50: owner=phase
+51: while isinstance(owner.base,np.ndarray):owner=owner.base
+52: emit('phase_cache_budget', budget=e.max_phase_bytes,
+53:      reported=e.memory_report()['internal_phase_cache_bytes'], retained_bytes=owner.nbytes,
+54:      cached=bool(e._phase))
+55: 
+56: n,k=65536,8
+57: e=RelationFFT(max_temp_bytes=16*n+8*(n//k),max_phase_bytes=0)
+58: s=e.register(np.zeros(n))
+59: for j in range(k):s.edit(j+1,j+.25)
+60: tracemalloc.start()
+61: try:
+62:     out=s.spectrum('pruned')
+63:     _,peak=tracemalloc.get_traced_memory()
+64:     emit('pruned_work_arrays', admitted=True,budget=e.max_temp_bytes,
+65:          traced_peak=peak,peak_minus_output=peak-out.nbytes)
+66: except MemoryError as exc:
+67:     emit('pruned_work_arrays',admitted=False,budget=e.max_temp_bytes,error=str(exc))
+68: finally:tracemalloc.stop()
+69: 
+70: e=RelationFFT()
+71: a=e.register([0.,0.]).edit(0,1e308)
+72: b=e.register([1e-308,0.])
+73: sub=subscribe_convolution(RelationalConvolver().product(a,b),[0])
+74: before=sub.values().copy()
+75: try:
+76:     sub.edit('left',0,1e308)
+77: except ValueError as exc:
+78:     emit('subscription_rejected_edit', error=str(exc), before=before.tolist(),
+79:          after=sub.values().tolist(), snapshot=[sub.snapshot_view().at(0)], events=sub.events)
+80: 
+81: e=ChainEngine()
+82: single=e.chain([e.seed([1.])])
+83: v=single
+84: for _ in range(1099):v=v.convolve_with(single)
+85: for action in ('factor','edit'):
+86:     try:
+87:         out=v.factor(0) if action=='factor' else v.edit(0,0,.25)
+88:         emit('sequential_composition',factors=v.root.size, action=action, completed=True)
+89:     except RecursionError as exc:
+90:         emit('sequential_composition',factors=v.root.size, action=action, completed=False,error=str(exc))
+91: balanced=e.chain([single.factor(0)]*1100)
+92: emit('balanced_composition_control',factors=balanced.root.size,value=balanced.edit(0,0,.25).dense().tolist())
+93: 
+94: with warnings.catch_warnings(record=True) as w:
+95:     warnings.simplefilter('always')
+96:     try:
+97:         seed=ChainEngine().seed(np.array([1+2j,3+4j]))
+98:         emit('complex_input', accepted=True, signal=seed.values().tolist(),warnings=[str(x.message) for x in w])
+99:     except ValueError as exc:
+100:         emit('complex_input', accepted=False, error=str(exc))
+101: 
+102: e1,e2=RelationFFT(),RelationFFT()
+103: a,b=e1.register([1.,2.]),e2.register([3.,4.])
+104: try:
+105:     e1.combine([a,b],[1.,1.])
+106:     emit('cross_engine_combine_control',rejected=False)
+107: except ValueError as exc:
+108:     emit('cross_engine_combine_control',rejected=True,error=str(exc))
+109: 
+110: c1,c2=ChainEngine(),ChainEngine()
+111: v1=c1.chain([c1.seed([1.,2.])]);v2=c2.chain([c2.seed([3.,4.])])
+112: emit('cross_engine_sharing_diagnostic',same_object=v1.root is v2.root,
+113:      reported=v1.count_reused_nodes(v2))

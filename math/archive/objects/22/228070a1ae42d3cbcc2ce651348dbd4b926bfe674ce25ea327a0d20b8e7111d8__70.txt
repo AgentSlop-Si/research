@@ -1,0 +1,91 @@
+1: """Exact finite-field support checks for sparse-surrogate graph fusion."""
+2: from __future__ import annotations
+3: 
+4: import itertools
+5: import json
+6: from pathlib import Path
+7: import random
+8: 
+9: 
+10: def support(v):
+11:     return sum(z != 0 for z in v)
+12: 
+13: 
+14: def defect(v, lam, shift, p):
+15:     n = len(v)
+16:     return [(v[i] - lam*v[(i+shift) % n]) % p for i in range(n)]
+17: 
+18: 
+19: def main():
+20:     p, g, n = 257, 3, 8
+21:     # 257 is prime by complete trial division; g has order 256.
+22:     assert all(p % d for d in range(2, 17))
+23:     assert pow(g, 256, p) == 1 and pow(g, 128, p) != 1
+24:     assert p-1 > 2*(n-1)**2
+25:     x = [pow(g, i*i, p) for i in range(n)]
+26:     ratio_checks = 0
+27:     for shift in range(1, n):
+28:         ratios = [x[i] * pow(x[(i+shift) % n], -1, p) % p for i in range(n)]
+29:         assert len(set(ratios)) == n
+30:         ratio_checks += 1
+31: 
+32:     corrections = [[0]*n]
+33:     for i in range(n):
+34:         for value in (1, x[i], p-1):
+35:             y = [0]*n
+36:             y[i] = value
+37:             corrections.append(y)
+38:     rng = random.Random(20261009)
+39:     for k in (2, 3):
+40:         for _ in range(12):
+41:             y = [0]*n
+42:             for i in rng.sample(range(n), k):
+43:                 y[i] = rng.randrange(1, p)
+44:             corrections.append(y)
+45: 
+46:     checks = 0
+47:     for shift, lam, y in itertools.product(range(1, n), range(p), corrections):
+48:         dx, dy = defect(x, lam, shift, p), defect(y, lam, shift, p)
+49:         residual = [(a-b) % p for a, b in zip(x, y)]
+50:         dr = defect(residual, lam, shift, p)
+51:         k = support(y)
+52:         assert support(dx) >= n-1
+53:         assert support(dy) <= 2*k
+54:         assert dr == [(a-b) % p for a, b in zip(dx, dy)]
+55:         assert support(dr) >= support(dx)-2*k
+56:         assert support(dr) >= n-1-2*k
+57:         checks += 1
+58: 
+59:     y = [0]*n
+60:     y[3] = pow(g, 9, p)*(1-pow(g, 4, p)) % p
+61:     lam = pow(g, -12, p)
+62:     tight_defect = defect([(a-b) % p for a,b in zip(x,y)], lam, 2, p)
+63:     assert support(y) == 1 and support(tight_defect) == n-3
+64: 
+65:     # Exact l1 anti-contraction examples: positive equal-mass atoms.
+66:     contraction_checks = 0
+67:     for size in (8, 16, 32):
+68:         for k in (1, 2, 4):
+69:             for indices in ([0]*k, list(range(k)), [i % 2 for i in range(k)]):
+70:                 counts = [indices.count(i) for i in range(size)]
+71:                 # Multiply residual by k to avoid rational arithmetic.
+72:                 residual_scaled = [k-size*c for c in counts]
+73:                 used = support(counts)
+74:                 assert sum(abs(v) for v in residual_scaled) == 2*k*(size-used)
+75:                 assert support(residual_scaled) == size
+76:                 contraction_checks += 1
+77: 
+78:     report = {"status": "PASS", "field": p, "generator": g, "N": n,
+79:               "witness": x, "all_shift_ratio_checks": ratio_checks,
+80:               "all_lambda_sparse_correction_checks": checks,
+81:               "tested_corrections": len(corrections),
+82:               "tight_example": {"lambda": lam, "shift": 2,
+83:                                 "correction": y, "defect_support": support(tight_defect)},
+84:               "exact_residual_noncontraction_checks": contraction_checks,
+85:               "scope": "Exact tests support the stated restricted fusion lemmas, not a universal FFT lower bound."}
+86:     Path(__file__).with_name("results.json").write_text(json.dumps(report, indent=2)+"\n")
+87:     print(json.dumps({k:v for k,v in report.items() if k not in ("witness", "tight_example")}, sort_keys=True))
+88: 
+89: 
+90: if __name__ == "__main__":
+91:     main()

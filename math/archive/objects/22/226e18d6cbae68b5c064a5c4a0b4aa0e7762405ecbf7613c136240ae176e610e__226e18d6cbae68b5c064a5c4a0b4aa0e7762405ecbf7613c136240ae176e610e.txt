@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Composite-modulus unit-step-chirp Green cycle, pure NumPy implementation.
+
+Exact arithmetic identity: for n=k*m, k>=m, gcd(a,n)=1, this returns
+U_n P_(a,beta) x with ONE k-point FFT, plus O(n) complex arithmetic.
+It does not return U_n x exactly for a generic single random state.
+
+The derivation extends the user's v9/v11 prime-power core. It uses only
+(n,m) divisibility, not a prime-power condition. See HERO0_RESEARCH.md.
+
+The NumPy prototype uses float64 phases and int64 modular intermediates;
+the proof is in ideal complex arithmetic, not an unlimited-size binary64
+or bit-operation theorem. Avoid n so large that int64 products overflow.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Any
+import numpy as np
+
+
+@dataclass(frozen=True)
+class ChirpState:
+    a: int
+    beta: int
+
+    def validate(self,n:int)->None:
+        if not (0<self.a<n) or math.gcd(self.a,n)!=1:
+            raise ValueError('a must be a unit in Z/nZ')
+        if not 0<=self.beta<n:
+            raise ValueError('beta must be in Z/nZ')
+
+
+def validate_dimensions(n:int,m:int):
+    if n<2 or m<1 or n%m:
+        raise ValueError('require n>=2 and m>=1 dividing n')
+    k=n//m
+    if k<m:
+        raise ValueError('require n/m >= m')
+    return 0,k,m
+
+
+def draw_state(n:int,rng:np.random.Generator)->ChirpState:
+    if n<2:raise ValueError('require n>=2')
+    # Every accepted candidate has exactly the uniform unit distribution;
+    # exhausted budgets are explicitly reported as a rare failure event.
+    cap=max(64,8*math.ceil(math.log2(n))**2)
+    for _ in range(cap):
+        a=int(rng.integers(1,n))
+        if math.gcd(a,n)==1:
+            return ChirpState(a,int(rng.integers(n)))
+    raise RuntimeError('unit sampling budget exhausted')
+
+
+def _tri_array_mod(t:np.ndarray,n:int)->np.ndarray:
+    return ((t*(t-1))//2)%n
+
+
+def tri_int(t:int)->int:
+    return t*(t-1)//2
+
+
+def local_phase_matrix(n:int,m:int,state:ChirpState)->np.ndarray:
+    _,k,_=validate_dimensions(n,m);state.validate(n)
+    r=np.arange(k,dtype=np.int64)[:,None]
+    t=np.arange(m,dtype=np.int64)[None,:]
+    c=((((state.a*m)%n)*r)+state.beta)%n
+    phase_n=((state.a%n)*_tri_array_mod(t,n)+(c*t)%n)%n
+    phase_2n=(2*phase_n+(n&1)*t)%(2*n)
+    return np.exp(1j*np.pi*phase_2n.astype(np.float64)/n)
+
+
+def compress_blocks(x,m:int,state:ChirpState)->np.ndarray:
+    arr=np.asarray(x,dtype=np.complex128).reshape(-1)
+    n=arr.size;_,k,_=validate_dimensions(n,m)
+    return np.sum(local_phase_matrix(n,m,state)*arr.reshape(k,m),axis=1)
+
+
+def materialize_projected_signal(x,m:int,state:ChirpState)->np.ndarray:
+    arr=np.asarray(x,dtype=np.complex128).reshape(-1)
+    n=arr.size;_,k,_=validate_dimensions(n,m)
+    phase=local_phase_matrix(n,m,state)
+    d=np.sum(phase*arr.reshape(k,m),axis=1)
+    return (np.conj(phase)*d[:,None]).reshape(-1)
+
+
+def pairwise_sum(values,dtype:Any=np.complex128)->complex:
+    data=np.asarray(values,dtype=dtype).reshape(-1)
+    if data.size==0:return 0.+0.j
+    size=1<<(data.size-1).bit_length()
+    temp=np.zeros(size,dtype=dtype);temp[:data.size]=data
+    width=size
+    while width>1:
+        temp[:width//2]=temp[:width:2]+temp[1:width:2]
+        width//=2
+    return complex(temp[0])
+
+
+def balanced_exclusive_scan(values,dtype:Any=np.complex128)->np.ndarray:
+    data=np.asarray(values,dtype=dtype).reshape(-1)
+    n=data.size
+    if n==0:return np.empty(0,dtype=dtype)
+    size=1<<(n-1).bit_length()
+    temp=np.zeros(size,dtype=dtype);temp[:n]=data
+    stride=2
+    while stride<=size:
+        right=np.arange(stride-1,size,stride)
+        left=right-stride//2
+        temp[right]=temp[left]+temp[right]
+        stride*=2
+    temp[-1]=0.+0.j
+    stride=size
+    while stride>=2:
+        right=np.arange(stride-1,size,stride)
+        left=right-stride//2
+        saved=temp[left].copy()
+        temp[left]=temp[right]
+        temp[right]=temp[right]+saved
+        stride//=2
+    return temp[:n].copy()
+
+
+def _cycle_arrays(d_fft:np.ndarray,n:int,m:int,state:ChirpState):
+    _,k,_=validate_dimensions(n,m)
+    j=np.arange(n,dtype=np.int64)
+    indices=(state.a*j)%n
+    tri=_tri_array_mod(j,n)
+    phase_n=((state.a%n)*tri+(state.beta*j)%n)%n
+    phase_2n=(2*phase_n+(n&1)*j)%(2*n)
+    gauge=np.exp(1j*np.pi*phase_2n.astype(np.float64)/n)
+
+    boundary_n=(m*((indices+state.beta)%n)+state.a*(tri_int(m)%n))%n
+    boundary_2n=(2*boundary_n+(n&1)*m)%(2*n)
+    boundary=np.exp(-1j*np.pi*boundary_2n.astype(np.float64)/n)
+
+    forcing=(d_fft[indices%k]-boundary*d_fft[(indices+state.a*m)%k])/math.sqrt(n)
+    return indices,gauge,forcing/gauge
+
+
+def decode_balanced_scan(summaries,n:int,m:int,state:ChirpState,
+                         dtype:Any=np.complex128)->np.ndarray:
+    _,k,_=validate_dimensions(n,m);state.validate(n)
+    d=np.asarray(summaries,dtype=dtype).reshape(-1)
+    if d.size!=k:raise ValueError('summaries must have K entries')
+    # This K-FFT is the only FFT performed by the proposed execution path.
+    d_fft=np.asarray(np.fft.fft(d.astype(np.complex128)),dtype=dtype)
+    idx,gauge,terms=_cycle_arrays(d_fft,n,m,state)
+    terms=np.asarray(terms,dtype=dtype)
+    seed=pairwise_sum(terms,dtype)/2.0
+    prefix=balanced_exclusive_scan(terms,dtype)
+    out=np.empty(n,dtype=dtype)
+    out[idx]=np.asarray(gauge,dtype=dtype)*(seed-prefix)
+    return out
+
+
+def one_row_estimate(x,m:int,state:ChirpState,dtype:Any=np.complex128)->np.ndarray:
+    arr=np.asarray(x,dtype=np.complex128).reshape(-1)
+    d=compress_blocks(arr,m,state)
+    return decode_balanced_scan(d,arr.size,m,state,dtype)
+
+
+def direct_row_estimate(x,m:int,state:ChirpState)->np.ndarray:
+    """Reference oracle: intentionally computes a full length-N FFT."""
+    projected=materialize_projected_signal(x,m,state)
+    return np.fft.fft(projected)/math.sqrt(projected.size)

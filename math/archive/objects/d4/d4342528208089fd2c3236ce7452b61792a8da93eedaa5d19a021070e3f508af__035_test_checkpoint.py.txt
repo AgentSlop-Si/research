@@ -1,0 +1,79 @@
+from __future__ import annotations
+import random
+import unittest
+
+from common import FIELD_DATA, dft_matrix, mod_rank, random_permutation, submatrix
+from green_parallel_sum_gate import choose_parallel_sum_witness, exact_random_audit
+from semiseparable_annihilator_gate import (
+    exact_random_audit as semiseparable_audit,
+    find_length_five_gap,
+    input_annihilator,
+    output_annihilator,
+    random_fully_nondegenerate_stage,
+)
+
+
+class TestGreenParallelSumGate(unittest.TestCase):
+    def test_universal_witness_random_permutations(self):
+        rng = random.Random(17001)
+        for n in (11, 13, 17, 19, 29, 31, 47, 64):
+            for _ in range(200):
+                sa = random_permutation(n, rng)
+                sb = random_permutation(n, rng)
+                w = choose_parallel_sum_witness(sa, sb)
+                self.assertEqual(len(w.rows_I), 2)
+                self.assertEqual(len(w.cols_J), 2)
+                self.assertLessEqual(len(w.support_R), 3)
+                self.assertLessEqual(len(w.support_C), 3)
+                self.assertFalse(set(w.cols_J) & set(w.forbidden_columns))
+
+    def test_exact_prime_field_audits(self):
+        for n in (11, 13, 17, 19, 29, 31):
+            p, _, omega = FIELD_DATA[n]
+            r = exact_random_audit(n, p, omega, trials=12, seed=1702)
+            self.assertGreaterEqual(r["min_contradiction_block_rank"], 1)
+
+    def test_small_fourier_minors_for_used_fields(self):
+        rng = random.Random(1703)
+        for n in (11, 17, 31):
+            p, _, omega = FIELD_DATA[n]
+            f = dft_matrix(n, p, omega)
+            for _ in range(500):
+                r = rng.choice((2, 3))
+                c = rng.choice((2, 3))
+                rows = rng.sample(range(n), r)
+                cols = rng.sample(range(n), c)
+                self.assertEqual(mod_rank(submatrix(f, rows, cols), p), min(r, c))
+
+
+class TestSemiseparableAnnihilatorGate(unittest.TestCase):
+    def test_length_five_gap_combinatorics(self):
+        rng = random.Random(1704)
+        for n in range(30, 80):
+            for _ in range(100):
+                forbidden = set(rng.sample(range(n), 5))
+                s = find_length_five_gap(n, forbidden)
+                self.assertTrue(all(s+t not in forbidden for t in range(5)))
+
+    def test_annihilator_endpoints_nonzero(self):
+        n = 31
+        p, _, _ = FIELD_DATA[n]
+        rng = random.Random(1705)
+        stage = random_fully_nondegenerate_stage(n, p, rng)
+        for j in range(n-2):
+            x = input_annihilator(stage, j)
+            y = output_annihilator(stage, j)
+            self.assertNotEqual(x[0] % p, 0)
+            self.assertNotEqual(x[2] % p, 0)
+            self.assertNotEqual(y[0] % p, 0)
+            self.assertNotEqual(y[2] % p, 0)
+
+    def test_exact_semiseparable_audit(self):
+        n = 31
+        p, _, omega = FIELD_DATA[n]
+        r = semiseparable_audit(n, p, omega, trials=12, seed=1706)
+        self.assertGreaterEqual(r["min_fourier_bilinear_rank"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

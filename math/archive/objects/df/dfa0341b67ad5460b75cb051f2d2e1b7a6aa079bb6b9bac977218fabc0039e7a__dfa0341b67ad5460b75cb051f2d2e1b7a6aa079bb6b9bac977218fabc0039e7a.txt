@@ -1,0 +1,49 @@
+"""Two exact counterexamples guarding exceptional-chart logic.
+
+1. Rank-one separated stages are *not* closed under inversion at degenerate
+   zero-corner points, even though quasiseparable cut ranks are preserved.
+2. The 30 Fourier quartics have singular spurious solutions. Saturation by
+   det(C) and appropriate patch anchors is essential to claim equivalence.
+"""
+import json
+import numpy as np
+from inverse_quartic import (root8,fftmod,SHUFFLE,char_stage,identities,rankmod)
+
+def exceptional_inverse_example():
+    # Det=2, C has rank-one lower and upper triangular outer products.
+    # Inverse has (2,0)=0, (1,0)=-1, (2,1)=-1/2: impossible to
+    # represent lower off-diagonal entries as l_i v_j globally.
+    from fractions import Fraction as Q
+    C=[[Q(2),Q(1),Q(1)], [Q(1),Q(1),Q(1)], [Q(1),Q(1),Q(3)]]
+    I=[[Q(1),Q(-1),Q(0)], [Q(-1),Q(5,2),Q(-1,2)], [Q(0),Q(-1,2),Q(1,2)]]
+    assert all(sum(C[i][k]*I[k][j] for k in range(3))==(1 if i==j else 0)
+               for i in range(3) for j in range(3))
+    assert I[2][0]==0 and I[1][0]!=0 and I[2][1]!=0
+    return {'C':[[str(z) for z in row] for row in C],
+       'C_inverse':[[str(z) for z in row] for row in I],
+       'reason':'I[2,0]=0 yet I[1,0] and I[2,1] nonzero, contradicting a single global l_i*v_j lower representation.'}
+
+def singular_false_positive():
+    result=[]
+    for prime in (12289,65537):
+        for choice in (0,1):
+            root=root8(prime,choice); F=fftmod(prime,root)
+            C=char_stage(np.ones(26,dtype=np.int64),prime)
+            assert np.array_equal(C,np.ones((8,8),dtype=np.int64))
+            B=F@C[:,np.array(SHUFFLE)]%prime
+            assert not any(identities(B,prime)),identities(B,prime)
+            assert not np.any(B[1:,:])
+            assert all(int(x)==8 for x in B[0,:])
+            assert rankmod(C,prime)==1
+            assert int(B[7,0])==0
+            result.append({'p':prime,'root':root,'rank_C':1,
+              'quadratic_B_equations_all_zero':True,
+              'saturated_open_patch_invalid':True})
+    return result
+
+if __name__=='__main__':
+    result={'inverse_boundary':exceptional_inverse_example(),
+            'Fourier_singular_spurious_solution':singular_false_positive()}
+    import pathlib
+    pathlib.Path(__file__).with_name('exception_results.json').write_text(json.dumps(result,indent=2)+'\n')
+    print(json.dumps(result,indent=2))

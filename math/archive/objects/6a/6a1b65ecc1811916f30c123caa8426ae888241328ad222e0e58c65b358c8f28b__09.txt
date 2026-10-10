@@ -1,0 +1,381 @@
+   1 #!/usr/bin/env python3
+   2 """Exact, bounded two-round synthetic-transform experiment. Python stdlib only.
+   3 
+   4 This is a finite additive-circuit experiment, not the upstream layer compiler.
+   5 All complex coefficients are represented by one real component; the imaginary
+   6 component is an independent identical copy. No upstream code is executed.
+   7 """
+   8 from collections import Counter, defaultdict
+   9 from fractions import Fraction as Q
+  10 from itertools import combinations, product
+  11 from pathlib import Path
+  12 import argparse
+  13 import hashlib
+  14 import json
+  15 
+  16 
+  17 def combine(a, b, sa=1, sb=1):
+  18     out = {i: sa * v for i, v in a.items()}
+  19     for i, v in b.items():
+  20         out[i] = out.get(i, 0) + sb * v
+  21         if not out[i]:
+  22             del out[i]
+  23     return out
+  24 
+  25 
+  26 def canonical(v):
+  27     s = 1 if v[min(v)] > 0 else -1
+  28     return tuple(sorted((i, int(s * a)) for i, a in v.items())), s
+  29 
+  30 
+  31 class DAG:
+  32     def __init__(self, n):
+  33         self.n = n
+  34         self.forms = [{i: 1} for i in range(n)]
+  35         self.gates = []
+  36         self.known = {((i, 1),): i for i in range(n)}
+  37 
+  38     def add(self, a, b, sign=1):
+  39         va = self.forms[a[0]]
+  40         vb = self.forms[b[0]]
+  41         assert not (va.keys() & vb.keys()), 'non-cancellation grammar'
+  42         val = combine(va, vb, a[1], sign * b[1])
+  43         key, out_sign = canonical(val)
+  44         if key in self.known:
+  45             return self.known[key], out_sign
+  46         node = len(self.forms)
+  47         self.forms.append(dict(key))
+  48         self.gates.append((a[0], a[1] * out_sign, b[0], sign * b[1] * out_sign))
+  49         self.known[key] = node
+  50         return node, out_sign
+  51 
+  52     def value(self, ref):
+  53         return {i: Q(ref[1] * v) for i, v in self.forms[ref[0]].items()}
+  54 
+  55 
+  56 def monomial_refs(record, exponent):
+  57     r = len(record)
+  58     out = [None] * r
+  59     for k, (node, sign) in enumerate(record):
+  60         q, j = divmod(k + exponent, r)
+  61         out[j] = (node, sign * (-1 if q % 2 else 1))
+  62     return out
+  63 
+  64 
+  65 def stage_refs(dag, data, t, r, stage):
+  66     u = t >> stage
+  67     out = list(data)
+  68     routes = []
+  69     for base in range(0, t, u):
+  70         for k in range(u // 2):
+  71             a = data[(base + k) * r:(base + k + 1) * r]
+  72             b = data[(base + k + u // 2) * r:(base + k + u // 2 + 1) * r]
+  73             plus = [dag.add(x, y) for x, y in zip(a, b)]
+  74             minus = [dag.add(x, y, -1) for x, y in zip(a, b)]
+  75             exponent = -(2 * r // u) * k
+  76             out[(base + k) * r:(base + k + 1) * r] = plus
+  77             out[(base + k + u // 2) * r:(base + k + u // 2 + 1) * r] = monomial_refs(minus, exponent)
+  78             if exponent % (2 * r):
+  79                 routes.append({'record': base + k + u // 2, 'exponent_mod_2r': exponent % (2*r)})
+  80     return out, routes
+  81 
+  82 
+  83 def stage_numerical(data, t, r, stage, truncate):
+  84     """Separate numerical implementation used only for rounding tests."""
+  85     u = t >> stage
+  86     out = list(data)
+  87     for base in range(0, t, u):
+  88         for k in range(u // 2):
+  89             lo, hi = (base+k)*r, (base+k+u//2)*r
+  90             aa, bb = data[lo:lo+r], data[hi:hi+r]
+  91             plus = [(a+b)/2 for a,b in zip(aa,bb)]
+  92             minus = [(a-b)/2 for a,b in zip(aa,bb)]
+  93             twiddled = [Q(0)]*r
+  94             for j,v in enumerate(minus):
+  95                 q,h=divmod(j-(2*r//u)*k,r)
+  96                 twiddled[h]=(-1 if q%2 else 1)*v
+  97             if truncate:
+  98                 plus=list(map(lambda v: Q(int(v)),plus))
+  99                 twiddled=list(map(lambda v: Q(int(v)),twiddled))
+ 100             out[lo:lo+r]=plus
+ 101             out[hi:hi+r]=twiddled
+ 102     return out
+ 103 
+ 104 
+ 105 def fourier_reference(t, r):
+ 106     """Closed-form normalized synthetic DFT, stored in bit-reversed order."""
+ 107     ans=[{} for _ in range(t*r)]
+ 108     bits=t.bit_length()-1
+ 109     for j in range(t):
+ 110         slot=int(f'{j:0{bits}b}'[::-1],2)
+ 111         for k in range(t):
+ 112             exp=-(2*r//t)*j*k
+ 113             for coefficient in range(r):
+ 114                 winding,destination=divmod(coefficient+exp,r)
+ 115                 ans[slot*r+destination][k*r+coefficient]=Q(-1 if winding%2 else 1,t)
+ 116     return ans
+ 117 
+ 118 
+ 119 def lower_bound_certificate(rows):
+ 120     """Exhaustive incidence certificate for all helpful 2/3-support sums.
+ 121 
+ 122     In a cancellation-free binary circuit for distinct 4-support outputs,
+ 123     every non-output node has size 2 or 3. A triple serving at most one output
+ 124     is unshared. If k outputs use a (3,1) split, there are at least k triples
+ 125     and 2N-k pair-use incidences. Pair reuse <=2 implies at least
+ 126     ceil((2N-k)/2) pair gates. Total >= N+k+ceil((2N-k)/2) >= 2N.
+ 127     """
+ 128     n=len(rows)
+ 129     counts={2: Counter(), 3: Counter()}
+ 130     output_keys=[]
+ 131     partitions=[]
+ 132     for row in rows:
+ 133         assert len(row)==4 and all(abs(v)==1 for v in row.values())
+ 134         key,_=canonical(row)
+ 135         output_keys.append(key)
+ 136         terms=sorted(row)
+ 137         for size in (2,3):
+ 138             for subset in combinations(terms,size):
+ 139                 p,_=canonical({i:row[i] for i in subset})
+ 140                 counts[size][p]+=1
+ 141         parts=[]
+ 142         for mate in terms[1:]:
+ 143             first=(terms[0],mate)
+ 144             second=tuple(i for i in terms if i not in first)
+ 145             pa,_=canonical({i:row[i] for i in first})
+ 146             pb,_=canonical({i:row[i] for i in second})
+ 147             parts.append((pa,pb))
+ 148         partitions.append(parts)
+ 149     unique_outputs=len(set(output_keys))==n
+ 150     max_pair=max(counts[2].values())
+ 151     max_triple=max(counts[3].values())
+ 152     valid=unique_outputs and max_pair<=2 and max_triple<=1
+ 153     cert={'distinct_outputs_up_to_sign':unique_outputs,
+ 154           'pair_patterns':len(counts[2]),'max_pair_output_incidence':max_pair,
+ 155           'triple_patterns':len(counts[3]),'max_triple_output_incidence':max_triple,
+ 156           'cancellation_free_addition_lower_bound':2*n if valid else None,
+ 157           'proof_inequalities':[
+ 158               {'triple_outputs':k,'bound':n+k+(2*n-k+1)//2} for k in range(n+1)]}
+ 159     return cert,partitions
+ 160 
+ 161 
+ 162 def enumerate_pair_partitions(partitions):
+ 163     best=10**9
+ 164     best_assignment=None
+ 165     multiplicity=0
+ 166     histogram=Counter()
+ 167     for assignment in product(range(3),repeat=len(partitions)):
+ 168         pairs=set()
+ 169         for options,choice in zip(partitions,assignment):
+ 170             pairs.update(options[choice])
+ 171         size=len(pairs)
+ 172         histogram[size]+=1
+ 173         if size<best:
+ 174             best=size
+ 175             best_assignment=assignment
+ 176             multiplicity=1
+ 177         elif size==best:
+ 178             multiplicity+=1
+ 179     return {'assignments_examined':3**len(partitions), 'minimum_pairs':best,
+ 180             'optimal_assignments':multiplicity,
+ 181             'pair_count_histogram':dict(sorted(histogram.items()))},best_assignment
+ 182 
+ 183 
+ 184 def candidate_from_partition(rows, partitions, choices):
+ 185     dag=DAG(len(rows))
+ 186     outs=[]
+ 187     for row,options,choice in zip(rows,partitions,choices):
+ 188         pairrefs=[]
+ 189         for pair in options[choice]:
+ 190             (i,si),(j,sj)=pair
+ 191             ref=dag.add((i,si),(j,sj))
+ 192             # Orient this canonical pair as in the target row.
+ 193             orient=int(row[i]/si)
+ 194             pairrefs.append((ref[0],ref[1]*orient))
+ 195         outs.append(dag.add(*pairrefs))
+ 196     assert [dag.value(o) for o in outs]==rows
+ 197     return dag,outs
+ 198 
+ 199 
+ 200 def lift_dirty(dag, outs):
+ 201     """Emit actual invertible rational mixer and transparent scratch schedule.
+ 202 
+ 203     Each edge gets a role except that a binary gate reuses its first input
+ 204     role as its first outgoing role. Copy operations are additive shears;
+ 205     dirty values are never overwritten or assumed zero. Four complete mixer
+ 206     traversals and two copies/injections are explicitly charged.
+ 207     """
+ 208     n=dag.n
+ 209     outgoing=defaultdict(list)
+ 210     for g,(a,sa,b,sb) in enumerate(dag.gates,n):
+ 211         outgoing[a].append(('g',g,0))
+ 212         outgoing[b].append(('g',g,1))
+ 213     for o,(v,s) in enumerate(outs):
+ 214         outgoing[v].append(('o',o,0))
+ 215     roles={}
+ 216     nextrole=0
+ 217     mixer=[]
+ 218     inputs=[]
+ 219     for v in range(len(dag.forms)):
+ 220         edges=outgoing[v]
+ 221         assert edges
+ 222         if v<n:
+ 223             pivot=nextrole
+ 224             nextrole+=1
+ 225             inputs.append(pivot)
+ 226         else:
+ 227             a,sa,b,sb=dag.gates[v-n]
+ 228             pivot=roles[('g',v,0)]
+ 229             other=roles[('g',v,1)]
+ 230             assert pivot!=other
+ 231             if sa==-1:
+ 232                 mixer.append(('neg',pivot,None,None))
+ 233             mixer.append(('add',pivot,other,Q(sb)))
+ 234         roles[edges[0]]=pivot
+ 235         for e in edges[1:]:
+ 236             new=nextrole
+ 237             nextrole+=1
+ 238             roles[e]=new
+ 239             mixer.append(('add',new,pivot,Q(1)))
+ 240     assert nextrole==len(dag.gates)+len(outs)
+ 241     scratch=nextrole
+ 242     dim=2*n+scratch
+ 243     state=[{i:Q(1)} for i in range(dim)]
+ 244     counts=Counter()
+ 245     word=[]
+ 246     peak_norm=Q(1)
+ 247     peak_denominator=1
+ 248     def emit(op,dst,src=None,weight=None):
+ 249         nonlocal peak_norm,peak_denominator
+ 250         counts[op]+=1
+ 251         word.append([op,dst,src,str(weight) if weight is not None else None])
+ 252         if op=='neg':
+ 253             state[dst]={i:-v for i,v in state[dst].items()}
+ 254         else:
+ 255             state[dst]=combine(state[dst],state[src],1,weight)
+ 256         peak_norm=max(peak_norm,sum(abs(v) for v in state[dst].values()))
+ 257         peak_denominator=max(peak_denominator,max((v.denominator for v in state[dst].values()),default=1))
+ 258     def mix(inverse=False):
+ 259         ops=reversed(mixer) if inverse else mixer
+ 260         for op,dst,src,w in ops:
+ 261             emit(op,2*n+dst,2*n+src if src is not None else None,
+ 262                  -w if inverse and w is not None else w)
+ 263     def inject(sign):
+ 264         for j,(v,s) in enumerate(outs):
+ 265             emit('add',n+j,2*n+roles[('o',j,0)],Q(sign*s,4))
+ 266     def copy(sign):
+ 267         for i,p in enumerate(inputs):
+ 268             emit('add',2*n+p,i,Q(sign))
+ 269     mix();inject(-1);mix(True);copy(1)
+ 270     mix();inject(1);mix(True);copy(-1)
+ 271     expected=[{i:Q(1)} for i in range(dim)]
+ 272     for j,ref in enumerate(outs):
+ 273         expected[n+j]=combine(expected[n+j],dag.value(ref),1,Q(1,4))
+ 274     assert state==expected,'dirty full-state map mismatch'
+ 275     serial=[sorted((i,str(v)) for i,v in row.items()) for row in state]
+ 276     digest=hashlib.sha256(json.dumps(serial,separators=(',',':')).encode()).hexdigest()
+ 277     return {'full_state_dimension':dim,'scratch_roles':scratch,
+ 278             'mixer_shears':sum(op[0]=='add' for op in mixer),
+ 279             'mixer_sign_flips':sum(op[0]=='neg' for op in mixer),
+ 280             'complete_word_shears':counts['add'],
+ 281             'complete_word_sign_flips':counts['neg'],
+ 282             'normalizing_quarter_coefficients':2*n,
+ 283             'general_scalar_multiplications':0,
+ 284             'shear_operand_reads':2*counts['add'],
+ 285             'shear_destination_writes':counts['add'],
+ 286             'signed_quarter_output_updates':2*n,
+ 287             'maximum_intermediate_row_l1_norm':str(peak_norm),
+ 288             'maximum_intermediate_coefficient_denominator':peak_denominator,
+ 289             'source_and_scratch_restoration':True,
+ 290             'all_input_and_dirty_basis_columns_checked':dim,
+ 291             'full_state_matrix_sha256':digest},word,serial
+ 292 
+ 293 
+ 294 def run_case(t,r,start=0,exhaustive=False):
+ 295     assert t & (t-1)==0 and r & (r-1)==0 and (2*r)%t==0
+ 296     n=t*r
+ 297     dag=DAG(n)
+ 298     refs=[(i,1) for i in range(n)]
+ 299     routes=[]
+ 300     for s in (start,start+1):
+ 301         refs,route=stage_refs(dag,refs,t,r,s)
+ 302         routes.extend({'stage':s,**x} for x in route)
+ 303     rows=[dag.value(o) for o in refs]
+ 304     cert,partitions=lower_bound_certificate(rows)
+ 305     assert cert['cancellation_free_addition_lower_bound']==len(dag.gates)==2*n
+ 306     baseline_profile,baseline_word,baseline_matrix=lift_dirty(dag,refs)
+ 307     result={'t':t,'r':r,'start_stage':start,'real_scalar_inputs':n,
+ 308             'baseline_add_sub':len(dag.gates),'candidate_add_sub':len(dag.gates),
+ 309             'baseline_and_candidate_final_quarter_scales':n,
+ 310             'general_multiplications':0,'lower_bound_certificate':cert,
+ 311             'routing':{'signed_twiddle_records':routes,
+ 312                        'explicit_twiddle_coefficient_reads_if_materialized':len(routes)*r,
+ 313                        'explicit_twiddle_coefficient_writes_if_materialized':len(routes)*r,
+ 314                        'fused_signed_edge_count':2*len(dag.gates)+n,
+ 315                        'fixed_tape_routing_not_implemented':True},
+ 316             'dirty_lift':baseline_profile}
+ 317     artifacts={'baseline_word':baseline_word,'full_state_matrix':baseline_matrix,
+ 318                'normalized_target_matrix':[
+ 319                    sorted((i,str(v/4)) for i,v in row.items()) for row in rows]}
+ 320     if exhaustive:
+ 321         enumeration,assignment=enumerate_pair_partitions(partitions)
+ 322         candidate,candidate_out=candidate_from_partition(rows,partitions,assignment)
+ 323         cp,cw,cm=lift_dirty(candidate,candidate_out)
+ 324         assert cp['full_state_dimension']==baseline_profile['full_state_dimension']
+ 325         assert cm==baseline_matrix
+ 326         result['pair_partition_enumeration']=enumeration
+ 327         result['candidate_dirty_lift']=cp
+ 328         result['candidate_add_sub']=len(candidate.gates)
+ 329         artifacts['candidate_word']=cw
+ 330         artifacts['candidate_optimal_pair_assignment']=assignment
+ 331     # Independently check the full untruncated transform against its defining sum.
+ 332     full=DAG(n)
+ 333     fr=[(i,1) for i in range(n)]
+ 334     for s in range(t.bit_length()-1):
+ 335         fr,_=stage_refs(full,fr,t,r,s)
+ 336     matrix=[{i:v/t for i,v in full.value(o).items()} for o in fr]
+ 337     assert matrix==fourier_reference(t,r)
+ 338     result['closed_form_full_fourier_check']=True
+ 339     return result,artifacts
+ 340 
+ 341 
+ 342 def rounding_counterexample():
+ 343     t,r=4,2
+ 344     # Coordinates in units of 2^-p for p=1, constants only, all in disk.
+ 345     x=[Q(2),Q(0),Q(1),Q(0),Q(1),Q(0),Q(0),Q(0)]
+ 346     staged=x
+ 347     exact=x
+ 348     for s in range(2):
+ 349         staged=stage_numerical(staged,t,r,s,True)
+ 350         exact=stage_numerical(exact,t,r,s,False)
+ 351     fused=[Q(int(v)) for v in exact]
+ 352     assert staged!=fused and staged[0]==0 and fused[0]==1
+ 353     return {'p':1,'inputs_in_grid_units':list(map(str,x)),
+ 354             'staged_rounded_outputs_in_grid_units':list(map(str,staged)),
+ 355             'fused_once_rounded_outputs_in_grid_units':list(map(str,fused)),
+ 356             'interpretation':'Multiply grid units by 1/2. DC differs: 0 versus 1/2.'}
+ 357 
+ 358 
+ 359 def main():
+ 360     ap=argparse.ArgumentParser()
+ 361     ap.add_argument('--out',type=Path,default=Path(__file__).parent/'results')
+ 362     args=ap.parse_args();args.out.mkdir(exist_ok=True)
+ 363     cases=[]
+ 364     for t,r,s in [(4,2,0),(4,4,0),(4,8,0),(8,4,0),(8,4,1),
+ 365                   (8,8,0),(16,8,0),(16,8,1),(16,8,2),(16,16,0)]:
+ 366         result,artifacts=run_case(t,r,s,exhaustive=(t,r,s)==(4,2,0))
+ 367         cases.append(result)
+ 368         name=f't{t}_r{r}_s{s}'
+ 369         (args.out/(name+'_certificate.json')).write_text(json.dumps(artifacts,indent=2)+'\n')
+ 370     summary={'scope':'Finite exact cancellation-free signed-addition experiment; no frame-profile or asymptotic certificate.',
+ 371              'cases':cases,'rounded_interface_counterexample':rounding_counterexample()}
+ 372     (args.out/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+ 373     for c in cases:
+ 374         print(f"t={c['t']}, r={c['r']}, stage={c['start_stage']}: "
+ 375               f"{c['baseline_add_sub']} baseline additions = restricted optimum; "
+ 376               f"dirty full dimension {c['dirty_lift']['full_state_dimension']} checked")
+ 377     print('All exact checks passed. No addition saving in the tested grammar.')
+ 378 
+ 379 
+ 380 if __name__=='__main__':
+ 381     main()

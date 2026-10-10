@@ -1,0 +1,51 @@
+   1 #!/usr/bin/env python3
+   2 """Optional independent network-flow audit: all 15*255 parity layouts.
+   3 
+   4 Requires networkx, scipy, numpy. Checks exact GF(p) Fourier rank for each
+   5 of the 255 masks in two prime fields (510 exact rank calculations), then
+   6 checks 3825 exact integer maxflows for all choices of replaced stages.
+   7 """
+   8 from pathlib import Path
+   9 import json,itertools
+  10 from verify_rank_rigidity import N,K,PRIMES,affine,transport,parity,boundary,rank_mod,fourier_matrix
+  11 from fast_mincut import ScanFlowOracle
+  12 
+  13 HERE=Path(__file__).resolve().parent
+  14 L=json.loads((HERE/'AFFINE_LAYOUT.json').read_text())
+  15 perms=[affine(x) for x in L['affine_shuffle_columns']]
+  16 saved=json.loads((HERE/'EXACT_CERTIFICATES.json').read_text())['certificates']
+  17 paths=[]
+  18 for mask in range(1,N):
+  19     trace=[mask]
+  20     for p in perms:trace.append(transport(trace[-1],p))
+  21     R=[i for i in range(N) if parity(i,trace[-1])==1]
+  22     C=[i for i in range(N) if parity(i,trace[0])==0]
+  23     expected= N//4 if (trace[0].bit_length()-1)+(trace[-1].bit_length()-1)<=K-2 else N//2
+  24     paths.append((mask,trace,R,C,expected))
+  25 for p in PRIMES:
+  26     F,_=fourier_matrix(p)
+  27     for mask,trace,R,C,rank in paths:
+  28         actual=rank_mod(F[__import__('numpy').ix_(R,C)],p)
+  29         assert actual==rank,(p,mask,actual,rank)
+  30     print('PASS 255 exact Fourier-rank checks modulo',p,flush=True)
+  31 
+  32 cut_checks=0
+  33 for count in range(1,5):
+  34     for J0 in itertools.combinations(range(4),count):
+  35         stages=tuple(x+1 for x in J0)
+  36         r=[0 if j in J0 else 1 for j in range(4)]
+  37         oracle=ScanFlowOracle(N,r,perms)
+  38         maxgap=-1
+  39         for mask,trace,R,C,rank in paths:
+  40             flow=oracle.bound(R,C)
+  41             budget=sum(boundary(trace[j]) for j in range(4) if j not in J0)
+  42             assert flow<=budget,(stages,mask,flow,budget)
+  43             maxgap=max(maxgap,rank-flow)
+  44             cut_checks+=1
+  45         matching=next(c for c in saved if tuple(c['replaced_stages'])==stages)
+  46         assert maxgap==matching['rank_correction_lower_bound']
+  47         selected=next(p for p in paths if p[0]==matching['input_mask'])
+  48         assert oracle.bound(selected[2],selected[3])==matching['remaining_stage_capacity']
+  49         print('PASS',stages,'maximum parity-family deficit',maxgap,flush=True)
+  50 assert cut_checks==3825
+  51 print('PASS 3,825 exact min-cut calculations; 510 independent modular rank checks')

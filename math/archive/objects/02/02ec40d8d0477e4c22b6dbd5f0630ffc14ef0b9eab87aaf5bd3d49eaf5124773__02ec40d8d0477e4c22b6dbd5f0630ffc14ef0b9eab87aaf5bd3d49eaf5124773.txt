@@ -1,0 +1,79 @@
+"""Derive the 6-variable necessary determinant eliminating gamma1/gamma2,
+and the 5-variable resultant with the linear-in-beta lower quartic."""
+from __future__ import annotations
+import json,random
+from pathlib import Path
+from exact_minor import make_exact
+from exact_upper import build as upper_build
+from inverse_quartic import poly_eval
+from dual_support import primitive_root
+
+def split_upper():
+    D,R=upper_build()
+    out={}
+    for k,P in R.items():
+        coef=[{}, {}, {}]
+        for mon,c in P.items():
+            assert mon.count(6)<=1 and mon.count(7)<=1 and not(6 in mon and 7 in mon)
+            i=1 if 6 in mon else 2 if 7 in mon else 0
+            sub=tuple(x for x in mon if x<6)
+            coef[i][sub]=c
+        out[k]=coef
+    return out
+
+def split_lower():
+    Q,A,B,C=make_exact();return A,B,C
+
+def det3(M,p):
+    a,b,c=M[0];d,e,f=M[1];g,h,i=M[2]
+    return (a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g))%p
+
+def eval_G(base,p,w,coefs):
+    M=[[poly_eval(coefs[k][j],base,p,w) for j in range(3)] for k in (1,2,5)]
+    return det3(M,p)
+
+def prove():
+    coefs=split_upper();A,B,C=split_lower()
+    for k,c in coefs.items():
+        assert len(c[0])==len(c[1])==len(c[2])
+        assert max(len(m) for q in c for m in q)<=6
+    p=12289;w=primitive_root(p,8)
+    raw=[103,211,321,455,500,678]
+    raw_G=eval_G(raw,p,w,coefs)
+    assert raw_G==4050
+    rng=random.Random(20261009)
+    witnesses=[]
+    for _ in range(60):
+        t,h0,h1,h2,hl=[rng.randrange(1,p) for _ in range(5)]
+        vals=[t,h0,h1,h2,hl,0]
+        a=poly_eval(A,vals,p,w);b=poly_eval(B,vals,p,w);c=poly_eval(C,vals,p,w)
+        if b==0:continue
+        beta=-(t*a+c)*pow(b,-1,p)%p
+        vals[-1]=beta
+        q=(t*a+beta*b+c)%p
+        assert q==0
+        g=eval_G(vals,p,w,coefs)
+        if g!=0:witnesses.append(dict(t=t,h0=h0,h1=h1,h2=h2,hl=hl,beta=beta,coef_beta=b,lower_Q=q,upper_elimination_G=g))
+    assert witnesses
+    w0=witnesses[0]
+    # Upper-triangular field evaluation by interpolating on beta in GF(p),
+    # and testing degree via finite differences. Determinant degree <=6.
+    def degree_for(fixed):
+        f=[eval_G(fixed+[beta],p,w,coefs) for beta in range(7)]
+        last_nonzero=0
+        for order in range(7):
+            if any(y for y in f):last_nonzero=order
+            f=[(f[j+1]-f[j])%p for j in range(len(f)-1)]
+        return last_nonzero
+    cases=[degree_for([rng.randrange(1,p) for _ in range(5)]) for _ in range(15)]
+    obj=dict(field='Q[z]/(z^4+1)',gamma_elimination='G=det of the 3x3 coefficient matrix of R1,R2,R5 linear in (1,gamma1,gamma2)',
+        degree_bound_G=18, variable_order=['t','h0','h1','h2','hl','beta'],
+        upper_coefficient_terms={str(k):list(map(len,c)) for k,c in coefs.items()},
+        nonzero_G_mod_p=dict(prime=p,root=w,parameters=raw,value=raw_G),
+        independent_of_lower_mod_p=w0,
+        sampled_beta_degrees=cases,
+        next_elimination='On B(h)!=0, H(t,h)=B(h)^d G(t,h,beta=-(A*t+C)/B)=0; d >= deg_beta(G). No expanded H is required to evaluate its exact arithmetic circuit.',
+        caveat='Necessary conditions only, no global Fourier impossibility proof.')
+    Path(__file__).with_name('gamma_elimination_results.json').write_text(json.dumps(obj,indent=2)+'\n')
+    print(json.dumps(obj,indent=2))
+if __name__=='__main__':prove()

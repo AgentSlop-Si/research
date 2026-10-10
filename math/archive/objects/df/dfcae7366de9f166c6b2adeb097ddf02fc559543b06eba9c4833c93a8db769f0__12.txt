@@ -1,0 +1,240 @@
+0001 """Independent mathematical audit. No uploaded programs imported or executed."""
+0002 import json, math, random, hashlib, pathlib, itertools
+0003 P=998244353
+0004 B=pathlib.Path(__file__).resolve().parent
+0005 out={}
+0006 
+0007 def rank(M,p=P):
+0008  a=[[v%p for v in r] for r in M]; n=len(a);m=len(a[0]) if n else 0;k=0
+0009  for j in range(m):
+0010   t=next((i for i in range(k,n) if a[i][j]),None)
+0011   if t is None:continue
+0012   a[k],a[t]=a[t],a[k];inv=pow(a[k][j],-1,p)
+0013   a[k]=[v*inv%p for v in a[k]]
+0014   for i in range(k+1,n):
+0015    v=a[i][j]
+0016    if v:a[i]=[(x-v*y)%p for x,y in zip(a[i],a[k])]
+0017   k+=1
+0018   if k==n:break
+0019  return k
+0020 
+0021 def mm(A,B,p=P):return [[sum(x*y for x,y in zip(row,col))%p for col in zip(*B)] for row in A]
+0022 def mv(A,x,p=P):return [sum(a*b for a,b in zip(r,x))%p for r in A]
+0023 def trans(A):return [list(r) for r in zip(*A)]
+0024 def sub(A,B,p=P):return [[(x-y)%p for x,y in zip(a,b)] for a,b in zip(A,B)]
+0025 def eye(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+0026 def perm(s):return [[int(s[j]==i) for j in range(len(s))] for i in range(len(s))]
+0027 def inv(A,p=P):
+0028  n=len(A); a=[[(v%p) for v in r]+e for r,e in zip(A,eye(n))]
+0029  for k in range(n):
+0030   t=next((i for i in range(k,n) if a[i][k]),None)
+0031   if t is None:return None
+0032   a[k],a[t]=a[t],a[k];u=pow(a[k][k],-1,p);a[k]=[v*u%p for v in a[k]]
+0033   for i in range(n):
+0034    if i!=k:
+0035     u=a[i][k];a[i]=[(x-u*y)%p for x,y in zip(a[i],a[k])]
+0036  return [r[n:] for r in a]
+0037 def cycles(s):
+0038  seen=set();c=0
+0039  for j in range(len(s)):
+0040   if j in seen:continue
+0041   c+=1
+0042   while j not in seen:seen.add(j);j=s[j]
+0043  return c
+0044 def diff_rank(s,t):
+0045  ti=[0]*len(t)
+0046  for i,v in enumerate(t):ti[v]=i
+0047  return len(s)-cycles([ti[v] for v in s])
+0048 def green(s,a,p=P):
+0049  # Cycle-wise recurrence formula valid for every permutation.
+0050  n=len(s);G=[[0]*n for _ in range(n)]
+0051  for j in range(n):
+0052   cyc=[j];i=s[j]
+0053   while i!=j:cyc.append(i);i=s[i]
+0054   den=pow((1-pow(a,len(cyc),p))%p,-1,p);v=den
+0055   for i in cyc:G[i][j]=v;v=v*a%p
+0056  return G
+0057 def random_cycle(n,seed):
+0058  a=list(range(n));random.Random(seed).shuffle(a);s=[0]*n
+0059  for i in range(n):s[a[i]]=a[(i+1)%n]
+0060  return s
+0061 def direct_fourier(n,p=P):
+0062  w=pow(3,(p-1)//n,p);return [[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+0063 
+0064 # Resolvent identity including characteristic divisibility and non-Hamiltonian permutations.
+0065 c=0
+0066 for p in [5,7,17,101]:
+0067  for n in range(2,6):
+0068   rng=random.Random(p*100+n)
+0069   for trial in range(35):
+0070    s=list(range(n));t=list(range(n));rng.shuffle(s);rng.shuffle(t)
+0071    for a in range(1,min(p,5)):
+0072     try:Gs=green(s,a,p);Gt=green(t,a,p)
+0073     except ValueError:continue
+0074     assert rank(sub(Gs,Gt,p),p)==diff_rank(s,t)
+0075     assert mm(sub(eye(n),[[a*v for v in r] for r in perm(s)],p),Gs,p)==eye(n)
+0076     c+=1
+0077 out['arbitrary_permutation_resolvent_checks']=c
+0078 # Source helper counterexample: its overwrite formula on identity permutation.
+0079 n=8;a=2
+0080 bad_scalar=pow(a,n-1,P)*pow((1-pow(a,n,P))%P,-1,P)%P
+0081 bad=[[bad_scalar*int(i==j)%P for j in range(n)] for i in range(n)]
+0082 z=[(j+1)%n for j in range(n)]
+0083 out['source_direct_green_counterexample']={'n':n,'p':P,'alpha':a,'reference':'identity','source_scalar':bad_scalar,'correct_scalar':pow(1-a,-1,P),'bad_difference_rank':rank(sub(green(z,a),bad)),'true_difference_rank':n-1,'residual_diagonal':((1-a)*bad_scalar-1)%P}
+0084 assert out['source_direct_green_counterexample']['bad_difference_rank']==8
+0085 
+0086 out['all_affine']=[]
+0087 for n in [32,64,128,256]:
+0088  s=random_cycle(n,2700+n);best=n;witness=None
+0089  for u in range(1,n,2):
+0090   for b in range(n):
+0091    r=diff_rank(s,[(u*j+b)%n for j in range(n)])
+0092    if r<best:best=r;witness=[u,b]
+0093  assert best=={32:24,64:52,128:114,256:240}[n]
+0094  out['all_affine'].append({'n':n,'references':n*n//2,'min_rank':best,'witness':witness})
+0095 
+0096 # Exact integer Sylvester certificate, symmetric Bareiss derived afresh.
+0097 def positive_minors(A):
+0098  a=[r[:] for r in A];n=len(a);den=1;ds=[]
+0099  for k in range(n):
+0100   d=a[k][k];assert d>0;ds.append(d)
+0101   for i in range(k+1,n):
+0102    for j in range(i,n):
+0103     q,r=divmod(d*a[i][j]-a[i][k]*a[k][j],den);assert not r
+0104     a[i][j]=q;a[j][i]=q
+0105   for i in range(k+1,n):a[i][k]=a[k][i]=0
+0106   den=d
+0107  return ds
+0108 out['sylvester']=[]
+0109 for n in [32,64,128,256]:
+0110  L=[[0]*n for _ in range(n)]
+0111  for s in [[(j+1)%n for j in range(n)],random_cycle(n,2700+n)]:
+0112   for j,k in enumerate(s):L[j][j]+=1;L[k][k]+=1;L[j][k]-=1;L[k][j]-=1
+0113  K=[[2*n*L[i][j]+2-n*int(i==j) for j in range(n)] for i in range(n)]
+0114  ds=positive_minors(K)
+0115  out['sylvester'].append({'n':n,'positive_leading_minors':len(ds),'sha256':hashlib.sha256(';'.join(map(str,ds)).encode()).hexdigest(),'last_bits':ds[-1].bit_length()})
+0116 
+0117 out['density']=[]
+0118 for n in [16,32,64,128]:
+0119  t=list(range(n));t[0],t[n//4+1]=t[n//4+1],t[0];s=[t[(t[j]+1)%n] for j in range(n)];nonzero=0
+0120  for a in range(n):
+0121   for b in range(n):
+0122    hist=[0]*(n//2)
+0123    for j in range(n):
+0124     k=(a*s[j]-b*j)%n;hist[k%(n//2)]+=1 if k<n//2 else -1
+0125    nonzero+=any(hist)
+0126  assert nonzero==n*n-3*n+4 and diff_rank(s,[(j+1)%n for j in range(n)])==2
+0127  out['density'].append({'n':n,'nonzero':nonzero,'rank_gap':2})
+0128 
+0129 # Cross-cut exact identity and full N=16 mixer audit.
+0130 c=0;out['mixer_cuts']=[]
+0131 for n in [4,6,8,16]:
+0132  z=[(j+1)%n for j in range(n)];w=random_cycle(n,2700+n)
+0133  G=green(z,pow(4,-1,P));H=green(w,pow(5,-1,P));M=[[(a+3*pow(2,-1,P)*b)%P for a,b in zip(r,s)] for r,s in zip(G,H)]
+0134  mi=n
+0135  for I in itertools.combinations(range(n),n//2):
+0136   I=set(I);J=set(range(n))-I
+0137   for s,Q in [(z,G),(w,H)]:
+0138    cut=sum(s[j] in I for j in J)
+0139    assert rank([[Q[i][j] for j in J] for i in I])==cut;c+=1
+0140   mi=min(mi,rank([[M[i][j] for j in J] for i in I]))
+0141  out['mixer_cuts'].append({'n':n,'cuts':math.comb(n,n//2),'minimum_rank':mi})
+0142 assert out['mixer_cuts'][-1]['minimum_rank']==4
+0143 out['cyclic_cut_rank_checks']=c
+0144 
+0145 # Algebraic reconstruction directly from dense entries, no source oracle imports.
+0146 rng=random.Random(20251027);recovery=[]
+0147 for n in [4,8,16,32,64,128,256]:
+0148  w=pow(3,(P-1)//n,P);roots={pow(w,i,P):i for i in range(n)}
+0149  for trial in range(5):
+0150   rp=list(range(n));cp=list(range(n));rng.shuffle(rp);rng.shuffle(cp)
+0151   l=[rng.randrange(1,P) for _ in range(n)];r=[rng.randrange(1,P) for _ in range(n)]
+0152   M=[[l[i]*r[j]*pow(w,rp[i]*cp[j],P)%P for j in range(n)] for i in range(n)]
+0153   j=next(j for j in range(1,n) if math.gcd(cp[j]-cp[0],n)==1)
+0154   aa=[roots[M[i][j]*M[0][0]*pow(M[i][0]*M[0][j],-1,P)%P] for i in range(n)]
+0155   i=aa.index(1)
+0156   bb=[roots[M[i][j]*M[0][0]*pow(M[i][0]*M[0][j],-1,P)%P] for j in range(n)]
+0157   assert sorted(aa)==sorted(bb)==list(range(n))
+0158   assert all(M[i][j]==M[i][0]*M[0][j]*pow(M[0][0],-1,P)*pow(w,aa[i]*bb[j],P)%P for i in range(n) for j in range(n))
+0159  recovery.append({'n':n,'full_matrix_controls':5})
+0160 out['four_probe_reconstruction']=recovery
+0161 # Four structural probes do not certify equality; exact rank-one hidden corruption.
+0162 n=8;F=direct_fourier(n);M=[r[:] for r in F];M[7][7]=(M[7][7]+1)%P
+0163 assert all(M[i][j]==F[i][j] for i in range(n) for j in range(n) if i in [0,1] or j in [0,1])
+0164 out['probe_only_counterexample']={'n':n,'changed_entry':[7,7],'delta':1,'matching_rows':[0,1],'matching_columns':[0,1],'difference_rank':rank(sub(M,F))}
+0165 
+0166 # Homogeneous intertwiner identities and two/three-stage witnesses.
+0167 def hom(n,a,b,d,p):return [[(a if i>j else b if i<j else d)%p for j in range(n)] for i in range(n)]
+0168 def inter(n,a,b,d,p):
+0169  forward=b%p!=0;s=b if forward else a;o=a if forward else b
+0170  K=[[0]*n for _ in range(n)]
+0171  for i in range(n):K[i][(i+1)%n if forward else (i-1)%n]=s if (i<n-1 if forward else i>0) else o
+0172  BB=[[(K[i][j]-s*int(i==j))%p for j in range(n)] for i in range(n)]
+0173  AA=[[((d-s)*K[i][j]+s*(o-d)*int(i==j))%p for j in range(n)] for i in range(n)]
+0174  return AA,BB,forward
+0175 c=0;homo=[]
+0176 for p,g in [(12289,11),(65537,3)]:
+0177  for n in [8,16,32,64]:
+0178   w=pow(g,(p-1)//n,p);assert pow(w,n,p)==1 and pow(w,n//2,p)!=1
+0179   FF=[[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+0180   for trial in range(32):
+0181    pars=[]
+0182    for k in range(3):
+0183     a,b,d=[rng.randrange(p) for _ in range(3)]
+0184     if trial%4==0:b=0;a=a or 1
+0185     if trial%4==1:a=0;b=b or 1
+0186     if trial%4==2:b=a or 1;a=b
+0187     pars.append((a,b,d))
+0188    HH=[hom(n,*v,p) for v in pars];AB=[inter(n,*v,p) for v in pars]
+0189    for H,(A,BB,fwd) in zip(HH,AB):
+0190     assert mm(BB,H,p)==mm(H,BB,p)==A;c+=1
+0191    A1,B1,f1=AB[0];A3,B3,f3=AB[2];j=1 if f1 else 0
+0192    v=[r[j] for r in A1];perm1=list(range(n));perm2=list(range(n));rng.shuffle(perm1);rng.shuffle(perm2)
+0193    v=mv(HH[1],[v[k] for k in perm1],p);v=[v[k] for k in perm2];rhs=mv(A3,v,p)
+0194    lhs=mv(B3,mv(FF,[r[j] for r in B1],p),p)
+0195    idx=range(n-1) if f3 else range(1,n)
+0196    assert len({lhs[i] for i in idx})==n-1
+0197    assert len({rhs[i] for i in idx})<=13
+0198    if n>=16:assert lhs!=rhs
+0199   homo.append({'p':p,'n':n,'cases':32})
+0200 out['homogeneous_intertwiner_checks']=c;out['homogeneous_three_stage']=homo
+0201 
+0202 # Broad asymmetric envelopes: support and Fourier polynomial constraints.
+0203 c=0
+0204 for p,g in [(12289,11),(65537,3)]:
+0205  for n in [8,16,32,64]:
+0206   w=pow(g,(p-1)//n,p)
+0207   for trial in range(45):
+0208    r=[rng.randrange(1,p) for _ in range(n)];ell=[rng.randrange(1,p) for _ in range(n)]
+0209    u,v,b,e,d,dd=[[rng.randrange(p) for _ in range(n)] for k in range(6)]
+0210    S1=[[u[i]*r[j]%p if i>j else v[i]*r[j]%p if i<j else d[i] for j in range(n)] for i in range(n)]
+0211    S2=[[ell[i]*b[j]%p if i>j else ell[i]*e[j]%p if i<j else dd[i] for j in range(n)] for i in range(n)]
+0212    gg=[rng.randrange(1,p) for _ in range(n)];hh=[rng.randrange(1,p) for _ in range(n)]
+0213    perm1=list(range(n));rng.shuffle(perm1);left=[];right=[]
+0214    for j in [0,1]:
+0215     x=[0]*n;x[j]=pow(r[j],-1,p);x[j+1]=-pow(r[j+1],-1,p)%p
+0216     y=mv(S1,x,p);assert all(y[i]==0 for i in range(n) if i not in [j,j+1])
+0217     z=mv(S2,[y[k] for k in perm1],p);right.append([(z[i+1]*pow(ell[i+1],-1,p)-z[i]*pow(ell[i],-1,p))%p for i in range(n-1)])
+0218     z=[gg[i]*sum(hh[k]*x[k]*pow(w,i*k,p) for k in range(n))%p for i in range(n)]
+0219     left.append([(z[i+1]*pow(ell[i+1],-1,p)-z[i]*pow(ell[i],-1,p))%p for i in range(n-1)])
+0220    assert sum(bool(a or b) for a,b in zip(*right))<=6
+0221    assert sum(not(a or b) for a,b in zip(*left))<=2
+0222    if n>=10:assert left!=right
+0223    c+=1
+0224 out['asymmetric_envelope_cases']=c
+0225 # Twisted-circulant eigenvectors including diagonal singular choices.
+0226 c=0
+0227 for p,g in [(12289,11),(65537,3)]:
+0228  for n in [4,8,16,32,64]:
+0229   w=pow(g,(p-1)//n,p)
+0230   for trial in range(12):
+0231    q=rng.randrange(1,p)
+0232    while pow(q,n,p)==1:q=rng.randrange(1,p)
+0233    b=rng.randrange(1,p);a=b*pow(q,n,p)%p;d=rng.randrange(p);H=hom(n,a,b,d,p);ls=[]
+0234    for k in range(n):
+0235     z=q*pow(w,k,p)%p;lam=((d-b)*z+a-d)*pow(z-1,-1,p)%p;v=[pow(z,i,p) for i in range(n)]
+0236     assert mv(H,v,p)==[lam*x%p for x in v];ls.append(lam);c+=1
+0237    assert len(set(ls))==n
+0238 out['twisted_circulant_eigenvectors']=c
+0239 (B/'INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+0240 print(json.dumps(out,indent=2))

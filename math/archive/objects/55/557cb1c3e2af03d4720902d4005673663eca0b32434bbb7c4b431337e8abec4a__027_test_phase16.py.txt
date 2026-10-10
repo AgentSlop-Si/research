@@ -1,0 +1,143 @@
+"""Focused Phase16 regression tests; add exact auditors for all-basis replays."""
+import unittest
+import numpy as np
+from weyl_green import (P, root_for_n, WeylGreen, complex_Green_bounds,
+                        field_dft)
+from weyl_atom_audit import (atoms,apply_left,apply_right,
+    apply_left_to_dft_column,apply_right_to_dft_column)
+from entropy_gate import (radix2_path,entropy_witness_nontrivial_gates,
+                          robust_approximation_gate)
+from permutation_green import (PermutationGreen,shuffled_permutation,
+                               permutation_cycles,union_find_partition)
+
+
+class Phase16(unittest.TestCase):
+    def test_primitive_roots(self):
+        for n in (4,8,16,24,32,48,64,96,128,192,384):
+            w=root_for_n(n)
+            self.assertEqual(pow(w,n,P),1)
+            self.assertNotEqual(w,1)
+
+    def test_reject_nondivisor(self):
+        with self.assertRaises(ValueError):
+            root_for_n(7)
+
+    def test_complex_condition_certificate(self):
+        b=complex_Green_bounds()
+        self.assertEqual(b['condition_number_upper'],2.5)
+        self.assertEqual(b['smallest_singular_lower'],4)
+
+    def test_finite_field_green_solve(self):
+        for n in (8,24,64,192):
+            g=WeylGreen(n,root_for_n(n))
+            for z in range(3):
+                x=[(j*j*j + (z+5)*j + 17*z + 11)%P for j in range(n)]
+                self.assertEqual(g.solve_L(g.apply_L(x)),x)
+
+    def test_intertwining_all_basis_small(self):
+        for n in (8,16,24,32):
+            g=WeylGreen(n,root_for_n(n))
+            for j in range(n):
+                expected=g.dft_column(j)
+                b=g.rhs_column_direct(j)
+                self.assertEqual(g.apply_L(expected),b)
+                self.assertEqual(g.dft_of_sparse_preprocessed_column(j),b)
+                self.assertEqual(g.solve_L(b),expected)
+
+    def test_noncommutativity(self):
+        n=24
+        w=root_for_n(n)
+        x=[0]*n;x[4]=1
+        SD=apply_left(x,w,[(1,1,1)])
+        Sx=apply_left(x,w,[(1,1,0)])
+        DS=apply_left(Sx,w,[(1,0,1)])
+        # The noncommutation is not just a parameter difference: DS=omega SD.
+        self.assertEqual(DS,[v*w%P for v in SD])
+        self.assertNotEqual(SD,DS)
+
+    def test_weyl_atoms_all_basis_small(self):
+        for n in (8,24,32):
+            w=root_for_n(n)
+            for j in range(n):
+                self.assertEqual(apply_left_to_dft_column(j,n,w,atoms()),
+                                 apply_right_to_dft_column(j,n,w,atoms()))
+
+    def test_weyl_wrong_exponent_mutation(self):
+        n=16
+        w=root_for_n(n)
+        left=apply_left_to_dft_column(3,n,w,atoms())
+        corrupt=atoms().copy()
+        c,a,b=corrupt[-1]
+        corrupt[-1]=(c,a,b+1)
+        right=apply_right_to_dft_column(3,n,w,corrupt)
+        self.assertNotEqual(left,right)
+
+    def test_linear_Weyl_application(self):
+        n=32
+        w=root_for_n(n)
+        x=[(k+1)**2%P for k in range(n)]
+        p=apply_right(x,w,atoms())
+        l=apply_left(x,w,atoms())
+        self.assertEqual(len(p),len(x))
+        self.assertEqual(len(l),len(x))
+        self.assertNotEqual(p,l)
+
+    def test_permutation_cycle_union_partition(self):
+        for n in (8,24,64,192):
+            pi=shuffled_permutation(n)
+            cycles=permutation_cycles(pi)
+            self.assertEqual(union_find_partition(pi),
+                             {frozenset(c) for c in cycles})
+            self.assertEqual(sum(map(len,cycles)),n)
+
+    def test_permutation_irregular_green_inverse(self):
+        for n in (8,24,64,192):
+            g=PermutationGreen(shuffled_permutation(n),root_for_n(n))
+            for salt in range(3):
+                x=[(k*k+salt*k+3*salt+1)%P for k in range(n)]
+                self.assertEqual(g.solve_L(g.apply_L(x)),x)
+
+    def test_permutation_full_basis_small(self):
+        for n in (8,16,24,64):
+            g=PermutationGreen(shuffled_permutation(n),root_for_n(n))
+            for j in range(n):
+                expected=g.dft_column(j)
+                b=g.rhs_column_direct(j)
+                self.assertEqual(b,g.apply_L(expected))
+                self.assertEqual(g.solve_L(b),expected)
+
+    def test_permutation_fixed_points_and_errors(self):
+        n=16
+        g=PermutationGreen(list(range(n)),root_for_n(n))
+        for j in range(n):
+            self.assertEqual(g.solve_L(g.rhs_column_direct(j)),g.dft_column(j))
+        with self.assertRaises(ValueError):
+            PermutationGreen([0]*n,root_for_n(n))
+
+    def test_entropy_fft_tightness(self):
+        for n in (4,8,16,32):
+            r=radix2_path(n)
+            self.assertEqual(r['radix2_gates'],r['lower_bound_n_log2_n_over_2'])
+            self.assertLess(r['max_fft_absolute_error'],1e-12)
+
+    def test_entropy_generic_rotations(self):
+        r=entropy_witness_nontrivial_gates(n=8,trials=60)
+        self.assertLessEqual(r['largest_entropy_increase_bits'],2+1e-10)
+
+    def test_entropy_approximate_certificate(self):
+        r=robust_approximation_gate(n=32)
+        self.assertGreater(r['entropy_potential_bits'],r['entropy_lower_certificate_bits'])
+
+    def test_complex_operator_bound_numerical(self):
+        for n in (4,8,16,32):
+            w=np.exp(-2j*np.pi/n)
+            L=np.zeros((n,n),dtype=np.complex128)
+            for k in range(n):
+                L[k,k]=7+w**k
+                L[k,(k-1)%n]+=2
+            sig=np.linalg.svd(L,compute_uv=False)
+            self.assertGreaterEqual(sig[-1]+1e-9,4)
+            self.assertLessEqual(sig[0]-1e-9,10)
+            self.assertLessEqual(sig[0]/sig[-1],2.5+1e-9)
+
+if __name__=='__main__':unittest.main()

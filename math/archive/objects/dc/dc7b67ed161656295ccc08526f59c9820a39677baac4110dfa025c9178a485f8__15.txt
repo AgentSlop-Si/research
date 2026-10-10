@@ -1,0 +1,136 @@
+   1 """Exact radix-4 DFT control using bidirectional-sum scan stages.
+   2 No dense transform is used by scan_fft. This is ordinary mixed-radix FFT,
+   3 encoded in the proposed stage model, not a new asymptotic FFT.
+   4 """
+   5 import json, random
+   6 from pathlib import Path
+   7 
+   8 
+   9 def scan_stage(x, radix, iroot, p):
+  10     """x is gathered into independent radix-2/4 groups, in leaf column order."""
+  11     n=len(x)
+  12     if radix == 4:
+  13         aa=[0,-1,-iroot,-1]; bb=[1,1,-1,1]
+  14         cc=[1,-1,-1,0]; dd=[-1,-3,3,-3]
+  15     elif radix == 2:
+  16         aa=[0,1]; bb=[1,1]; cc=[1,0]; dd=[-1,-3]
+  17     else: raise ValueError('radix must be 2 or 4')
+  18     f=[0]*n; u=[0]*n
+  19     for j in range(n):
+  20         r=j%radix
+  21         f[j]=((bb[r]*x[j]+aa[r]*f[j-1]) if r else bb[r]*x[j])%p
+  22     for j in range(n-1,-1,-1):
+  23         r=j%radix
+  24         u[j]=((bb[r]*x[j]+cc[r]*u[j+1]) if r+1<radix else bb[r]*x[j])%p
+  25     return [(f[j]+u[j]+dd[j%radix]*x[j])%p for j in range(n)]
+  26 
+  27 
+  28 def make_plan(n, root, p):
+  29     assert n>0 and n&(n-1)==0
+  30     lg=n.bit_length()-1
+  31     radices=([2] if lg%2 else []) + [4]*(lg//2)
+  32     assert pow(root,n,p)==1 and (n==1 or pow(root,n//2,p)!=1)
+  33     rev=[]
+  34     for pos in range(n):
+  35         q=pos; source=0; place=n
+  36         for radix in radices:
+  37             digit=q%radix; q//=radix; place//=radix
+  38             source+=digit*place
+  39         rev.append(source)
+  40     plans=[]; m=1; coefficient_multiplications=0; root_multiplications=0
+  41     def root_power_of_two(exponent):
+  42         nonlocal root_multiplications
+  43         value=root
+  44         while exponent>1:
+  45             value=value*value%p; exponent//=2; root_multiplications+=1
+  46         return value
+  47     ir=root_power_of_two(n//4) if n>=4 else 0
+  48     for radix in radices:
+  49         m*=radix; stride=m//radix
+  50         stage_root=root_power_of_two(n//m)
+  51         col=[1,3,0,2] if radix==4 else [0,1]
+  52         row=[0,2,1,3] if radix==4 else [0,1]
+  53         tw=[]; t=1
+  54         for j in range(stride):
+  55             powers=[1,t]
+  56             if radix==4:
+  57                 if j==0: powers += [1,1]
+  58                 else:
+  59                     t2=t*t%p
+  60                     powers += [t2, t2*t%p]
+  61                     coefficient_multiplications+=2
+  62             tw.append(powers)
+  63             if j+1<stride:
+  64                 t=t*stage_root%p; coefficient_multiplications+=1
+  65         gather=[]; scatter=[]; scalars=[]
+  66         for base in range(0,n,m):
+  67             for j in range(stride):
+  68                 for r in col:
+  69                     gather.append(base+j+r*stride); scalars.append(tw[j][r])
+  70                 for r in row:
+  71                     scatter.append(base+j+r*stride)
+  72         plans.append((radix,gather,scatter,scalars))
+  73     return rev, plans, coefficient_multiplications, root_multiplications, ir
+  74 
+  75 
+  76 def scan_fft(x, root, p, plan=None, counters=None):
+  77     n=len(x)
+  78     if plan is None: plan=make_plan(n,root,p)
+  79     rev, stages, prep, root_prep, ir=plan
+  80     a=[x[j]%p for j in rev]
+  81     for radix,gather,scatter,scalars in stages:
+  82         gathered=[a[j]*s%p if s!=1 else a[j] for j,s in zip(gather,scalars)]
+  83         y=scan_stage(gathered,radix,ir,p)
+  84         a=[0]*n
+  85         for pos,value in zip(scatter,y): a[pos]=value
+  86         if counters is not None:
+  87             counters['stage_count']+=1
+  88             counters['scan_multiplications']+=5*n-2*(n//radix)
+  89             counters['scan_additions']+=4*n-2*(n//radix)
+  90             counters['twiddle_data_multiplications']+=sum(s!=1 for s in scalars)
+  91             counters['permutation_words']+=2*n
+  92     return a
+  93 
+  94 
+  95 def direct_dft(x,root,p):
+  96     n=len(x)
+  97     return [sum(x[j]*pow(root,k*j,p) for j in range(n))%p for k in range(n)]
+  98 
+  99 
+ 100 def check():
+ 101     rng=random.Random(20261009)
+ 102     records=[]; total_columns=0; random_vectors=0
+ 103     for p,g in [(998244353,3),(2013265921,31)]:
+ 104         for n in [2,4,8,16,32,64,128,256]:
+ 105             root=pow(g,(p-1)//n,p); plan=make_plan(n,root,p)
+ 106             for j in range(n):
+ 107                 x=[0]*n; x[j]=1
+ 108                 actual=scan_fft(x,root,p,plan)
+ 109                 expected=[pow(root,k*j,p) for k in range(n)]
+ 110                 assert actual==expected,(p,n,j)
+ 111                 total_columns+=1
+ 112             for trial in range(3):
+ 113                 x=[rng.randrange(p) for _ in range(n)]
+ 114                 assert scan_fft(x,root,p,plan)==direct_dft(x,root,p),(p,n,trial)
+ 115                 random_vectors+=1
+ 116             counters=dict(stage_count=0,scan_multiplications=0,scan_additions=0,
+ 117                           twiddle_data_multiplications=0,permutation_words=n)
+ 118             scan_fft([0]*n,root,p,plan,counters)
+ 119             counters['twiddle_preparation_multiplications']=plan[2]
+ 120             counters['root_preparation_multiplications']=plan[3]
+ 121             counters['root_preparation_method']='Explicit repeated squaring for each stage root and the fourth root; O((log N)^2) field operations'
+ 122             if n.bit_length()%2==1:  # n=4**s
+ 123                 s=(n.bit_length()-1)//2
+ 124                 assert counters['stage_count']==s
+ 125                 assert counters['scan_multiplications']==9*n*s//2
+ 126                 assert counters['scan_additions']==7*n*s//2
+ 127                 assert counters['twiddle_data_multiplications']==3*n*s//4-n+1
+ 128                 assert counters['twiddle_preparation_multiplications']==n-1-3*s
+ 129             records.append(dict(prime=p,N=n,basis_columns_checked=n,random_vectors_checked=3,**counters))
+ 130     result=dict(status='all exact checks passed',basis_columns_checked=total_columns,
+ 131                 random_vectors_checked=random_vectors,records=records,
+ 132                 scope='Finite modular checks plus the accompanying all-N radix identity. No sublogarithmic-stage claim.')
+ 133     Path(__file__).with_name('radix4_results.json').write_text(json.dumps(result,indent=2)+'\n')
+ 134     print(json.dumps(result,indent=2))
+ 135 
+ 136 if __name__=='__main__': check()

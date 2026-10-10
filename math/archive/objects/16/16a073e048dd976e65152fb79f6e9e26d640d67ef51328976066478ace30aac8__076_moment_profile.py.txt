@@ -1,0 +1,20 @@
+from functools import lru_cache
+@lru_cache(None)
+def profiles(n,k):
+    # returns vectors x_i of ordered pairs of distinct points with 2-adic difference valuation i; diagonal n.
+    if n==1:return {(k,)} if k in (0,1) else set()
+    ans=set()
+    for a in range(max(0,k-n//2),min(n//2,k)+1):
+      b=k-a
+      for u in profiles(n//2,a):
+       for v in profiles(n//2,b):
+        ans.add((2*a*b,)+tuple(x+y for x,y in zip(u,v)))
+    return ans
+P=sorted(profiles(32,11))
+print('profiles',len(P))
+mx=-1; witness=None
+for x in P:
+ for y in P:
+  t=sum(xi*yj*(1 if i+j>=5 else -1 if i+j==4 else 0) for i,xi in enumerate(x) for j,yj in enumerate(y))
+  if t>mx:mx=t;witness=(x,y)
+print('max',mx,'versus min needed 3660.25', 'witness',witness)

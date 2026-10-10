@@ -1,0 +1,73 @@
+   1 """An independent modular audit; does not import the proposed scan/rank engine.
+   2 The general complex-number theorem is separately proved in RESEARCH.md.
+   3 """
+   4 from itertools import combinations
+   5 import json
+   6 import random
+   7 
+   8 
+   9 def elimination(matrix, prime):
+  10     if not matrix: return 0
+  11     m=[row[:] for row in matrix]
+  12     h=len(m);w=len(m[0]);r=0
+  13     for j in range(w):
+  14         pivot=-1
+  15         for i in range(r,h):
+  16             if m[i][j] %prime:
+  17                 pivot=i;break
+  18         if pivot<0:continue
+  19         m[r],m[pivot]=m[pivot],m[r]
+  20         inv=pow(m[r][j],prime-2,prime)
+  21         for i in range(r+1,h):
+  22             f=(m[i][j]*inv)%prime
+  23             if f:
+  24                 for k in range(j,w):
+  25                     m[i][k]=(m[i][k]-f*m[r][k])%prime
+  26         r+=1
+  27         if r==h:break
+  28     return r
+  29 
+  30 
+  31 def fourier(n,p,g):
+  32     w=pow(g,(p-1)//n,p)
+  33     assert pow(w,n,p)==1 and pow(w,n//2,p)!=1
+  34     return [[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+  35 
+  36 
+  37 def run():
+  38     cases=[]
+  39     for p,g in ((998244353,3),(2013265921,31)):
+  40         for n in (8,16,32,64):
+  41             f=fourier(n,p,g);h=n//2
+  42             natural=elimination([row[h:] for row in f[:h]],p)
+  43             order=list(range(0,n,2))+list(range(1,n,2))
+  44             parity=elimination([[f[i][j] for j in order[h:]] for i in order[:h]],p)
+  45             assert natural==h and parity==h//2
+  46             rec={'modulus':p,'length':n,'natural_rank':natural,'parity_rank':parity}
+  47             if n==8:
+  48                 subsets=list(combinations(range(n),h))
+  49                 rmin=n; histogram={}
+  50                 for row_indices in subsets:
+  51                     for col_indices in subsets:
+  52                         rr=elimination([[f[i][j] for j in col_indices] for i in row_indices],p)
+  53                         assert rr>=n//4
+  54                         histogram[rr]=histogram.get(rr,0)+1
+  55                         rmin=min(rr,rmin)
+  56                 assert sum(histogram.values())==4900
+  57                 rec['exhaustive_submatrices']=4900
+  58                 rec['minimum_exhaustive_rank']=rmin
+  59                 rec['exhaustive_histogram']=histogram
+  60             else:
+  61                 rng=random.Random(2026+n)
+  62                 for _ in range(45):
+  63                     rows=rng.sample(range(n),h)
+  64                     cols=rng.sample(range(n),h)
+  65                     rr=elimination([[f[i][j] for j in cols] for i in rows],p)
+  66                     assert rr>=n//4
+  67                 rec['random_submatrices_tested']=45
+  68             cases.append(rec)
+  69     return {'cases':cases,'verdict':'all exact checks passed','proof':'RESEARCH.md (complex Frobenius-operator norm inequality)'}
+  70 
+  71 if __name__=='__main__':
+  72     result=run()
+  73     print(json.dumps(result,indent=2))

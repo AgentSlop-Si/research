@@ -1,0 +1,13 @@
+   1 #!/usr/bin/env python3
+   2 from pathlib import Path
+   3 import tempfile,shutil,subprocess,hashlib,json,sys
+   4 base=Path(__file__).parent
+   5 with tempfile.TemporaryDirectory(prefix='review_n64_outer_') as t:
+   6  p=Path(t)/'package';shutil.copytree(base,p,ignore=shutil.ignore_patterns('__pycache__'))
+   7  outputs=['seed_audit/INDEPENDENT_CERTIFICATE.json','VERIFIED_RESULTS.json']
+   8  before={n:hashlib.sha256((p/n).read_bytes()).hexdigest() for n in outputs}
+   9  commands=[['seed_audit/independent_verifier.py'],['independent_checks.py']]
+  10  for cmd in commands:subprocess.run([sys.executable,*cmd],cwd=p,check=True)
+  11  after={n:hashlib.sha256((p/n).read_bytes()).hexdigest() for n in outputs}
+  12  assert before==after
+  13  print(json.dumps({'status':'PASS','isolated_directory':True,'byte_identical_outputs':after,'network_required':False,'dependencies':'Python standard library','constructor_programs_executed':False},indent=2,sort_keys=True))

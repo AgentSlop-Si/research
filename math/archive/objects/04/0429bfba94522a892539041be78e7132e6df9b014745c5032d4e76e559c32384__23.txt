@@ -1,0 +1,86 @@
+   1	"""Joint primitive-orbit stability limits for fresh binary FFTs.
+   2	
+   3	Pure Python theorem checks. The analytical theorem is in RESEARCH.md.
+   4	Optional NumPy/SciPy/mpmath are used only in experiment.py.
+   5	"""
+   6	from __future__ import annotations
+   7	
+   8	from dataclasses import dataclass
+   9	from math import ceil, isqrt
+  10	
+  11	
+  12	def is_power_of_two(n: int) -> bool:
+  13	    return n >= 2 and (n & (n - 1)) == 0
+  14	
+  15	
+  16	def canonical_representatives(n: int) -> tuple[int, ...]:
+  17	    """One per rational cyclotomic conductor orbit, for n a power of two."""
+  18	    if not is_power_of_two(n):
+  19	        raise ValueError("n must be a power of two >=2")
+  20	    return (0,) + tuple(1 << i for i in range(n.bit_length() - 1))
+  21	
+  22	
+  23	def complementary_signal(u: int, n: int) -> tuple[int, ...]:
+  24	    """x=(u, 1-u) with independent binary bits u, little-endian."""
+  25	    if not is_power_of_two(n) or not (0 <= u < (1 << (n // 2))):
+  26	        raise ValueError("invalid length or bitmask")
+  27	    m = n // 2
+  28	    bits = tuple((u >> j) & 1 for j in range(m))
+  29	    return bits + tuple(1 - t for t in bits)
+  30	
+  31	
+  32	def folded_odd_coefficients(u: int, n: int) -> tuple[int, ...]:
+  33	    """Coefficients of odd spectral values in power basis (2u_j-1)."""
+  34	    x = complementary_signal(u, n)
+  35	    m = n // 2
+  36	    return tuple(x[j] - x[j + m] for j in range(m))
+  37	
+  38	
+  39	def theoretical_lipschitz_bound(n: int, r: int = 1) -> dict:
+  40	    """Combinatorial packing bound for decoding all unnormalized bins from r odd bins.
+  41	
+  42	    Restrict to x=(u,1-u), 2^(n/2) different binary inputs.  All even
+  43	    frequencies are constant; each odd frequency lies in the disk |z|<=n/2.
+  44	
+  45	    Split each real coordinate into M equal intervals where M=2^floor(m/(2r))-1.
+  46	    There are strictly fewer than 2^m cells if M>=1.  Some pair satisfies
+  47	    ||measured difference||_inf <= 2 sqrt(2) m/M (complex norm), whereas
+  48	    ||full DFT difference||_inf >= sqrt(2) by Parseval.
+  49	    Therefore any Lipschitz all-spectrum decoder has L>=M/(2m)=M/n.
+  50	    """
+  51	    if not is_power_of_two(n) or r < 1 or r > n // 2:
+  52	        raise ValueError("invalid n or number of odd representatives")
+  53	    m = n // 2
+  54	    expo = m // (2 * r)
+  55	    cells_per_real_dimension = (1 << expo) - 1 if expo >= 1 else 0
+  56	    # Underflow to 0 indicates a vacuous bound at large r.
+  57	    return {
+  58	        "N": n,
+  59	        "m": m,
+  60	        "odd_measured": r,
+  61	        "input_family_size_bits": m,
+  62	        "exponent_floor": expo,
+  63	        "M": cells_per_real_dimension,
+  64	        "lipschitz_lower_bound_numerator": cells_per_real_dimension,
+  65	        "lipschitz_lower_bound_denominator": n,
+  66	        "vacuous": cells_per_real_dimension == 0,
+  67	    }
+  68	
+  69	
+  70	def identical_even_spectrum(n: int) -> tuple[int, ...]:
+  71	    """Even-frequency bins for all (u,1-u), exact integer values."""
+  72	    if not is_power_of_two(n):
+  73	        raise ValueError("n power of 2 required")
+  74	    return (n // 2,) + (0,) * (n // 2 - 1)
+  75	
+  76	
+  77	def necessary_odd_representatives(n: int, lipschitz_upper: int) -> int:
+  78	    """Necessary integer r from the packing bound (not sufficient!)."""
+  79	    if not is_power_of_two(n) or lipschitz_upper < 0:
+  80	        raise ValueError("invalid n or Lipschitz bound")
+  81	    m = n // 2
+  82	    for r in range(1, m + 1):
+  83	        b = theoretical_lipschitz_bound(n, r)
+  84	        if b["M"] <= n * lipschitz_upper:
+  85	            return r
+  86	    return m

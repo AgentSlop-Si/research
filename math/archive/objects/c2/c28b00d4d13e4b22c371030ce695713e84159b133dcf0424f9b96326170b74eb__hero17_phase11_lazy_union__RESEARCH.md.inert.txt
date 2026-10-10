@@ -1,0 +1,91 @@
+# HERO #17 — Phase 11: Lazy Spectral Union and Sharp Green-Rank Gate
+
+**Date:** 2026-10-10  
+**User's original target:** exact `O(N)` sequential work, arbitrary fresh complex or finite-field input, all `N` Fourier coefficients, fully charged preprocessing, no reuse of earlier inputs, no hidden FFT.  
+**Verdict:** **target not reached.** A clean elimination of redundant spectral-projector materialization is achieved, but it yields an ordinary `O(N log N)` radix-2 arithmetic circuit. A separate exact rank-distance theorem closes a narrow Green-correction shortcut.
+
+## Executive findings
+
+1. **Lazy representation of every dyadic spectral projector:** A residue-class projector has `N/d` quotient coordinates, not `N` independent stored values. The `d` projectors at a fixed level collectively require exactly `N` active scalar coordinates. A full family of levels runs in `O(N)` retained storage rather than writing separate `N`-vectors for every mask.
+2. **Refinement identity:** All quotient states can be doubled by an ordinary butterfly. This gives `N/2` butterflies, `N` additions and `N/2` multiplications per level. The full online charged cost is exactly `(3N/2)log2 N` field operations in the implemented model, matching the separate classical FFT executor at every tested length. This is **not** an asymptotic improvement; the algorithm is an FFT in different coordinates.
+3. **Symbolic collision gate:** In the unrestricted-input formal linear model, no pair of quotient states at any levels is an identical/scalar-equivalent linear form; every level is an invertible basis of `F^N`. Literal graph interning/union-find cannot remove the butterfly work. This does not exclude clever *new* algebraic transformations or globally shared circuits.
+4. **Sharp rational-Green correction barrier:** For any nontrivial spectral mask `K` and rational circulant `p(S)q(S)^-1` with `deg p,deg q <= d`, either the filter is exactly 0/1 (rank error `|K|`/`N-|K|`) or its correction rank is at least `N-2d`. For `1<=d<=min(|K|,N-|K|)` the latter bound is **attained** by explicit numerator/denominator polynomials. For balanced masks with `d<=N/4`, the optimum *among all such rational filters* is rank `N/2`. This is a restriction on local, commuting cyclic Green filters only.
+5. **Full-rank can still be cheap:** the dense cyclic Green inverse `G=(I-alpha*S)^-1` costs `O(N)` to apply to *any fresh input*, has rank distance **N** from every spectral projector, and its full-rank difference from the even-frequency projector still costs `O(N)` to apply. This is a concrete caution against misreading the rank-distance gate as an arithmetic lower bound.
+6. **Mask-signature correction:** `ceil(log2 N)` binary mask labels may name `N` bins, but one scalar per mask gives at most `O(log N)` independent Fourier-amplitude equations. Naming the bins and computing their amplitudes are different tasks.
+
+## Mathematical statements and independent proofs
+
+See [`PROOF_CERTIFICATE.md`](PROOF_CERTIFICATE.md), Theorems 1–5, for the exact projector quotient formula, butterfly recurrence, formal uniqueness/rank, sharp polynomial-root rank bound and its constructive attainment.
+
+### The computational bottleneck in one equation
+
+For `N=d*m`, `C_(d,r)[t]=sum_u x[t+u*m] w^(-r*u*m)`. The only supported universal refinement performed by the executor is
+
+    a=C_(d,r)[t], b=C_(d,r)[t+m/2], tw=w^(-r*m/2)
+    C_(2d,r)[t]   = a + tw*b
+    C_(2d,r+d)[t] = a - tw*b
+
+There are `N/2` distinct state pairs to refine at *every* level. Reducing memory and removing redundant projected-vector writes is useful, but is **not equivalent to reducing the number of arithmetic gates**. A universal improvement would require a new shared evaluator for many of these transitions that does not reproduce the radix-2 circuit or depend on repeated numerical inputs.
+
+## Fully charged field-operation ledger
+
+The two arithmetic executors were run over the same supplied prime fields and primitive roots, on fresh arbitrary inputs. The independent control is Phase 10's decimation-in-frequency `classical_fft` code (not this lazy refinement's decimation-in-time loops). Its root-order validation and twiddle preparation are also charged. Both are exact finite-field programs.
+
+| N | Lazy butterflies | Lazy online arithmetic | Classical online arithmetic | Both total field ops incl. root preparation |
+|---:|---:|---:|---:|---:|
+| 256 | 1,024 | 3,072 | 3,072 | 3,344 |
+| 1,024 | 5,120 | 15,360 | 15,360 | 16,404 |
+| 4,096 | 24,576 | 73,728 | 73,728 | 77,848 |
+| 65,536 | 524,288 | 1,572,864 | 1,572,864 | 1,638,432 |
+
+The lazy implementation uses at most `3N+O(1)` field words and writes `N(log2 N+1)` state entries across its lifetime. Its final `N` output writes are included in that total, not double-counted. This cost is for the **particular explicit algorithm**; no `Omega(N log N)` unrestricted lower bound is claimed.
+
+### Sharp rational rank examples
+
+For a half-spectrum mask, the nontrivial rational class has exact minimum rank error `N-2d` when `d<=N/2`; for small `d` the globally best rational filter is simply 0 or 1 with rank error `N/2`.
+
+| N | Rational degree d | Sharp nontrivial rank | Best rank including constants when d<=N/4 |
+|---:|---:|---:|---:|
+| 16 | 1 | 14 | 8 |
+| 32 | 2 | 28 | 16 |
+| 64 | 3 | 58 | 32 |
+
+The code constructs **nonconstant** witness polynomials using chosen Fourier roots and a guaranteed nonvanishing denominator, and independently verifies rank by exact finite-field elimination. This is a **rank bound on the correction matrix**, not a direct lower bound on field operations needed to compute that correction. In fact, the additional dense Green counterexample has `rank(P_even-G)=N` while both `G` and `P_even-G` are implementable in `O(N)` sequential field arithmetic.
+
+## Audit details
+
+- `16/16` Phase 11 test groups passed.
+- `14/14` Phase 10 tests and `15/15` Phase 9 tests were rerun as predecessor controls.
+- `42` small fresh-input complete DFTs checked against direct `O(N²)` formula (`1,524` output coefficients).
+- Full `65,536`-point fresh-input transform checked against an independently implemented DIF FFT, plus `41` direct input-to-frequency sums.
+- `189` sharp nontrivial rational rank witnesses; `69` explicit small difference matrices independently rank-checked with Gaussian elimination.
+- `20` levels checked for full coefficient-matrix rank, plus `768` symbolic linear expressions checked for literal distinctness across multiple transform lengths.
+- Dense one-pole Green solver checked against every cyclic recurrence equation and its spectral eigenvalues; a full-rank, linear-time-computable Green–parity-projector difference was also verified.
+- Complete degree-one rational search over `F_17` at `N=8` found minimum rank `4` over all rational filters, but minimum `6` in the nontrivial class, matching both analytic bounds.
+- Large operation counts match a second executor *exactly*; no universal speedup observed.
+
+See [`AUDIT_RESULTS.json`](AUDIT_RESULTS.json), [`TEST_LOG.txt`](TEST_LOG.txt), and [`AUDIT_LOG.txt`](AUDIT_LOG.txt).
+
+## Why this is not a new universal FFT result
+
+- For arbitrary fresh `x`, our decoder performs exactly radix-2 butterflies and retains `Theta(N log N)` arithmetic.
+- A rank-one or rank-small internal representation of an operator does not imply a cheap charged executor for *all* its coefficient rows.
+- The new Green-rank gate is limited to rational functions of the **same fixed cyclic shift**. **Rank N does not imply an expensive correction:** a dense one-pole Green inverse has full-rank difference from a parity spectral projector, and both operators are nevertheless linear-time applicable. An exact two-tap high-degree projector `(I+S^(N/2))/2` escapes the hypotheses and is itself an O(N) spectral filter.
+- The field supplied is polynomial-size with exact modular arithmetic. Results do not imply an exact complex, bit-complexity, or numerically stable floating-point speedup.
+- The proof ingredients are classical (Fourier character orthogonality, polynomial zero bounds, rational interpolation, circulant spectral calculus). Our exact combination and witness certificates are **research checkpoints**, with no claim of publication priority.
+
+## What to investigate next — the constructive path
+
+The two cheapest routes are now clearly separated:
+
+1. **Sparse high-degree operators** `p(S)` supported on a few widely separated exponents, such as `I+S^(N/2)`. These escape the low-degree rational-root barrier and can apply globally in linear work, but still need a *joint* full-spectrum decoder.
+2. **Noncommuting, independently permuted Green networks** `G_i=(p_i(P_i S P_i^-1) q_i(P_i S P_i^-1)^-1)` whose product is not a single rational function of `S`. A candidate must specify the permutations, all field operations, precomputation, full basis transformation, memory and coefficient recovery. It must beat not only the radix-2 comparator but the published 2026 all-length exact-complex-arithmetic benchmark *in the same model*.
+
+The decisive test is an explicit circuit for every standard-basis vector `e_j`, with `F_N e_j` correct at every output, followed by random dense inputs, verified field-op recurrence, and a model-appropriate literature audit. Basis-vector correctness suffices for a fixed linear circuit but does **not** determine its complexity.
+
+## References / prior-art boundary
+
+- OpenAI Math family 130 Lean scope note: https://github.com/openai/math/blob/main/lean/docs/130.md — uniform `O(N(log N)^(1-10^-13))` in a permissive exact complex-register model.
+- Ailon, *An n log n Lower Bound for Fourier Transform Computation in the Well Conditioned Model* (2014): https://arxiv.org/abs/1403.1307 — lower bound for restricted well-conditioned circuits, not unrestricted.
+- Searle, *On inverting circulant matrices* (1979): https://www.sciencedirect.com/science/article/pii/0024379579900077 — classical recurrence/Green inversion of cyclic banded operators.
+- Phase 10 `RESEARCH.md` and `PROOF_CERTIFICATE.md` — spectral projector/comb lineage.

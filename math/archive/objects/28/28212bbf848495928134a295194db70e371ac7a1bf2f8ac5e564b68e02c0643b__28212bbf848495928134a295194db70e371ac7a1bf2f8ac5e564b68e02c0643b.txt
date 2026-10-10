@@ -1,0 +1,126 @@
+import unittest
+import random
+from green_stages import (P,green_family,apply_sum_inverse,
+ apply_inverse_of_sum,basis_matrix,inverse_matrix,rank_mod,matmul,cut_orders,support_count)
+from gauge_fft import GaugeFFT,direct_dft
+from gauge_recognizer import gauge_recognize,plan_audit
+
+class GreenAndGaugeTests(unittest.TestCase):
+    def test_green_solution(self):
+        for n in (2,3,4,8,16,32,64):
+            T,U,V=green_family(n)
+            for seed in range(3):
+                rng=random.Random(n*1009+seed)
+                b=[rng.randrange(P) for _ in range(n)]
+                self.assertEqual(T.multiply(T.apply_inverse(b)),b)
+                self.assertEqual(U.multiply(U.apply_inverse(b)),b)
+                self.assertEqual(V.multiply(V.apply_inverse(b)),b)
+
+    def test_sum_inversion_and_density(self):
+        for n in (4,8,16,32):
+            T,U,V=green_family(n)
+            S=basis_matrix(lambda x:apply_sum_inverse(T,U,x),n)
+            Sinv=inverse_matrix(S)
+            closed=basis_matrix(lambda x:apply_inverse_of_sum(T,U,V,x),n)
+            self.assertEqual(Sinv,closed)
+            self.assertEqual(support_count(S),n*n)
+            self.assertEqual(support_count(Sinv),n*n)
+            self.assertLessEqual(max(max(c) for c in cut_orders(S)),2)
+            self.assertLessEqual(max(max(c) for c in cut_orders(Sinv)),2)
+            if n>=8:
+                self.assertEqual(max(max(c) for c in cut_orders(S)),2)
+
+    def test_sum_is_not_one_green_stage(self):
+        T,U,V=green_family(8)
+        S=basis_matrix(lambda x:apply_sum_inverse(T,U,x),8)
+        self.assertGreater(max(max(c) for c in cut_orders(S)),1)
+
+    def test_exact_dressed_fft(self):
+        for n in (2,4,8,16,32,64,128,256):
+            fft=GaugeFFT(n)
+            for seed in range(4):
+                rng=random.Random(100+seed*1000+n)
+                inp=[rng.randrange(P) for _ in range(n)]
+                a,ca=fft.apply(inp,dressed=False)
+                b,cb=fft.apply(inp,dressed=True)
+                self.assertEqual(a,b)
+                if n<=32:self.assertEqual(a,direct_dft(inp))
+                self.assertEqual(cb['gauge_calls'],2*(n.bit_length()-2))
+                self.assertEqual(ca['gauge_calls'],0)
+                self.assertGreater(cb['mul'],ca['mul']) if n>2 else None
+
+    def test_full_stage_dense(self):
+        for n in (4,8,16,32):
+            fft=GaugeFFT(n)
+            for i in range(n.bit_length()-1):
+                M=fft.physical_matrix(i,dressed=True)
+                self.assertEqual(sum(bool(t) for row in M for t in row),n*n)
+
+    def test_gauge_detect(self):
+        for n in (4,8,16,32):
+            r=plan_audit(GaugeFFT(n))
+            self.assertTrue(r['match'])
+            self.assertEqual(r['dense_entries_per_stage'],[n*n]*(n.bit_length()-1))
+
+    def test_gauge_negative_control(self):
+        fft=GaugeFFT(8)
+        baseline=[fft.physical_matrix(i,False) for i in range(3)]
+        disguised=[fft.physical_matrix(i,True) for i in range(3)]
+        disguised[-1][0][0]=(disguised[-1][0][0]+1)%P
+        self.assertFalse(gauge_recognize(baseline,disguised)['match'])
+
+    def test_counts_charge_global_gauges(self):
+        for n in (8,16,256,1024):
+            f=GaugeFFT(n)
+            x=[(j*j+5*j+3)%P for j in range(n)]
+            plain=f.apply(x,False)[1]
+            dressed=f.apply(x,True)[1]
+            levels=n.bit_length()-1
+            self.assertEqual(plain['add'],n*levels)
+            self.assertEqual(plain['mul'],n*levels//2)
+            self.assertEqual(dressed['add'],n*levels+2*(levels-1)*(2*n-1))
+            self.assertEqual(dressed['mul'],n*levels//2+2*(levels-1)*(2*n+1))
+
+    def test_two_tridiagonal_inverse_stages_with_shuffle(self):
+        for n in (8,16,32):
+            T,U,_=green_family(n)
+            def revbits(j):return int(f'{j:0{n.bit_length()-1}b}'[::-1],2)
+            order=[revbits(j) for j in range(n)]
+            # (U^-1 P T^-1)^-1 = T P^-1 U.
+            A=basis_matrix(lambda x:U.apply_inverse([T.apply_inverse(x)[j] for j in order]),n)
+            Ainv=inverse_matrix(A)
+            Umat=basis_matrix(U.multiply,n)
+            Tmat=basis_matrix(T.multiply,n)
+            # P^-1 has entries [i, order.index(j)].
+            Pmat=[[int(order[i]==j) for j in range(n)] for i in range(n)]
+            Pinv=inverse_matrix(Pmat)
+            expect=matmul(matmul(Tmat,Pinv),Umat)
+            self.assertEqual(Ainv,expect)
+            self.assertLessEqual(max(sum(bool(t) for t in row) for row in Ainv),9)
+            if n>9:self.assertTrue(any(0 in row for row in Ainv))
+
+    def test_induced_column_norm_exact(self):
+        from fractions import Fraction
+        from norm_budget import exact_green_norm, exact_green_condition1, minimal_stages, minimal_stages_condition
+        for n in (2,4,8,16,32):
+            self.assertLess(exact_green_norm(n),Fraction(3,2))
+            a,b,kappa=exact_green_condition1(n)
+            self.assertLess(b,Fraction(17,6))
+            self.assertLess(kappa,Fraction(17,4))
+        for n in (16,64,256,1024,4096,65536):
+            t=minimal_stages(n)
+            self.assertGreaterEqual(3**(2*t),n*2**(2*t))
+            self.assertLess(3**(2*(t-1)),n*2**(2*(t-1)))
+            u=minimal_stages_condition(n)
+            self.assertGreaterEqual(17**u,n*4**u)
+            self.assertLess(17**(u-1),n*4**(u-1))
+
+    def test_inverse_support_gate(self):
+        # The row support of a product of k row-3 matrices is <=3**k.
+        import math
+        for n in (16,32,64,256,1024):
+            lower_bound=math.ceil(math.log(n,3)-1e-12)
+            self.assertLess(3**(lower_bound-1),n)
+            self.assertGreaterEqual(3**lower_bound,n)
+
+if __name__=='__main__':unittest.main()

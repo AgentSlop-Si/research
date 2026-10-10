@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+import json,math
+import numpy as np
+from phase6_complex import *
+
+def run():
+    rng=np.random.default_rng(12345)
+    rows=[];rejections=[]
+    for q,m in [(256,8),(256,16),(512,8),(512,16),(1024,16),(2048,16),(4096,16),(8192,16)]:
+        for a,beta in [(1,0),(3,2),(5,7)]:
+            for R in [0,1,2,3]:
+                modes=rng.choice(m,R,replace=False).tolist()
+                x=dense_chirp_mode_example(q,m,modes,seed=q*100+R*17+a*13+beta,a=a,beta=beta)
+                z=sparse_phase_fft(x,m,R,a=a,beta=beta,atol=1e-8)
+                assert z.accepted,(q,m,R,a,beta,z.modes,modes)
+                assert set(z.modes)==set(modes),(q,m,R,a,beta,z.modes,modes)
+                target=np.fft.fft(x)/np.sqrt(q)
+                err=float(np.max(abs(z.y-target)))
+                rel=float(err/max(1.,np.linalg.norm(x)))
+                assert rel<1e-8,(q,m,R,a,beta,err,rel)
+                rows.append({'q':q,'m':m,'r':R,'a':a,'beta':beta,'max_err':err,'relative_err':rel,'found_modes':z.modes,
+                             'discovery_blocks':z.expensive_blocks,'green_rows':z.green_rows})
+        noise=rng.normal(size=q)+1j*rng.normal(size=q)
+        z=sparse_phase_fft(noise,m,3)
+        assert not z.accepted,(q,m,'unexpected acceptance')
+        rejections.append({'q':q,'m':m,'tested_blocks':z.blocks_verified,'discovery_blocks':z.expensive_blocks})
+    result={'successful_complex_instances':len(rows),'nonsparse_rejections':len(rejections),
+            'max_relative_error':max(a['relative_err'] for a in rows),
+            'max_absolute_error':max(a['max_err'] for a in rows),
+            'examples':rows,'rejections':rejections}
+    print(json.dumps({k:v for k,v in result.items() if k not in ['examples']},indent=2))
+    open(__file__.replace('test_complex.py','complex_verification.json'),'w').write(json.dumps(result,indent=2))
+if __name__=='__main__':run()

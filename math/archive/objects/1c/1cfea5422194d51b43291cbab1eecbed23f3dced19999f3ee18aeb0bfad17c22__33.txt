@@ -1,0 +1,36 @@
+   1 """Reviewer-authored N16-to-N64 orders, shared by independent checks."""
+   2 LABELS=[(axis,c,s) for axis in ('H','V') for c in (0,1) for s in (-1,1)]
+   3 def cycles(p):
+   4  seen=set();out=[]
+   5  for v in range(len(p)):
+   6   if v in seen:continue
+   7   c=[];w=v
+   8   while w not in seen:seen.add(w);c.append(w);w=p[w]
+   9   assert w==v;out.append(c)
+  10  return out
+  11 
+  12 def cover(a,b,label):
+  13  axis,c,s=label
+  14  return [b*((x+s*(2*y+c))%a)+y if axis=='H' else b*x+(y+s*(2*x+c))%b for x in range(a) for y in range(b)]
+  15 def projection(v):
+  16  x,y=divmod(v,8);return 4*(x%4)+y%4
+  17 
+  18 def routes():
+  19  out=[]
+  20  for label in LABELS:
+  21   ts=cover(4,4,label);small=ts[:];tails=[min(c) for c in cycles(ts)]
+  22   for j,t in enumerate(tails):small[t]=ts[tails[(j+1)%len(tails)]]
+  23   assert len(cycles(small))==1
+  24   eta=[None]*16
+  25   for v,w in enumerate(ts):eta[w]=small[v]
+  26   pre=[]
+  27   for w in cover(8,8,label):
+  28    x,y=divmod(w,8);xx,yy=divmod(eta[4*(x%4)+y%4],4)
+  29    pre.append(8*(xx+4*(x//4))+yy+4*(y//4))
+  30   cc=cycles(pre);assert len(cc)==4 and all(len(c)==16 for c in cc)
+  31   tails=sorted(next(v for v in c if projection(v)==0) for c in cc);assert tails==[0,4,32,36]
+  32   p=pre[:]
+  33   for j,v in enumerate(tails):p[v]=pre[tails[(j+1)%4]]
+  34   assert len(cycles(p))==1 and all(projection(p[v])==small[projection(v)] for v in range(64))
+  35   out.append(p)
+  36  return out

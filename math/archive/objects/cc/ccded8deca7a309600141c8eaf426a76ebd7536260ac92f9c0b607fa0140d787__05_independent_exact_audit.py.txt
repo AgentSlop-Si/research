@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""Independent exact rebuild; uploaded Python is never imported or executed.
+Input JSON is inert comparison data only. Requires Python 3 and SymPy.
+All computations take place in Q[z]/(z^4+1), with integral output checks.
+"""
+import json,time,itertools,math
+from pathlib import Path
+import sympy as sp
+from sympy.polys.rings import ring
+HERE=Path(__file__).resolve().parent
+start=time.monotonic()
+zsym=sp.Symbol('z')
+K=sp.QQ.alg_field_from_poly(sp.Poly(zsym**4+1,zsym),alias='z')
+R,s,a,b,x,t,beta=ring('h0,h1,h2,h6,t,beta',K)
+z=R.ground_new(K.unit)
+Z=R.zero;O=R.one
+
+def determinant(matrix):
+    # Exterior-product accumulation: after each row, coefficients of wedge basis.
+    n=len(matrix); state={0:O}
+    for row in matrix:
+        nxt={}
+        for mask,v in state.items():
+            for j,u in enumerate(row):
+                if mask>>j&1 or not u:continue
+                target=mask|(1<<j)
+                sign=(-1)**((mask>>(j+1)).bit_count())
+                nxt[target]=nxt.get(target,Z)+sign*v*u
+        state={m:v for m,v in nxt.items() if v}
+    return state.get((1<<n)-1,Z)
+
+def coeff(P,i,d):
+    return R.from_dict({m[:i]+(0,)+m[i+1:]:c for m,c in P.items() if m[i]==d})
+
+def load_poly(item):
+    data={}
+    for indices,c in item['terms']:
+        exponents=[0]*6
+        for j in indices:exponents[j]+=1
+        assert tuple(exponents) not in data
+        data[tuple(exponents)]=sum((K.unit**i*int(v) for i,v in enumerate(c)),K.zero)
+    return R.from_dict(data)
+
+def record(P):
+    terms=[]
+    for m,c in sorted(P.items(),key=lambda kv:(sum(kv[0]),kv[0])):
+        cc=list(reversed(c.to_list()))+[0]*4
+        assert all(v.denominator==1 for v in cc if v)
+        terms.append([[j for j,e in enumerate(m) for _ in range(e)],[int(cc[j]) for j in range(4)]])
+    return {'term_count':len(P),'degree':max(map(sum,P),default=0),'terms':terms}
+
+def evaluate(P,vals,p,root):
+    total=0
+    for m,c in P.items():
+        value=0
+        for q in c.to_list():value=(value*root+int(q.numerator)*pow(int(q.denominator),-1,p))%p
+        for v,d in zip(vals,m):value=value*pow(v,d,p)%p
+        total=(total+value)%p
+    return total
+
+def resultant(f,g):
+    m=max(v[3] for v in f);n=max(v[3] for v in g)
+    fc=[coeff(f,3,i) for i in range(m,-1,-1)]
+    gc=[coeff(g,3,i) for i in range(n,-1,-1)]
+    rows=[]
+    for j in range(n):rows.append([Z]*j+fc+[Z]*(n-j-1))
+    for j in range(m):rows.append([Z]*j+gc+[Z]*(m-j-1))
+    return determinant(rows)
+
+# Reconstruct the old quartic and two tail identities directly, independent of saved coefficients.
+roots=[O,z**7,z**6]
+A=sum(roots,Z);B=sum((roots[i]*roots[j] for i in range(3) for j in range(i+1,3)),Z);C=math.prod(roots)
+H=[s,a,b]
+for _ in range(3):H.append(A*H[-1]-B*H[-2]+C*H[-3])
+H += [x,O]
+L=[Z]+[(z-O)*(O+beta*(H[k]-s))+(t-O+beta*(s-O))*(z**((-k)%8)-O) for k in range(1,7)]+[(z-O)*t]
+Q=determinant([[sum((z**((i*k)%8)*H[k] for k in range(3)),Z),sum((z**((i*k)%8)*L[k] for k in range(4,8)),Z),z**((i*3)%8),sum((z**((i*k)%8)*H[k] for k in range(8)),Z)] for i in range(4,8)])
+r=[z,z**2,z**3];c1=sum(r,Z);c2=r[0]*r[1]+r[0]*r[2]+r[1]*r[2];c3=math.prod(r)
+E=[L[k+3]-c1*L[k+2]+c2*L[k+1]-c3*L[k] for k in (3,4)]
+rows=[]
+for P in E+[Q]:
+    at=coeff(P,4,1);bt=coeff(P,5,1);ct=P-t*at-beta*bt
+    assert all(m[4]==m[5]==0 for v in (at,bt,ct) for m in v)
+    rows.append([at,bt,ct])
+W=determinant(rows)
+(aa,bb,cc),(dd,ee,ff)=rows[:2]
+Delta=aa*ee-bb*dd;T=bb*ff-cc*ee;V=cc*dd-aa*ff;M=(z-O)*T
+Uhat=H[:7]+[Z]
+Lhat=[Z]+[(z-O)*(Delta+V*(H[k]-s))+(T-Delta+V*(s-O))*(z**((-k)%8)-O) for k in range(1,7)]+[M]
+Ys={}
+for j,n in ((1,5),(2,5),(4,4),(5,5)):
+    Ys[j]=[[z**((i*j)%8),sum((z**((i*k)%8)*Uhat[k] for k in range(j)),Z),sum((z**((i*k)%8)*Lhat[k] for k in range(j+1,8)),Z)] for i in range(n)]
+eta=[(-1)**i*determinant(Ys[4][:i]+Ys[4][i+1:]) for i in range(4)]
+ell=[sum((eta[i]*Ys[1][i][j] for i in range(4)),Z) for j in range(3)]
+DB=determinant(Ys[2][:3])
+DH=determinant([Ys[1][i]+Ys[5][i] for i in range(5)]+[ell+[Z]*3])
+Dhat=-DB*DH
+fullK=[Ys[1][i]+[-v for v in Ys[2][i]]+[Z]*3 for i in range(5)]+[Ys[1][i]+[Z]*3+[-v for v in Ys[5][i]] for i in range(5)]+[ell+[Z]*6]
+assert determinant([fullK[i] for i in (0,1,2,5,6,7,8,9,10)])==Dhat
+print("Full 9x9 symbolic determinant equals -DB*DH",flush=True)
+polys=dict(Delta=Delta,T=T,V=V,M=M,W=W,DB=DB,DH=DH,Dhat=Dhat)
+expected=json.loads((HERE/'input_data/exact_polynomial_gate.json').read_text())
+for name,P in polys.items():
+    assert P==load_poly(expected[name]),name
+    print(name,'all coefficients match:',len(P),'degree',max(map(sum,P)),flush=True)
+RB=resultant(W,DB);RH=resultant(W,DH)
+rexpected=json.loads((HERE/'input_data/exact_nonzero_resultants.json').read_text())
+for name,P in [('RDB',RB),('RDH',RH)]:
+    assert P==load_poly(rexpected[name]),name
+    print(name,'all coefficients match:',len(P),'degree',max(map(sum,P)),flush=True)
+polys.update(RDB=RB,RDH=RH)
+# Exact characteristic-zero slice and resultant, then valid modular reduction.
+# Specialize h0=1,h1=h2=0; summation combines collapsed monomials.
+def slice_poly(P):return sum((R.from_dict({(0,0,0,m[3],0,0):c}) for m,c in P.items() if m[1]==m[2]==0),Z)
+sw=slice_poly(W);sd=slice_poly(Dhat)
+sres=resultant(sw,sd)
+assert not any(any(m) for m in sres)
+resval=evaluate(sres,[0]*6,17,9);assert resval==6
+slicechecks=[]
+for xx in (2,12):
+    v=[1,0,0,xx,0,0]
+    d={k:evaluate(P,v,17,9) for k,P in polys.items()};d['x']=xx
+    slicechecks.append(d)
+assert [d['Dhat'] for d in slicechecks]==[3,2]
+assert [d['Delta'] for d in slicechecks]==[14,9]
+assert [d['T'] for d in slicechecks]==[8,10]
+# Exact polynomial division verifies the nondivisibility used in the fiber argument.
+W2=coeff(W,3,2);W1=coeff(W,3,1);W0=coeff(W,3,0)
+q,rem=W1.div(W2)
+assert W2 and max(map(sum,W2))==1 and rem
+assert evaluate(W2,[1,0,10,0,0,0],17,9)==0
+assert evaluate(W1,[1,0,10,0,0,0],17,9)==2
+# A fixed-root specialization certifies common degree-2 stays degree-2 mod17.
+assert evaluate(coeff(sw,3,2),[0]*6,17,9)==16
+res={'uploaded_code_executed':False,'exact_matches':{k:{'terms':len(v),'degree':max(map(sum,v),default=0),'degree_in_h6':max((m[3] for m in v),default=0)} for k,v in polys.items()},'coefficient_vectors_verified':sum(len(v) for v in polys.values()),'slice_checks':slicechecks,'slice_resultant_mod17':resval,'slice_resultant_exact':record(sres),'W1_remainder_mod_W2':record(rem),'dimension_argument_exact_nondivisibility':True,'elapsed_seconds':round(time.monotonic()-start,3)}
+(HERE/'independent_polynomials.json').write_text(json.dumps({k:record(v) for k,v in polys.items()},indent=2)+'\n')
+(HERE/'exact_results.json').write_text(json.dumps(res,indent=2)+'\n')
+print(json.dumps(res,indent=2),flush=True)

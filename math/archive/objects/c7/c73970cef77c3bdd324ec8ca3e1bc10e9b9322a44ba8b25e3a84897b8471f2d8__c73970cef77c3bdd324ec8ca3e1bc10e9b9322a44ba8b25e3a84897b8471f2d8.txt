@@ -1,0 +1,59 @@
+"""Unitary Haar-augmented O(N) Green mixer, not a DFT.
+
+Only for N=power of two, N>=4. Haar coefficient c[0] is the scaling
+coefficient and coefficients c[1..m-1] label the internal binary-tree
+wavelets in heap order. Each transform uses O(m) arithmetic.
+"""
+from math import sqrt
+from unitary_mixer import UnitaryGreenMixer
+
+
+def is_power_of_two(n):
+    return n > 0 and (n & (n-1)) == 0
+
+
+def haar_synthesis(x):
+    m = len(x)
+    if not is_power_of_two(m):
+        raise ValueError('Haar needs power-of-two length')
+    out = [0j]*m
+    def rec(i,lo,hi,base):
+        if hi-lo == 1:
+            out[lo] = base
+            return
+        half=(lo+hi)//2
+        w=x[i] / sqrt(hi-lo)
+        rec(2*i, lo, half, base+w)
+        rec(2*i+1, half, hi, base-w)
+    rec(1,0,m,x[0]/sqrt(m))
+    return out
+
+
+def haar_analysis(x):
+    m = len(x)
+    if not is_power_of_two(m):
+        raise ValueError('Haar needs power-of-two length')
+    out = [0j]*m
+    def rec(i,lo,hi):
+        if hi-lo==1:
+            return x[lo]
+        half=(lo+hi)//2
+        left=rec(2*i,lo,half)
+        right=rec(2*i+1,half,hi)
+        out[i]=(left-right)/sqrt(hi-lo)
+        return left+right
+    total=rec(1,0,m)
+    out[0]=total/sqrt(m)
+    return out
+
+
+class HaarEscapeMixer(UnitaryGreenMixer):
+    """Same strong two-path core U, Haar replaces original binary-tree B."""
+    def __init__(self, n, order=None, seed=20261009):
+        if not is_power_of_two(n) or n<4:
+            raise ValueError('N must be power of 2')
+        super().__init__(n,order=order,seed=seed,p=None)
+
+    def apply_R(self,x):
+        m=self.half
+        return haar_synthesis(x[m:]) + haar_analysis(x[:m])

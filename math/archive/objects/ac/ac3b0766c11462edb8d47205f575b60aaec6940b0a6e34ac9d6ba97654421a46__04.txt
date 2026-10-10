@@ -1,0 +1,489 @@
+1: """Online reorganization of many projected Fourier consumers.
+2: 
+3: This module sits on top of :mod:`multi_view`.  It observes *when* consumers
+4: query and *which* Fourier bins they request.  Consumers that repeatedly query
+5: within a small producer-update window and have overlapping frequency sets are
+6: placed into a lazy spectral group.  A group stores one cached spectrum on the
+7: union of its members' bins; the first member query updates/rebuilds that union,
+8: and nearby member queries become cache hits.
+9: 
+10: The partition is recomputed from a bounded recent history, so groups disappear
+11: again when query rates or phases diverge.  Producer metadata changes remain one append except at scheduled probe
+12: boundaries, when an update can also execute the nonconstant greedy planner.
+13: Planning time is reported separately and charged in end-to-end benchmarks.
+14: 
+15: This is a workload optimizer, not a different Fourier identity.  Its planner
+16: uses a simple cost proxy and all numerical answers remain exact up to normal
+17: floating-point roundoff of the underlying projected representation.
+18: """
+19: from __future__ import annotations
+20: 
+21: from collections import deque, OrderedDict
+22: from dataclasses import dataclass, field
+23: from itertools import combinations, islice
+24: from time import perf_counter_ns
+25: from typing import Iterable, Mapping, Sequence
+26: 
+27: import numpy as np
+28: 
+29: from multi_view import SharedProjectedFourierStore
+30: 
+31: 
+32: @dataclass
+33: class SpectralGroup:
+34:     gid: int
+35:     members: tuple[str, ...]
+36:     indices: np.ndarray
+37:     take: dict[str, np.ndarray]
+38:     sync_score: float
+39:     overlap_ratio: float
+40:     benefit_score: float
+41:     cached: np.ndarray | None = None
+42:     version: int = -1
+43:     strategy: str = "cold"
+44:     uses: int = 0
+45:     cache_hits: int = 0
+46:     replays: int = 0
+47:     rebuilds: int = 0
+48: 
+49:     @property
+50:     def width(self) -> int:
+51:         return int(self.indices.size)
+52: 
+53: 
+54: @dataclass
+55: class OptimizerStats:
+56:     replans: int = 0
+57:     planning_ns: int = 0
+58:     replay_records: int = 0
+59:     published_bins: int = 0
+60:     group_cache_evictions: int = 0
+61:     group_queries: int = 0
+62:     solo_queries: int = 0
+63:     group_cache_hits: int = 0
+64:     group_replays: int = 0
+65:     group_rebuilds: int = 0
+66:     guarded_solo: int = 0
+67:     partitions: list[tuple[tuple[str, ...], ...]] = field(default_factory=list)
+68: 
+69: 
+70: def _greedy_match_fraction(a: Sequence[int], b: Sequence[int], window: int) -> float:
+71:     """Symmetric recent-query synchronization score in [0,1].
+72: 
+73:     Query timestamps are producer versions.  We greedily pair timestamps whose
+74:     distance is <= ``window`` and divide by the larger history length.  The
+75:     denominator is deliberately the larger count: a slow consumer that happens
+76:     to align with a tiny subset of a hot consumer should *not* look synchronized.
+77:     """
+78:     if not a or not b:
+79:         return 0.0
+80:     aa = list(a); bb = list(b)
+81:     i = j = matches = 0
+82:     while i < len(aa) and j < len(bb):
+83:         d = aa[i] - bb[j]
+84:         if abs(d) <= window:
+85:             matches += 1; i += 1; j += 1
+86:         elif d < 0:
+87:             i += 1
+88:         else:
+89:             j += 1
+90:     return matches / max(len(aa), len(bb))
+91: 
+92: 
+93: class AdaptiveSpectralOrganizer:
+94:     """Adaptive grouping layer for :class:`SharedProjectedFourierStore`.
+95: 
+96:     Parameters are intentionally conservative.  A merge must have both recent
+97:     temporal synchronization and enough frequency overlap to reduce the proxy
+98:     cost.  Replanning uses only bounded query history and never touches the
+99:     producer's dense signal.
+100:     """
+101: 
+102:     def __init__(
+103:         self,
+104:         store: SharedProjectedFourierStore,
+105:         *,
+106:         sync_window: int = 1,
+107:         history_queries: int = 24,
+108:         min_history: int = 4,
+109:         replan_every: int = 24,
+110:         replan_min_updates: int = 64,
+111:         replan_max_updates: int = 512,
+112:         probe_period_updates: int = 1024,
+113:         probe_window_updates: int = 256,
+114:         merge_threshold: float = 1.08,
+115:         min_sync: float = 0.45,
+116:         immediate_guard: float = 1.08,
+117:         max_group_size: int | None = None,
+118:         max_group_cache_bytes: int = 8*1024**2,
+119:         partition_history_limit: int = 128,
+120:     ):
+121:         self.store = store
+122:         self.max_group_cache_bytes = int(max_group_cache_bytes)
+123:         if self.max_group_cache_bytes < 0: raise ValueError("negative cache budget")
+124:         self._group_cache_bytes = 0
+125:         self._cache_order = OrderedDict()
+126:         self.sync_window = max(0, int(sync_window))
+127:         self.history_queries = max(2, int(history_queries))
+128:         self.min_history = max(2, int(min_history))
+129:         # replan_every is retained as a minimum number of observed queries, but
+130:         # update epochs are the primary cadence. Query-count-only replanning is
+131:         # pathological when one consumer is very hot.
+132:         self.replan_every = max(1, int(replan_every))
+133:         self.replan_min_updates = max(1, int(replan_min_updates))
+134:         self.replan_max_updates = max(self.replan_min_updates, int(replan_max_updates))
+135:         self.probe_period_updates = max(1, int(probe_period_updates))
+136:         self.probe_window_updates = max(1, int(probe_window_updates))
+137:         self.merge_threshold = float(merge_threshold)
+138:         self.min_sync = float(min_sync)
+139:         self.immediate_guard = float(immediate_guard)
+140:         self.max_group_size = None if max_group_size is None else max(2, int(max_group_size))
+141: 
+142:         self.history: dict[str, deque[int]] = {
+143:             name: deque(maxlen=self.history_queries) for name in self.store.views
+144:         }
+145:         self.groups: dict[int, SpectralGroup] = {}
+146:         self.member_group: dict[str, int] = {}
+147:         self._queries_since_replan = 0
+148:         self._last_replan_version = self.store.version
+149:         self._next_replan_updates = self.replan_min_updates
+150:         self._last_partition = None
+151:         self._all_singletons = True
+152:         self._probe_active = True
+153:         self._probe_end_version = self.store.version + self.probe_window_updates
+154:         self._next_probe_version = 0
+155:         self._next_gid = 1
+156:         self.stats = OptimizerStats()
+157:         self.stats.partitions = deque(maxlen=max(0,int(partition_history_limit)))
+158:         self._install_singletons()
+159: 
+160:     # ---------- planner ----------
+161:     def _install_singletons(self) -> None:
+162:         self.groups.clear(); self.member_group.clear()
+163:         for name in sorted(self.store.views):
+164:             self._install_group((name,), sync=0.0, overlap=1.0, benefit=1.0)
+165: 
+166:     def _install_group(self, members: Iterable[str], *, sync: float, overlap: float, benefit: float) -> SpectralGroup:
+167:         mem = tuple(sorted(members))
+168:         idx = np.asarray(sorted(set(int(i) for n in mem for i in self.store.views[n].indices)), dtype=np.intp)
+169:         pos = {int(x): j for j, x in enumerate(idx)}
+170:         take = {
+171:             n: np.asarray([pos[int(i)] for i in self.store.views[n].indices], dtype=np.intp)
+172:             for n in mem
+173:         }
+174:         g = SpectralGroup(self._next_gid, mem, idx, take, float(sync), float(overlap), float(benefit))
+175:         self._next_gid += 1
+176:         self.groups[g.gid] = g
+177:         for n in mem: self.member_group[n] = g.gid
+178:         return g
+179: 
+180:     def _seed_from_member_caches(self, g: SpectralGroup) -> bool:
+181:         """Seed a union cache by copying members at a common version.
+182: 
+183:         Replanning should not force a numerical rebuild merely because two
+184:         already-current views were merged.  Their cached coordinates cover the
+185:         union; overlapping bins are identical by construction.
+186:         """
+187:         if len(g.members) <= 1 or g.width*16 > self.max_group_cache_bytes:
+188:             return False
+189:         versions={self.store.views[n].version for n in g.members}
+190:         if len(versions)!=1:
+191:             return False
+192:         version=next(iter(versions))
+193:         y=np.empty(g.width,dtype=np.complex128)
+194:         filled=np.zeros(g.width,dtype=bool)
+195:         for n in g.members:
+196:             v=self.store.views[n]
+197:             pos=g.take[n]
+198:             missing=~filled[pos]
+199:             if np.any(missing):
+200:                 y[pos[missing]]=v.cached[missing]
+201:                 filled[pos[missing]]=True
+202:         if not np.all(filled):
+203:             return False
+204:         g.cached=np.ascontiguousarray(y); g.version=version; g.strategy='seeded'
+205:         return True
+206: 
+207:     def _sync(self, a: str, b: str) -> float:
+208:         return _greedy_match_fraction(self.history[a], self.history[b], self.sync_window)
+209: 
+210:     def _cluster_metrics(self, members: Sequence[str]) -> tuple[float, float, float]:
+211:         members = tuple(members)
+212:         widths = [len(self.store.views[n].indices) for n in members]
+213:         total = sum(widths)
+214:         union = len(set(int(i) for n in members for i in self.store.views[n].indices))
+215:         overlap = total / max(1, union)
+216:         if len(members) == 1:
+217:             return 1.0, overlap, 1.0
+218:         syncs = [self._sync(a,b) for a,b in combinations(members,2)]
+219:         # Harmonic-ish conservative blend: the minimum prevents a single badly
+220:         # phased member from hitchhiking on an otherwise synchronized cluster.
+221:         avg = float(np.mean(syncs)) if syncs else 0.0
+222:         mn = min(syncs) if syncs else 0.0
+223:         sync = 0.65 * avg + 0.35 * mn
+224:         benefit = sync * overlap
+225:         return sync, overlap, benefit
+226: 
+227:     def _eligible(self, members: Sequence[str], metrics: tuple[float,float,float]) -> bool:
+228:         if len(members) <= 1: return True
+229:         if self.max_group_size is not None and len(members) > self.max_group_size: return False
+230:         if any(len(self.history[n]) < self.min_history for n in members): return False
+231:         sync, _overlap, benefit = metrics
+232:         return sync >= self.min_sync and benefit >= self.merge_threshold
+233: 
+234:     def replan(self) -> tuple[tuple[str, ...], ...]:
+235:         """Greedy agglomerative partition under the measured cost proxy."""
+236:         planning_start = perf_counter_ns()
+237:         clusters = [tuple([n]) for n in sorted(self.store.views)]
+238:         while True:
+239:             best = None
+240:             for i in range(len(clusters)):
+241:                 for j in range(i+1, len(clusters)):
+242:                     merged = tuple(sorted(clusters[i] + clusters[j]))
+243:                     metrics = self._cluster_metrics(merged)
+244:                     if not self._eligible(merged, metrics):
+245:                         continue
+246:                     # Prefer the largest expected multiplicative saving.  A tiny
+247:                     # size bonus makes deterministic larger cohesive groups win ties.
+248:                     score = metrics[2] + 1e-6 * len(merged)
+249:                     if best is None or score > best[0]:
+250:                         best = (score, i, j, merged, metrics)
+251:             if best is None:
+252:                 break
+253:             _, i, j, merged, _metrics = best
+254:             clusters = [c for k,c in enumerate(clusters) if k not in (i,j)] + [merged]
+255: 
+256:         # Preserve numerical caches for unchanged groups. Greedy planning,
+257:         # new index maps, and bookkeeping still have a measured cost.
+258:         old_by_members = {g.members:g for g in self.groups.values()}
+259:         self.groups = {}; self.member_group = {}
+260:         for members in sorted(clusters):
+261:             metrics = self._cluster_metrics(members)
+262:             old = old_by_members.get(tuple(sorted(members)))
+263:             g = self._install_group(members, sync=metrics[0], overlap=metrics[1], benefit=metrics[2])
+264:             if old is not None:
+265:                 g.cached = old.cached
+266:                 g.version = old.version
+267:                 g.strategy = old.strategy
+268:                 g.uses = old.uses; g.cache_hits = old.cache_hits
+269:                 g.replays = old.replays; g.rebuilds = old.rebuilds
+270:             else:
+271:                 self._seed_from_member_caches(g)
+272: 
+273:         self._cache_order.clear()
+274:         self._group_cache_bytes = 0
+275:         for group in self.groups.values():
+276:             if group.cached is not None: self._touch_group_cache(group)
+277:         self.stats.replans += 1
+278:         part = tuple(sorted((g.members for g in self.groups.values()), key=lambda x:(len(x),x)))
+279:         self.stats.partitions.append(part)
+280:         changed = self._last_partition is not None and part != self._last_partition
+281:         self._all_singletons = all(len(x)==1 for x in part)
+282:         if changed:
+283:             self._next_replan_updates = self.replan_min_updates
+284:         else:
+285:             self._next_replan_updates = min(self.replan_max_updates, max(
+286:                 self.replan_min_updates, self._next_replan_updates * 2))
+287:         if self._all_singletons:
+288:             # Stable singleton workloads go dormant.  We reopen a bounded
+289:             # observation window periodically so new synchronization can still
+290:             # be discovered without taxing every hot query.
+291:             self._probe_active = False
+292:             self._next_probe_version = self.store.version + self.probe_period_updates
+293:         else:
+294:             self._probe_active = True
+295:         self._last_partition = part
+296:         self._last_replan_version = self.store.version
+297:         self._queries_since_replan = 0
+298:         self.stats.planning_ns += perf_counter_ns()-planning_start
+299:         return part
+300: 
+301:     def _maybe_replan(self) -> None:
+302:         if self._queries_since_replan < self.replan_every:
+303:             return
+304:         if self.store.version - self._last_replan_version < self._next_replan_updates:
+305:             return
+306:         self.replan()
+307: 
+308:     @property
+309:     def partition(self) -> tuple[tuple[str, ...], ...]:
+310:         return tuple(sorted((g.members for g in self.groups.values()), key=lambda x:(len(x),x)))
+311: 
+312:     # ---------- group execution ----------
+313:     def _group_history_available(self, g: SpectralGroup) -> bool:
+314:         if g.cached is None: return False
+315:         if g.version == self.store.version: return True
+316:         return bool(self.store.events) and self.store.events[0][0] <= g.version + 1
+317: 
+318:     def _replay_group(self, g: SpectralGroup) -> None:
+319:         assert g.cached is not None
+320:         backlog = self.store.version-g.version
+321:         recent = list(islice(reversed(self.store.events), backlog))
+322:         self.stats.replay_records += len(recent)
+323:         for ver,kind,key,delta in reversed(recent):
+324:             if kind == 'c':
+325:                 g.cached += delta * self.store.projection[key, g.indices]
+326:             else:
+327:                 g.cached += delta * self.store._phase_view(key, g.indices)
+328: 
+329:     def _publish_group(self, g: SpectralGroup, backlog: int, strategy: str, requested: str) -> None:
+330:         assert g.cached is not None
+331:         for name in (requested,):
+332:             v = self.store.views[name]
+333:             self.stats.published_bins += len(v.indices)
+334:             v.cached = np.ascontiguousarray(g.cached[g.take[name]])
+335:             v.version = self.store.version
+336:             v.backlog = backlog
+337:             v.strategy = strategy
+338: 
+339:     def _group_query(self, g: SpectralGroup, requested: str) -> np.ndarray:
+340:         current = self.store.version
+341:         if g.cached is not None and g.version == current:
+342:             g.cache_hits += 1; self.stats.group_cache_hits += 1
+343:             g.strategy = 'group_cached'; g.uses += 1; self.stats.group_queries += 1
+344:             self._publish_group(g, 0, 'group_cached', requested)
+345:             self._touch_group_cache(g)
+346:             return self.store.views[requested].cached.copy()
+347: 
+348:         H = current - g.version if g.cached is not None else current + 1
+349:         d = self.store.r + len(self.store.sparse)
+350:         if g.cached is not None and H <= max(1,d) and self._group_history_available(g):
+351:             self._replay_group(g)
+352:             g.replays += 1; self.stats.group_replays += 1
+353:             strategy = 'group_replay'
+354:         else:
+355:             g.cached = self.store._rebuild(g.indices)
+356:             g.rebuilds += 1; self.stats.group_rebuilds += 1
+357:             strategy = 'group_rebuild'
+358:         g.version = current; g.strategy = strategy; g.uses += 1; self.stats.group_queries += 1
+359:         self._publish_group(g, max(0,H), strategy, requested)
+360:         self._touch_group_cache(g)
+361:         return self.store.views[requested].cached.copy()
+362: 
+363:     def _should_use_group(self, g: SpectralGroup, name: str) -> bool:
+364:         if len(g.members) <= 1 or g.width*16 > self.max_group_cache_bytes: return False
+365:         v = self.store.views[name]
+366:         if v.version == self.store.version: return False
+367:         if g.cached is not None and g.version == self.store.version: return True
+368:         d = max(1, self.store.r + len(self.store.sparse))
+369:         Hv = self.store.version - v.version
+370:         Hg = (self.store.version - g.version) if g.cached is not None else d
+371:         solo_work = min(max(1,Hv), d) if self.store._history_available(v) else d
+372:         solo = max(1, len(v.indices)) * solo_work
+373:         group_work = min(max(1,Hg), d) if self._group_history_available(g) else d
+374:         grouped = max(1, g.width) * group_work
+375:         expected_queries = 1.0 + g.sync_score * (len(g.members)-1)
+376:         amortized = grouped / expected_queries
+377:         return amortized <= self.immediate_guard * solo
+378: 
+379:     def _touch_group_cache(self, g):
+380:         if g.cached is None: return
+381:         if g.gid not in self._cache_order:
+382:             self._cache_order[g.gid] = g.cached.nbytes
+383:             self._group_cache_bytes += g.cached.nbytes
+384:         self._cache_order.move_to_end(g.gid)
+385:         while self._group_cache_bytes > self.max_group_cache_bytes:
+386:             gid, size = self._cache_order.popitem(last=False)
+387:             self._group_cache_bytes -= size
+388:             old = self.groups[gid]
+389:             old.cached = None; old.version = -1
+390:             self.stats.group_cache_evictions += 1
+391: 
+392:     def memory_report(self):
+393:         return {"group_cache_bytes": self._group_cache_bytes,
+394:                 "group_cache_budget": self.max_group_cache_bytes,
+395:                 "query_history_numeric_bytes": sum(len(v)*8 for v in self.history.values()),
+396:                 "retained_partition_snapshots": len(self.stats.partitions),
+397:                 "total_numeric_payload_bytes": self.storage_bytes,
+398:                 "excludes_python_objects_and_planner_temporary_memory": True}
+399: 
+400:     # ---------- public query/update API ----------
+401:     def _observe(self, name: str) -> None:
+402:         self.history.setdefault(name, deque(maxlen=self.history_queries)).append(self.store.version)
+403:         self._queries_since_replan += 1
+404: 
+405:     def _start_probe(self) -> None:
+406:         for h in self.history.values(): h.clear()
+407:         self._queries_since_replan = 0
+408:         self._probe_active = True
+409:         self._probe_end_version = self.store.version + self.probe_window_updates
+410: 
+411:     def _singleton_query_preamble(self) -> bool:
+412:         """Return True when this query should be observed."""
+413:         if self._probe_active:
+414:             return True
+415:         if self.store.version >= self._next_probe_version:
+416:             self._start_probe(); return True
+417:         return False
+418: 
+419:     def _finish_probe_before_update(self) -> None:
+420:         # Producer updates delimit a complete query epoch: every query for the
+421:         # previous version has already happened. Replanning here avoids seeing
+422:         # only the first member of a synchronized query batch.
+423:         if self._all_singletons and self._probe_active and self.store.version >= self._probe_end_version:
+424:             self.replan()
+425: 
+426:     def query(self, name: str) -> np.ndarray:
+427:         # Very hot asynchronous workloads spend most of their lifetime here:
+428:         # a stable singleton partition outside a probe window. Keep this path
+429:         # intentionally tiny.
+430:         if self._all_singletons and not self._probe_active and self.store.version < self._next_probe_version:
+431:             return self.store.query(name)
+432:         name = str(name)
+433:         if name not in self.store.views: raise KeyError(name)
+434:         if self._all_singletons:
+435:             observe=self._singleton_query_preamble()
+436:             if observe:self._observe(name)
+437:             self.stats.solo_queries += 1
+438:             out=self.store.query(name)
+439:             return out
+440: 
+441:         self._observe(name)
+442:         gid = self.member_group.get(name)
+443:         g = self.groups.get(gid) if gid is not None else None
+444:         if g is not None and self._should_use_group(g,name):
+445:             out = self._group_query(g,name)
+446:         else:
+447:             if g is not None and len(g.members)>1: self.stats.guarded_solo += 1
+448:             self.stats.solo_queries += 1
+449:             out = self.store.query(name)
+450:         self._maybe_replan()
+451:         return out
+452: 
+453:     def query_many(self, names: Sequence[str]) -> dict[str,np.ndarray]:
+454:         names = list(dict.fromkeys(str(n) for n in names))
+455:         for n in names:
+456:             if n not in self.store.views: raise KeyError(n)
+457:         if self._all_singletons:
+458:             observe=self._singleton_query_preamble()
+459:             if observe:
+460:                 for n in names:self._observe(n)
+461:             out=self.store.query_many(names)
+462:             return out
+463:         for n in names:self._observe(n)
+464:         out=self.store.query_many(names)
+465:         self._maybe_replan()
+466:         return out
+467: 
+468:     def add_coefficient(self, i: int, delta: complex) -> None:
+469:         if self._all_singletons and self._probe_active and self.store.version >= self._probe_end_version:
+470:             self.replan()
+471:         self.store.add_coefficient(i,delta)
+472: 
+473:     def add_point(self, j: int, delta: complex) -> None:
+474:         if self._all_singletons and self._probe_active and self.store.version >= self._probe_end_version:
+475:             self.replan()
+476:         self.store.add_point(j,delta)
+477: 
+478:     def compact(self) -> None:
+479:         self.store.compact()
+480: 
+481:     @property
+482:     def storage_bytes(self) -> int:
+483:         extra = 0
+484:         for g in self.groups.values():
+485:             extra += g.indices.nbytes
+486:             if g.cached is not None: extra += g.cached.nbytes
+487:             extra += sum(x.nbytes for x in g.take.values())
+488:         extra += sum(len(h)*8 for h in self.history.values())
+489:         return int(self.store.storage_bytes + extra)

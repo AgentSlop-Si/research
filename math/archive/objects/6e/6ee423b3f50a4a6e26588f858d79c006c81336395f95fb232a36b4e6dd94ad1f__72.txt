@@ -1,0 +1,103 @@
+1: """Deterministic full-table and packed arithmetic decoder audit."""
+2: import cmath
+3: import hashlib
+4: import json
+5: import math
+6: import random
+7: from pathlib import Path
+8: 
+9: from guarded_decoder import GuardedDecoder, _phasors, _trig_parameters, WordAudit, asymptotic_parameters
+10: 
+11: 
+12: def main():
+13:     rng = random.Random(928337)
+14:     cases = []
+15:     # Every case enumerates its entire table, including unused rows.
+16:     configs = [
+17:         dict(N=1, K=8, block_size=1, phase_grid=4, slope_grid=4, group_size=2),
+18:         dict(N=17, K=30, block_size=4, phase_grid=16, slope_grid=64, group_size=1),
+19:         dict(N=32, K=40, block_size=2, phase_grid=8, slope_grid=8, group_size=2),
+20:         dict(N=65, K=112, block_size=4, phase_grid=32, slope_grid=128, group_size=1),
+21:         dict(N=257, K=1000, block_size=80, phase_grid=4, slope_grid=16,
+22:              group_size=2, lane_step_bits=2, trig_bits=8, word_bits=112),
+23:     ]
+24:     output_checks = 0
+25:     for config in configs:
+26:         config = dict(config)
+27:         N, K = config.pop("N"), config.pop("K")
+28:         decoder = GuardedDecoder(N, K, table_mode="eager", **config)
+29:         assert len(decoder.table) == decoder.table_entries
+30:         for family in ("zero_index", "single_atom", "random", "coherent", "alternating"):
+31:             if family == "zero_index":
+32:                 samples = [(0, i % 4) for i in range(K)]
+33:             elif family == "single_atom":
+34:                 samples = [(N - 1, 3)] * K
+35:             elif family == "random":
+36:                 samples = [(rng.randrange(N), rng.randrange(4)) for _ in range(K)]
+37:             elif family == "coherent":
+38:                 samples = [(i % N, (i // max(1, N // 4)) % 4) for i in range(K)]
+39:             else:
+40:                 samples = [(N // 2, i % 2 * 2) for i in range(K)]
+41:             result = decoder.decode(samples)
+42:             reference = [sum((1j) ** phase * cmath.exp(-2j * math.pi * j * m / N)
+43:                              for j, phase in samples) / K for m in range(N)]
+44:             err = max(abs(a - b) for a, b in zip(result["values"], reference))
+45:             assert err <= result["error_bound"] + 1e-11, (config, family, err)
+46:             assert result["counts"]["max_operand_bits"] <= result["parameters"]["word_bits"]
+47:             # Unpack exactly and compare with a scalar sum of the actual table
+48:             # lanes, independently rebuilding each block key.
+49:             integers = []
+50:             for m0 in range(0, N, decoder.B):
+51:                 scalar = [[0, 0] for _ in range(decoder.B)]
+52:                 for start in range(0, K, decoder.g):
+53:                     key = 0
+54:                     for pos, (j, phase) in enumerate(samples[start:start + decoder.g]):
+55:                         a0 = (phase * (decoder.Q0 // 4) - (2 * decoder.Q0 * (j * m0 % N) + N) // (2 * N)) % decoder.Q0
+56:                         # Parentheses implement minus the nearest integer,
+57:                         # including the away-from-zero half-tie convention.
+58:                         a1 = (-((2 * decoder.Q1 * j + N) // (2 * N))) % decoder.Q1
+59:                         desc = a0 + a1 * decoder.Q0
+60:                         key += desc * decoder.D ** pos
+61:                     row = decoder.table[key]
+62:                     for t in range(decoder.B):
+63:                         z, lane = divmod(t, decoder.L)
+64:                         for c in range(2):
+65:                             scalar[t][c] += (row[c][z] >> (lane * decoder.r)) & decoder.mask
+66:                 for t in range(min(decoder.B, N - m0)):
+67:                     integers.append(tuple(v - decoder.G * decoder.H for v in scalar[t]))
+68:             assert integers == result["integer_outputs"]
+69:             output_checks += N
+70:             cases.append({"N": N, "K": K, "family": family, "maximum_error": err,
+71:                           "error_bound": result["error_bound"], "parameters": result["parameters"],
+72:                           "counts": result["counts"]})
+73:     trig_checks = []
+74:     for bits in (8, 16, 24, 40):
+75:         _, P = _trig_parameters(bits)
+76:         W = WordAudit(4 * P + 128)
+77:         values, S, info = _phasors(128, bits, W)
+78:         error = max(abs(complex(a / S, b / S) - cmath.exp(2j * math.pi * i / 128))
+79:                     for i, (a, b) in enumerate(values))
+80:         assert error < info["complex_error_bound"], (bits, error)
+81:         trig_checks.append({"bits": bits, "max_error": error, "bound": info["complex_error_bound"]})
+82:     parameters = []
+83:     for logN in (32, 64, 128, 256, 1024, 4096):
+84:         p = asymptotic_parameters(1 << logN, 0.5)
+85:         if p:
+86:             descriptor_bits = p["phase_grid"].bit_length() + p["slope_grid"].bit_length() - 2
+87:             assert descriptor_bits * p["group_size"] <= logN // 2
+88:         parameters.append({"log2_N": logN, "epsilon": 0.5, "parameters": p})
+89:     report = {"status": "PASS", "full_table_configurations": len(configs),
+90:               "decoded_sample_lists": len(cases), "output_checks": output_checks,
+91:               "trigonometric_table_checks": trig_checks, "asymptotic_tuning": parameters,
+92:               "cases": cases,
+93:               "source_sha256": hashlib.sha256(Path("guarded_decoder.py").read_bytes()).hexdigest(),
+94:               "limitations": ["Python timings do not establish an asymptotic speedup.",
+95:                               "Finite full-table configurations intentionally differ from the eventual asymptotic schedule.",
+96:                               "Only the deterministic sample decoder is tested here; upstream sampling is integrated separately.",
+97:                               "Counters are selected explicit word primitives; theorem also charges control/index overhead."]}
+98:     Path("results.json").write_text(json.dumps(report, indent=2) + "\n")
+99:     print(json.dumps({k: report[k] for k in ("status", "full_table_configurations", "decoded_sample_lists", "output_checks")}))
+100: 
+101: 
+102: if __name__ == "__main__":
+103:     main()

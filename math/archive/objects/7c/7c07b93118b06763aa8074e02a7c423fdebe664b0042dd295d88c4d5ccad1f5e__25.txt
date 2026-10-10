@@ -1,0 +1,184 @@
+0001 """Independent review code. Imports no uploaded programs; source JSON is data only."""
+0002 from pathlib import Path
+0003 import json, random, itertools, hashlib, math
+0004 import sympy as sp
+0005 BASE=Path(__file__).resolve().parent
+0006 SRC=BASE/'extracted/fft_green_research_phase29_2026-10-10(1)/fft_green_phase29_two_parameter'
+0007 CERT=SRC/'certificates'
+0008 
+0009 def ident(n): return [[int(i==j) for j in range(n)] for i in range(n)]
+0010 def mul(a,b,p): return [[sum(x*y for x,y in zip(row,col))%p for col in zip(*b)] for row in a]
+0011 def inv(a,p):
+0012  n=len(a); w=[[x%p for x in row]+ident(n)[i] for i,row in enumerate(a)]
+0013  for k in range(n):
+0014   t=next(i for i in range(k,n) if w[i][k]);w[k],w[t]=w[t],w[k]
+0015   v=pow(w[k][k],-1,p);w[k]=[x*v%p for x in w[k]]
+0016   for i in range(n):
+0017    if i!=k:
+0018     v=w[i][k];w[i]=[(x-v*y)%p for x,y in zip(w[i],w[k])]
+0019  b=[r[n:] for r in w];assert mul(a,b,p)==ident(n) and mul(b,a,p)==ident(n);return b
+0020 
+0021 def det(a,p):
+0022  a=[r[:] for r in a];out=1;n=len(a)
+0023  for k in range(n):
+0024   piv=next((i for i in range(k,n) if a[i][k]),None)
+0025   if piv is None:return 0
+0026   if piv!=k:a[k],a[piv]=a[piv],a[k];out=-out
+0027   c=a[k][k];out=out*c%p;ic=pow(c,-1,p)
+0028   for i in range(k+1,n):
+0029    c=a[i][k]*ic%p
+0030    for j in range(k+1,n):a[i][j]=(a[i][j]-c*a[k][j])%p
+0031  return out%p
+0032 
+0033 def rank(a,p):
+0034  a=[r[:] for r in a];h=0
+0035  for k in range(len(a[0])):
+0036   piv=next((i for i in range(h,len(a)) if a[i][k]),None)
+0037   if piv is None:continue
+0038   a[h],a[piv]=a[piv],a[h];v=pow(a[h][k],-1,p)
+0039   for i in range(h+1,len(a)):
+0040    c=a[i][k]*v%p
+0041    for j in range(k+1,len(a[0])):a[i][j]=(a[i][j]-c*a[h][j])%p
+0042    a[i][k]=0
+0043   h+=1
+0044   if h==len(a):break
+0045  return h
+0046 
+0047 def components(n,seed,p,root,denoms):
+0048  rng=random.Random(seed);out=[];spec=[]
+0049  for d in denoms:
+0050   order=list(range(n));rng.shuffle(order);a=ident(n)
+0051   for k in range(n):a[order[(k+1)%n]][order[k]]=(-pow(d,-1,p))%p
+0052   g=inv(a,p);le=[rng.randrange(n) for _ in range(n)];ri=[rng.randrange(n) for _ in range(n)]
+0053   out.append([[pow(root,le[i]+ri[j],p)*g[i][j]%p for j in range(n)] for i in range(n)])
+0054   spec.append({'order':order,'left_exponents':le,'right_exponents':ri,'coupling_denominator':d})
+0055  return out,spec
+0056 
+0057 def family(n,p=998244353,generator=3):
+0058  assert sp.isprime(p);w=pow(generator,-((p-1)//n),p);assert pow(w,n,p)==1 and all(pow(w,n//q,p)!=1 for q in sp.factorint(n))
+0059  seed=2800+n;aa,sa=components(n,3*seed+1,p,w,[4,5]);bb,sb=components(n,3*seed+2,p,w,[4,5]);cc,sc=components(n,3*seed+3,p,w,[4,5]);gg,sg=components(n,3*seed+4,p,w,[7]);coeff=3*pow(2,-1,p)%p
+0060  a=[[ (aa[0][i][j]+coeff*aa[1][i][j])%p for j in range(n)]for i in range(n)];c=[[ (cc[0][i][j]+coeff*cc[1][i][j])%p for j in range(n)]for i in range(n)]
+0061  F=[[pow(w,i*j,p) for j in range(n)]for i in range(n)];T=mul(mul(inv(a,p),F,p),inv(c,p),p)
+0062  assert all(v for row in T for v in row)
+0063  return T,bb+[gg[0]],{'n':n,'p':p,'root':w,'A':sa,'B':sb+sg,'C':sc}
+0064 
+0065 def moment(a,s,p):
+0066  n=len(a);iv=[[pow(x,-1,p) for x in row] for row in a];out=n**3
+0067  for i in range(n):
+0068   for j in range(i):
+0069    a1=sum(pow(a[i][k]*iv[j][k]%p,s,p) for k in range(n))%p
+0070    a2=sum(pow(a[j][k]*iv[i][k]%p,s,p) for k in range(n))%p
+0071    out=(out+2*a1*a2)%p
+0072  return out
+0073 
+0074 def peval(a,t,p):
+0075  r=0
+0076  for x in a[::-1]:r=(r*t+x)%p
+0077  return r
+0078 
+0079 def pmul(a,b,p):
+0080  out=[0]*(len(a)+len(b)-1)
+0081  for i,x in enumerate(a):
+0082   for j,y in enumerate(b):out[i+j]=(out[i+j]+x*y)%p
+0083  return out
+0084 
+0085 MON2=[(a,b,2-a-b) for a in range(3) for b in range(3-a)]
+0086 MON4=[(a,b,4-a-b) for a in range(5) for b in range(5-a)]
+0087 POS={e:i for i,e in enumerate(MON4)}
+0088 def rows(T,G,r,c,p,anchor=3):
+0089  def vec(i,j):return [G[1][i][j],G[2][i][j],G[0][i][j]]
+0090  def prod(v,w):
+0091   ans={e:0 for e in MON2}
+0092   for i in range(3):
+0093    for j in range(3):
+0094     e=[0,0,0];e[i]+=1;e[j]+=1;e=tuple(e);ans[e]=(ans[e]+v[i]*w[j])%p
+0095   return ans
+0096  out=[]
+0097  for i in range(1,anchor):
+0098   for j in range(1,anchor):
+0099    x=prod(vec(r[i],c[0]),vec(r[0],c[j]));y=prod(vec(r[i],c[j]),vec(r[0],c[0]));a=T[i][j]*T[0][0]%p;b=T[i][0]*T[0][j]%p
+0100    q={e:(a*x[e]-b*y[e])%p for e in MON2}
+0101    for m in MON2:
+0102     row=[0]*15
+0103     for e,v in q.items():row[POS[tuple(x+y for x,y in zip(m,e))]]=v
+0104     out.append(row)
+0105  return out
+0106 
+0107 def main():
+0108  results={'source_code_executed':False};specs=[];cases={}
+0109  for n in (4,8,16):
+0110   T,G,spec=family(n);specs.append(spec);p=spec['p'];c=json.loads((CERT/f'bezout_two_param_N{n}.json').read_text());a,b=c['slice_P1'],c['slice_P2'];u,v=c['bezout_U'],c['bezout_V'];x=pmul(a,u,p);y=pmul(b,v,p);z=[((x[k] if k<len(x) else 0)+(y[k] if k<len(y) else 0))%p for k in range(max(len(x),len(y)))];assert z[0]==1 and not any(z[1:])
+0111   tq=[moment(T,s,p) for s in (1,2)];d=math.prod(v for row in G[2] for v in row)%p
+0112   leads=[pow(d,s,p)*(moment(G[2],s,p)-tq[s-1])%p for s in (1,2)];assert leads==[a[-1],b[-1]] and all(leads)
+0113   checked=[0,0];mu=0
+0114   while checked[1]<2*n*n+1:
+0115    B=[[(G[0][i][j]+c['fixed_lambda_slice']*G[1][i][j]+mu*G[2][i][j])%p for j in range(n)]for i in range(n)]
+0116    if all(x for row in B for x in row):
+0117     dd=math.prod(x for row in B for x in row)%p
+0118     for s,poly in ((1,a),(2,b)):
+0119      if checked[s-1]<s*n*n+1:
+0120       assert peval(poly,mu,p)==pow(dd,s,p)*(moment(B,s,p)-tq[s-1])%p;checked[s-1]+=1
+0121    mu+=1
+0122   cases[n]={'bezout_identity':True,'identified_evaluations':checked,'leading_mu_coefficients':leads}
+0123   (BASE/f'family_N{n}.txt').write_text(str(n)+' '+str(p)+'\n'+'\n'.join(' '.join(map(str,row)) for M in [T]+G for row in M)+'\n')
+0124   if n==8:
+0125    cert=json.loads((CERT/'anchored_exhaustive_N8_p998244353.json').read_text())
+0126    for w in cert['sample_nonzero_minors']:
+0127     m=rows(T,G,w['source_rows'],w['source_cols'],p);assert det([m[k] for k in w['selected_rows']],p)==w['determinant_modp']!=0
+0128    cases[n]['saved_minor_witnesses']=len(cert['sample_nonzero_minors'])
+0129  results['two_parameter_certificates']=cases
+0130  for p,generator in ((998244353,3),(2013265921,31)):
+0131   T,G,spec=family(4,p,generator);specs.append(spec);cert=json.loads((CERT/f'degree4_all_permutations_N4_p{p}.json').read_text());seen=set()
+0132   for key,w in cert['pivot_witnesses'].items():
+0133    r,c=key.split('/');r=tuple(map(int,r));c=tuple(map(int,c));assert sorted(r)==list(range(4)) and sorted(c)==list(range(4));seen.add((r,c));m=rows(T,G,r,c,p,4);assert det([m[k] for k in w['selected_rows']],p)==w['determinant_modp']!=0
+0134   assert len(seen)==576
+0135   planted=[[(G[0][i][j]+2*G[1][i][j]+3*G[2][i][j])%p for j in range(4)] for i in range(4)];rk=rank(rows(planted,G,range(4),range(4),p,4),p);assert rk<15
+0136   results[f'all_N4_minors_p{p}']={'count':576,'positive_control_rank':rk}
+0137  # Exact characteristic-zero paired-constructor control.
+0138  z=sp.symbols('z');i=sp.I;r=sp.sqrt(2);q=(1+i)/r;t=(1-i)/r;gp=1+t*z-z*z+t*z**3;Q=1+r*z+i*z*z;P=2-2*i+2*r*z
+0139  assert sp.simplify(sp.rem(sp.expand(gp*Q-P),z**4-1,z))==0
+0140  assert sp.simplify(sp.resultant(Q,z**4-1,z))==8*i
+0141  assert sp.simplify(sp.resultant(Q,P,z))==8+8*i
+0142  Z=sp.zeros(4)
+0143  for k in range(4):Z[(k+1)%4,k]=1
+0144  C=sp.eye(4)+t*Z-Z**2+t*Z**3;D=sp.diag(*[sp.simplify(q**(k*k)) for k in range(4)]);F=sp.Matrix([[i**(j*k) for k in range(4)]for j in range(4)])
+0145  assert all(sp.simplify(x)==0 for x in D*C*D-F)
+0146  H=sp.Matrix([[1,1,1,1],[1,-1,1,-1],[1,1,-1,-1],[1,-1,-1,1]])
+0147  for A in (F,H): assert A*A.applyfunc(lambda x:1/x).T==4*sp.eye(4)
+0148  results['paired_F4']={'chirp_identity_exact':True,'rational_congruence_exact':True,'denominator_resultant':'8i','coprime_numerator_resultant':'8+8i','scope':'scalar-weighted two resolvents; exact unit-diagonal two-sum normalization not yet established'}
+0149  results['invariant_insufficiency']={'F4_and_real_H4_both_R_equals_4I':True,'inequivalent':'All H4 cross-ratios are ±1; F4 has cross-ratio i.'}
+0150  # v16 exhaustive cycle statistic and independent matrix checks.
+0151  minima={}
+0152  for n in range(2,10):
+0153   minimum=n;winners=[]
+0154   for perm in itertools.permutations(range(n)):
+0155    unseen=set(range(n));zero=0
+0156    while unseen:
+0157     k=min(unseen);cy=[]
+0158     while k in unseen:unseen.remove(k);cy.append(k);k=perm[k]
+0159     zero+=sum(cy)%n==0
+0160    rk=n-zero
+0161    if rk<minimum:minimum=rk;winners=[perm]
+0162    elif rk==minimum:winners.append(perm)
+0163   assert minimum==n//2 and winners==[tuple((-j)%n for j in range(n))]
+0164   minima[n]={'minimum':minimum,'minimizers':len(winners),'permutations':math.factorial(n)}
+0165  results['v16_exhaustive_permutations']=minima
+0166  checks=0
+0167  for n,p,root in ((5,101,2),(8,97,5),(16,97,5),(25,101,2),(32,193,5),(49,197,2),(64,257,3)):
+0168   w=pow(root,(p-1)//n,p)
+0169   assert pow(w,n,p)==1 and all(pow(w,n//a,p)!=1 for a in sp.factorint(n))
+0170   rng=random.Random(771+n);F=[[pow(w,j*k,p)for k in range(n)]for j in range(n)]
+0171   for trial in range(6):
+0172    perm=list(range(n));rng.shuffle(perm);DP=[[((pow(w,-i,p) if i==j else 0)-(1 if i==perm[j] else 0))%p for j in range(n)]for i in range(n)]
+0173    DF=[[(F[(i-1)%n][j]-F[i][perm[j]])%p for j in range(n)]for i in range(n)]
+0174    unseen=set(range(n));zero=0
+0175    while unseen:
+0176     k=min(unseen);cy=[]
+0177     while k in unseen:unseen.remove(k);cy.append(k);k=perm[k]
+0178     zero+=sum(cy)%n==0
+0179    assert rank(DP,p)==rank(DF,p)==n-zero;checks+=1
+0180  results['v16_independent_matrix_rank_checks']=checks
+0181  (BASE/'FAMILY_SPECIFICATIONS.json').write_text(json.dumps(specs,indent=2))
+0182  (BASE/'INDEPENDENT_RESULTS.json').write_text(json.dumps(results,indent=2))
+0183  print(json.dumps(results,indent=2))
+0184 if __name__=='__main__':main()

@@ -1,0 +1,43 @@
+"""Practical demonstrations of the reusable FFT engine."""
+import numpy as np
+from adaptive_fft import AdaptiveFFT, CanonicalFFTGraph, two_real_ffts_packed
+
+rng=np.random.default_rng(20261008)
+N=16_384
+x=rng.standard_normal(N)
+e=AdaptiveFFT()
+print('First input:', len(e.rfft(x)), 'nonredundant FFT values; method:', e.last_strategy)
+np.testing.assert_allclose(e.rfft(x), np.fft.rfft(x), rtol=1e-11)
+print('Repeated input method:', e.last_strategy)
+
+# Force research-mode structural reuse instead of choosing native FFT.
+r=AdaptiveFFT(mode='aggressive')
+r.rfft(x)
+y=np.roll(x,51)
+np.testing.assert_allclose(r.rfft(y), np.fft.rfft(y), atol=1e-7)
+print('Shifted input method:',r.last_strategy)
+
+z=y.copy(); z[123]+=2
+np.testing.assert_allclose(r.rfft(z), np.fft.rfft(z), atol=1e-7)
+print('Sparse-update method:',r.last_strategy)
+
+basis=rng.standard_normal((2,N))
+c=rng.integers(-3,4,(128,2)).astype(float)
+spectra=e.fft_family(basis,c)
+np.testing.assert_allclose(spectra,np.fft.rfft(c@basis,axis=1),atol=1e-7)
+print('Known linear family: 128 different FFTs from 2 basis FFTs:',spectra.shape)
+
+pair_a,pair_b=two_real_ffts_packed(basis[0],basis[1])
+np.testing.assert_allclose(pair_a,np.fft.fft(basis[0]),atol=1e-8)
+np.testing.assert_allclose(pair_b,np.fft.fft(basis[1]),atol=1e-8)
+print('Two real FFTs packed into one complex FFT: verified')
+
+pattern=np.tile([1,0,1,0,0,1,1,0],N//8)
+graph=CanonicalFFTGraph()
+root=graph.add(pattern)
+np.testing.assert_allclose(graph.evaluate(root),np.fft.fft(pattern),atol=1e-8)
+print('Shared DAG butterfly count:',graph.butterflies,'vs usual',N*14//2)
+
+product=np.rint(e.convolution([4,3,2,1],[8,7,6,5])).astype(int)
+assert sum(int(d)*10**k for k,d in enumerate(product)) == 7006652
+print('1234 * 5678 = 7006652: verified')

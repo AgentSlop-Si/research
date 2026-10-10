@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Phase16 full independent checks + optional untouched Phase15 lineage replay."""
+import argparse,sys,subprocess,zipfile,tempfile
+from pathlib import Path
+root=Path(__file__).resolve().parent
+
+def call(*args,cwd=root):
+    print('>>>',*args,flush=True)
+    subprocess.run([sys.executable,*args],cwd=cwd,check=True)
+
+def main():
+    ap=argparse.ArgumentParser()
+    ap.add_argument('--full-lineage',action='store_true')
+    opts=ap.parse_args()
+    call('-m','unittest','-v','test_phase16')
+    call('field_global_audit.py')
+    call('weyl_atom_audit.py')
+    call('field_permutation_audit.py')
+    call('entropy_gate.py')
+    if opts.full_lineage:
+        with tempfile.TemporaryDirectory() as td:
+            with zipfile.ZipFile(root/'PRIOR_PHASE15_COMPLETE.zip') as z:
+                for member in z.namelist():
+                    parts=Path(member).parts
+                    if member.startswith('/') or '..' in parts:
+                        raise RuntimeError('Unsafe embedded path')
+                z.extractall(td)
+            call('run_all.py','--full-lineage',cwd=Path(td)/'fft_hero1_phase15')
+    print('PHASE16 PASSED: 17 tests; 654,752 exact all-basis field entries; unitary-entropy audit',flush=True)
+
+if __name__=='__main__':main()

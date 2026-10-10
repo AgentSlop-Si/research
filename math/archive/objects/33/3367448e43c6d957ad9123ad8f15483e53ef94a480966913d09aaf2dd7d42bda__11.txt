@@ -1,0 +1,599 @@
+   1 #!/usr/bin/env python3
+   2 """Exact finite-field audits for Annihilator-Closed Fourier Feedback.
+   3 
+   4 No faster FFT is implemented here. Dense Fourier matrices and Gaussian
+   5 elimination are independent test oracles, never claimed fast primitives.
+   6 The Green/Horner kernels have separately instrumented scalar operation counts.
+   7 Requires only Python's standard library. Run: python verify.py --output RESULTS.json
+   8 """
+   9 from __future__ import annotations
+  10 
+  11 import argparse
+  12 import json
+  13 import random
+  14 from dataclasses import dataclass
+  15 from pathlib import Path
+  16 from typing import Sequence
+  17 
+  18 Matrix = list[list[int]]
+  19 Vector = list[int]
+  20 FIELDS = (65537, 998244353)
+  21 
+  22 
+  23 def eye(n: int) -> Matrix:
+  24     return [[int(i == j) for j in range(n)] for i in range(n)]
+  25 
+  26 
+  27 def zeros(n: int) -> Matrix:
+  28     return [[0] * n for _ in range(n)]
+  29 
+  30 
+  31 def add(a: Matrix, b: Matrix, p: int, sign: int = 1) -> Matrix:
+  32     return [[(x + sign * y) % p for x, y in zip(ar, br)] for ar, br in zip(a, b)]
+  33 
+  34 
+  35 def scale(a: Matrix, c: int, p: int) -> Matrix:
+  36     return [[c * x % p for x in row] for row in a]
+  37 
+  38 
+  39 def mul(a: Matrix, b: Matrix, p: int) -> Matrix:
+  40     bt = list(zip(*b))
+  41     return [[sum(x * y for x, y in zip(row, col)) % p for col in bt] for row in a]
+  42 
+  43 
+  44 def mv(a: Matrix, x: Sequence[int], p: int) -> Vector:
+  45     return [sum(u * v for u, v in zip(row, x)) % p for row in a]
+  46 
+  47 
+  48 def inv(a: Matrix, p: int) -> Matrix:
+  49     n = len(a)
+  50     aug = [list(row) + ident for row, ident in zip(a, eye(n))]
+  51     for col in range(n):
+  52         pivot = next((r for r in range(col, n) if aug[r][col] % p), None)
+  53         if pivot is None:
+  54             raise ValueError("singular test-oracle matrix")
+  55         aug[col], aug[pivot] = aug[pivot], aug[col]
+  56         z = pow(aug[col][col] % p, -1, p)
+  57         aug[col] = [v * z % p for v in aug[col]]
+  58         for r in range(n):
+  59             if r != col and aug[r][col]:
+  60                 z = aug[r][col]
+  61                 aug[r] = [(x - z * y) % p for x, y in zip(aug[r], aug[col])]
+  62     return [row[n:] for row in aug]
+  63 
+  64 
+  65 def rank(a: Matrix, p: int) -> int:
+  66     if not a:
+  67         return 0
+  68     b = [row[:] for row in a]
+  69     r = 0
+  70     for col in range(len(b[0])):
+  71         pivot = next((i for i in range(r, len(b)) if b[i][col] % p), None)
+  72         if pivot is None:
+  73             continue
+  74         b[r], b[pivot] = b[pivot], b[r]
+  75         z = pow(b[r][col] % p, -1, p)
+  76         b[r] = [x * z % p for x in b[r]]
+  77         for i in range(r + 1, len(b)):
+  78             z = b[i][col]
+  79             if z:
+  80                 b[i] = [(x - z * y) % p for x, y in zip(b[i], b[r])]
+  81         r += 1
+  82         if r == len(b):
+  83             break
+  84     return r
+  85 
+  86 
+  87 def root_of_unity(n: int, p: int) -> int:
+  88     if n < 2 or n & (n - 1) or (p - 1) % n:
+  89         raise ValueError("test roots require dyadic n >= 2 dividing p-1")
+  90     w = pow(3, (p - 1) // n, p)
+  91     if pow(w, n, p) != 1 or pow(w, n // 2, p) == 1:
+  92         raise ValueError("3 did not yield a primitive root at this test length")
+  93     return w
+  94 
+  95 
+  96 def fourier(n: int, p: int) -> Matrix:
+  97     w = root_of_unity(n, p)
+  98     return [[pow(w, i * j, p) for j in range(n)] for i in range(n)]
+  99 
+ 100 
+ 101 def shift_diagonal(n: int, p: int) -> tuple[Matrix, Matrix]:
+ 102     w = root_of_unity(n, p)
+ 103     s, d = zeros(n), zeros(n)
+ 104     for j in range(n):
+ 105         s[(j + 1) % n][j] = 1
+ 106         d[j][j] = pow(w, j, p)
+ 107     return s, d
+ 108 
+ 109 
+ 110 def poly_matrix(coeff: Sequence[int], k: Matrix, p: int) -> Matrix:
+ 111     n = len(k)
+ 112     out = zeros(n)
+ 113     for c in reversed(coeff):
+ 114         out = add(mul(out, k, p), scale(eye(n), c, p), p)
+ 115     return out
+ 116 
+ 117 
+ 118 def inverse_coefficients(mu: Sequence[int], p: int) -> Vector:
+ 119     """Coefficients of (mu(1)-mu(z))/((1-z)*mu(1)), ascending order."""
+ 120     if len(mu) < 2 or mu[-1] % p == 0:
+ 121         raise ValueError("annihilator must have positive stated degree")
+ 122     m = sum(mu) % p
+ 123     if m == 0:
+ 124         raise ValueError("resonance: mu(1)=0 does not certify invertibility")
+ 125     mi = pow(m, -1, p)
+ 126     suffix = 0
+ 127     q = [0] * (len(mu) - 1)
+ 128     for j in range(len(mu) - 1, 0, -1):
+ 129         suffix = (suffix + mu[j]) % p
+ 130         q[j - 1] = suffix * mi % p
+ 131     return q
+ 132 
+ 133 
+ 134 def certificate(a: Matrix, b: Matrix, mu: Sequence[int], p: int) -> dict[str, bool]:
+ 135     n = len(a)
+ 136     s, d = shift_diagonal(n, p)
+ 137     k = mul(b, a, p)
+ 138     h = add(eye(n), k, p, -1)
+ 139     j = add(eye(n), mul(a, b, p), p, -1)
+ 140     cubic = add(mul(mul(h, d, p), b, p), mul(mul(b, s, p), j, p), p, -1)
+ 141     seed = mv(h, [1] * n, p) == [row[0] for row in b]
+ 142     mu_valid = len(mu) >= 2 and mu[-1] % p != 0
+ 143     closure = mu_valid and poly_matrix(mu, k, p) == zeros(n)
+ 144     nonresonant = mu_valid and sum(mu) % p != 0
+ 145     return {"cubic_phase": cubic == zeros(n), "seed": seed,
+ 146             "annihilator": closure, "nonresonant": nonresonant}
+ 147 
+ 148 
+ 149 def dense_kernel(a: Matrix, b: Matrix, mu: Sequence[int], x: Sequence[int], p: int) -> Vector:
+ 150     q = inverse_coefficients(mu, p)
+ 151     u = mv(b, x, p)
+ 152     v = [q[-1] * z % p for z in u]
+ 153     for c in reversed(q[:-1]):
+ 154         v = mv(b, mv(a, v, p), p)
+ 155         v = [(z + c * t) % p for z, t in zip(v, u)]
+ 156     return v
+ 157 
+ 158 
+ 159 @dataclass
+ 160 class Counts:
+ 161     mul: int = 0
+ 162     add: int = 0
+ 163     inverse: int = 0
+ 164 
+ 165     def multiply(self, a: int, b: int, p: int) -> int:
+ 166         self.mul += 1
+ 167         return a * b % p
+ 168 
+ 169     def plus(self, a: int, b: int, p: int) -> int:
+ 170         self.add += 1
+ 171         return (a + b) % p
+ 172 
+ 173     def invert(self, a: int, p: int) -> int:
+ 174         self.inverse += 1
+ 175         return pow(a, -1, p)
+ 176 
+ 177 
+ 178 class GreenPlan:
+ 179     """L (I-diag(weights) P_cycle)^-1 R with fully charged scalar scan.
+ 180 
+ 181     The cycle list c means (P z)[c[t]] = z[c[t+1]]. Individual zero
+ 182     weights are valid. Only product(weights)==1 is singular.
+ 183     Numeric parameter generation is NOT included in the scan setup counts.
+ 184     """
+ 185     def __init__(self, cycle: Sequence[int], weights: Sequence[int],
+ 186                  left: Sequence[int], right: Sequence[int], p: int):
+ 187         self.n = len(cycle)
+ 188         if self.n == 0 or any(len(x) != self.n for x in (weights, left, right)):
+ 189             raise ValueError("nonempty equal-length arrays required")
+ 190         seen = [False] * self.n
+ 191         for c in cycle:
+ 192             if not isinstance(c, int) or c < 0 or c >= self.n or seen[c]:
+ 193                 raise ValueError("cycle must list every coordinate exactly once")
+ 194             seen[c] = True
+ 195         self.cycle, self.p = list(cycle), p
+ 196         self.a = [x % p for x in weights]
+ 197         self.left = [x % p for x in left]
+ 198         self.right = [x % p for x in right]
+ 199         self.prefix: Vector = []
+ 200         self.setup = Counts()
+ 201         total = 1
+ 202         for c in self.cycle:
+ 203             self.prefix.append(total)
+ 204             total = self.setup.multiply(total, self.a[c], p)
+ 205         denom = self.setup.plus(1, -total, p)
+ 206         if denom == 0:
+ 207             raise ValueError("singular Green cycle: product(weights)=1")
+ 208         self.denom_inv = self.setup.invert(denom, p)
+ 209 
+ 210     def apply(self, x: Sequence[int], count: Counts | None = None) -> Vector:
+ 211         if len(x) != self.n:
+ 212             raise ValueError("wrong vector length")
+ 213         c = count if count is not None else Counts()
+ 214         p = self.p
+ 215         v = [c.multiply(r, t, p) for r, t in zip(self.right, x)]
+ 216         total = 0
+ 217         for pref, index in zip(self.prefix, self.cycle):
+ 218             total = c.plus(total, c.multiply(pref, v[index], p), p)
+ 219         z = [0] * self.n
+ 220         z[self.cycle[0]] = c.multiply(total, self.denom_inv, p)
+ 221         nxt = z[self.cycle[0]]
+ 222         for t in range(self.n - 1, 0, -1):
+ 223             index = self.cycle[t]
+ 224             z[index] = c.plus(v[index], c.multiply(self.a[index], nxt, p), p)
+ 225             nxt = z[index]
+ 226         return [c.multiply(l, t, p) for l, t in zip(self.left, z)]
+ 227 
+ 228     def denominator(self) -> Matrix:
+ 229         out = eye(self.n)
+ 230         for t, index in enumerate(self.cycle):
+ 231             nxt = self.cycle[(t + 1) % self.n]
+ 232             out[index][nxt] = (out[index][nxt] - self.a[index]) % self.p
+ 233         return out
+ 234 
+ 235     def oracle_matrix(self) -> Matrix:
+ 236         out = inv(self.denominator(), self.p)
+ 237         return [[self.left[i] * out[i][j] * self.right[j] % self.p
+ 238                  for j in range(self.n)] for i in range(self.n)]
+ 239 
+ 240 
+ 241 class PairPlan:
+ 242     def __init__(self, g0: GreenPlan, g1: GreenPlan):
+ 243         if (g0.n, g0.p) != (g1.n, g1.p):
+ 244             raise ValueError("incompatible Green plans")
+ 245         self.g0, self.g1, self.n, self.p = g0, g1, g0.n, g0.p
+ 246 
+ 247     def apply(self, x: Sequence[int], count: Counts | None = None) -> Vector:
+ 248         c = count if count is not None else Counts()
+ 249         v, w = self.g0.apply(x, c), self.g1.apply(x, c)
+ 250         return [c.plus(a, b, self.p) for a, b in zip(v, w)]
+ 251 
+ 252     def oracle_matrix(self) -> Matrix:
+ 253         return add(self.g0.oracle_matrix(), self.g1.oracle_matrix(), self.p)
+ 254 
+ 255 
+ 256 def fast_polynomial_kernel(a: PairPlan, b: PairPlan, q: Sequence[int],
+ 257                            x: Sequence[int]) -> tuple[Vector, Counts]:
+ 258     """Evaluate p(BA)B x. This is an inverse ONLY with a valid annihilator."""
+ 259     if len(q) == 0 or (a.n, a.p) != (b.n, b.p):
+ 260         raise ValueError("nonempty polynomial and compatible operators required")
+ 261     c = Counts()
+ 262     u = b.apply(x, c)
+ 263     v = [c.multiply(q[-1], t, a.p) for t in u]
+ 264     for coeff in reversed(q[:-1]):
+ 265         v = b.apply(a.apply(v, c), c)
+ 266         v = [c.plus(z, c.multiply(coeff, t, a.p), a.p) for z, t in zip(v, u)]
+ 267     return v, c
+ 268 
+ 269 
+ 270 def random_green(n: int, p: int, rng: random.Random, zero_edge: bool = False) -> GreenPlan:
+ 271     cycle = list(range(n))
+ 272     rng.shuffle(cycle)
+ 273     while True:
+ 274         weights = [rng.randrange(1, p) for _ in range(n)]
+ 275         if zero_edge:
+ 276             weights[rng.randrange(n)] = 0
+ 277         left = [rng.randrange(1, p) for _ in range(n)]
+ 278         right = [rng.randrange(1, p) for _ in range(n)]
+ 279         try:
+ 280             return GreenPlan(cycle, weights, left, right, p)
+ 281         except ValueError:
+ 282             continue
+ 283 
+ 284 
+ 285 def random_pair(n: int, p: int, rng: random.Random) -> PairPlan:
+ 286     return PairPlan(random_green(n, p, rng), random_green(n, p, rng))
+ 287 
+ 288 
+ 289 def basis(n: int, j: int) -> Vector:
+ 290     return [int(i == j) for i in range(n)]
+ 291 
+ 292 
+ 293 def nilpotent(n: int, degree: int, p: int) -> Matrix:
+ 294     """Dense-looking similarity of block Jordan nilpotents. Exact degree=degree."""
+ 295     if not 1 <= degree <= n:
+ 296         raise ValueError("invalid nilpotency degree")
+ 297     j = zeros(n)
+ 298     for start in range(0, n, degree):
+ 299         for i in range(start, min(n, start + degree) - 1):
+ 300             j[i][i + 1] = 1
+ 301     g = [[int(i >= k) for k in range(n)] for i in range(n)]
+ 302     return mul(mul(g, j, p), inv(g, p), p)
+ 303 
+ 304 
+ 305 def oracle_feedback(target: Matrix, k: Matrix, p: int) -> tuple[Matrix, Matrix]:
+ 306     """Uses a dense target oracle: algebra control, NOT candidate synthesis."""
+ 307     b = mul(add(eye(len(k)), k, p, -1), target, p)
+ 308     a = mul(inv(b, p), k, p)
+ 309     assert mul(b, a, p) == k
+ 310     return a, b
+ 311 
+ 312 
+ 313 def test_oracle_fourier() -> dict:
+ 314     cases = vectors = entries = 0
+ 315     rng = random.Random(17731)
+ 316     details = []
+ 317     for p in FIELDS:
+ 318         for n in (2, 4, 8, 16, 32):
+ 319             f = fourier(n, p)
+ 320             for degree in sorted({1, min(2, n), min(3, n), min(5, n)}):
+ 321                 k = nilpotent(n, degree, p)
+ 322                 mu = [0] * degree + [1]
+ 323                 a, b = oracle_feedback(f, k, p)
+ 324                 assert all(certificate(a, b, mu, p).values())
+ 325                 q = inverse_coefficients(mu, p)
+ 326                 assert mul(add(eye(n), k, p, -1), poly_matrix(q, k, p), p) == eye(n)
+ 327                 for x in [basis(n, j) for j in range(n)] + [[rng.randrange(p) for _ in range(n)] for _ in range(3)]:
+ 328                     assert dense_kernel(a, b, mu, x, p) == mv(f, x, p)
+ 329                     vectors += 1
+ 330                     entries += n
+ 331                 cases += 1
+ 332                 details.append({"p": p, "N": n, "degree": degree})
+ 333     return {"status": "pass", "cases": cases, "vectors": vectors,
+ 334             "output_entries": entries, "scope": "Dense Fourier-oracle-derived algebra controls; NOT cheap Fourier factorizations.",
+ 335             "details": details}
+ 336 
+ 337 
+ 338 def test_negative_certificates() -> dict:
+ 339     cases = 0
+ 340     details = []
+ 341     for p in FIELDS:
+ 342         for n in (4, 8, 16, 32):
+ 343             k = nilpotent(n, 2, p)
+ 344             mu = [0, 0, 1]
+ 345             f = fourier(n, p)
+ 346             a, b = oracle_feedback(scale(f, 2, p), k, p)
+ 347             c = certificate(a, b, mu, p)
+ 348             assert c == {"cubic_phase": True, "seed": False, "annihilator": True, "nonresonant": True}
+ 349             cases += 1
+ 350             a, b = oracle_feedback(eye(n), k, p)
+ 351             c = certificate(a, b, mu, p)
+ 352             assert c["annihilator"] and c["nonresonant"] and not c["cubic_phase"]
+ 353             cases += 1
+ 354             a, b = oracle_feedback(f, k, p)
+ 355             bad = certificate(a, b, [1, 0, 1], p)
+ 356             assert bad["cubic_phase"] and bad["seed"] and not bad["annihilator"]
+ 357             cases += 1
+ 358             c = certificate(eye(n), zeros(n), [0, 1], p)
+ 359             assert c["cubic_phase"] and c["annihilator"] and not c["seed"]
+ 360             cases += 1
+ 361             c = certificate(eye(n), eye(n), [-1, 1], p)
+ 362             assert c["annihilator"] and not c["nonresonant"]
+ 363             try:
+ 364                 inverse_coefficients([-1, 1], p)
+ 365             except ValueError:
+ 366                 pass
+ 367             else:
+ 368                 raise AssertionError("resonance was not rejected")
+ 369             cases += 1
+ 370             details.append({"p": p, "N": n, "rejected_types": ["scalar multiple of Fourier", "non-Fourier exact closure", "false annihilator", "zero input map", "resonant loop"]})
+ 371     return {"status": "pass", "rejected_cases": cases, "details": details}
+ 372 
+ 373 
+ 374 def test_green() -> dict:
+ 375     rng = random.Random(819377)
+ 376     cases = vectors = entries = 0
+ 377     for p in FIELDS:
+ 378         for n in (2, 4, 8, 16, 32, 64, 128):
+ 379             for zero_edge in (False, True):
+ 380                 g = random_green(n, p, rng, zero_edge)
+ 381                 assert vars(g.setup) == {"mul": n, "add": 1, "inverse": 1}
+ 382                 matrix = g.oracle_matrix()
+ 383                 xs = [basis(n, j) for j in range(n)] if n <= 32 else []
+ 384                 xs += [[rng.randrange(p) for _ in range(n)] for _ in range(4)]
+ 385                 for x in xs:
+ 386                     count = Counts()
+ 387                     out = g.apply(x, count)
+ 388                     assert out == mv(matrix, x, p)
+ 389                     assert vars(count) == {"mul": 4 * n, "add": 2 * n - 1, "inverse": 0}
+ 390                     vectors += 1
+ 391                     entries += n
+ 392                 cases += 1
+ 393     try:
+ 394         GreenPlan([0, 1], [1, 1], [1, 1], [1, 1], FIELDS[0])
+ 395     except ValueError:
+ 396         pass
+ 397     else:
+ 398         raise AssertionError("singular Green cycle accepted")
+ 399     return {"status": "pass", "plans": cases, "vectors": vectors,
+ 400             "output_entries": entries, "includes_zero_weights": True,
+ 401             "setup_and_apply_operation_counts": "exactly checked"}
+ 402 
+ 403 
+ 404 def test_polynomial_kernel() -> dict:
+ 405     rng = random.Random(61321)
+ 406     cases = 0
+ 407     sample_counts = []
+ 408     for p in FIELDS:
+ 409         for n in (4, 8, 16, 32):
+ 410             a, b = random_pair(n, p, rng), random_pair(n, p, rng)
+ 411             am, bm = a.oracle_matrix(), b.oracle_matrix()
+ 412             k = mul(bm, am, p)
+ 413             for d in (1, 2, 3, 5):
+ 414                 q = [rng.randrange(1, p) for _ in range(d)]
+ 415                 oracle = mul(poly_matrix(q, k, p), bm, p)
+ 416                 for _ in range(3):
+ 417                     x = [rng.randrange(p) for _ in range(n)]
+ 418                     y, counts = fast_polynomial_kernel(a, b, q, x)
+ 419                     assert y == mv(oracle, x, p)
+ 420                     expected = {"mul": (17 * d - 8) * n,
+ 421                                 "add": (11 * d - 6) * n - 4 * d + 2, "inverse": 0}
+ 422                     assert vars(counts) == expected
+ 423                     cases += 1
+ 424                 sample_counts.append({"p": p, "N": n, "degree": d, **vars(counts)})
+ 425     return {"status": "pass", "vectors": cases,
+ 426             "scope": "Checks polynomial action and costs only; random loop is NOT asserted to have this annihilator or to be Fourier.",
+ 427             "sample_counts": sample_counts}
+ 428 
+ 429 
+ 430 def test_fullrank_short_closure() -> dict:
+ 431     rng = random.Random(7719)
+ 432     cases = 0
+ 433     for p in FIELDS:
+ 434         for n in (4, 8, 16, 32):
+ 435             g = random_green(n, p, rng)
+ 436             b = g.oracle_matrix()
+ 437             a = scale(inv(b, p), 2, p)
+ 438             k = mul(b, a, p)
+ 439             assert k == scale(eye(n), 2, p)
+ 440             mu = [-2, 1]
+ 441             c = certificate(a, b, mu, p)
+ 442             assert c["annihilator"] and c["nonresonant"]
+ 443             assert not all(c.values())
+ 444             t = mul(poly_matrix(inverse_coefficients(mu, p), k, p), b, p)
+ 445             assert rank(t, p) == n
+ 446             assert t != fourier(n, p)
+ 447             cases += 1
+ 448     return {"status": "pass", "cases": cases,
+ 449             "scope": "Full rank and degree-one closure coexist, but do not imply Fourier phases."}
+ 450 
+ 451 
+ 452 def test_random_minimal_degree() -> dict:
+ 453     rng = random.Random(177130)
+ 454     details = []
+ 455     for p in FIELDS:
+ 456         for n in (4, 8, 16, 32):
+ 457             for repetition in range(5):
+ 458                 a, b = random_pair(n, p, rng), random_pair(n, p, rng)
+ 459                 am, bm = a.oracle_matrix(), b.oracle_matrix()
+ 460                 k = mul(bm, am, p)
+ 461                 columns = []
+ 462                 v = basis(n, 0)
+ 463                 for _ in range(n):
+ 464                     columns.append(v)
+ 465                     v = mv(k, v, p)
+ 466                 krylov = [list(row) for row in zip(*columns)]
+ 467                 kr = rank(krylov, p)
+ 468                 # rank N gives lower bound N on minimal-polynomial degree;
+ 469                 # Cayley-Hamilton supplies the matching upper bound.
+ 470                 c = certificate(am, bm, [0, 1], p)
+ 471                 details.append({"p": p, "N": n, "repetition": repetition,
+ 472                                 "krylov_rank": kr, "minimal_degree_N_certified": kr == n,
+ 473                                 "cubic_phase": c["cubic_phase"], "seed": c["seed"]})
+ 474     return {"status": "completed", "cases": len(details),
+ 475             "full_degree_N_certificates": sum(x["minimal_degree_N_certified"] for x in details),
+ 476             "scope": "Exact finite samples, NOT an impossibility theorem for designed parameters.",
+ 477             "details": details}
+ 478 
+ 479 
+ 480 
+ 481 def test_cubic_residual_and_rank() -> dict:
+ 482     rng = random.Random(71873)
+ 483     cases = singular_b = 0
+ 484     for p in FIELDS:
+ 485         for n in (4, 8, 16, 32):
+ 486             for repetition in range(4):
+ 487                 a = [[rng.randrange(p) for _ in range(n)] for _ in range(n)]
+ 488                 b = [[rng.randrange(p) for _ in range(n)] for _ in range(n)]
+ 489                 if repetition % 2 == 0:
+ 490                     b[-1] = b[0][:]
+ 491                     singular_b += 1
+ 492                 h = add(eye(n), mul(b, a, p), p, -1)
+ 493                 try:
+ 494                     hinv = inv(h, p)
+ 495                 except ValueError:
+ 496                     # Deterministic sample retry with A=0 retains singular B coverage.
+ 497                     a = zeros(n)
+ 498                     h = eye(n)
+ 499                     hinv = eye(n)
+ 500                 j = add(eye(n), mul(a, b, p), p, -1)
+ 501                 t = mul(hinv, b, p)
+ 502                 ss, dd = shift_diagonal(n, p)
+ 503                 residual = add(mul(mul(h, dd, p), b, p), mul(mul(b, ss, p), j, p), p, -1)
+ 504                 dt_minus_ts = add(mul(dd, t, p), mul(t, ss, p), p, -1)
+ 505                 assert residual == mul(mul(h, dt_minus_ts, p), j, p)
+ 506                 assert mul(j, add(eye(n), mul(mul(a, hinv, p), b, p), p), p) == eye(n)
+ 507                 assert rank(t, p) == rank(b, p)
+ 508                 seed_residual = [(z - row[0]) % p for z, row in zip(mv(h, [1] * n, p), b)]
+ 509                 assert seed_residual == mv(h, [(1 - row[0]) % p for row in t], p)
+ 510                 cases += 1
+ 511     return {"status": "pass", "cases": cases, "singular_B_cases": singular_b,
+ 512             "scope": "Cubic residual identity and rank preservation, including singular B; not candidate synthesis."}
+ 513 
+ 514 
+ 515 def test_generic_degree_witness() -> dict:
+ 516     rng = random.Random(88573)
+ 517     cases = 0
+ 518     for p in FIELDS:
+ 519         half = pow(2, -1, p)
+ 520         for n in (4, 8, 16, 32, 64):
+ 521             orders = [list(range(n)) for _ in range(4)]
+ 522             for order in orders:
+ 523                 rng.shuffle(order)
+ 524             ds = list(range(2, n + 2))
+ 525             a = PairPlan(GreenPlan(orders[0], [0]*n, [half]*n, [1]*n, p),
+ 526                          GreenPlan(orders[1], [0]*n, [half]*n, [1]*n, p))
+ 527             b = PairPlan(GreenPlan(orders[2], [0]*n, [v*half % p for v in ds], [1]*n, p),
+ 528                          GreenPlan(orders[3], [0]*n, [v*half % p for v in ds], [1]*n, p))
+ 529             k = mul(b.oracle_matrix(), a.oracle_matrix(), p)
+ 530             assert k == [[ds[i] if i == j else 0 for j in range(n)] for i in range(n)]
+ 531             columns = []
+ 532             v = [1] * n
+ 533             for _ in range(n):
+ 534                 columns.append(v)
+ 535                 v = mv(k, v, p)
+ 536             assert rank([list(row) for row in zip(*columns)], p) == n
+ 537             cases += 1
+ 538     return {"status": "pass", "cases": cases,
+ 539             "scope": "Explicit Vandermonde witness for the generic-degree-N theorem for any fixed four cycle orders."}
+ 540 
+ 541 
+ 542 def test_pure_feedback_obstruction() -> dict:
+ 543     rng = random.Random(631)
+ 544     details = []
+ 545     for p in FIELDS:
+ 546         for n in (16, 32, 64, 128):
+ 547             finv = inv(fourier(n, p), p)
+ 548             for repetition in range(3):
+ 549                 pg = random_green(n, p, rng)
+ 550                 qg = random_green(n, p, rng)
+ 551                 # The no-go proof uses the denominators, not endpoint-scaled maps.
+ 552                 pm, qm = pg.denominator(), qg.denominator()
+ 553                 lhs = mul(pm, finv, p)
+ 554                 rhs = add(mul(pm, qm, p), eye(n), p, -1)
+ 555                 lhs_min = min(sum(z != 0 for z in row) for row in lhs)
+ 556                 rhs_max = max(sum(z != 0 for z in row) for row in rhs)
+ 557                 assert lhs_min >= (n + 1) // 2 and rhs_max <= 4 and lhs != rhs
+ 558                 details.append({"p": p, "N": n, "repetition": repetition,
+ 559                                 "min_support_P_Finverse": lhs_min,
+ 560                                 "max_support_PQ_minus_I": rhs_max})
+ 561     return {"status": "pass", "cases": len(details), "details": details,
+ 562             "scope": "Independent arithmetic checks of a support obstruction proved in THEORY.md."}
+ 563 
+ 564 
+ 565 def run_all() -> dict:
+ 566     tests = [
+ 567         ("oracle_fourier_controls", test_oracle_fourier),
+ 568         ("negative_certificates", test_negative_certificates),
+ 569         ("green_scan", test_green),
+ 570         ("paired_green_polynomial_kernel", test_polynomial_kernel),
+ 571         ("fullrank_short_closure_nonfourier", test_fullrank_short_closure),
+ 572         ("random_paired_loop_minimal_degree", test_random_minimal_degree),
+ 573         ("pure_green_feedback_obstruction", test_pure_feedback_obstruction),
+ 574         ("cubic_residual_and_rank", test_cubic_residual_and_rank),
+ 575         ("generic_degree_witness", test_generic_degree_witness),
+ 576     ]
+ 577     out = {"theory": "Annihilator-Closed Fourier Feedback", "date": "2026-10-10",
+ 578            "status": "Conditional execution theorem and candidate architecture; no universal fast Fourier construction.",
+ 579            "arithmetic": "exact modular arithmetic", "fields": list(FIELDS), "tests": {}}
+ 580     for name, function in tests:
+ 581         result = function()
+ 582         out["tests"][name] = result
+ 583         print(name + ": " + result["status"], flush=True)
+ 584     out["groups_completed"] = len(tests)
+ 585     return out
+ 586 
+ 587 
+ 588 def main() -> None:
+ 589     parser = argparse.ArgumentParser(description=__doc__)
+ 590     parser.add_argument("--output", type=Path, default=Path("RESULTS.json"))
+ 591     args = parser.parse_args()
+ 592     results = run_all()
+ 593     args.output.parent.mkdir(parents=True, exist_ok=True)
+ 594     args.output.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+ 595     print("Recorded exact results: " + str(args.output), flush=True)
+ 596 
+ 597 
+ 598 if __name__ == "__main__":
+ 599     main()

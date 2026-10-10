@@ -1,0 +1,50 @@
+   1 """Adapter that merges known sparse-update metadata with existing AdaptiveFFT.
+   2 
+   3 These are floating-point tests of the decomposition, not a reproduction
+   4 of OpenAI's exact arithmetic algorithm #130.
+   5 """
+   6 from __future__ import annotations
+   7 import numpy as np
+   8 from adaptive_fft import AdaptiveFFT
+   9 from hybrid_sparse import sparse_dft, update_spectrum, low_rank_plus_sparse
+  10 
+  11 
+  12 class HybridAdaptiveFFT(AdaptiveFFT):
+  13     def fft_from_delta(self, base_spectrum, edits, *, algorithm='factorized'):
+  14         """Return full spectrum after edits, without rescanning original input.
+  15 
+  16         base_spectrum is a precomputed full complex DFT; edits is a list
+  17         of (index, delta) pairs. User supplies their validity.
+  18         """
+  19         if algorithm == 'factorized':
+  20             ans, plan=update_spectrum(base_spectrum, edits)
+  21             self.last_strategy='metadata_sparse_factorized'
+  22             return ans, plan
+  23         if algorithm == 'direct':
+  24             source=np.asarray(base_spectrum, dtype=np.complex128)
+  25             n=source.size
+  26             ks=np.arange(n)
+  27             result=source.copy()
+  28             for index,delta in edits:
+  29                 result += delta*np.exp(-2j*np.pi*(index % n)*ks/n)
+  30             self.last_strategy='metadata_sparse_direct'
+  31             return result, None
+  32         raise ValueError('algorithm must be factorized or direct')
+  33 
+  34     def rfft_from_delta(self, base_rfft, n, real_edits):
+  35         """Efficiently update compact spectrum for a real signal."""
+  36         compact=np.asarray(base_rfft,dtype=np.complex128)
+  37         if compact.ndim!=1 or compact.size!=n//2+1:
+  38             raise ValueError('incorrect compact spectrum length')
+  39         edits=list(real_edits)
+  40         if any(complex(v).imag!=0 for _,v in edits):
+  41             raise ValueError('rfft edits must be real')
+  42         delta,plan=sparse_dft(n,edits,return_plan=True)
+  43         self.last_strategy='metadata_rfft_sparse'
+  44         return compact + delta[:n//2+1],plan
+  45 
+  46     def fft_basis_plus_sparse(self, basis_spectra, coefficients, edits):
+  47         """Use known basis spectra plus a sparse residual."""
+  48         ans,plan=low_rank_plus_sparse(basis_spectra,coefficients,edits)
+  49         self.last_strategy='metadata_low_rank_plus_sparse'
+  50         return ans,plan

@@ -1,0 +1,141 @@
+   1 """Exact phase certificates: no floating point and no asymptotic extrapolation."""
+   2 from collections import Counter
+   3 from fractions import Fraction
+   4 import json
+   5 from pathlib import Path
+   6 import random
+   7 
+   8 
+   9 def root_sum(exponents,order,weights=None):
+  10     """Exact integer coefficients in Z[z]/(z^(order/2)+1), order power of 2."""
+  11     assert order>=2 and not order&(order-1)
+  12     out=[0]*(order//2)
+  13     if weights is None:
+  14         weights=[1]*len(exponents)
+  15     for exponent,weight in zip(exponents,weights):
+  16         e=exponent%order
+  17         if e>=order//2:
+  18             out[e-order//2]-=weight
+  19         else:
+  20             out[e]+=weight
+  21     return out
+  22 
+  23 
+  24 def slope(r,coefficients,M):
+  25     value=0
+  26     for coefficient in reversed(coefficients):
+  27         value=(value*r+coefficient)%M
+  28     return value
+  29 
+  30 
+  31 def dyadic_case(M,K,a,coefficients):
+  32     assert M%4==0 and K%2==0 and coefficients[0]%2==1
+  33     for r in range(0,K,2):
+  34         c=slope(r,coefficients,M)
+  35         assert c%2==1
+  36         exponents=[a*t*t+c*t for t in range(M)]
+  37         assert root_sum(exponents,M)==[0]*(M//2)
+  38         for t in range(M//2):
+  39             assert (exponents[t+M//2]-exponents[t])%M==M//2
+  40 
+  41 
+  42 def prime_character_variance(M,K):
+  43     """Error monomials have orthogonal seed characters iff labels differ.
+  44 
+  45     Labels correspond to the independently uniform seeds (a,alpha,b).
+  46     For prime M and K<=M every off-diagonal error term has a distinct label.
+  47     """
+  48     labels={}
+  49     multiplicities=Counter()
+  50     for r in range(K):
+  51         for u in range(M):
+  52             for t in range(M):
+  53                 if u==t:
+  54                     continue
+  55                 label=((u*u-t*t)%M,r*(u-t)%M,(u-t)%M)
+  56                 assert label not in labels
+  57                 labels[label]=(r,u,t)
+  58                 multiplicities[(r,u)]+=1
+  59     assert set(multiplicities.values())=={M-1}
+  60     return {'M':M,'K':K,'orthogonal_error_characters':len(labels),
+  61             'variance_coefficient':f'{M-1}/{K*M}',
+  62             'statement':'Var[estimate_m]=(M-1)/N * ||x||_2^2 for every m and x'}
+  63 
+  64 
+  65 def main():
+  66     rng=random.Random(20261009)
+  67     affine=polynomial=0
+  68     rows=[]
+  69     for M in (4,8,16):
+  70         for K in (2,4,8):
+  71             count=0
+  72             for a in range(M):
+  73                 for alpha in range(M):
+  74                     for b in range(1,M,2):
+  75                         dyadic_case(M,K,a,[b,alpha])
+  76                         affine+=1
+  77                         count+=1
+  78             for degree in range(2,9):
+  79                 for _ in range(40):
+  80                     coefficients=[2*rng.randrange(M//2)+1]+[rng.randrange(M) for _ in range(degree)]
+  81                     dyadic_case(M,K,rng.randrange(M),coefficients)
+  82                     polynomial+=1
+  83             rows.append({'M':M,'K':K,'exhaustive_affine_bad_seed_cases':count})
+  84     dense=[]
+  85     for epsilon in (Fraction(1,4),Fraction(1,2),Fraction(3,4),Fraction(9,10),Fraction(99,100)):
+  86         t=(1-epsilon*epsilon)/(4*epsilon)
+  87         bound=1/epsilon-t
+  88         # Exact rational check of epsilon*(sqrt(1+t^2)+t)<1.
+  89         assert t>0 and bound>0 and bound*bound>1+t*t
+  90         dense.append({'epsilon':str(epsilon),'dense_offset_t':str(t),
+  91                       'DC_error_balls_disjoint':True,
+  92                       'worst_of_two_fixed_dense_inputs_failure_lower_bound':'1/4'})
+  93     cazac=0
+  94     for M in (4,8,16,32):
+  95         for a in range(1,2*M,2):
+  96             for c in range(M):
+  97                 exponents=[]
+  98                 weights=[]
+  99                 for u in range(M):
+ 100                     for t in range(M):
+ 101                         exponents.append(a*(u*u-t*t)+2*c*(u-t))
+ 102                         weights.append(-1 if u%2 else 1)
+ 103                 product=root_sum(exponents,2*M,weights)
+ 104                 assert root_sum(exponents,2*M)==[M]+[0]*(M-1)
+ 105                 expected=M*(-1 if (c+M//4)%2 else 1)
+ 106                 assert product==[expected]+[0]*(M-1)
+ 107                 cazac+=1
+ 108     prime=[]
+ 109     for M in (3,5,7,11):
+ 110         for K in range(1,M+1):
+ 111             prime.append(prime_character_variance(M,K))
+ 112     # Exact negative control: K>M aliases block labels even over a prime.
+ 113     M=5
+ 114     label0=((1-0)%M,0*(1-0)%M,(1-0)%M)
+ 115     labelM=((1-0)%M,M*(1-0)%M,(1-0)%M)
+ 116     assert label0==labelM
+ 117     # Exact negative control: an odd composite permits within-block aliases.
+ 118     M=9
+ 119     assert ((3**2-0**2)%M,3%M)==((6**2-3**2)%M,3%M)
+ 120     boundary=0
+ 121     for M in (4,5,8,11,16):
+ 122         for a in range(M):
+ 123             for b in range(M):
+ 124                 for degree in range(1,M+1):
+ 125                     rhs=(a+b+a*(degree-1)**2+b*(degree-1)+2*a*(degree-1))%M
+ 126                     assert rhs==(a*degree**2+b*degree)%M
+ 127                 assert (a*M*M+b*M)%M==0
+ 128                 boundary+=1
+ 129     report={'status':'PASS','arithmetic':'Integer cyclotomic coefficients and modular character identities; no floating point.',
+ 130             'exhaustive_affine_bad_seed_cases':affine,'higher_degree_bad_seed_cases':polynomial,
+ 131             'CAZAC_alternating_input_exact_products':cazac,'prime_variance_character_cases':len(prime),
+ 132             'CAZAC_constant_input_exact_products':cazac,
+ 133             'finite_chirp_recurrence_cases':boundary,'dyadic_cases':rows,
+ 134             'dense_collision_examples':dense,'prime_variance_cases':prime,
+ 135             'limits':'Prime variance is not an all-bin tail bound, a power-of-two-length repair, or a fast joint decoder.'}
+ 136     Path(__file__).with_name('results.json').write_text(json.dumps(report,indent=2)+'\n')
+ 137     print(json.dumps({k:v for k,v in report.items() if k not in ('dyadic_cases','dense_collision_examples','prime_variance_cases')},indent=2))
+ 138 
+ 139 
+ 140 if __name__=='__main__':
+ 141     main()

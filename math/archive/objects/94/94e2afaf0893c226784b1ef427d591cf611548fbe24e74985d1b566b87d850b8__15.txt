@@ -1,0 +1,307 @@
+   1 """Shared output-pruned DFT plans for arbitrary requested Fourier bins.
+   2 
+   3 For N = K*M, write a time index as n = m + M*r.  A Cooley--Tukey step gives
+   4 
+   5     X[j] = sum_m G[m, j mod K] * exp(-2*pi*i*m*j/N),
+   6 
+   7 where G[m,:] is the K-point DFT of x[m + M*r] over r=0..K-1.
+   8 
+   9 Thus one set of M length-K FFTs is shared by *all* requested outputs.  If K is
+  10 chosen on the order of q=|Q| (and K divides N), q arbitrary outputs cost
+  11 O(N log K + q*N/K) = O(N log q) arithmetic.  This is classical generic FFT
+  12 pruning; this module packages it for projected relation-aware Fourier views.
+  13 
+  14 The plan stores only the final q-by-M phase matrix.  For K>=q this is at most
+  15 N complex numbers, independent of how scattered the requested bins are.
+  16 """
+  17 from __future__ import annotations
+  18 from dataclasses import dataclass
+  19 from typing import Iterable, Sequence
+  20 import math
+  21 import time
+  22 import numpy as np
+  23 
+  24 try:
+  25     from scipy import fft as sp_fft
+  26 except ImportError:
+  27     sp_fft = None
+  28 
+  29 
+  30 def _divisors(n: int) -> list[int]:
+  31     small=[]; large=[]
+  32     d=1
+  33     while d*d<=n:
+  34         if n%d==0:
+  35             small.append(d)
+  36             if d*d!=n: large.append(n//d)
+  37         d+=1
+  38     return small+large[::-1]
+  39 
+  40 
+  41 def candidate_radices(n:int,q:int) -> list[int]:
+  42     """A small useful set of Cooley--Tukey inner sizes.
+  43 
+  44     The arithmetic proxy for one plan execution is log2(K)+q/K, ignoring
+  45     backend constants.  Return divisors around the minimizer plus endpoints.
+  46     """
+  47     n=int(n); q=int(q)
+  48     if n<1 or q<1 or q>n: raise ValueError('need 1<=q<=n')
+  49     ds=_divisors(n)
+  50     scored=[]
+  51     for k in ds:
+  52         score=(0.0 if k==1 else math.log2(k))+q/k
+  53         scored.append((score,k))
+  54     scored.sort()
+  55     picks={1,n}
+  56     for _,k in scored[:6]: picks.add(k)
+  57     # Also include bracketing divisors around q; practical FFT constants often
+  58     # move the optimum away from the arithmetic proxy.
+  59     below=[d for d in ds if d<=q]
+  60     above=[d for d in ds if d>=q]
+  61     if below: picks.add(below[-1])
+  62     if len(below)>1: picks.add(below[-2])
+  63     if above: picks.add(above[0])
+  64     if len(above)>1: picks.add(above[1])
+  65     return sorted(picks)
+  66 
+  67 
+  68 def choose_radix(n:int,q:int) -> int:
+  69     ds=candidate_radices(n,q)
+  70     return min(ds,key=lambda k: ((0.0 if k==1 else math.log2(k))+q/k, k))
+  71 
+  72 
+  73 class FullFFTBinPlan:
+  74     """Optimized full FFT fallback, gathering only requested bins."""
+  75     strategy='full_fft'
+  76     def __init__(self,n:int,bins:Sequence[int],*,backend='scipy'):
+  77         self.n=int(n); self.backend=backend
+  78         b=np.asarray(bins,dtype=np.int64)
+  79         if b.ndim!=1 or b.size<1 or np.any(b<0) or np.any(b>=self.n):
+  80             raise ValueError('bad bins')
+  81         self.bins=b.astype(np.intp,copy=True); self.q=len(b)
+  82     @property
+  83     def plan_bytes(self): return int(self.bins.nbytes)
+  84     def execute(self,x):
+  85         a=np.asarray(x,dtype=np.complex128)
+  86         if a.shape!=(self.n,): raise ValueError('input has wrong length')
+  87         if self.backend=='scipy' and sp_fft is not None: y=sp_fft.fft(a)
+  88         elif self.backend in ('scipy','numpy'): y=np.fft.fft(a)
+  89         else: raise ValueError('backend must be scipy or numpy')
+  90         return np.ascontiguousarray(y[self.bins])
+  91     def project_stream(self,basis_vectors:Iterable[np.ndarray]):
+  92         rows=[self.execute(row) for row in basis_vectors]
+  93         return np.ascontiguousarray(np.stack(rows)) if rows else np.empty((0,self.q),np.complex128)
+  94 
+  95 
+  96 class ArbitraryBinsDFTPlan:
+  97     """Reusable exact (up to floating-point roundoff) arbitrary-output plan."""
+  98     strategy='arbitrary_pruned'
+  99     def __init__(self,n:int,bins:Sequence[int],*,radix:int|str='auto',backend='scipy'):
+ 100         self.n=int(n); self.backend=backend
+ 101         if self.n<1: raise ValueError('n must be positive')
+ 102         b=np.asarray(bins,dtype=np.int64)
+ 103         if b.ndim!=1 or b.size<1 or np.any(b<0) or np.any(b>=self.n):
+ 104             raise ValueError('bad bins')
+ 105         self.bins=b.astype(np.intp,copy=True); self.q=len(self.bins)
+ 106         if radix=='auto': k=choose_radix(self.n,self.q)
+ 107         else: k=int(radix)
+ 108         if k<1 or self.n%k: raise ValueError('radix must be a positive divisor of n')
+ 109         self.k=k; self.m=self.n//self.k
+ 110         self.residue=np.asarray(self.bins % self.k,dtype=np.intp)
+ 111         mm=np.arange(self.m,dtype=np.float64)
+ 112         # phase[t,m] corresponds to requested global bin bins[t].
+ 113         self.phase=np.exp((-2j*np.pi/self.n)*np.outer(self.bins.astype(np.float64),mm))
+ 114     @property
+ 115     def plan_bytes(self):
+ 116         return int(self.phase.nbytes+self.bins.nbytes+self.residue.nbytes)
+ 117     @property
+ 118     def arithmetic_proxy(self):
+ 119         return (0.0 if self.k==1 else math.log2(self.k))+self.q/self.k
+ 120     def execute(self,x):
+ 121         a=np.asarray(x,dtype=np.complex128)
+ 122         if a.shape!=(self.n,): raise ValueError('input has wrong length')
+ 123         if self.k==1:
+ 124             # q is normally tiny here.  groups[:,0] is just x in the required
+ 125             # Cooley--Tukey ordering.
+ 126             col=a
+ 127             return np.einsum('qm,m->q',self.phase,col,optimize=False)
+ 128         groups=np.ascontiguousarray(a.reshape(self.k,self.m).T)
+ 129         if self.backend=='scipy' and sp_fft is not None:
+ 130             inner=sp_fft.fft(groups,axis=1)
+ 131         elif self.backend in ('scipy','numpy'):
+ 132             inner=np.fft.fft(groups,axis=1)
+ 133         else: raise ValueError('backend must be scipy or numpy')
+ 134         selected=inner[:,self.residue]  # M x q, one inner output per requested bin
+ 135         return np.einsum('mq,qm->q',selected,self.phase,optimize=False)
+ 136     def project_stream(self,basis_vectors:Iterable[np.ndarray]):
+ 137         rows=[self.execute(row) for row in basis_vectors]
+ 138         return np.ascontiguousarray(np.stack(rows)) if rows else np.empty((0,self.q),np.complex128)
+ 139 
+ 140 
+ 141 @dataclass(frozen=True)
+ 142 class PlanChoice:
+ 143     strategy:str
+ 144     radix:int|None
+ 145     execute_ms:float|None
+ 146     full_ms:float|None
+ 147 
+ 148 
+ 149 class AutoOutputPlan:
+ 150     """Measured query-plan chooser over pruned radices and a full FFT.
+ 151 
+ 152     With ``sample`` supplied, nearby Cooley--Tukey radices are timed on the
+ 153     actual machine subject to ``max_plan_bytes``.  The fastest execution plan
+ 154     is retained.  ``calibration_ms`` is exposed and must be charged by callers;
+ 155     the tuner is intended for many repeated registrations/queries, not one-offs.
+ 156 
+ 157     Without a sample, a conservative arithmetic/memory heuristic is used.
+ 158     """
+ 159     def __init__(self,n:int,bins:Sequence[int],*,backend='scipy',sample=None,
+ 160                  reps=2,max_plan_bytes=128*1024*1024):
+ 161         self.n=int(n); self.bins=np.asarray(bins,dtype=np.intp); self.q=len(self.bins)
+ 162         self.backend=backend; self.max_plan_bytes=int(max_plan_bytes)
+ 163         if self.q<1: raise ValueError('bins must be nonempty')
+ 164         self.calibration_ms=0.0; self.candidates=[]; self.sample_result=None
+ 165         full=FullFFTBinPlan(n,bins,backend=backend)
+ 166         if sample is None:
+ 167             # Prefer a radix >= q when possible so the phase table is O(N),
+ 168             # then fall back to the arithmetic minimizer.
+ 169             ds=[k for k in candidate_radices(self.n,self.q) if self.n%k==0]
+ 170             feasible=[k for k in ds if self.q*(self.n//k)*16 <= self.max_plan_bytes]
+ 171             ge=[k for k in feasible if k>=self.q]
+ 172             k=min(ge) if ge else (min(feasible,key=lambda z: ((0 if z==1 else math.log2(z))+self.q/z)) if feasible else self.n)
+ 173             pruned=ArbitraryBinsDFTPlan(n,bins,radix=k,backend=backend)
+ 174             use_pruned=(self.q <= max(1,self.n//100))
+ 175             self.impl=pruned if use_pruned else full
+ 176             self.choice=PlanChoice(self.impl.strategy,k if use_pruned else None,None,None)
+ 177             return
+ 178 
+ 179         a=np.asarray(sample,dtype=np.complex128)
+ 180         if a.shape!=(self.n,): raise ValueError('sample has wrong length')
+ 181         reps=max(1,int(reps))
+ 182         t_cal=time.perf_counter_ns()
+ 183         # Full-FFT timing and result.
+ 184         full.execute(a)
+ 185         vals=[]; full_result=None
+ 186         for _ in range(reps):
+ 187             t=time.perf_counter_ns(); full_result=full.execute(a); vals.append((time.perf_counter_ns()-t)/1e6)
+ 188         full_ms=float(np.median(vals))
+ 189         best_impl=full; best_ms=full_ms; best_result=full_result; best_radix=None
+ 190         self.candidates.append({'strategy':'full_fft','radix':None,'execute_ms':full_ms,'plan_bytes':full.plan_bytes})
+ 191 
+ 192         for k in candidate_radices(self.n,self.q):
+ 193             if k>=self.n: continue
+ 194             phase_bytes=self.q*(self.n//k)*16
+ 195             if phase_bytes>self.max_plan_bytes: continue
+ 196             p=ArbitraryBinsDFTPlan(self.n,self.bins,radix=k,backend=backend)
+ 197             p.execute(a)  # warm
+ 198             vals=[]; result=None
+ 199             for _ in range(reps):
+ 200                 t=time.perf_counter_ns(); result=p.execute(a); vals.append((time.perf_counter_ns()-t)/1e6)
+ 201             tm=float(np.median(vals))
+ 202             self.candidates.append({'strategy':'arbitrary_pruned','radix':k,'execute_ms':tm,'plan_bytes':p.plan_bytes})
+ 203             if tm<best_ms:
+ 204                 best_impl=p; best_ms=tm; best_result=result; best_radix=k
+ 205             # Non-winning plans are dropped immediately; only their timing is retained.
+ 206         self.impl=best_impl; self.sample_result=np.ascontiguousarray(best_result)
+ 207         self.calibration_ms=(time.perf_counter_ns()-t_cal)/1e6
+ 208         self.choice=PlanChoice(self.impl.strategy,best_radix,best_ms,full_ms)
+ 209 
+ 210     @property
+ 211     def strategy(self): return self.impl.strategy
+ 212     @property
+ 213     def plan_bytes(self): return self.impl.plan_bytes
+ 214     def execute(self,x): return self.impl.execute(x)
+ 215     def project_stream(self,basis_vectors): return self.impl.project_stream(basis_vectors)
+ 216 
+ 217     def project_stream_with_sample(self,sample,basis_vectors):
+ 218         """Use the already-computed calibration output for the first basis row."""
+ 219         if self.sample_result is None:
+ 220             first=self.execute(sample)
+ 221         else:
+ 222             first=self.sample_result.copy()
+ 223         rows=[first]
+ 224         rows.extend(self.execute(row) for row in basis_vectors)
+ 225         return np.ascontiguousarray(np.stack(rows))
+ 226 
+ 227 
+ 228 
+ 229 def productive_radices(n:int,q:int,max_plan_bytes=128*1024*1024,limit=4) -> list[int]:
+ 230     """Radices worth trying when every trial will process a real basis row."""
+ 231     ds=[d for d in _divisors(int(n)) if d<int(n)]
+ 232     if not ds: return []
+ 233     targets=[]
+ 234     # Practical measurements often prefer a larger K than the arithmetic
+ 235     # minimum because larger inner FFTs improve locality and shrink the final
+ 236     # phase-combination table.
+ 237     for mul in (1,2,4,8): targets.append(max(1,int(q)*mul))
+ 238     targets.append(choose_radix(n,q))
+ 239     picks=[]
+ 240     for target in targets:
+ 241         feasible=[d for d in ds if q*(n//d)*16<=max_plan_bytes]
+ 242         if not feasible: continue
+ 243         k=min(feasible,key=lambda d:(abs(math.log(max(d,1)/max(target,1))),d))
+ 244         if k not in picks:picks.append(k)
+ 245     # Prefer the practical 4q neighborhood first, then nearby alternatives.
+ 246     picks.sort(key=lambda k:(abs(math.log(max(k,1)/max(4*q,1))),k))
+ 247     return picks[:max(1,int(limit))]
+ 248 
+ 249 
+ 250 @dataclass
+ 251 class ProductivePlannerStats:
+ 252     chosen_strategy:str
+ 253     chosen_radix:int|None
+ 254     planning_ms:float
+ 255     trials:list
+ 256     basis_count:int
+ 257 
+ 258 
+ 259 class ProductiveProjectionPlanner:
+ 260     """Autotune while doing useful basis registrations.
+ 261 
+ 262     Each candidate strategy is evaluated on a *different basis vector whose
+ 263     projection is required anyway*.  Hence no transform execution is thrown
+ 264     away.  Only construction of losing pruned plans is pure tuning overhead.
+ 265     After the productive trials, all remaining basis rows use the fastest
+ 266     observed strategy.
+ 267     """
+ 268     def __init__(self,n:int,bins:Sequence[int],*,backend='scipy',
+ 269                  max_plan_bytes=128*1024*1024,max_pruned_trials=3):
+ 270         self.n=int(n); self.bins=np.asarray(bins,dtype=np.intp); self.q=len(self.bins)
+ 271         self.backend=backend; self.max_plan_bytes=int(max_plan_bytes)
+ 272         self.max_pruned_trials=int(max_pruned_trials)
+ 273         self.stats=None
+ 274 
+ 275     def project(self,basis_vectors:Iterable[np.ndarray], *, expected_count:int|None=None):
+ 276         it=iter(basis_vectors); rows=[]; trials=[]; planning_ms=0.0
+ 277         full=FullFFTBinPlan(self.n,self.bins,backend=self.backend)
+ 278         # Strategy table stores (observed execution ms, plan object).
+ 279         strategies=[]
+ 280         try:first=next(it)
+ 281         except StopIteration:
+ 282             self.stats=ProductivePlannerStats('none',None,0.0,[],0)
+ 283             return np.empty((0,self.q),dtype=np.complex128)
+ 284         t=time.perf_counter_ns(); y=full.execute(first); ms=(time.perf_counter_ns()-t)/1e6
+ 285         rows.append(y); trials.append({'strategy':'full_fft','radix':None,'execute_ms':ms,'plan_bytes':full.plan_bytes})
+ 286         strategies.append((ms,full,None))
+ 287         count=1
+ 288 
+ 289         # Do not tune aggressively if the caller says there are too few rows to
+ 290         # amortize even plan construction.  Unknown count assumes a stream.
+ 291         max_trials=self.max_pruned_trials
+ 292         if expected_count is not None:
+ 293             max_trials=min(max_trials,max(0,int(expected_count)-2))
+ 294         for k in productive_radices(self.n,self.q,self.max_plan_bytes,max_trials):
+ 295             try: row=next(it)
+ 296             except StopIteration: break
+ 297             tp=time.perf_counter_ns(); p=ArbitraryBinsDFTPlan(self.n,self.bins,radix=k,backend=self.backend); planning_ms+=(time.perf_counter_ns()-tp)/1e6
+ 298             t=time.perf_counter_ns(); y=p.execute(row); ms=(time.perf_counter_ns()-t)/1e6
+ 299             rows.append(y); count+=1
+ 300             trials.append({'strategy':'arbitrary_pruned','radix':k,'execute_ms':ms,'plan_bytes':p.plan_bytes})
+ 301             strategies.append((ms,p,k))
+ 302 
+ 303         best_ms,best,best_k=min(strategies,key=lambda z:z[0])
+ 304         for row in it:
+ 305             rows.append(best.execute(row)); count+=1
+ 306         self.stats=ProductivePlannerStats(best.strategy,best_k,planning_ms,trials,count)
+ 307         return np.ascontiguousarray(np.stack(rows))

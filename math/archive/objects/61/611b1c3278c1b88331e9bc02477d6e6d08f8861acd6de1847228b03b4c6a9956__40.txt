@@ -1,0 +1,148 @@
+1: """Exact fast H(C), backward-spectrum, and shifted-resolvent audit."""
+2: import sys
+3: import json
+4: import random
+5: from pathlib import Path
+6: from fast_hc import prepare_fast,apply_hc,expected_preparation,expected_online,fused_fourier
+7: from resolvent import (prepare_resolvent,solve,
+8:     expected_preparation as expected_resolvent_preparation,expected_solve)
+9: from operators import prepare_sparse,apply_sparse_c,horner_c
+10: from fixed_kernel import prepare,lower_convolution
+11: from prior_exact_arithmetic import PrimeField,CyclotomicField
+12: from covariance import prepare_covariance,apply_s,apply_k,chain
+13: 
+14: 
+15: def horner(field,coefficients,z):
+16:     value=field.zero
+17:     for c in reversed(coefficients):
+18:         value=field.add(field.mul(value,z),c)
+19:     return value
+20: 
+21: 
+22: def audit_case(field,n,name,rng):
+23:     eta=field.root(2*n)
+24:     assert field.power(eta,n)==field.neg(field.one)
+25:     assert field.power(eta,2*n)==field.one
+26:     q=field.mul(eta,eta)
+27:     fast=prepare_fast(field,n,eta)
+28:     coefficients=prepare(field,n,q)
+29:     sparse=prepare_sparse(field,n,q)
+30:     resolvent=prepare_resolvent(field,n,q)
+31:     covariance=prepare_covariance(field,fast)
+32:     assert covariance.preparation==dict(sub=n-1)
+33:     assert fast.preparation==expected_preparation(n)
+34:     assert resolvent.preparation==expected_resolvent_preparation(n)
+35:     assert fast.t==coefficients.kernel
+36:     assert [horner(field,coefficients.middle,z) for z in fast.kernel.fft.powers]==fast.kernel.spectrum
+37:     # Exact polynomial, including its finite top boundary.
+38:     for z in (field.one,eta,field.integer(2)):
+39:         kz=horner(field,coefficients.middle,z)
+40:         rhs=field.add(field.mul(field.sub(field.one,z),
+41:                      horner(field,coefficients.middle,field.mul(q,z))),
+42:                      field.mul(field.power(z,n),fast.kernel.fft.inverse_n))
+43:         assert kz==rhs
+44:     assert fast.kernel.spectrum[0]==fast.kernel.fft.inverse_n!=field.zero
+45:     vectors=[[field.one if i==j else field.zero for i in range(n)] for j in range(n)]
+46:     vectors.append([field.integer(rng.randrange(-20,21)) for _ in range(n)])
+47:     resolvent_cases=0
+48:     for x in vectors:
+49:         actual,counts=apply_hc(field,fast,x)
+50:         expected,_=horner_c(field,sparse,coefficients.kernel,x)
+51:         assert actual==expected
+52:         assert counts['field_operations']==expected_online(n)
+53:         sx,scount=apply_s(field,covariance,x)
+54:         ky,kcount=apply_k(field,covariance,actual)
+55:         assert scount==dict(mul=n,add=n-1)
+56:         assert kcount==dict(mul=n)
+57:         assert apply_hc(field,fast,sx)[0]==ky
+58:         cx=apply_sparse_c(field,sparse,x)
+59:         difference=[field.sub(a,b) for a,b in zip(x,cx)]
+60:         assert apply_s(field,covariance,difference)[0]==apply_k(field,covariance,x)[0]
+61:         # The compiler cancellation returns the ordinary N-point FFT.
+62:         gamma_x=[field.mul(field.power(q,j*(j-1)//2),v) for j,v in enumerate(x)]
+63:         gamma_x=[field.neg(v) if j%2 else v for j,v in enumerate(gamma_x)]
+64:         tx=lower_convolution(field,coefficients.kernel,gamma_x)
+65:         hc_tx,_=apply_hc(field,fast,tx)
+66:         unfused=[field.mul(v,f) for v,f in zip(hc_tx,coefficients.factorial)]
+67:         fused,fused_counts=fused_fourier(field,fast,x)
+68:         assert fused==unfused
+69:         l=n.bit_length()-1
+70:         assert fused_counts==dict(mul=n*l//2,add=n*l//2,sub=n*l//2)
+71:         # Includes lambda exactly equal to a diagonal entry; no singular cut.
+72:         for lam in (field.one,q,field.integer(2)):
+73:             y,details=solve(field,resolvent,lam,x)
+74:             assert details['field_operations']==expected_solve(n)
+75:             cy=apply_sparse_c(field,sparse,y)
+76:             assert [field.sub(field.mul(lam,a),b) for a,b in zip(y,cy)]==x
+77:             resolvent_cases+=1
+78:     # The N-resolvent identity is verified on a mixed vector for small sizes.
+79:     batch_cases=0
+80:     if n<=16:
+81:         x=vectors[-1]
+82:         combined=[field.zero]*n
+83:         for j in range(n):
+84:             lam=field.power(q,j)
+85:             weight=field.mul(field.mul(lam,fast.kernel.fft.inverse_n),
+86:                              horner(field,coefficients.kernel,lam))
+87:             value,_=solve(field,resolvent,lam,x)
+88:             combined=[field.add(a,field.mul(weight,b)) for a,b in zip(combined,value)]
+89:         assert combined==apply_hc(field,fast,x)[0]
+90:         batch_cases=1
+91:     # Reversible orbit and a completely charged related-input family.
+92:     sx=kx=vectors[-1]
+93:     for _ in range(n):
+94:         sx=apply_s(field,covariance,sx)[0]
+95:         kx=apply_k(field,covariance,kx)[0]
+96:     assert sx==kx==vectors[-1]
+97:     steps=4
+98:     cached=chain(field,covariance,vectors[-1],steps,True)
+99:     baseline=chain(field,covariance,vectors[-1],steps,False)
+100:     assert cached['outputs']==baseline['outputs']
+101:     online=expected_online(n)
+102:     assert cached['field_operations']==dict(mul=online['mul']+2*n*steps,
+103:         add=online['add']+(n-1)*steps,sub=online['sub'])
+104:     assert baseline['field_operations']==dict(mul=(steps+1)*online['mul']+n*steps,
+105:         add=(steps+1)*online['add']+(n-1)*steps,sub=(steps+1)*online['sub'])
+106:     return dict(field=name,n=n,basis_vectors=n,mixed_vectors=1,
+107:                 inverse_spectrum_values=2*n,resolvent_cases=resolvent_cases,
+108:                 resolvent_batch_identity_cases=batch_cases,
+109:                 preparation=fast.preparation,fast_online=expected_online(n),
+110:                 horner_online=dict(mul=3*n*n-2*n,add=2*n*n-2*n),
+111:                 resolvent_preparation=resolvent.preparation,
+112:                 resolvent_query=expected_solve(n),
+113:                 covariance_basis_vectors=n,covariance_mixed_vectors=1,
+114:                 covariance_chain_outputs=steps+1,
+115:                 cached_chain_total=sum(fast.preparation.values())+sum(covariance.preparation.values())+sum(cached['field_operations'].values()),
+116:                 baseline_chain_total=sum(fast.preparation.values())+sum(baseline['field_operations'].values()),
+117:                 status='PASS')
+118: 
+119: 
+120: def main():
+121:     rng=random.Random(20261009)
+122:     cases=[]
+123:     for p in (65537,998244353):
+124:         field=PrimeField(p)
+125:         for n in (2,4,8,16,32,64):
+126:             cases.append(audit_case(field,n,f'F_{p}',rng))
+127:     for n in (2,4,8):
+128:         cases.append(audit_case(CyclotomicField(2*n),n,f'Q(zeta_{2*n})',rng))
+129:     result=dict(status='PASS',configurations=len(cases),
+130:         basis_vectors=sum(c['basis_vectors'] for c in cases),
+131:         mixed_vectors=sum(c['mixed_vectors'] for c in cases),
+132:         inverse_spectrum_values=sum(c['inverse_spectrum_values'] for c in cases),
+133:         shifted_resolvent_vectors=sum(c['resolvent_cases'] for c in cases),
+134:         resolvent_batch_identity_cases=sum(c['resolvent_batch_identity_cases'] for c in cases),
+135:         covariance_vectors=sum(c['covariance_basis_vectors']+c['covariance_mixed_vectors'] for c in cases),
+136:         covariance_chain_outputs=sum(c['covariance_chain_outputs'] for c in cases),
+137:         scope='O(N log N) ordinary-FFT comparator for H(C), not an independent faster Fourier algorithm',
+138:         cases=cases)
+139:     out=Path(__file__).parent/'results'
+140:     out.mkdir(exist_ok=True)
+141:     (out/'fast_hc_audit.json').write_text(json.dumps(result,indent=2)+'\n')
+142:     print(json.dumps({k:v for k,v in result.items() if k!='cases'},indent=2))
+143:     for c in cases[:6]:
+144:         print(f"N={c['n']}: fast online={sum(c['fast_online'].values())}, Horner online={sum(c['horner_online'].values())}, fast prep={sum(c['preparation'].values())}")
+145: 
+146: 
+147: if __name__=='__main__':
+148:     main()

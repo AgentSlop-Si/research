@@ -1,0 +1,44 @@
+   1 from __future__ import annotations
+   2 import json, subprocess, sys
+   3 from pathlib import Path
+   4 from weyl_line_basis import finite_field_case
+   5 
+   6 ROOT=Path(__file__).resolve().parent
+   7 CASES=[7,11,13,17]
+   8 
+   9 def main():
+  10     records=[finite_field_case(n) for n in CASES]
+  11     results={
+  12       'phase':'v21',
+  13       'title':'Weyl-line Fourier embedding and Bluestein collapse',
+  14       'finite_field_cases':records,
+  15       'theorem_checks':{
+  16         'generic_packet_blocks_checked':sum(r['n'] for r in records),
+  17         'all_block_ranks_full':all(r['block_ranks']==[r['n']-1]*r['n'] for r in records),
+  18         'all_green_line_identities':all(r['green_line_identity'] for r in records),
+  19         'all_chirp_polynomial_identities':all(r['chirp_polynomial_identity'] for r in records),
+  20         'all_chirp_spectra_full_support':all(r['chirp_spectrum_nonzero']==r['n'] for r in records),
+  21       }
+  22     }
+  23     (ROOT/'results.json').write_text(json.dumps(results,indent=2,sort_keys=True)+'\n')
+  24     summary={
+  25       'exact_faster_fft':False,
+  26       'positive_result':'generic multi-h character packets plus I span every constant-diagonal matrix; a gauged Fourier has an exact N-1-resolvent Weyl-line representation',
+  27       'collapse':'the Fourier-compatible line is a full quadratic-chirp polynomial in one monomial Weyl generator, equivalent to Bluestein convolution',
+  28       'tests_expected':11,
+  29       'cases':CASES,
+  30     }
+  31     (ROOT/'RESULT_SUMMARY.json').write_text(json.dumps(summary,indent=2,sort_keys=True)+'\n')
+  32     commands=[
+  33       [sys.executable,'-m','unittest','-v','test_checkpoint'],
+  34       [sys.executable,'independent_verifier.py'],
+  35     ]
+  36     logs=[]
+  37     for cmd in commands:
+  38       cp=subprocess.run(cmd,cwd=ROOT,text=True,capture_output=True)
+  39       logs.append('$ '+' '.join(cmd)+'\n'+cp.stdout+cp.stderr)
+  40       if cp.returncode: raise SystemExit(cp.returncode)
+  41     (ROOT/'run_all.log').write_text('\n'.join(logs))
+  42     print(json.dumps(results['theorem_checks'],sort_keys=True))
+  43 
+  44 if __name__=='__main__':main()

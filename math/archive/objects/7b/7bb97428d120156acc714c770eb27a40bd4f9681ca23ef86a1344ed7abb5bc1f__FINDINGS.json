@@ -1,0 +1,862 @@
+[
+  {
+    "mathematical_scope": "Lines 8–32 construct an m=N/2 quadratic-chirp Hankel matrix over a field with a primitive 2N-th root. The diagonal–Vandermonde factorization is algebraically correct: (a+b)^2=a^2+b^2+2ab and omega=xi^2. Distinct evaluation points give rank m. Lines 35–61 check the separated half-cut of a sum of q diagonal-gauged inverse path-tridiagonals with one common path order. A common-order cut has rank at most q, while the Fourier consecutive-row/consecutive-column cut is Vandermonde of rank m. These are architecture-specific additive barriers.",
+    "input_and_guard_coverage": "Chirp entry asserts even N>=2; common-order entry asserts even N>2 and q<N/2. Neither enforces integer arguments or q>=1. q=0 or negative passes the latter guard, then max(component_ranks) fails on an empty list. Assertions are not durable input checks under Python -O. Root/field validity is inherited from green_sum_cert.",
+    "cost_and_scaling": "Dense Hankel/Fourier construction uses quadratic storage/work (plus modular exponent costs), and rank elimination is cubic in m. The all-entry Bluestein verification adds N² modular exponentiations. q Green submatrices require q·m tridiagonal solves. This is a dense certificate generator, not a fast Fourier implementation.",
+    "test_evidence": "Test_phase17 tests 7–9 cover N=8..128 for chirps and N=16,32,64 for common-order q=2. No q=0, negative q, odd size, root-search failure, or optimized-assertion mode tests. Tests read only; never run here.",
+    "dependency_identity": "green_sum_cert.py exact assigned hash 8137aead5088f288737b3175e8ce41a4a83ecf7b028314d458e45896bdcfdea7; standard-library json/random. Local bare import is not content-addressed.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "29–32",
+        "finding": "The returned cyclic_first_order_green_resolvents_needed_at_least label is broader than what this function constructs. It follows only after an external identification of each permitted cyclic first-order resolvent kernel with a rank-one Hankel sequence on this no-wrap interval. Arbitrary reordered/gauged Green layers or products are not certified."
+      },
+      {
+        "severity": "low",
+        "lines": "35–56",
+        "finding": "q<=0 is not rejected before max([])."
+      }
+    ],
+    "acceptance_boundary": "Accept the exact identity and common-order additive rank argument within the stated model. Do not generalize it to arbitrary Fourier algorithms, different path orders, products, or a runtime speedup.",
+    "sha256": "46bd6abfd6449d1a38c6432398066988dd6b2278f66695c02d8b311ae0621fdc",
+    "filename": "chirp_hankel.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/fft_green_phase17_nonunitary_sum/chirp_hankel.py",
+    "bytes": 2927,
+    "lines": 71,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 71,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "The 459-line module supplies finite-field primality/root search, exact Gaussian rank, monotone and balanced separation witnesses, tridiagonal solves and cut extraction, determinant polynomials, prime- and power-of-two Fourier cut certificates, a noncommutativity witness, and adversarial separation controls. For powers of two, reduction modulo X^(N/2)+1 is exactly the cyclotomic reduction. For prime N and determinant size at least 2, the coefficient sum at X=1 vanishes, so a nonzero reduced degree<N polynomial cannot be a nonzero multiple of Phi_N. Balanced separation preserves earlier separations by taking subsets and retains at least half of each color at every new order. The complex Fourier cut rank bound is rank(F[R,C])>=|R||C|/N, from Frobenius norm and operator norm of normalized Fourier submatrices. With m²>qN this excludes sums of q separated inverse-tridiagonal cuts, regardless of sampled Green coefficients.",
+    "input_and_guard_coverage": "Permutation checks are present in common_monotone_subseq and balanced_separation_witness. Public helper domains remain partial: field_for_root lacks order>=2 checks (order=0 divides by zero; order=1 finds only w=1, skips it and raises); at_least uses a floor and may return a prime below its requested minimum. rank_mod assumes prime modulus and integer-coercible rectangular data; shape is an assert. make_tridiagonal assumes n>0 and sufficiently large ell, does not reject the first zero pivot, and n=1 can return a zero diagonal modulo ell. The solver assumes nonempty matching dimensions and nonzero leading pivots. green_submatrix assumes a bijective label order, valid row/column labels and matching gauges. add_matrices silently truncates mismatched shapes using zip. balanced separation assumes nonempty surviving colors; N=0/1 reaches max/min of empty data. q>=1 is not explicitly validated in certificate entrypoints. Assertions dominate mathematical preconditions.",
+    "cost_and_scaling": "Primality is trial division O(sqrt(ell)); root candidate search tries only 2..299. LIS/LDS is O(N²), iterated for each order. Balanced separation sorts surviving labels and validates permutations, O(qN log N) as a safe bound. Rank elimination is cubic for dense square minors. Each selected Green column solves a length-N tridiagonal, O(N) field operations plus inversions. Determinant polynomial generation enumerates m! permutations with O(m²) inversion counting per permutation: factorial growth in q+1, with no work guard. Full-density mode stores N² entries and adds q dense matrices. These verification costs must not be mistaken for the Green apply cost.",
+    "test_evidence": "Phase17 supplies 22 discovery/direct tests: exact rank/solves, randomized monotone chains, concrete prime and composite witnesses, chirp identities, balanced separation, sampled noncommutativity, approximation-gap dependency, product escape, adversarial cuts and primitive roots. No broad invalid-input suite or zero-pivot test. The main block at lines 283–284 runs only the early three prime examples; later power-two/balanced helpers are defined afterward and are not automatically exercised by that main call.",
+    "dependency_identity": "Pure standard library. Imported downstream as green_sum_cert by three assigned modules/tests. No CAS. Approximation-gap tests are external to this hash and need separate dependency inspection.",
+    "findings": [
+      {
+        "severity": "high",
+        "lines": "182–190, 219–261, 287–334",
+        "finding": "A parameterized-looking certificate interface has unbounded factorial determinant expansion in q+1; this is usable for the tiny illustrated q values, not a scalable large-q routine."
+      },
+      {
+        "severity": "medium",
+        "lines": "29–57, 123–155, 174–175, 364–394",
+        "finding": "Several exposed helper domains are not guarded; malformed dimensions can truncate silently or fail late, and empty color sets trigger max/min errors."
+      },
+      {
+        "severity": "medium",
+        "lines": "397–437",
+        "finding": "The analytic Fourier rank floor is a complex-field theorem, not a universal lower bound in every finite characteristic. A single unlucky prime can make the modular rank assert fail; unlike the power-two witness routine this path does not retry. Passing is valid finite-field evidence; failure is not a complex counterexample."
+      },
+      {
+        "severity": "info",
+        "lines": "288–292, 397–422",
+        "finding": "Composite witness code correctly labels concrete-order scope. The balanced additive theorem is broader, but depends on m²>qN and inverse-tridiagonal separated-cut structure; it does not rule out products of Green sums."
+      }
+    ],
+    "acceptance_boundary": "Accept the finite-field and algebraic witness machinery subject to its domains, and the separated-cut proof within the additive architecture. No execution result is certified by this read; no general FFT lower bound follows.",
+    "sha256": "8137aead5088f288737b3175e8ce41a4a83ecf7b028314d458e45896bdcfdea7",
+    "filename": "green_sum_cert.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/fft_green_phase17_nonunitary_sum/green_sum_cert.py",
+    "bytes": 16936,
+    "lines": 459,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 459,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "An archive builder for phase 17 and the complete phase-16 checkpoint; no mathematical algorithm.",
+    "input_and_guard_coverage": "Top-level code checks PREVIOUS and START exist. It does not assert CURRENT exists before scanning, pin an expected ancestor hash, or verify the manifest against the actual archived bytes. It excludes SHA256SUMS.txt and validation.log but may include other unintended files. Hard-coded /mnt/data paths and import-time writes require an isolated intended environment.",
+    "cost_and_scaling": "Reads complete files to hash and again through ZIP writing; compression and testzip are proportional to total payload size, with per-file materialization memory. Embedded historical checkpoints can dominate size.",
+    "test_evidence": "Post-build checks test ZIP CRC integrity, required member names, and duplicate member names. There is no rerun here and no test of ancestor identity or manifest contents.",
+    "dependency_identity": "pathlib/hashlib/zipfile/json only; external START, CURRENT contents and PREVIOUS archives are not hash-pinned in source.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "17–29, 31–40",
+        "finding": "Manifest digests are computed before a second read by z.write; files changing between those reads can make manifest and ZIP disagree. CRC/name tests do not detect that mismatch. previous_chain_sha256 is measured after writing, so it is not by itself an identity attestation for the bytes embedded."
+      }
+    ],
+    "acceptance_boundary": "Accept only as packaging logic. Its recorded presence or source review does not prove an archive was built or preserved correctly. This audit supplies its own independent source preservation receipt.",
+    "sha256": "cadeffafd33b6773829c85178c401ada923fae0d07355322b18163875f6d0518",
+    "filename": "package.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/fft_green_phase17_nonunitary_sum/package.py",
+    "bytes": 1891,
+    "lines": 40,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 40,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Constructs two sampled sums of two gauged Green inverses, multiplies them densely, checks a cut selected for the first sum, and verifies a nonzero Fourier covariance defect. The example demonstrates that the additive cut barrier need not survive a product; it explicitly does not construct Fourier.",
+    "input_and_guard_coverage": "No n>0/integer guard. n is passed to field_for_root and separation helpers. Dense product assumes square compatible matrices; cut assumes valid indices. Random assertions product_rank>2 and covariance_rank!=0 are seed-specific experimental outcomes, not input-wide guarantees.",
+    "cost_and_scaling": "Dense q=2 Green matrices use O(N²) storage and column solves. dense_product_mod and covariance rank cost O(N³) modular arithmetic. The returned apply-cost string describes a hypothetical factored application using four O(N) solves, not the cost of product_escape_audit.",
+    "test_evidence": "Test_phase17 test 20 uses N=32,64 and the default seed. No varying-seed exhaustive search, counterexample fallback, dimension rejection, or full Fourier equality test; covariance nonzero is sufficient to reject the sample.",
+    "dependency_identity": "Assigned green_sum_cert exact hash 8137aead…; json/random standard library.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "48–70",
+        "finding": "The report mixes dense cubic audit execution with an O(N) factored-application description. This distinction must be preserved in any performance summary."
+      },
+      {
+        "severity": "info",
+        "lines": "60–70",
+        "finding": "Product escape establishes a limitation of this one additive obstruction, not Fourier synthesis or a universal escape theorem for every seed."
+      }
+    ],
+    "acceptance_boundary": "Accept as a designed finite-instance positive control for barrier escape and a Fourier falsification control; not evidence for a fast Fourier transform.",
+    "sha256": "b30bfc991abe8116bf5cf9fbedb2bc341ba809aa0333e1241d7bca0b2327f846",
+    "filename": "product_escape_probe.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/fft_green_phase17_nonunitary_sum/product_escape_probe.py",
+    "bytes": 2628,
+    "lines": 75,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 75,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "22 unittest methods covering phase17 algebraic certificates, finite-field arithmetic, separation combinatorics and related probes. All classes precede unittest.main, so both direct and discovery loading can see the methods.",
+    "input_and_guard_coverage": "Inputs are mostly a short list of fixed N,q,seed values. Root tests inspect all proper divisors for selected N; composite vanishing is correctly included as a negative control. No invalid dimensions, q<=0, invalid primes, malformed matrices, zero initial pivots, or determinant-work limits.",
+    "cost_and_scaling": "Tests can invoke cubic rank/dense product and factorial determinant calculations. The large balanced case N=2048 uses compute_green=False but still forms a dense Fourier minor and eliminates it. No benchmark or asymptotic runtime gate.",
+    "test_evidence": "Read all 163 lines. 22 methods identified by textual inspection. Successes are not established; no unittest process or import was run. Approximation tests add an unreviewed module body outside this batch.",
+    "dependency_identity": "Assigned green_sum_cert/chirp_hankel/product_escape_probe; approximation_gap.py identity 608ef72d254244adee559cfcc823c9bda861caba8013d5dd26c9ba29ba164644 is hash-verified only. The file prepends its parent directory to sys.path, which makes its intended local dependencies plausible but not runtime-verified.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "130–136",
+        "finding": "The approximation-gap assertion relies on a dependency outside the assigned full-read set. Do not transfer this test source’s coverage to that dependency."
+      },
+      {
+        "severity": "info",
+        "lines": "115–128",
+        "finding": "Names using universal describe theorem motivation; each test invokes only one concrete order/seed. Universal scope must come from the separation and Fourier-rank proofs, not these sampled tests."
+      }
+    ],
+    "acceptance_boundary": "Accept as source-level test coverage specification only. Passing the suite, dependency closure and run provenance remain unverified.",
+    "sha256": "a7ab2b7d75f2f8a9d3396d36a9de7308f2d25845681e2711e60f0ee62411ce9f",
+    "filename": "test_phase17.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/fft_green_phase17_nonunitary_sum/tests/test_phase17.py",
+    "bytes": 6922,
+    "lines": 163,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 163,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Closed-form bookkeeping for the phase15 folded radix-2 architecture: base=N b/2, folding=(N-B)/2, orbit=B/2+N(h-1)/2, summing to N(b+h)/2=N log2 N/2. Residual sparsity identity A_nnz=B R_nnz is a symbolic architecture identity, not an FFT lower bound.",
+    "input_and_guard_coverage": "Asserts powers of two and 8<=B<N<=B². Supports symbolic sizes larger than the executor’s fixed-field root range; that is appropriate for counting, but not evidence those sizes execute in F_998244353. Assertions and integer assumptions are the only guards.",
+    "cost_and_scaling": "Constant number of integer arithmetic operations, with bit complexity depending on integer size. Counts butterflies, not all phase-table, scalar, permutation, allocation, or bit costs.",
+    "test_evidence": "Phase15 final class checks many sizes up to N=2^30. Those are arithmetic counts only and are skipped by direct test_phase15.py invocation because the class is below unittest.main.",
+    "dependency_identity": "Assigned phase15_executor is_pow2, hash f2bc75914a3f38cf856956f41096a43299fc6cb4593ad7a549238fb61cab4ffd.",
+    "findings": [
+      {
+        "severity": "info",
+        "lines": "11–24",
+        "finding": "The formulas explicitly conserve classical FFT butterfly work. They cannot support a sub-N-log-N total-work claim."
+      }
+    ],
+    "acceptance_boundary": "Accept exact symbolic count identities in this architecture; do not promote them to general lower bounds or runtime benchmarks.",
+    "sha256": "ca7204a686f3af739c5278ddc712b1fa9d81d07fd2603e3e44f252272f54d865",
+    "filename": "complexity_budget.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/fft_green_phase15_folding/complexity_budget.py",
+    "bytes": 1099,
+    "lines": 29,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 29,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Implements the finite-field dyadic frequency folding R and its inverse, plus inverse residual A through unfolding followed by inverse B-FFTs. Per level, high/other=(u+tw·v,u-tw·v), and inverse uses (high+other)/2 and (high-other)/(2tw). This algebra is correct when all intended slots/groups are present. The complex Gram identity in the docstring is not computed by this modular implementation.",
+    "input_and_guard_coverage": "fold validates power-of-two row count L, uniform row length B and B>=L, but lacks B power-of-two and 8<=B or B>0 at this boundary; some downstream calls assert roots. unfold computes N//B before validating B and does not require N divisible by B, power-of-two N/B in the full original domain, or canonical supplied groups. Slot assertions detect some, not all, malformed groups. inverse_residual relies on these contracts. No direct empty-input rejection beyond downstream errors.",
+    "cost_and_scaling": "All dyadic spectra together occupy B(2L-1)<2N slots. Folding/unfolding has (N-B)/2 butterflies plus O(N) gathering. Inverse residual includes L B-point FFTs, O(N log B) field work. Root tables are cached by the dependency; modular inverse/exponentiation bit costs are additional. Dense R construction is not used here.",
+    "test_evidence": "Seven early phase15 tests include inverse banks through N=4096, residual inverses through N=2048, and selected impulses. The main demonstration has ten fixed parameter pairs. No invalid/malicious custom group tests or all-basis verification at large sizes. No execution here.",
+    "dependency_identity": "Assigned phase15_executor exact hash f2bc75914a3f…; no third-party dependency in this file.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "12–16, 48–67",
+        "finding": "Reusable fold/unfold entrypoints expose looser domains than the phase15 executor. B=0, odd/non-power-of-two B, nondivisible residual lengths and custom group errors are not consistently rejected at entry."
+      },
+      {
+        "severity": "info",
+        "lines": "98–105",
+        "finding": "A linear-time R inverse does not make inverse_residual linear-time: it also applies the B-FFT bank."
+      }
+    ],
+    "acceptance_boundary": "Accept the finite-field inverse formulas within canonical valid phase15 parameters and groups. Complex unitarity and large-size execution need separate evidence.",
+    "sha256": "36437d50a2fbe7b2f8c0bc9958cf59fb3a2d046f7757c51851953a995b986415",
+    "filename": "haar_coherence.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/fft_green_phase15_folding/haar_coherence.py",
+    "bytes": 4188,
+    "lines": 122,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 122,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Large exact finite-field regression driver for folded Galois Fourier and inverse residual at N=4096,8192,16384.",
+    "input_and_guard_coverage": "All sizes and seeds are hard-coded. Guards are assertions delegated to the implementation. Under -O, equality assertions disappear but success JSON labels remain.",
+    "cost_and_scaling": "Each case computes a folded transform, a whole-length radix2 comparator, another residual and its inverse; total O(N log N) field work and O(N) algorithmic storage plus cached roots. No independent timing/cost instrumentation.",
+    "test_evidence": "Checks every output at the three configured instances and full inverse vector equality if assertions remain enabled. No run performed here. The reference fft_radix2 is the same helper used inside the candidate, so arithmetic/root/sign bugs can be shared.",
+    "dependency_identity": "Assigned phase15_executor and haar_coherence exact hashes f2bc75914a3f… and 36437d50a2fb….",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "1, 9–17",
+        "finding": "The label independent is only partially justified: the whole-length decomposition differs, but it reuses the same radix2 routine, field, phase tables and normalization machinery. It is not an independently implemented DFT oracle."
+      }
+    ],
+    "acceptance_boundary": "Accept as intended larger regression coverage; success claims require an actual normal-mode run and independent small direct-DFT controls.",
+    "sha256": "ee30cc00e118311105d6b40dcb9c22ab871f8624ff5c67a329b8e1d7ca1d31b8",
+    "filename": "large_smoke.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/fft_green_phase15_folding/large_smoke.py",
+    "bytes": 784,
+    "lines": 17,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 17,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Phase15 archive builder embedding previous phase14 checkpoint and two original uploaded materials. No mathematical algorithm.",
+    "input_and_guard_coverage": "Hard-coded /mnt/data paths; absent files fail during read. Recursively selected current files exclude bytecode/cache and prior manifest. No expected ancestor/original-upload digest is embedded in source. Top-level imports execute writes if imported, so inert reading was essential.",
+    "cost_and_scaling": "Hashing/ZIP construction and verification read complete payloads repeatedly. Full ancestor embedding dominates long checkpoint chains; peak verification memory at least the largest member.",
+    "test_evidence": "Checks ZIP CRC and compares each stored member to the current file bytes, stronger than the phase17 packager. This remains subject to source changes between manifest creation, write and verification. No package built here.",
+    "dependency_identity": "pathlib/zipfile/hashlib plus four external hard-coded inputs and current folder contents; their existence/content not established by this source read.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "16–25",
+        "finding": "A source mutation after manifest generation but before ZIP writing can leave a stale manifest while the archive-versus-current-file equality passes. Verification should compare archived bytes to archived manifest hashes, using one fixed input snapshot."
+      },
+      {
+        "severity": "low",
+        "lines": "30–31",
+        "finding": "The final preservation flags test dictionary-key membership, not an expected version/hash. They establish intended inclusion, not ancestor identity."
+      }
+    ],
+    "acceptance_boundary": "Accept packaging intent and stronger byte-comparison design; no preservation result or specific produced archive is certified by source inspection.",
+    "sha256": "2fcf2f4c8f15b93424ee79d53a99b6a54a22b6db9550da3e168897d6d3fe4007",
+    "filename": "package.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/fft_green_phase15_folding/package.py",
+    "bytes": 1740,
+    "lines": 32,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 32,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Full 249-line exact positive-sign finite-field Fourier executor for powers of two with 8<=B<N<=B², L=N/B. It builds L independent B-point FFTs, folds even frequencies by dyadic butterflies, gathers residual rows according to multiplication-by-(1+B) orbits, then performs orbit FFTs with phase factors. The displayed geometric-sum formula supports the sparse residual oracle. The final count is exactly N log2(N)/2 butterflies; source explicitly says no speedup. The finite field has 2-power roots only through 2^23.",
+    "input_and_guard_coverage": "root checks power-of-two n and n|(P-1), then exact order. precompute_residual checks structural N,B range, but does not check root(N) at the start: unsupported larger N may do substantial work before orbit_finish requests its N-th root. fft_radix2 asserts nonempty power-of-two length. orbits, orbit_finish, sparse_residual_oracle and direct_dft are public helpers with fewer guards; orbit_finish only checks y length and total consumed, not disjoint/exhaustive/valid cycle indices or canonical orbit order. Invalid B=0 can divide by zero. All major invariants are assert statements and disappear under -O.",
+    "cost_and_scaling": "FFT bank N log2(B)/2 butterflies, folding (N-B)/2, orbit total B/2+N(log2 L-1)/2; together classical count. All retained dyadic spectra sum to <2N entries, cycles O(N), output O(N), roots cached without a size/count eviction cap. Phase tables and scalar twiddles are additional work outside the butterfly counter. Sparse oracle loops N output rows by N input indices, O(N²) predicate checks, and uses modular exponentiation on selected entries. Direct DFT uses N² exponentiations. Fixed-modulus finite implementation is not itself an asymptotic unbounded-N field family.",
+    "test_evidence": "Phase15 suite checks random residuals, selected zero/one/alternating/geometric/impulse inputs, exact counts, same-helper FFT equality, inverses and numerical Gram. Main checks direct DFT/sparse oracle through N=1024 and shared-helper FFT at N=2048; separate large_smoke reaches N=16384. These are intended checks, not runs in this audit. Small direct DFT is the stronger independent algorithmic oracle.",
+    "dependency_identity": "Standard library only: Counter (unused), dataclass and lru_cache. Three assigned consumers rely on this exact hash. Bare imports and execution environment remain unpinned.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "180–200",
+        "finding": "Externally supplied cycles can duplicate or omit output labels while still consuming exactly N input elements. The helper lacks a permutation/disjoint-cover guard; correctness requires canonical cycles from orbits(N,B)."
+      },
+      {
+        "severity": "medium",
+        "lines": "121–177, 180–206",
+        "finding": "The public structural parameter guard admits N beyond the available fixed-field root range, which is rejected only later in the full pipeline. Early root-domain validation would prevent wasted work."
+      },
+      {
+        "severity": "info",
+        "lines": "7–11, 95–114, 203–207",
+        "finding": "Butterfly conservation is an architecture accounting result, not a lower bound on all FFT implementations. It already rules out a speedup claim for this concrete butterfly decomposition."
+      }
+    ],
+    "acceptance_boundary": "Accept as an auditable finite-field folded FFT design with conserved classical work, subject to canonical helper inputs. No tests, import, compilation or actual transform evaluation were performed here.",
+    "sha256": "f2bc75914a3f38cf856956f41096a43299fc6cb4593ad7a549238fb61cab4ffd",
+    "filename": "phase15_executor.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/fft_green_phase15_folding/phase15_executor.py",
+    "bytes": 7369,
+    "lines": 249,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 249,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "The support theorem is valid for the stated model: if F=M_t B_t^-1 ... B_1^-1 M_0 and each B_i has at most s nonzeros per row while M_i are monomial, then F^-1 has row support at most s^t. A dense inverse Fourier matrix requires s^t>=N. The integer loop computes ceil(log_s N) without floating logarithms. The random routine tracks Boolean possible support, so numerical cancellations cannot invalidate its upper bound.",
+    "input_and_guard_coverage": "support_lower_bound asserts s>=2,N>=2, but not integrality. random_row_sparsity_audit has no explicit domain checks for N,s,t. For positive N and s>N, its while len(choices)<s can never finish: choices are contained in range(N). N=0 reaches max(empty), negative t silently performs no stages, noninteger s has unclear rounded behavior.",
+    "cost_and_scaling": "Lower-bound loop uses O(log_s N) multiplications. Random support storage can grow to N² elements; naive set unions per factor can take O(N·s·min(N,s^level)) work. Sampling s distinct values becomes expensive as s approaches N. It is a dense structural audit, not an O(N) Green application.",
+    "test_evidence": "Three support-bound values and four finite random cases appear in phase15 final test class. None covers s>N, N=0, or negative t, and that entire class is omitted in direct script invocation. No tests run here.",
+    "dependency_identity": "Standard-library random; math imported unused. No unreviewed local dependency.",
+    "findings": [
+      {
+        "severity": "high",
+        "lines": "21–35",
+        "finding": "Deterministic nontermination for s>N: at most N distinct indices can ever enter choices, so the while loop cannot terminate. This is a source proof, not an executed failure."
+      },
+      {
+        "severity": "info",
+        "lines": "1–8",
+        "finding": "The source correctly excludes sums of Green solves and stages with nonsparse inverses. Applying this support veto to those models would exceed its mathematical scope."
+      }
+    ],
+    "acceptance_boundary": "Accept the sparse-inverse product support argument and small valid-domain Boolean controls. Repair input guards before treating the random helper as a general callable audit.",
+    "sha256": "53fca3732d4cee8622405bc26444488eb289ae38a1aa33b83002301fcc3bf4a9",
+    "filename": "sparse_green_gate.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/fft_green_phase15_folding/sparse_green_gate.py",
+    "bytes": 1588,
+    "lines": 44,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 44,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "10 unittest methods across exact residual, reversible Haar, and spectral/support classes. Tests include small direct DFT comparisons, same-helper FFT comparisons, symbolic butterfly identities and numerical scaled unitarity.",
+    "input_and_guard_coverage": "Valid-domain fixed parameter pairs dominate; no malformed input/group tests. Basis tests sample four columns rather than all N. Numerical tests in the final class import NumPy unconditionally. Most implementation invariants are asserts rather than unittest assertions, so optimized Python can weaken coverage.",
+    "cost_and_scaling": "Small exact direct DFT and sparse oracles are quadratic or worse with exponentiation; numerical make_R plus Gram and tests can be cubic. Large N=2^30 case only evaluates cost formulas, not a transform.",
+    "test_evidence": "Textual count is 7 methods before line 79 and 3 after. unittest.main normally calls sys.exit, so direct python tests/test_phase15.py registers only the first 7; discovery imports the whole module and can collect all 10. validate.py uses discovery, so its chosen launch route avoids this particular omission.",
+    "dependency_identity": "Assigned executor/coherence/unitarity_probe/complexity_budget/sparse_green_gate hashes; NumPy version unpinned. Test file inserts its package root ahead of sys.path.",
+    "findings": [
+      {
+        "severity": "high",
+        "lines": "79–105",
+        "finding": "The unittest.main call appears before SpectralAndSupportGates. Direct invocation silently omits all three final tests: scaled unitarity, symbolic large costs and sparse-inverse support bound. Move the main guard after all class definitions in any repair."
+      },
+      {
+        "severity": "medium",
+        "lines": "46–51",
+        "finding": "The independent FFT test shares fft_radix2 with the implementation; it does not isolate shared root/sign/arithmetic defects. Direct-DFT tests provide some separate coverage."
+      }
+    ],
+    "acceptance_boundary": "Accept complete static read and intended discovery coverage, not a 10-test direct-run claim or proof that any tests passed.",
+    "sha256": "a97cdc4f7c67da105d6a4e897b9b66c6513cb7c480bde4839e1d495b8e0ec445",
+    "filename": "test_phase15.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/fft_green_phase15_folding/tests/test_phase15.py",
+    "bytes": 4668,
+    "lines": 105,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 105,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Dense complex numerical construction of frequency-folding matrix R from basis columns, checking R R*=diag(L/d) and support counts. This matches the finite-field folding topology but is a separate floating implementation. Numerical Gram agreement is evidence for finite cases, not the all-N proof referenced in THEOREM.md.",
+    "input_and_guard_coverage": "make_R only asserts N<=B². It assumes positive power-of-two N,B, divisibility, B>=L, valid orbits and u invertibility; B=0 or invalid dimensions fail later. Thresholds 1e-7 support and 1e-10 Gram are fixed absolute tolerances.",
+    "cost_and_scaling": "N basis applications use O(N²) arithmetic/storage; dense Gram multiplication is O(N³), support scan O(N²). Dense complex N×N allocation makes this a small-N control.",
+    "test_evidence": "Main lists six N,B pairs through N=256; phase15 suite lists three pairs through N=64. No conditioning-scaled tolerance, parameter validation tests or high-N precision audit. No execution here.",
+    "dependency_identity": "NumPy external, unpinned; assigned phase15_executor.orbits hash f2bc75914a3f….",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "8–15",
+        "finding": "Public entry lacks the original dyadic and divisibility preconditions, though its internals assume them."
+      },
+      {
+        "severity": "info",
+        "lines": "46–62",
+        "finding": "Success labels depend on assertions and fixed floating tolerances; they are not exact or theorem-wide certificates."
+      }
+    ],
+    "acceptance_boundary": "Accept as small finite floating sanity-check design. Do not infer a complex all-size Gram theorem or numerical stability guarantee solely from these cases.",
+    "sha256": "aaad629ec705ffcab813fdb5174061a9868e305a5dbdf8653935823a0e1e9d65",
+    "filename": "unitarity_probe.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/fft_green_phase15_folding/unitarity_probe.py",
+    "bytes": 2075,
+    "lines": 62,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 62,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Validation orchestrator for four historical phase folders plus three phase15 scripts. It requests unittest discovery, records logs, counts tests and summarizes output JSON. It is not itself a mathematical proof or a historical execution record.",
+    "input_and_guard_coverage": "Hard-coded paths, expected counts and date. subprocess timeouts are 120 seconds, but executable is the PATH-selected python rather than a pinned interpreter. PYTHONPATH is set to dot for discovery; process source identities and NumPy version are not pinned. Logs/results are overwritten at top level. Assertions are used as acceptance checks, so -O on the driver removes them.",
+    "cost_and_scaling": "Runs suites sequentially and captures complete combined stdout/stderr in memory. Probe subprocesses also collect all output and parse every line as JSON. No aggregate wall-time/resource/size guard beyond per-subprocess timeout.",
+    "test_evidence": "Expected suite counts are 10,15,12,8; a source count does not prove outcome. phase12 tests explicitly use skipTest when NumPy is unavailable. unittest returns code 0 and prints Ran N tests with skipped tests, so the suite acceptance parser can count skips as passed. If NumPy is absent throughout the same environment, the later mandatory unitarity_probe will fail, so that one condition alone does not produce a completed success report; the parser still does not distinguish skips or expected failures. Script probes require zero exit codes but do not verify expected row counts, parameter coverage, success flags, or output hash provenance.",
+    "dependency_identity": "Assigned phase15 modules and local phase12/13 sources partly covered here; phase14 test suite/body outside assignment. All dependency versions and execution paths must be separately bound to source hashes. No subprocess launched in this review.",
+    "findings": [
+      {
+        "severity": "high",
+        "lines": "8–12, 25–33",
+        "finding": "Exit code 0 plus the substring Ran N tests is insufficient to establish N passing tests: unittest skips and expected failures can satisfy it. The summary unconditionally sets passed=True and total_passed_tests to declared counts."
+      },
+      {
+        "severity": "high",
+        "lines": "13–24, 27–33",
+        "finding": "Successful script exit is not proof its assertions ran (PYTHONOPTIMIZE may disable them), and probe rows are counted without validating required parameter coverage or individual success conditions. all(...) on an empty FFT list would be true, although later max() presently prevents this specific fully empty case from producing a report."
+      },
+      {
+        "severity": "medium",
+        "lines": "3–9, 25",
+        "finding": "Hard-coded paths/date and PATH-selected interpreter do not bind reported results to this exact archived source set."
+      }
+    ],
+    "acceptance_boundary": "Accept as intended run workflow only. No claim of 45 tests passed or fresh result provenance follows from reading it, and its output schema overstates skipped-test acceptance.",
+    "sha256": "904a68464c8932dc9ca3dae66fcdb113f165a56fcc8d10b3d22dd3a404f9ca53",
+    "filename": "validate.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/fft_green_phase15_folding/validate.py",
+    "bytes": 2576,
+    "lines": 37,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 37,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Phase12 audit constructs a complete binary tree Cayley root-to-leaf column, numeric unitarity/condition/cut statistics for a sampled mixer, and modular inverse/involution checks on sampled vectors. The tree recurrence D[k+2]=D[k+1]+8D[k] and numerator 2·2^depth are specific to coupling alpha=2.",
+    "input_and_guard_coverage": "Public tree_exact_root_leaf accepts alpha yet expected formula always assumes alpha=2; other alpha values produce a mismatched comparator. No nonnegative integer depth guard. numerical(n) relies on mixer domain; if required_rank is 0 then singular[target-1] indexes the last singular value, not a meaningful threshold. exact_modular accepts trials=0/negative and returns success count 0 without a check. Seeded checks are finite.",
+    "cost_and_scaling": "Dense S needs O(N²) storage; Gram, condition number and SVD need dense cubic work. Root tree has 2^(depth+1)-1 vertices, exponential in depth. Modular vector checks scale as trials times apply/inverse cost of the unreviewed mixer.",
+    "test_evidence": "Phase12 test suite uses default alpha=2 for depths1..9, exact trials=4 at N16..256, and separate dense matrix controls. Numeric run covers two cuts at N32,64,128. Numerical values returned by audit.numerical are not asserted there; it only reports passed flags for cuts.",
+    "dependency_identity": "unitary_mixer exact candidate aff6a16c8c94a6e8db93afbaad9b20d0c20d633c946f1587f51a11df8a7f9ae6 is identity/hash verified only here. NumPy unpinned. Dependency body is not counted as full read.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "9–24",
+        "finding": "alpha parameter is forwarded to TreeCayley, but expected recurrence/numerator ignore alpha. The advertised exact formula comparison is valid only at the default alpha=2."
+      },
+      {
+        "severity": "medium",
+        "lines": "27–53",
+        "finding": "Numerical audit emits errors, conditioning and cut booleans without enforcing global pass criteria; successful execution alone does not mean the stage passed them."
+      },
+      {
+        "severity": "low",
+        "lines": "56–68",
+        "finding": "Zero/negative trial counts yield vacuous round-trip reports."
+      }
+    ],
+    "acceptance_boundary": "Accept as finite numerical/modular controls at tested default parameters, conditional on exact dependency identity. No all-cut or unbounded-size conclusion.",
+    "sha256": "b2858676a50bb4108f74482adb03df76ba7fbb9b162320072641cf8a08003859",
+    "filename": "audit.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/previous_full_phase14_checkpoint.zip.unpacked/fft_green_phase12_unitary_escape/audit.py",
+    "bytes": 3156,
+    "lines": 78,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 78,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Exact finite-field entrywise Fourier covariance falsification: positive-sign F has FZ=DF, with Ze_j=e_(j+1). It compares every entry of a sampled modular stage and separately counts deviations of its first column from all ones. Covariance plus the all-ones first column uniquely determines the unnormalized Fourier matrix; covariance alone permits arbitrary row scaling, including zero rows.",
+    "input_and_guard_coverage": "Checks n divides MOD-1, but n=0 divides by zero and n<0 is not deliberately rejected. The root-order assertion checks n and n/2 only, sufficient for powers of two under expected domain; no power-of-two n guard is present. Because 3 is assumed primitive, divisibility gives order n, but that primitive-root fact is inherited rather than independently verified here.",
+    "cost_and_scaling": "Dense matrix materialization O(N²) if mixer apply is linear, and N² residual entries with modular powers in the Fourier control. No rank/SVD, but the nested control calls pow at every entry. Finite small-size audit, not an implementation of Fourier.",
+    "test_evidence": "Main lists N8,16,32,64,128. It asserts the Fourier control entries vanish, but does not assert the sampled stage actually has a nonzero defect or first-column error; reported counts must be inspected. No execution.",
+    "dependency_identity": "unitary_mixer candidate aff6a16c… hash verified only; fixed MOD and primitive generator are imported/assumed.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "25–31",
+        "finding": "actual_modular_fourier_defect_entries is hard-coded 0 after assertion checks. Under -O the checks vanish, so this field ceases to be an observed result."
+      },
+      {
+        "severity": "info",
+        "lines": "16–31",
+        "finding": "This module reports stage defects; it does not test a whole class of stages or products and does not certify a universal Fourier impossibility."
+      }
+    ],
+    "acceptance_boundary": "Accept exact finite-instance covariance calculation design. Require dimensions, field embedding and inspected output counts for any actual rejection claim.",
+    "sha256": "83ff4b06e6397ca271701a8477cee13092eb861724d6df90343d4af74743e344",
+    "filename": "covariance_exact.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/previous_full_phase14_checkpoint.zip.unpacked/fft_green_phase12_unitary_escape/covariance_exact.py",
+    "bytes": 1287,
+    "lines": 34,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 34,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Floating negative-sign normalized Fourier covariance control and first-column comparison for one sampled unitary Green stage. The sign convention is consistent with np.fft.fft and D=exp(-2πik/N); it intentionally differs from the modular positive-sign control.",
+    "input_and_guard_coverage": "No explicit n>0/domain guard. No acceptance assertions: four residual/error values are returned for inspection. Fixed Frobenius normalization by sqrt(n) is meaningful on positive sizes but not itself a tolerance.",
+    "cost_and_scaling": "Builds dense S,Z,F. A@Z uses a dense matrix multiplication even though Z is a permutation, so covariance evaluation can be O(N³); storage O(N²). No fast candidate algorithm is established.",
+    "test_evidence": "Three main cases N32,64,128; no randomized sweep or condition-dependent acceptance. Phase12 tests include a related independent source-level covariance test. Not run here.",
+    "dependency_identity": "Unreviewed-body identity unitary_mixer aff6a16c… plus unpinned NumPy.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "13–18",
+        "finding": "A zero process exit carries no pass/fail meaning; the module has no threshold assertions. Numeric outputs need independent interpretation."
+      },
+      {
+        "severity": "info",
+        "lines": "9–12",
+        "finding": "Preserve the negative-sign normalized convention when comparing against positive-sign unnormalized finite-field reports."
+      }
+    ],
+    "acceptance_boundary": "Accept only as numerical finite-instance falsification-control design, not an exact proof or a passing-run attestation.",
+    "sha256": "75317ce073dfe65f3941d6a96ca8e24fe12c72ab1669cc1d3d75a9a4a73f3080",
+    "filename": "covariance_probe.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/previous_full_phase14_checkpoint.zip.unpacked/fft_green_phase12_unitary_escape/covariance_probe.py",
+    "bytes": 856,
+    "lines": 21,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 21,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "8 unittest methods covering tree shapes, modular Cayley action against a dense inverse, modular mixer round trips, small full inverse matrices, alpha=2 root-leaf formula, graph edges, numeric unitarity/cuts and one-stage Fourier falsification. The dense inverse helper uses modular Gauss–Jordan; the vector helper uses zip and assumes matching dimensions.",
+    "input_and_guard_coverage": "Selected valid sizes/seeds only. NumPy-dependent tests deliberately skip if importing NumPy fails. Invalid parent arrays, singular modular pivots, malformed vector lengths, wrong modulus and alternate alpha are not comprehensively tested. Zero-length/square-matrix guards are absent in test helpers.",
+    "cost_and_scaling": "Dense inversion/cross-products are cubic in small N; full inverse tests use N8,16, numerical SVD N32..128. Tree tests cover depth9 (1023 vertices) but are not all-depth proof.",
+    "test_evidence": "All 8 tests precede unittest.main and are visible to direct/discovery runs. Two can be skipped while the unittest run exits 0 and says Ran 8 tests; validate.py would still label all8 passed. No tests run here.",
+    "dependency_identity": "Assigned audit.py b2858676a50b… plus unitary_mixer hash-only identity aff6a16c…. NumPy optional in two tests and version unpinned.",
+    "findings": [
+      {
+        "severity": "high",
+        "lines": "94–96, 110–112",
+        "finding": "Two substantive tests are optional via skipTest. Any downstream suite summary must distinguish skipped from passed; validate.py currently does not. Globally absent NumPy would also break its later mandatory numerical probe, so absent NumPy alone does not imply the entire driver can finish successfully."
+      },
+      {
+        "severity": "info",
+        "lines": "40–56, 63–75",
+        "finding": "Dense independent algebraic formulations are useful controls but depend on the same field/modulus and constructor; their presence is not evidence that the archived tests were executed."
+      }
+    ],
+    "acceptance_boundary": "Accept source-level test specification, with 8 discovered methods and possible skips. No pass count or dependency-body coverage is inferred.",
+    "sha256": "11d4d05cc498e03e75ec4e6e6287d67f31e64997f21d26edb61754ff6ff4a237",
+    "filename": "test_phase12.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/previous_full_phase14_checkpoint.zip.unpacked/fft_green_phase12_unitary_escape/tests/test_phase12.py",
+    "bytes": 5109,
+    "lines": 123,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 123,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Exact fixed-instance covariance-rank correction bound. If S+E intertwines Z,D then SZ-DS=-(EZ-DE), so rank(SZ-DS)<=rank(EZ)+rank(DE)<=2 rank(E). Thus any correction has rank at least ceil(r/2). This bound concerns additive corrections to the fixed stage, not stage products, and the source states that boundary.",
+    "input_and_guard_coverage": "covariance_matrix uses stage.n, asserts divisibility by MOD-1 and omega^n=1, then trusts stage.dense dimensions and stage arithmetic field. It does not validate n>0, primitive order, or that the supplied stage actually uses MOD. A custom stage over another field is silently reduced modulo MOD. Direct stage classes in run use intended MOD.",
+    "cost_and_scaling": "Builds a dense N² covariance matrix, evaluating pow(omega,k,MOD) redundantly for every j. Rank routine is dense cubic. Default sweep uses ten matrices through N128, not a scalable synthesis procedure.",
+    "test_evidence": "Phase13 modular rank test checks Haar ranks >=N-1 only for N8,16,32. Main run reports both tree/Haar variants at N8..128 but does not assert a minimum rank. Neither was run here.",
+    "dependency_identity": "Assigned haar_adapter_mod hash 25d361…; unitary_mixer and rank_mod imported from identity-only aff6a16c… dependency. Module does not itself make sibling phase12 module importable for direct execution.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "12–19",
+        "finding": "Generic stage acceptance is wider than the actual field/domain checks. The correction theorem applies to the field in which S,Z,D and their ranks are defined; coercing an arbitrary stage modulo MOD does not automatically prove a complex statement."
+      },
+      {
+        "severity": "info",
+        "lines": "3–5, 29–32",
+        "finding": "The ceil(r/2) inequality is a valid finite-field result. Lifting a particular complex stage requires a consistent algebraic reduction with denominators nonzero; it does not cover arbitrary products or free parameter choices."
+      }
+    ],
+    "acceptance_boundary": "Accept the rank inequality and prescribed modular-instance calculation. Preserve field/dependency identity and one-stage additive-correction scope.",
+    "sha256": "6dafdcf815252fe531c29bab2b7cfc692887550b72963f96ed4e29a8248a42cf",
+    "filename": "exact_covariance_gate.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/previous_full_phase14_checkpoint.zip.unpacked/fft_green_phase13_phase_coherence/exact_covariance_gate.py",
+    "bytes": 1263,
+    "lines": 35,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 35,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Exact modular Haar synthesis/analysis on power-of-two sizes, subclassing the phase12 Green mixer, plus a strong-coupling experimental variant. inv_sqrt_size uses powers of 2 and the chosen sqrt2; recursive Haar synthesis/analysis are transposes/inverses in the finite-field normalization. The explicit omega8 compatibility assertion is important for a chosen cyclotomic embedding. Strong variant resets path couplings and Haar epsilon to 1/2 and explicitly disclaims inherited small-angle bounds.",
+    "input_and_guard_coverage": "Tonelli–Shanks assumes an odd prime but accepts arbitrary p without primality validation; nonresidue is explicitly rejected. Module import computes sqrt2 and checks the square/embedding using asserts. Haar functions reject non-power-of-two lengths. Class rejects n<4/non-power-of-two but does not explicitly restrict n<=2^23 or validate order/vector shape itself; inherited constructor/apply contracts govern those. apply_R slices input by self.half without an explicit length check. Inputs are reduced through modular operations.",
+    "cost_and_scaling": "Haar recursions have O(n) nodes and O(log n) stack depth, but repeatedly compute modular inverses via inv_sqrt_size; unit-cost field operation and actual Python bit costs differ. Dense stage methods are inherited. Strong constructor builds additional path solvers; no timing benchmarks.",
+    "test_evidence": "Phase13 checks sqrt2²=2, modular Haar inverse on selected vectors at m2..32, mixer two-sided round trips at n8..64 and strong round trips. These five modular/permutation-related methods occur after unittest.main in test_phase13 and are missed by direct invocation. No invalid-modulus/order/vector tests. Not executed.",
+    "dependency_identity": "Unreviewed-body dependencies haar_adapter c73970cef77c3bdd324ec8ca3e1bc10e9b9322a44ba8b25e3a84897b8471f2d8 and unitary_mixer aff6a16c… are hash-verified and located in package/sibling paths. Exact behavior remains conditional on those bodies, their imports and stage methods.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "10–37",
+        "finding": "The generic-looking Tonelli helper is not guarded for arbitrary modulus; its reliable intended domain is the fixed known prime. Import-time asserts bind one root choice only while assertions are enabled."
+      },
+      {
+        "severity": "medium",
+        "lines": "72–78",
+        "finding": "apply_R relies on a correctly sized vector. Slicing can pass unexpected lengths into Haar transforms; a parent method’s checks cannot be assumed without inspecting that exact dependency."
+      },
+      {
+        "severity": "info",
+        "lines": "80–95",
+        "finding": "Strong coupling is deliberately outside the phase12 norm/cut perturbation theorem. It must remain a separate experiment even if modular inverses or two-stage vetoes succeed."
+      }
+    ],
+    "acceptance_boundary": "Accept modular Haar formulas and explicit embedding/strong-parameter separation within the intended prime and dimensions. No complex unitarity, inherited cut guarantee, or runtime verification is inferred.",
+    "sha256": "25d361111a3cd6b102759f05aa9ac3cbde60830797fde748ce5ccfe2e4e275ec",
+    "filename": "haar_adapter_mod.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/previous_full_phase14_checkpoint.zip.unpacked/fft_green_phase13_phase_coherence/haar_adapter_mod.py",
+    "bytes": 3169,
+    "lines": 95,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 95,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Complex numerical sanity audit of one seeded Haar-augmented mixer: dense unitarity 2-norm defect and twelve balanced cuts, one fixed half-cut and eleven random cuts. The source explicitly says not an all-cut certificate.",
+    "input_and_guard_coverage": "No n domain/precision guard and no assert acceptance checks. It counts singular values >=1/64 with no tolerance margin, reports required_floor_fraction=N/512 as a float but never compares observed minimum to it. NumPy/backend behavior is unpinned.",
+    "cost_and_scaling": "Dense N² matrix and Gram, spectral norm and 12 SVDs give O(N³) work and O(N²) storage; repeated for N32,64,128 by main. Sampling does not cover the exponentially many balanced cuts.",
+    "test_evidence": "This file has no tests or pass condition. Output labels are statistics. Related phase13 tests check norms/round trips rather than exhausting cuts. Not executed.",
+    "dependency_identity": "haar_adapter hash-only candidate c73970… and NumPy unpinned. Its local haar_adapter in turn needs phase12 sibling imports.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "18–24",
+        "finding": "The returned required_floor_fraction is not enforced and singular-value threshold has no numerical margin. Successful execution cannot be counted as passing the stated cut target."
+      },
+      {
+        "severity": "info",
+        "lines": "1, 24",
+        "finding": "The sampled nature is clearly disclosed and must be retained in summaries."
+      }
+    ],
+    "acceptance_boundary": "Accept as intended finite numerical diagnostics. No theorem-wide all-cut, robustness or passing-run claim follows.",
+    "sha256": "fd5ed81a16cab68e5c7c4c995718f04ff34333c0b5ab5d827fc91ad990fb51c4",
+    "filename": "haar_numerical_audit.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/previous_full_phase14_checkpoint.zip.unpacked/fft_green_phase13_phase_coherence/haar_numerical_audit.py",
+    "bytes": 1081,
+    "lines": 26,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 26,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Computes analytic l_p operator-norm upper bounds for a fixed-strength phase12 architecture. general bound 1+2/(1-d|alpha|delta) requires p in [1,2], delta=2/p-1 and d|alpha|delta<1. Path bound uses a stronger l1 Neumann bound interpolated with l2 unitarity. Combining path² and normalized I+i epsilon R yields K. A normalized Fourier matrix has l_p norm N^(1/p-1/2), giving t>=log(N^(1/p-1/2))/log K for products of these fixed stages and l_p-isometric interleavings. The helper does not prove the cited analytic interpolation/resolvent steps; they are assumptions/theoretical derivation, not numerical fitting.",
+    "input_and_guard_coverage": "Checks p range and resolvent inequality but computes 2/p before validating p, so p=0 raises ZeroDivisionError rather than the promised ValueError. degree is not checked nonnegative/integer. lower_bound_stage_count checks n>=1 but not integer/finite and uses floating logs/ceil with an ad hoc 1e-12 offset. p=2 yields a trivial zero lower bound for fixed K>1. Floating near-boundary inputs/ceil require care.",
+    "cost_and_scaling": "Constant-size floating arithmetic for each query, with logarithm cost; no FFT/norm oracle. This is a bound calculator, not a certified interval-arithmetic implementation.",
+    "test_evidence": "Phase13 tests constants at p=1.8, one rejected p=1.5, t at N2^20/N1 and selected basis vectors at sizes16..128. Basis vectors do not certify the full operator norm for p≠1; proof must supply it. No boundary/rounding tests.",
+    "dependency_identity": "Only standard-library math. Parameter constants correspond to phase12; Haar/strong variants intentionally violate relevant hypotheses and cannot inherit this result.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "17–21, 24–30",
+        "finding": "Input validation occurs after division by p, and negative degree is admitted; use only the intended nonnegative-degree, nonzero p domain."
+      },
+      {
+        "severity": "medium",
+        "lines": "38–42",
+        "finding": "A routine advertised as rigorous rounds a floating quotient with ceil and an absolute fudge. It is not a certified exact integer lower-bound implementation near integer thresholds; interval or symbolic verification is needed for exact reported stage counts."
+      },
+      {
+        "severity": "info",
+        "lines": "1, 8–14, 33–35",
+        "finding": "Fixed-strength bounds do not apply to the strong-Haar variant or arbitrary stage families, even if those share an implementation base class."
+      }
+    ],
+    "acceptance_boundary": "Accept the conditional analytic norm-budget argument. Treat numeric rounded stage counts as ordinary floating estimates until certified; retain architecture/parameter restrictions.",
+    "sha256": "e8c51e7af8bcb35d37d5c792805e6ad480401285d186491cae0beab4fb54dff2",
+    "filename": "lp_gate.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/previous_full_phase14_checkpoint.zip.unpacked/fft_green_phase13_phase_coherence/lp_gate.py",
+    "bytes": 1682,
+    "lines": 52,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 52,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "Necessary two-stage invariant: if A=S2 Q P S1 satisfies AZ=DA, then Q P (S1 Z S1^-1) P^-1 Q^-1=S2^-1 D S2. Diagonal similarity leaves diagonal entries unchanged, and permutation similarity permutes them, so the diagonal multisets must match. A mismatch excludes every intermediate permutation and invertible diagonal for these fixed S1,S2 in the chosen field; equality is not sufficient. The two component formulas correctly compute diagonal entries of the conjugates.",
+    "input_and_guard_coverage": "mats trusts apply/inverse without explicitly verifying mutual inverses or output lengths. diag_modulation_conjugate does not require N|(MOD-1) or validate primitive order; unsupported n uses floor exponentiation. certify_two_stage accepts only named variants by dictionary lookup, with no friendly validation. Generic tree stage dimensions may extend beyond the root assumptions. Fixed sampled constructors in run use dyadic n8..128.",
+    "cost_and_scaling": "mats materializes N forward and inverse columns, O(N²) storage and O(N·apply_cost). Each diagonal computation uses N² products plus modular powers for modulation. Sorting adds O(N log N). This avoids N! permutation search but is still dense quadratic storage/work (assuming linear stage apply).",
+    "test_evidence": "Phase13 test uses both repeated explicit sums and separate apply-based conjugation at n8, then veto cases at n8,16,32 for six fixed variant pairs. All these tests are below unittest.main and missed on direct invocation. No tests where diagonal multisets match but synthesis fails, or unsupported root dimensions.",
+    "dependency_identity": "Assigned haar_adapter_mod; identity-only unitary_mixer aff6a16c…. Bare import from sibling phase12 is not established for standalone execution. Field embedding for sqrt2 is guarded by assigned modular adapter.",
+    "findings": [
+      {
+        "severity": "medium",
+        "lines": "31–35",
+        "finding": "Missing divisibility/exact-root-order guard can construct a modulation matrix that is not the intended N-th-root Fourier D for unsupported N; a mismatch then does not answer the intended Fourier problem."
+      },
+      {
+        "severity": "info",
+        "lines": "3–6, 38–52",
+        "finding": "The quantifier is arbitrary intermediate Q,P but fixed sampled endpoint stages. It cannot be promoted to all endpoint graph orders, strengths, products of three or more stages, or an arbitrary Fourier algorithm."
+      }
+    ],
+    "acceptance_boundary": "Accept the exact necessary invariant and fixed-instance veto methodology within field/root/inverse assumptions. A matching multiset never certifies successful synthesis.",
+    "sha256": "8b53cb42cb795358fee1a9f1f46b5adc56dcc9613f6718a6e27d89c1a1c318b5",
+    "filename": "phase_permutation_gate.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/previous_full_phase14_checkpoint.zip.unpacked/fft_green_phase13_phase_coherence/phase_permutation_gate.py",
+    "bytes": 2498,
+    "lines": 61,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 61,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  },
+  {
+    "mathematical_scope": "12 unittest methods across norm, complex Haar, modular Haar, phase/permutation and strong-parameter controls. Early tests cover seven methods; later five add exact modular inverse/covariance and two-stage veto checks.",
+    "input_and_guard_coverage": "The file inserts phase13 root then sibling phase12 at position0, so phase12 ends up first. This is intentional dependency setup but module names remain globally cached and hash-unpinned. Mostly fixed sizes and vectors; no malformed/root-range/precision boundary cases.",
+    "cost_and_scaling": "Includes sampled vector applications, dense covariance ranks and conjugation matrices at small N. No asymptotic performance gate. Numeric p-norm equality checks depend on floats/tolerances.",
+    "test_evidence": "Line81 calls unittest.main before classes ModularHaarTest, PhasePermutationGateTest and StrongParameterControl. Direct run sees only7 methods; discovery imports all12. The conjugation test partly repeats the same explicit summation formula but also uses an independently expressed apply/inverse/shift route (lines120–130), providing useful additional structure. No execution in this review.",
+    "dependency_identity": "Assigned lp_gate/exact_covariance_gate/haar_adapter_mod/phase_permutation_gate plus hash-only haar_adapter c73970… and unitary_mixer aff6a16c…. Sibling path lookup is evidenced in source, not runtime exercised.",
+    "findings": [
+      {
+        "severity": "high",
+        "lines": "81–149",
+        "finding": "The direct script exits before defining five important exact modular/covariance/permutation/strong tests. Any report claiming twelve tests from direct invocation is inconsistent with this exact source; discovery is required until the main guard is moved."
+      },
+      {
+        "severity": "medium",
+        "lines": "29–35, 60–68",
+        "finding": "Selected basis/vector checks and selected p values are regression controls; the method names do not make them all-vector operator-norm or all-p proofs."
+      }
+    ],
+    "acceptance_boundary": "Accept complete static coverage of the test specification with direct/discovery distinction. Neither twelve passing tests nor full transitive code coverage is established.",
+    "sha256": "1df4056a78ad17d95a6c9d7b0ef203f731fbcd9504d3a8ae7e1346db805aacd1",
+    "filename": "test_phase13.py",
+    "representative_path": "additions/1717/extracted/fft_green_phase20_weyl_shared_state/previous_full_phase19_checkpoint.zip.unpacked/fft_green_phase19_dual_green/previous_full_phase18_checkpoint.zip.unpacked/previous_full_phase17_checkpoint.zip.unpacked/previous_full_phase16_checkpoint.zip.unpacked/previous_full_phase15_checkpoint.zip.unpacked/previous_full_phase14_checkpoint.zip.unpacked/fft_green_phase13_phase_coherence/tests/test_phase13.py",
+    "bytes": 6796,
+    "lines": 149,
+    "full_source_read": true,
+    "read_range": {
+      "first_line": 1,
+      "last_line": 149,
+      "all_lines_read": true
+    },
+    "source_executed": false,
+    "source_imported": false,
+    "source_compiled": false,
+    "source_syntax_parsed": false
+  }
+]

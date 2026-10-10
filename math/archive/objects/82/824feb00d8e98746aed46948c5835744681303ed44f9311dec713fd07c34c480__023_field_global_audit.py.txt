@@ -1,0 +1,55 @@
+"""Independent exact finite-field full-basis gate for global noncommuting Green.
+All Fourier reference columns and dense forcing columns are recomputed, not
+obtained by testing an identity against itself. The solver never calls a DFT.
+"""
+import json, time
+from pathlib import Path
+from weyl_green import P, root_for_n, WeylGreen, field_dft, complex_Green_bounds
+
+LENGTHS = [4,8,16,24,32,48,64,96,128,192,384]
+
+
+def audit_one(n):
+    root=root_for_n(n)
+    obj=WeylGreen(n,root)
+    verified=0
+    zeros=0
+    for j in range(n):
+        # Three distinct constructions of B(:,j).
+        direct=obj.rhs_column_direct(j)
+        expected=obj.dft_column(j)
+        by_L=obj.apply_L(expected)
+        by_P=obj.dft_of_sparse_preprocessed_column(j)
+        if direct!=by_L or direct!=by_P:
+            raise AssertionError(('intertwining failed',n,j))
+        if obj.solve_L(direct)!=expected:
+            raise AssertionError(('cyclic inverse failed',n,j))
+        verified+=n
+        zeros+=sum(v==0 for v in direct)
+    # An off-by-one phase and broken predecessor must be caught.
+    j=1
+    true=obj.rhs_column_direct(j)
+    wrong=[v for v in true]
+    wrong[0]=(wrong[0]+1)%P
+    assert obj.solve_L(wrong)!=obj.dft_column(j)
+    x=[((i+1)**3+17*i+5)%P for i in range(n)]
+    assert obj.apply_L(field_dft(x,root))==field_dft(obj.apply_P(x),root)
+    assert obj.solve_L(obj.apply_L(x))==x
+    return {'n':n,'checked_full_basis_entries':verified,'finite_field_forcing_zeros':zeros,
+            'primitive_root':root,'noncommuting':(root!=1)}
+
+
+def main():
+    start=time.monotonic()
+    result=[audit_one(n) for n in LENGTHS]
+    total=sum(v['checked_full_basis_entries'] for v in result)
+    payload={'model':'F unnormalized; Sx[k]=x[k-1]; D=diag(root^k)',
+             'prime':P,'lengths':result,'checked_entries':total,
+             'theorem_complex':complex_Green_bounds(),
+             'note':'finite-field support counts do not certify complex support; complex bound does',
+             'elapsed_seconds':round(time.monotonic()-start,3)}
+    (Path(__file__).parent/'FIELD_GLOBAL_RESULTS.json').write_text(json.dumps(payload,indent=2)+'\n')
+    print(json.dumps(payload,indent=2))
+    assert total > 0
+
+if __name__=='__main__':main()

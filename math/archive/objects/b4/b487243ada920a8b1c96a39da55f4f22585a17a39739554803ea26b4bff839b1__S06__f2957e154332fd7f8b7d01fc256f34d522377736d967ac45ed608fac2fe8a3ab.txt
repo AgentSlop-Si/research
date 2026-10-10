@@ -1,0 +1,524 @@
+   1 """Hero #17 Phase 8: exact multistage Fourier cross-cut and polynomial-CRT audits.
+   2 
+   3 All claimed general-FFT bounds are carefully *restricted* to their declared grammar.
+   4 The executable fast baseline is radix-2 decimation via binomial remainder union.
+   5 No universal sub-NlogN FFT is claimed.
+   6 """
+   7 from __future__ import annotations
+   8 
+   9 from collections import Counter
+  10 from dataclasses import dataclass, asdict
+  11 from itertools import combinations
+  12 from math import isqrt, log2, pi, sqrt
+  13 from cmath import exp
+  14 import random
+  15 
+  16 
+  17 def is_prime(n: int) -> bool:
+  18     if n < 2: return False
+  19     for k in range(2, isqrt(n) + 1):
+  20         if n % k == 0: return False
+  21     return True
+  22 
+  23 
+  24 def factors(n: int) -> set[int]:
+  25     out=set();k=2
+  26     while k*k<=n:
+  27         if n%k==0:
+  28             out.add(k)
+  29             while n%k==0:n//=k
+  30         k+=1
+  31     if n>1:out.add(n)
+  32     return out
+  33 
+  34 
+  35 def fixture(n: int) -> tuple[int,int]:
+  36     """Find prime p and primitive Nth root; explicitly OUTSIDE online executor."""
+  37     for c in range(1,10000):
+  38         p=c*n+1
+  39         if not is_prime(p): continue
+  40         for g in range(2,p):
+  41             w=pow(g,(p-1)//n,p)
+  42             if all(pow(w,n//q,p)!=1 for q in factors(n)):
+  43                 return p,w
+  44     raise RuntimeError('no fixture field')
+  45 
+  46 
+  47 @dataclass
+  48 class Ledger:
+  49     adds:int=0
+  50     muls:int=0
+  51     root_prep_muls:int=0
+  52     inputs:int=0
+  53     writes:int=0
+  54     butterflies:int=0
+  55     plan_adds:int=0
+  56     plan_muls:int=0
+  57     def record(self):return asdict(self)
+  58     def add(self,a,b,p,plan=False):
+  59         if plan:self.plan_adds+=1
+  60         else:self.adds+=1
+  61         return (a+b)%p
+  62     def sub(self,a,b,p,plan=False):
+  63         if plan:self.plan_adds+=1
+  64         else:self.adds+=1
+  65         return (a-b)%p
+  66     def mul(self,a,b,p,plan=False):
+  67         if plan:self.plan_muls+=1
+  68         else:self.muls+=1
+  69         return (a*b)%p
+  70 
+  71 
+  72 def roots_table(n:int,p:int,w:int,log:Ledger|None=None)->list[int]:
+  73     out=[1]*n
+  74     for i in range(1,n):
+  75         out[i]=out[i-1]*w%p
+  76         if log:log.root_prep_muls+=1
+  77     return out
+  78 
+  79 
+  80 def dft_ref(x:list[int],p:int,w:int)->list[int]:
+  81     n=len(x);roots=roots_table(n,p,w)
+  82     return [sum(x[j]*roots[(-k*j)%n] for j in range(n))%p for k in range(n)]
+  83 
+  84 
+  85 def dft_matrix(n:int,p:int,w:int)->list[list[int]]:
+  86     roots=roots_table(n,p,w)
+  87     return [[roots[(-k*j)%n] for j in range(n)] for k in range(n)]
+  88 
+  89 
+  90 def matmul(A:list[list[int]],B:list[list[int]],p:int)->list[list[int]]:
+  91     if not A or not B:return []
+  92     assert len(A[0])==len(B)
+  93     return [[sum(A[i][k]*B[k][j] for k in range(len(B)))%p
+  94              for j in range(len(B[0]))] for i in range(len(A))]
+  95 
+  96 
+  97 def matrank(A:list[list[int]],p:int)->int:
+  98     if not A:return 0
+  99     W=[row.copy() for row in A];m=len(W);n=len(W[0]);r=0
+ 100     for j in range(n):
+ 101         pivot=next((i for i in range(r,m) if W[i][j]%p),None)
+ 102         if pivot is None:continue
+ 103         W[r],W[pivot]=W[pivot],W[r]
+ 104         inv=pow(W[r][j],-1,p)
+ 105         W[r]=[(a*inv)%p for a in W[r]]
+ 106         for i in range(r+1,m):
+ 107             c=W[i][j]
+ 108             if c:W[i]=[(a-c*b)%p for a,b in zip(W[i],W[r])]
+ 109         r+=1
+ 110         if r==m:break
+ 111     return r
+ 112 
+ 113 
+ 114 def matinv(A:list[list[int]],p:int)->list[list[int]]:
+ 115     n=len(A)
+ 116     assert all(len(a)==n for a in A)
+ 117     W=[a.copy()+[int(i==j) for j in range(n)] for i,a in enumerate(A)]
+ 118     for j in range(n):
+ 119         pivot=next((i for i in range(j,n) if W[i][j]%p),None)
+ 120         if pivot is None:raise ValueError('singular matrix')
+ 121         W[j],W[pivot]=W[pivot],W[j]
+ 122         inv=pow(W[j][j],-1,p)
+ 123         W[j]=[(a*inv)%p for a in W[j]]
+ 124         for i in range(n):
+ 125             if i==j:continue
+ 126             c=W[i][j]
+ 127             if c:W[i]=[(a-c*b)%p for a,b in zip(W[i],W[j])]
+ 128     return [row[n:] for row in W]
+ 129 
+ 130 
+ 131 def submat(A, rows, cols):return [[A[i][j] for j in cols] for i in rows]
+ 132 
+ 133 def matrix_sub(A,B,p):return [[(a-b)%p for a,b in zip(ar,br)] for ar,br in zip(A,B)]
+ 134 
+ 135 def blockdiag(A,B,p):
+ 136     a=len(A);b=len(B)
+ 137     return [A[i]+[0]*b for i in range(a)]+[[0]*a+B[i] for i in range(b)]
+ 138 
+ 139 
+ 140 def outer(u:list[int],v:list[int],p:int)->list[list[int]]:
+ 141     return [[x*y%p for y in v] for x in u]
+ 142 
+ 143 
+ 144 def schur_cut_certificate(n:int,p:int,w:int)->dict:
+ 145     """F_N=blockdiag(0,S)+UV exactly, rank(UV)=m, n even.
+ 146 
+ 147     Construction costs dense elimination; *not* a fast FFT algorithm.
+ 148     """
+ 149     assert n%2==0
+ 150     m=n//2;F=dft_matrix(n,p,w)
+ 151     A=submat(F,range(m),range(m));B=submat(F,range(m),range(m,n))
+ 152     C=submat(F,range(m,n),range(m));D=submat(F,range(m,n),range(m,n))
+ 153     CAi=matmul(C,matinv(A,p),p)
+ 154     S=matrix_sub(D,matmul(CAi,B,p),p)
+ 155     U=[[int(i==j) for j in range(m)] for i in range(m)]+CAi
+ 156     V=[A[i]+B[i] for i in range(m)]
+ 157     UV=matmul(U,V,p)
+ 158     base=blockdiag([[0]*m for _ in range(m)],S,p)
+ 159     reconstructed=[[(base[i][j]+UV[i][j])%p for j in range(n)] for i in range(n)]
+ 160     assert reconstructed==F
+ 161     assert matrank(UV,p)==m
+ 162     assert matrank(submat(F,range(m),range(m,n)),p)==m
+ 163     # Stronger sharpness certificate: a rank-m residual even when the
+ 164     # block-diagonal baseline itself is invertible. The baseline is dense,
+ 165     # and constructing it is NOT counted as a cheap operation.
+ 166     H=matmul(CAi,B,p)
+ 167     witness=None
+ 168     for t in range(2,p):
+ 169         inv=pow((1-t)%p,-1,p)
+ 170         X=[[(t*v)%p for v in row] for row in A]
+ 171         Y=[[(D[i][j]-inv*H[i][j])%p for j in range(m)] for i in range(m)]
+ 172         if matrank(Y,p)<m:continue
+ 173         full_base=blockdiag(X,Y,p)
+ 174         residual=matrix_sub(F,full_base,p)
+ 175         assert matrank(full_base,p)==n
+ 176         assert matrank(residual,p)==m
+ 177         witness=t
+ 178         break
+ 179     assert witness is not None
+ 180     return {'n':n,'cut':m,'cross_rank':m,'bridge_rank':m,
+ 181             'invertible_block_baseline_witness':witness,
+ 182             'baseline_lower_rank':matrank(S,p),'construction':'Schur complement; dense elimination charged'}
+ 183 
+ 184 
+ 185 def dense_star(n:int,p:int)->tuple[list[list[int]],int]:
+ 186     """O(N)-gate full-support invertible nonunitary transform; not F_N."""
+ 187     A=[[int(i==j) for j in range(n)] for i in range(n)]
+ 188     for j in range(1,n):A[0]=[(a+b)%p for a,b in zip(A[0],A[j])]
+ 189     for j in range(1,n):A[j]=[(a+b)%p for a,b in zip(A[j],A[0])]
+ 190     return A,2*(n-1)
+ 191 
+ 192 
+ 193 def bridge_network(n:int,p:int,w:int,seed:int=44,steps:int=5)->dict:
+ 194     """Random numerical verification of telescoping rank sum on same fixed cut."""
+ 195     rng=random.Random(seed); m=n//2
+ 196     acc=[[int(i==j) for j in range(n)] for i in range(n)]
+ 197     base=[[int(i==j) for j in range(n)] for i in range(n)]
+ 198     rank_budget=0
+ 199     for t in range(steps):
+ 200         left=[[rng.randrange(p) for _ in range(m)] for _ in range(m)]
+ 201         right=[[rng.randrange(p) for _ in range(n-m)] for _ in range(n-m)]
+ 202         B=blockdiag(left,right,p)
+ 203         r=1 if t%2==0 else 2
+ 204         E=[[0]*n for _ in range(n)]
+ 205         for h in range(r):
+ 206             v=[rng.randrange(p) for _ in range(n)]
+ 207             u=[rng.randrange(p) for _ in range(n)]
+ 208             E=[[E[i][j]+u[i]*v[j] for j in range(n)] for i in range(n)]
+ 209         E=[[v%p for v in row] for row in E]
+ 210         T=[[(B[i][j]+E[i][j])%p for j in range(n)] for i in range(n)]
+ 211         acc=matmul(T,acc,p);base=matmul(B,base,p)
+ 212         rank_budget+=r
+ 213     residual_rank=matrank(matrix_sub(acc,base,p),p)
+ 214     off_rank=matrank(submat(acc,range(m),range(m,n)),p)
+ 215     assert residual_rank<=rank_budget and off_rank<=rank_budget
+ 216     return {'n':n,'stages':steps,'rank_budget':rank_budget,
+ 217             'residual_rank':residual_rank,'offdiag_rank':off_rank}
+ 218 
+ 219 
+ 220 def eval_radix2_remainder(x:list[int],p:int,w:int)->tuple[list[int],Ledger]:
+ 221     """Classical DIF FFT interpreted as *shared binomial remainder* graph.
+ 222 
+ 223     Each split roots z^r=c vs z^r=-c and reuses the multiplication c*x_high.
+ 224     Charged O(N log N); not an improved general FFT.
+ 225     """
+ 226     n=len(x)
+ 227     if n<2 or n&(n-1):raise ValueError('power-of-two N required')
+ 228     ledger=Ledger(inputs=n);roots=roots_table(n,p,w,ledger)
+ 229     out=[None]*n
+ 230     def rec(poly,labels):
+ 231         s=len(labels)
+ 232         if s==1:
+ 233             out[labels[0]]=poly[0]%p;ledger.writes+=1;return
+ 234         m=s//2
+ 235         left=labels[::2];right=labels[1::2]
+ 236         c=roots[(-left[0]*m)%n]
+ 237         L=[];R=[]
+ 238         for j in range(m):
+ 239             tw=ledger.mul(c,poly[j+m],p)
+ 240             L.append(ledger.add(poly[j],tw,p))
+ 241             R.append(ledger.sub(poly[j],tw,p))
+ 242             ledger.butterflies+=1
+ 243         rec(L,left);rec(R,right)
+ 244     rec([v%p for v in x],list(range(n)))
+ 245     return out,ledger
+ 246 
+ 247 
+ 248 def _vanish_poly(labels,roots,p,ledger,cache):
+ 249     key=tuple(labels)
+ 250     if key in cache:return cache[key]
+ 251     P=[1]
+ 252     n=len(roots)
+ 253     for j in labels:
+ 254         z=roots[(-j)%n]
+ 255         Q=[0]*(len(P)+1)
+ 256         for i,v in enumerate(P):
+ 257             zprod=ledger.mul(v,z,p,plan=True)
+ 258             Q[i]=ledger.sub(Q[i],zprod,p,plan=True)
+ 259             Q[i+1]=ledger.add(Q[i+1],v,p,plan=True)
+ 260         P=Q
+ 261     cache[key]=P
+ 262     return P
+ 263 
+ 264 
+ 265 def _remainder(P,Q,p,ledger):
+ 266     """Monic polynomial remainder; Q annihilates one child root set."""
+ 267     d=len(Q)-1;W=P.copy()
+ 268     assert Q[-1]==1
+ 269     for k in range(len(W)-1,d-1,-1):
+ 270         c=W[k]
+ 271         if not c:continue
+ 272         for j in range(d):
+ 273             if not Q[j]:continue
+ 274             prod=ledger.mul(c,Q[j],p)
+ 275             W[k-d+j]=ledger.sub(W[k-d+j],prod,p)
+ 276         W[k]=0
+ 277     return W[:d]
+ 278 
+ 279 
+ 280 def eval_generic_remainder(x:list[int],p:int,w:int,policy='contiguous')->tuple[list[int],Ledger]:
+ 281     """Exact alternative full-input circuit with charged root polynomials and divisions.
+ 282 
+ 283     Unoptimized independent divisions; tests whether unconventional root partitions
+ 284     help before shared-quotient arithmetic circuit synthesis.
+ 285     """
+ 286     n=len(x)
+ 287     if n<2 or n&(n-1):raise ValueError('power of two N required')
+ 288     ledger=Ledger(inputs=n);roots=roots_table(n,p,w,ledger)
+ 289     out=[None]*n;cache={}
+ 290     special=(0,1,2,3,4,8,10,12)
+ 291     def rec(P,labels,top=False):
+ 292         if len(labels)==1:
+ 293             out[labels[0]]=P[0]%p;ledger.writes+=1;return
+ 294         s=len(labels)
+ 295         if policy=='noncoset16' and top and n==16:
+ 296             L=list(special);R=sorted(set(labels)-set(special))
+ 297         elif policy=='contiguous':L=labels[:s//2];R=labels[s//2:]
+ 298         else:L=labels[::2];R=labels[1::2]
+ 299         VL=_vanish_poly(L,roots,p,ledger,cache)
+ 300         VR=_vanish_poly(R,roots,p,ledger,cache)
+ 301         rec(_remainder(P,VL,p,ledger),L)
+ 302         rec(_remainder(P,VR,p,ledger),R)
+ 303     rec([v%p for v in x],list(range(n)),True)
+ 304     return out,ledger
+ 305 
+ 306 
+ 307 def _mul_zeta_vec(v:list[int],j:int,n:int)->list[int]:
+ 308     """Multiply cyclotomic integer by zeta^j modulo Phi_{2^m}(z)=z^(n/2)+1."""
+ 309     d=n//2; out=[0]*d
+ 310     for i,c in enumerate(v):
+ 311         t=(i+j)%n
+ 312         if t>=d:out[t-d]-=c
+ 313         else:out[t]+=c
+ 314     return out
+ 315 
+ 316 
+ 317 def exact_cyclotomic_root_poly(labels:tuple[int,...],n:int)->list[list[int]]:
+ 318     """Vanishing P(z)=product(z-zeta^j), coefficients in Z[zeta_N].
+ 319 
+ 320     Only for n a power of two; exact integer arithmetic; no finite-field
+ 321     spurious coefficient cancellations.
+ 322     """
+ 323     if n<2 or n&(n-1):raise ValueError('n=2^m only')
+ 324     d=n//2
+ 325     P=[[1]+[0]*(d-1)]
+ 326     for j in labels:
+ 327         Q=[[0]*d for _ in range(len(P)+1)]
+ 328         for i,v in enumerate(P):
+ 329             scaled=_mul_zeta_vec(v,j,n)
+ 330             Q[i]=[a-b for a,b in zip(Q[i],scaled)]
+ 331             Q[i+1]=[a+b for a,b in zip(Q[i+1],v)]
+ 332         P=Q
+ 333     return P
+ 334 
+ 335 
+ 336 def coeff_support(P:list[list[int]])->int:
+ 337     return sum(any(v) for v in P)
+ 338 
+ 339 
+ 340 def exhaustive_root_split(n:int=16)->dict:
+ 341     """All binomial/balanced-half subset possibilities, exact cyclotomic ring.
+ 342 
+ 343     n=16 involves 12870 distinct subsets, 6435 complement-pairs.
+ 344     """
+ 345     if n not in (4,8,16):raise ValueError('limit exhaustive set size')
+ 346     m=n//2;full=set(range(n))
+ 347     supports={}
+ 348     for A in combinations(range(n),m):
+ 349         supports[A]=coeff_support(exact_cyclotomic_root_poly(A,n))
+ 350     hist=Counter(supports.values());paired=Counter(); examples={}
+ 351     min_non_periodic=(10**9,None)
+ 352     for A,sa in supports.items():
+ 353         B=tuple(sorted(full-set(A)))
+ 354         if A>B:continue
+ 355         sb=supports[B]
+ 356         periodic=any({(j+t)%n for j in A}==set(A) for t in range(1,n))
+ 357         key=(sa+sb,periodic)
+ 358         paired[key]+=1
+ 359         if sa+sb not in examples:examples[sa+sb]=list(A)
+ 360         if not periodic and sa+sb<min_non_periodic[0]:
+ 361             min_non_periodic=(sa+sb,list(A))
+ 362     return {'n':n,'half':m,'subsets':len(supports),
+ 363             'complement_pairs':sum(paired.values()),
+ 364             'support_histogram':{str(k):v for k,v in sorted(hist.items())},
+ 365             'pair_support_histogram':{f'{k[0]}_{"periodic" if k[1] else "nonperiodic"}':v for k,v in sorted(paired.items())},
+ 366             'best_split_total_support':min(x[0] for x in paired),
+ 367             'best_nonperiodic_total_support':None if min_non_periodic[1] is None else min_non_periodic[0],
+ 368             'best_nonperiodic_subset':min_non_periodic[1],
+ 369             'example_subsets':{str(k):v for k,v in sorted(examples.items())[:5]}}
+ 370 
+ 371 
+ 372 def radix2_symbolic_merges(n:int,p:int,w:int)->dict:
+ 373     """Number of identical/proportional linear forms across all FFT stages.
+ 374 
+ 375     Stage inputs are basis vectors in bit-reversed order; each stage remains
+ 376     invertible, and each wire has support exactly 2^stage. Thus zero merges.
+ 377     """
+ 378     if n<2 or n&(n-1):raise ValueError('n must be power of two')
+ 379     roots=roots_table(n,p,w);ell=n.bit_length()-1
+ 380     def bitrev(i):return int(f'{i:0{ell}b}'[::-1],2)
+ 381     state=[[int(j==bitrev(i)) for j in range(n)] for i in range(n)]
+ 382     seen={};duplicate=0;per_stage=[]
+ 383     def canonical(v):
+ 384         pivot=next(a for a in v if a%p)
+ 385         inv=pow(pivot,-1,p)
+ 386         return tuple(a*inv%p for a in v)
+ 387     for stage in range(ell+1):
+ 388         rows=[canonical(v) for v in state]
+ 389         stage_dup=sum(r in seen for r in rows)
+ 390         duplicate+=stage_dup
+ 391         for r in rows:seen[r]=stage
+ 392         per_stage.append({'stage':stage,'forms':n,'support':1<<stage,'duplicate':stage_dup})
+ 393         if stage==ell:break
+ 394         span=1<<(stage+1);m=span//2
+ 395         for base in range(0,n,span):
+ 396             for k in range(m):
+ 397                 i=base+k;j=i+m
+ 398                 u=state[i];v=state[j];tw=roots[(-k*n//span)%n]
+ 399                 scaled=[a*tw%p for a in v]
+ 400                 state[i]=[(a+b)%p for a,b in zip(u,scaled)]
+ 401                 state[j]=[(a-b)%p for a,b in zip(u,scaled)]
+ 402     assert state==dft_matrix(n,p,w)
+ 403     return {'n':n,'total_forms':n*(ell+1),'unique_forms':len(seen),
+ 404             'proportional_merges':duplicate,'layers':per_stage}
+ 405 
+ 406 
+ 407 def unitary_entropy_audit(n:int)->dict:
+ 408     """Reproduce Ailon 2013 unitary 2-wire entropy lower bound on classical FFT."""
+ 409     if n<2 or n&(n-1):raise ValueError('n must be power of two')
+ 410     ell=n.bit_length()-1
+ 411     def bitrev(i):return int(f'{i:0{ell}b}'[::-1],2)
+ 412     state=[[complex(j==bitrev(i)) for j in range(n)] for i in range(n)]
+ 413     def ent(v):
+ 414         return -sum((abs(a)**2)*log2(abs(a)**2) for a in v if abs(a)>1e-12)
+ 415     increases=[]
+ 416     for stage in range(ell):
+ 417         span=1<<(stage+1);m=span//2
+ 418         for base in range(0,n,span):
+ 419             for k in range(m):
+ 420                 i=base+k;j=i+m
+ 421                 u=state[i];v=state[j]
+ 422                 old=ent(u)+ent(v)
+ 423                 tw=exp(-2j*pi*k/span)
+ 424                 state[i]=[(a+tw*b)/sqrt(2) for a,b in zip(u,v)]
+ 425                 state[j]=[(a-tw*b)/sqrt(2) for a,b in zip(u,v)]
+ 426                 inc=ent(state[i])+ent(state[j])-old
+ 427                 assert inc<=2+1e-7
+ 428                 increases.append(inc)
+ 429     final=sum(ent(v) for v in state)
+ 430     assert abs(final-n*log2(n))<1e-6
+ 431     return {'n':n,'gates':len(increases),'max_entropy_increment':max(increases),
+ 432             'min_entropy_increment':min(increases),'total_entropy':final,
+ 433             'lower_bound':n*log2(n)/2}
+ 434 
+ 435 
+ 436 def lut_gate_bound(n:int,p:int,table_exponent:int=2)->dict:
+ 437     """Explicit truth-table r-input blocks over Fp, at most n^c entries.
+ 438 
+ 439     Polynomial table => r <= floor(c log(n)/log(p)); stage-only grammar.
+ 440     No statement about unrestricted algebraic circuits.
+ 441     """
+ 442     budget=n**table_exponent
+ 443     width=0
+ 444     while p**(width+1)<=budget:width+=1
+ 445     return {'n':n,'field_size':p,'table_entries_budget':budget,
+ 446             'max_complete_block_arity':width,'necessary_levels_if_full_width':
+ 447             None if width<2 else __import__('math').ceil(log2(n)/log2(width)),
+ 448             'proof':'explicit full table size p^r; stage influence <=r^d'}
+ 449 
+ 450 
+ 451 def remainder_transfer(P:list[int],p:int)->list[list[int]]:
+ 452     """High-coefficient transfer z^(m+t) mod monic P, for t=0,...,m-1."""
+ 453     m=len(P)-1
+ 454     R=[[0]*m for _ in range(m)]
+ 455     for t in range(m):
+ 456         coeff=[0]*(2*m);coeff[m+t]=1
+ 457         for k in range(2*m-1,m-1,-1):
+ 458             c=coeff[k]
+ 459             if c:
+ 460                 for j in range(m):
+ 461                     coeff[k-m+j]=(coeff[k-m+j]-c*P[j])%p
+ 462                 coeff[k]=0
+ 463         for i in range(m):R[i][t]=coeff[i]
+ 464     return R
+ 465 
+ 466 
+ 467 def root_poly_mod(labels:tuple[int,...],roots:list[int],p:int)->list[int]:
+ 468     n=len(roots);P=[1]
+ 469     for j in labels:
+ 470         z=roots[(-j)%n];Q=[0]*(len(P)+1)
+ 471         for i,a in enumerate(P):
+ 472             Q[i]=(Q[i]-a*z)%p
+ 473             Q[i+1]=(Q[i+1]+a)%p
+ 474         P=Q
+ 475     return P
+ 476 
+ 477 
+ 478 def crt_bridge_certificate(n:int,p:int,w:int,root_a:tuple[int,...])->dict:
+ 479     """Matrix for coefficient CRT: [[I,R_A],[I,R_B]]; difference full rank."""
+ 480     assert n%2==0
+ 481     m=n//2;root_a=tuple(sorted(root_a))
+ 482     assert len(root_a)==m and len(set(root_a))==m
+ 483     b=tuple(j for j in range(n) if j not in root_a)
+ 484     roots=roots_table(n,p,w)
+ 485     PA=root_poly_mod(root_a,roots,p);PB=root_poly_mod(b,roots,p)
+ 486     RA=remainder_transfer(PA,p);RB=remainder_transfer(PB,p)
+ 487     difference=matrix_sub(RB,RA,p)
+ 488     rank=matrank(difference,p)
+ 489     assert rank==m
+ 490     support_a=sum(v!=0 for row in RA for v in row)
+ 491     support_b=sum(v!=0 for row in RB for v in row)
+ 492     return {'n':n,'a':list(root_a),'b':list(b),
+ 493             'transfer_rank':rank,'support_a':support_a,'support_b':support_b,
+ 494             'combined_support':support_a+support_b,
+ 495             'poly_support_a':sum(v!=0 for v in PA),
+ 496             'poly_support_b':sum(v!=0 for v in PB)}
+ 497 
+ 498 
+ 499 def enumerate_crt_transfer_supports(n:int,p:int,w:int)->dict:
+ 500     """Exhaustive finite-field transfer-matrix sparsity, all balanced root splits.
+ 501 
+ 502     Unlike exact cyclotomic root-polynomial search, nonzero counts here are
+ 503     F_p-specific and may decrease accidentally modulo p.
+ 504     """
+ 505     if n not in (4,8,16):raise ValueError('limited exact search')
+ 506     m=n//2;roots=roots_table(n,p,w)
+ 507     hist=Counter();samples={};best_non=(10**9,None)
+ 508     for a in combinations(range(n),m):
+ 509         b=tuple(j for j in range(n) if j not in a)
+ 510         if a>b:continue
+ 511         PA=root_poly_mod(a,roots,p);PB=root_poly_mod(b,roots,p)
+ 512         RA=remainder_transfer(PA,p);RB=remainder_transfer(PB,p)
+ 513         nnz=sum(v!=0 for row in RA for v in row)+sum(v!=0 for row in RB for v in row)
+ 514         periodic=any({(j+t)%n for j in a}==set(a) for t in range(1,n))
+ 515         hist[(nnz,periodic)]+=1
+ 516         if nnz not in samples:samples[nnz]=list(a)
+ 517         if not periodic and nnz<best_non[0]:best_non=(nnz,list(a))
+ 518     return {'n':n,'p':p,'pairs':sum(hist.values()),
+ 519             'histogram':{f'{v}_{"periodic" if periodic else "nonperiodic"}':cnt
+ 520                          for (v,periodic),cnt in sorted(hist.items())},
+ 521             'minimum_transfer_nnz':min(k[0] for k in hist),
+ 522             'best_nonperiodic_transfer_nnz':best_non[0] if best_non[1] else None,
+ 523             'best_nonperiodic_subset':best_non[1],
+ 524             'first_support_examples':{str(k):v for k,v in sorted(samples.items())[:6]}}

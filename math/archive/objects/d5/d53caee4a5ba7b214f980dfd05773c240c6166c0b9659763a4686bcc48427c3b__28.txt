@@ -1,0 +1,226 @@
+   1 #!/usr/bin/env python3
+   2 """Independent finite controls for the v11 mathematical audit.
+   3 No source-bundle code is imported, evaluated, or executed. Only NumPy and
+   4 mpmath (installed libraries) are used. Claims of exactness rest on proofs,
+   5 not on these floating-point checks.
+   6 """
+   7 import json, math, platform, hashlib
+   8 from pathlib import Path
+   9 import numpy as np
+  10 import mpmath as mp
+  11 mp.mp.dps = 70
+  12 OUT = Path(__file__).resolve().parent
+  13 SOURCE = OUT.parent / 'extracted' / 'fft_all_length_fused_fp_v11(1)' / 'fft_all_length_fused_fp_v11'
+  14 
+  15 def bj(r,z):
+  16     """Fresh bounded-argument factorial series, not SciPy or uploaded code."""
+  17     sign = (-1)**(-r) if r < 0 else 1
+  18     r = abs(r)
+  19     z = np.asarray(z, dtype=float)
+  20     term = np.ones_like(z)
+  21     for j in range(1,r+1): term *= z/(2*j)
+  22     acc = term.copy()
+  23     for j in range(1,40):
+  24         term = term * (-z*z/(4*j*(r+j)))
+  25         acc = acc + term
+  26     return sign*acc
+  27 
+  28 def grid(n):
+  29     q=1<<(n-1).bit_length()
+  30     j=np.array([(2*k*q+n)//(2*n) for k in range(n)],dtype=int)
+  31     d=np.array([k*q-int(j[k])*n for k in range(n)],dtype=int)
+  32     return q,j,d/n
+  33 
+  34 def tail(R):
+  35     a=math.pi/2
+  36     return 2*math.exp(math.pi**2/(4*(R+1)))*a**R/math.factorial(R)/(1-a/(R+1))
+  37 
+  38 def local_tail(delta,H):
+  39     a=delta/2; r=H+1
+  40     return 2*math.exp(delta*delta/(4*(r+1)))*a**r/math.factorial(r)/(1-a/(r+1))
+  41 
+  42 def cheb_coeff(theta,R):
+  43     # Independent cosine definition, rather than Chebyshev recurrence.
+  44     x=np.clip(2*theta,-1,1)
+  45     c=np.array([np.cos(r*np.arccos(x)) for r in range(R)],dtype=complex)
+  46     for r in range(1,R): c[r] *= 2*(-1j)**r
+  47     return c
+  48 
+  49 def clenshaw(c,theta):
+  50     n=c.shape[1]; u=np.zeros(n,dtype=complex); v=u.copy(); node=2*theta
+  51     for r in reversed(range(1,len(c))):
+  52         w=c[r]+2*node*u-v
+  53         v,u=u,w
+  54     return c[0]+node*u-v
+  55 
+  56 def phase_matrix(q,m,a,beta):
+  57     k=q//m
+  58     return np.array([[np.exp(2j*math.pi*((a*t*(t-1)//2+(a*m*b+beta)*t)%q)/q) for t in range(m)] for b in range(k)])
+  59 
+  60 def compress_matrix(q,m,a,beta):
+  61     S=phase_matrix(q,m,a,beta); C=np.zeros((q//m,q),complex)
+  62     for b in range(q//m): C[b,b*m:(b+1)*m]=S[b]
+  63     return C
+  64 
+  65 def dft(q):
+  66     return np.exp(-2j*np.pi*np.outer(np.arange(q),np.arange(q))/q)/math.sqrt(q)
+  67 
+  68 def recurrence_decoder(q,m,a,beta,d,selected):
+  69     """Closed-form cycle recurrence; direct DFT and cumsum are independent controls."""
+  70     k=q//m
+  71     f=np.exp(-2j*np.pi*np.outer(np.arange(k),np.arange(k))/k) @ d
+  72     cycle=np.array([(a*t)%q for t in range(q)])
+  73     gauge=np.array([np.exp(2j*np.pi*((a*t*(t-1)//2+beta*t)%q)/q) for t in range(q)])
+  74     boundary=np.array([np.exp(-2j*np.pi*((m*(int(v)+beta)+a*m*(m-1)//2)%q)/q) for v in cycle])
+  75     forcing=(f[cycle%k]-boundary*f[(cycle+a*m)%k])/math.sqrt(q)
+  76     terms=forcing/gauge
+  77     prefix=np.r_[0,np.cumsum(terms[:-1])]
+  78     y=np.empty(q,complex); y[cycle]=gauge*(sum(terms)/2-prefix)
+  79     return y[selected]
+  80 
+  81 def weights(n,m,R,H):
+  82     q,selected,theta=grid(n); k=q//m; coeff=cheb_coeff(theta,R)
+  83     z=math.pi*np.arange(k)/k; delta=math.pi*np.arange(m)/q
+  84     exact=np.array([bj(r,math.pi*np.arange(n)/q) for r in range(R)])
+  85     approx=[]
+  86     for r in range(R):
+  87         a=np.zeros((k,m))
+  88         for h in range(-H,H+1): a+=bj(r-h,z)[:,None]*bj(h,delta)[None,:]
+  89         approx.append(a.ravel()[:n])
+  90     approx=np.array(approx)
+  91     return coeff.T @ exact, coeff.T @ approx, approx
+  92 
+  93 results={'scope':'Independent mathematical controls, no uploaded-code execution', 'python':platform.python_version(), 'numpy':np.__version__, 'mpmath':mp.__version__}
+  94 # Verify scalar reconstruction against an independent high-precision library.
+  95 max_bessel=0.0
+  96 for r in range(-4,19):
+  97     for z in [0,.001,.1,.7,1.5,math.pi]:
+  98         max_bessel=max(max_bessel,abs(float(bj(r,z))-float(mp.besselj(r,z))))
+  99 assert max_bessel<2e-14
+ 100 results['bessel_series_max_abs_error']=max_bessel
+ 101 # Exact arithmetic grid identities, including trivial N=1.
+ 102 for n in range(1,514):
+ 103     q,j,theta=grid(n)
+ 104     assert len(set(j))==n and min(j)>=0 and max(j)<q
+ 105     assert max(abs(theta))<=.5
+ 106 results['exact_grid_lengths_checked']=513
+ 107 # Selected cycle decoder equals direct U C* at all small states.
+ 108 decoder_checks=[]; rng=np.random.default_rng(9102026)
+ 109 for q,m in [(8,2),(16,4),(32,4)]:
+ 110     U=dft(q); selected=np.arange(0,q,2); d=rng.normal(size=q//m)+1j*rng.normal(size=q//m)
+ 111     err=0.0
+ 112     for a in range(1,q,2):
+ 113         for beta in range(q):
+ 114             C=compress_matrix(q,m,a,beta)
+ 115             ref=(U@C.conj().T@d)[selected]
+ 116             got=recurrence_decoder(q,m,a,beta,d,selected)
+ 117             err=max(err,float(np.max(abs(got-ref))))
+ 118     assert err<2e-12
+ 119     decoder_checks.append({'Q':q,'M':m,'states':q*q//2,'max_abs_error':err})
+ 120 results['selected_decoder_exhaustive']=decoder_checks
+ 121 # Clenshaw vs direct polynomial sum with factorial-decaying row magnitudes.
+ 122 clenshaw_error=0.0
+ 123 for n in [7,13,31,61]:
+ 124     q,j,theta=grid(n)
+ 125     for R in [1,2,6,12,20]:
+ 126         raw=rng.normal(size=(R,n))+1j*rng.normal(size=(R,n))
+ 127         raw*=np.array([(math.pi/2)**r/math.factorial(r) for r in range(R)])[:,None]
+ 128         coeff=raw.copy()
+ 129         for r in range(1,R): coeff[r]*=2*(-1j)**r
+ 130         ref=np.sum(raw*cheb_coeff(theta,R),axis=0)
+ 131         clenshaw_error=max(clenshaw_error,float(np.max(abs(ref-clenshaw(coeff,theta)))))
+ 132 assert clenshaw_error<5e-14
+ 133 results['clenshaw_direct_max_abs_error']=clenshaw_error
+ 134 # Kernel tails, exact center operator infinity-from-2 norm, negative channel parity.
+ 135 kernel_checks=[]; negative_error=0.0
+ 136 for n,m in [(7,2),(13,4),(31,4),(61,8),(127,8)]:
+ 137     q,j,theta=grid(n); delta=math.pi*(m-1)/q
+ 138     for R in [4,8,12]:
+ 139         exact_kernel=np.exp(-2j*np.pi*np.outer(theta,np.arange(n)/q))
+ 140         for H in [0,1,2]:
+ 141             trunc,fused,wr=weights(n,m,R,H)
+ 142             source_eps=tail(R)+(2*R-1)*local_tail(delta,H)
+ 143             fused_error=float(np.max(abs(fused-exact_kernel)))
+ 144             addition_error=float(np.max(abs(fused-trunc)))
+ 145             center_2inf=float(np.max(np.linalg.norm(fused-exact_kernel,axis=1))/math.sqrt(n))
+ 146             assert addition_error<=(2*R-1)*local_tail(delta,H)+3e-14
+ 147             assert fused_error<=source_eps+3e-14
+ 148             row={'N':n,'Q':q,'M':m,'R':R,'H':H,'kernel_error':fused_error,'center_2_to_inf':center_2inf,'source_bound':source_eps,'addition_ratio':addition_error/max((2*R-1)*local_tail(delta,H),1e-300)}
+ 149             if H==0:
+ 150                 sharp=tail(R)+delta
+ 151                 assert fused_error<=sharp+3e-14
+ 152                 row['sharper_H0_bound']=sharp
+ 153                 row['sharper_H0_ratio']=fused_error/sharp
+ 154             kernel_checks.append(row)
+ 155     for h in range(1,5):
+ 156         negative_error=max(negative_error,float(np.max(abs(bj(-h,math.pi*np.arange(m)/q)-(-1)**h*bj(h,math.pi*np.arange(m)/q)))))
+ 157 results['kernel_checks']=kernel_checks
+ 158 results['negative_channel_parity_max_error']=negative_error
+ 159 # Exhaustively average random states and check full error covariance matrices.
+ 160 cov_checks=[]; rank_checks=[]
+ 161 for n,m in [(7,2),(13,4),(17,4)]:
+ 162     q,selected,theta=grid(n); U=dft(q); R=10
+ 163     for H in [0,1]:
+ 164         _,W,_=weights(n,m,R,H)
+ 165         base=math.sqrt(q/n)*U[selected,:n]
+ 166         center=base*W
+ 167         all_L=[]; compressions=[]
+ 168         for a in range(1,q,2):
+ 169             for beta in range(q):
+ 170                 C=compress_matrix(q,m,a,beta)
+ 171                 L=math.sqrt(q/n)*(U[selected]@(C.conj().T@C))[:,:n]*W
+ 172                 all_L.append(L)
+ 173         all_L=np.array(all_L)
+ 174         mean_error=float(np.max(abs(all_L.mean(axis=0)-center)))
+ 175         eig_ratio=0.0
+ 176         for out in range(n):
+ 177             e=all_L[:,out,:]-center[out]
+ 178             cov=e.conj().T@e/len(all_L)
+ 179             eig=float(np.linalg.eigvalsh(cov)[-1])
+ 180             bound=m/n*float(np.max(abs(W[out])))**2
+ 181             eig_ratio=max(eig_ratio,eig/bound)
+ 182         assert mean_error<1e-13 and eig_ratio<=1+1e-12
+ 183         cov_checks.append({'N':n,'Q':q,'M':m,'H':H,'states':len(all_L),'mean_max_error':mean_error,'max_covariance_ratio_using_actual_kernel_envelope':eig_ratio})
+ 184         # Demonstrate the fused row really factors through H+1 local channels.
+ 185         a,beta=1,2; C=compress_matrix(q,m,a,beta); k=q//m
+ 186         reduced=[]
+ 187         for h in range(H+1):
+ 188             wt=np.tile(bj(h,math.pi*np.arange(m)/q),k)
+ 189             reduced.append((C*wt)[:,:n])
+ 190         G=np.vstack(reduced)
+ 191         rank=int(np.linalg.matrix_rank(G,tol=1e-11))
+ 192         L=all_L[beta]
+ 193         rankL=int(np.linalg.matrix_rank(L,tol=1e-11))
+ 194         assert rankL<=rank and rank<=(H+1)*k
+ 195         # Row map recovery from G is a numerical factorization diagnostic only.
+ 196         residual=float(np.max(abs(L-(L@np.linalg.pinv(G))@G)))
+ 197         assert residual<2e-11
+ 198         rank_checks.append({'N':n,'Q':q,'M':m,'H':H,'rank_channels':rank,'rank_row':rankL,'rank_cap':(H+1)*k,'factorization_max_error':residual})
+ 199 results['exhaustive_fused_covariance']=cov_checks
+ 200 results['reduced_channel_rank']=rank_checks
+ 201 # H=0 limiting error and frozen-block Taylor check (exact arithmetic formulas).
+ 202 frozen=[]
+ 203 for n,m in [(13,4),(31,4),(61,8),(127,8)]:
+ 204     q,j,theta=grid(n); b=np.arange(n)//m; delta=math.pi*(m-1)/q
+ 205     true=np.exp(-2j*np.pi*np.outer(theta,np.arange(n)/q))
+ 206     frozen_kernel=np.exp(-2j*np.pi*np.outer(theta,b*m/q))
+ 207     err=float(np.max(abs(frozen_kernel-true)))
+ 208     assert err<=delta+2e-14
+ 209     R=12; z=-2j*np.pi*np.outer(theta,b*m/q); term=np.ones_like(z); poly=term.copy()
+ 210     for r in range(1,R): term*=z/r; poly+=term
+ 211     taylor_error=float(np.max(abs(poly-true)))
+ 212     bound=delta+math.pi**R/math.factorial(R)
+ 213     assert taylor_error<=bound+2e-14
+ 214     frozen.append({'N':n,'M':m,'frozen_bias':err,'Delta':delta,'Taylor_R':R,'Taylor_total_error':taylor_error,'Taylor_bound':bound})
+ 215 results['frozen_block_variant']=frozen
+ 216 # Source manifests are data only; independently hash every top-level source file.
+ 217 evidence={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(SOURCE.iterdir()) if p.is_file()}
+ 218 (OUT/'SOURCE_CHECKSUMS.json').write_text(json.dumps(evidence,indent=2)+'\n')
+ 219 results['all_assertions_passed']=True
+ 220 (OUT/'CHECK_RESULTS.json').write_text(json.dumps(results,indent=2)+'\n')
+ 221 print('PASS: independent Bessel series, 513 exact grids, 672 decoder states, Clenshaw, 45 kernel cases, 6 exhaustive covariance cases, 6 rank cases, 4 frozen-block controls.')
+ 222 print('Bessel series maximum error:',max_bessel)
+ 223 print('Selected decoder maximum error:',max(v['max_abs_error'] for v in decoder_checks))
+ 224 print('Clenshaw maximum error:',clenshaw_error)
+ 225 print('Covariance maximum ratio:',max(v['max_covariance_ratio_using_actual_kernel_envelope'] for v in cov_checks))
+ 226 print('No uploaded code was executed or imported.')

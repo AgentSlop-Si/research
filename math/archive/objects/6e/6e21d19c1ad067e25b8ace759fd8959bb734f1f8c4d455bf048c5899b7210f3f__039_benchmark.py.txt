@@ -1,0 +1,142 @@
+"""Reproducible Phase 6 benchmarks. Memory/preparation costs disclosed in report.
+Run: OPENBLAS_NUM_THREADS=1 python benchmark.py
+"""
+from __future__ import annotations
+import json
+from pathlib import Path
+import sys
+import time
+import platform
+
+import numpy as np
+from scipy import fft
+from cost_aware_fft import RelationFFT
+from relational_convolution import RelationalConvolver, DynamicBitProduct
+
+RNG=np.random.default_rng(20261009)
+
+def median_time(fn,repeats=3):
+    vals=[];checks=[]
+    for _ in range(repeats):
+        start=time.perf_counter_ns(); chk=fn(); vals.append((time.perf_counter_ns()-start)/1e6);checks.append(chk)
+    if not np.allclose(checks,checks[0],rtol=1e-8,atol=1e-5):
+        raise RuntimeError('benchmark checksum varied')
+    return float(np.median(vals)), float(checks[0])
+
+def benchmark_dense():
+    results=[]
+    for n,M in [(4096,48),(16384,48),(65536,40),(262144,32),(1048576,20)]:
+        a=RNG.standard_normal(n)
+        b=RNG.standard_normal(n)
+        pairs=[(int(RNG.integers(n)),float(RNG.standard_normal())) for _ in range(M)]
+        h=fft.rfft(b)
+        # Warm native library once, outside either method's measured path.
+        fft.irfft(fft.rfft(a)*h,n=n)
+
+        def native():
+            b_frequency=fft.rfft(b) # include fixed-kernel preparation
+            acc=0.
+            for i,(p,d) in enumerate(pairs):
+                x=a.copy();x[p]+=d
+                product=fft.irfft(fft.rfft(x)*b_frequency,n=n)
+                acc+=float(product[(p+i*107)%n])
+            return acc
+
+        def reused():
+            re=RelationFFT()
+            sa=re.register(a); sb=re.register(b)
+            co=RelationalConvolver(max_core_bytes=max(n*8,1024))
+            # Both basis FFTs, one initial inverse FFT, and materialization counted
+            # in this timer. Core constructed during first view evaluation.
+            acc=0.
+            for i,(p,d) in enumerate(pairs):
+                variant=sa.fork().edit(p,d)
+                product=co.product(variant,sb).full(method='reuse')
+                acc+=float(product[(p+i*107)%n])
+            return acc
+
+        t_native,v1=median_time(native)
+        t_shared,v2=median_time(reused)
+        if not np.isclose(v1,v2,rtol=1e-7,atol=1e-4):
+            raise AssertionError(f'incorrect shared output n={n}: {v1} vs {v2}')
+        results.append({'n':n,'versions':M,'prepared_kernel_full_ffts_ms':t_native,
+                        'cached_core_sparse_versions_ms':t_shared,
+                        'speedup':t_native/t_shared,
+                        'checksum_native':v1,'checksum_shared':v2,
+                        'initial_convolution_included':True})
+        print('dense',n,M,round(t_native,3),round(t_shared,3),round(t_native/t_shared,2), flush=True)
+    return results
+
+def benchmark_point_queries():
+    n=65536
+    m=700
+    a=RNG.standard_normal(n)
+    b=RNG.standard_normal(n)
+    updates=[(int(RNG.integers(n)), float(RNG.standard_normal()),int(RNG.integers(n))) for _ in range(m)]
+    reverse_b=np.concatenate([b[:1],b[:0:-1]])
+    def baseline():
+        # The best basic no-precomputed-product baseline is one O(N) dot per query.
+        acc=0.
+        for p,d,j in updates:
+            x=a.copy();x[p]+=d
+            acc+=float(np.dot(x,np.roll(reverse_b,j)))
+        return acc
+    def persistent():
+        re=RelationFFT()
+        sa=re.register(a); sb=re.register(b)
+        co=RelationalConvolver(max_core_bytes=n*8)
+        acc=0.
+        for p,d,j in updates:
+            v=co.product(sa.fork().edit(p,d),sb)
+            acc+=v.at(j)
+        return acc
+    td,v1=median_time(baseline,repeats=2)
+    tp,v2=median_time(persistent,repeats=2)
+    if not np.isclose(v1,v2,rtol=1e-6,atol=1e-3):
+        raise AssertionError((v1,v2))
+    print('selected-time-bin',n,m,td,tp,td/tp,flush=True)
+    return {'n':n,'point_queries':m,'direct_dot_ms':td,'persistent_with_initial_fft_ms':tp,'speedup':td/tp,'scope':'one requested time-domain output each version'}
+
+def benchmark_bits():
+    out=[]
+    for n,m in [(1024,64),(8192,64),(65536,48),(262144,24),(1048576,12)]:
+        a=int.from_bytes(RNG.bytes((n+7)//8),'little') & ((1<<n)-1)
+        b=int.from_bytes(RNG.bytes((n+7)//8),'little') & ((1<<n)-1)
+        ops=[('a' if int(RNG.integers(2)) else 'b',int(RNG.integers(n))) for _ in range(m)]
+        def native():
+            x=a;y=b
+            acc=0
+            for axis,t in ops:
+                if axis=='a': x ^= 1<<t
+                else: y ^= 1<<t
+                p=x*y
+                acc ^= p & 0xFFFFFFFF
+            return acc
+        def increment():
+            p=DynamicBitProduct(a,b,n)
+            acc=0
+            for axis,t in ops:
+                prod=p.flip(axis,t)
+                acc ^= prod & 0xFFFFFFFF
+            if not p.verify(): raise AssertionError('wrong exact result')
+            return acc
+        t1,c1=median_time(native,repeats=3)
+        t2,c2=median_time(increment,repeats=3)
+        if c1!=c2: raise AssertionError(f'checksum mismatch at n={n}')
+        out.append({'bits_per_operand':n,'flips':m,'repeated_multiply_ms':t1,
+                    'initial_product_plus_updates_ms':t2,'speedup':t1/t2,
+                    'exact':True})
+        print('bigint',n,m,round(t1,3),round(t2,3),round(t1/t2,2),flush=True)
+    return out
+
+def main():
+    d={'date':'2026-10-09','platform':platform.platform(),
+       'python':sys.version.split()[0], 'numpy':np.__version__, 'scipy':__import__('scipy').__version__,
+       'measurement':'median of 3 (point queries 2) wall-clock milliseconds; 1 thread environment; inputs generated outside timing',
+       'note':'Specialized workloads with known changes and cached bases. Not fresh arbitrary FFT benchmarks.',
+       'circular_convolution':benchmark_dense(),
+       'selected_coefficient_queries':benchmark_point_queries(),
+       'exact_dynamic_integer_product':benchmark_bits()}
+    Path('benchmark_results.json').write_text(json.dumps(d,indent=2)+'\n')
+
+if __name__=='__main__':main()

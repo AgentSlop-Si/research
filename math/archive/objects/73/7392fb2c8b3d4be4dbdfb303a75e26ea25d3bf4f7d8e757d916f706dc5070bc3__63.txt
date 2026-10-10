@@ -1,0 +1,111 @@
+1: """Exact full Fourier transform from a supplied composition of affine filters.
+2: 
+3: Dependencies are explicit siblings, copied unchanged into any portable bundle.
+4: Continuous filter parameters are supplied, never discovered for free.
+5: """
+6: import sys
+7: from collections import Counter
+8: from pathlib import Path
+9: 
+10: DEPENDENCY=Path(__file__).resolve().parent.parent/'fft_bidirectional_graph_research'
+11: sys.path.insert(0,str(DEPENDENCY))
+12: from affine_cycle import Counted, cycle_order, ordinary_fft
+13: 
+14: 
+15: def prepared_cycle_solve(c,permutation,coefficients,rhs,closure_inverse):
+16:     """Use a previously proved/counted cycle closure inverse; costs4N+1."""
+17:     order=cycle_order(permutation); value=c.zero
+18:     for j in reversed(order): value=c.add(rhs[j],c.mul(coefficients[j],value))
+19:     value=c.mul(value,closure_inverse)
+20:     result=[c.zero]*len(order)
+21:     for j in reversed(order):
+22:         value=c.add(rhs[j],c.mul(coefficients[j],value))
+23:         result[j]=value
+24:     return result
+25: 
+26: 
+27: def try_composed_fourier(field,query,q,filters,lambdas,max_defects=1):
+28:     """Apply L_d ... L_1 x; transform sparse residual; invert in reverse order.
+29: 
+30:     Filter entries are (a,b,shift,lambda_index), with a=1 mod4 and odd b,shift.
+31:     Lambda pooling is explicit. Every pool value must be used; no inequality
+32:     or equality oracle for parameter discovery is assumed.
+33:     """
+34:     n=len(query)
+35:     if n<4 or n&(n-1): raise ValueError('dyadic N>=4 required')
+36:     if not isinstance(max_defects,int) or max_defects<0: raise ValueError('invalid defect budget')
+37:     filters=list(filters);lambdas=list(lambdas)
+38:     if not filters or not lambdas: raise ValueError('at least one filter and lambda required')
+39:     for item in filters:
+40:         if len(item)!=4 or any(not isinstance(v,int) for v in item): raise ValueError('integer filter descriptor required')
+41:         a,b,shift,index=item
+42:         if a%4!=1 or b%2!=1 or shift%2!=1: raise ValueError('full-cycle affine parameters required')
+43:         if not 0<=index<len(lambdas): raise ValueError('invalid lambda pool index')
+44:     if set(item[3] for item in filters)!=set(range(len(lambdas))): raise ValueError('unused lambda pool entry')
+45:     filters=[(a%n,b%n,shift%n,index) for a,b,shift,index in filters]
+46:     c=Counted(field);stages={};previous={}
+47:     def checkpoint(name):
+48:         nonlocal previous
+49:         stages[name]={k:v-previous.get(k,0) for k,v in c.count.items() if v!=previous.get(k,0)}
+50:         previous=dict(c.count)
+51:     def finish(result,reason,**extra):
+52:         meta=dict(accepted=result is not None,reason=reason,field_operations=dict(c.count),
+53:                   stages=stages,filter_count=len(filters),lambda_pool_size=len(lambdas),
+54:                   full_output_writes=n if result is not None else 0,
+55:                   supplied_parameters=True,ordinary_fft_calls=0)
+56:         meta.update(extra)
+57:         return result,meta
+58:     roots=[c.one]
+59:     for _ in range(1,n):roots.append(c.mul(roots[-1],q))
+60:     if c.mul(roots[-1],q)!=c.one or roots[n//2]==c.one: raise ValueError('primitive Nth root required')
+61:     checkpoint('root_table_and_validation')
+62:     scaled=[];closure=[]
+63:     for parameter in lambdas:
+64:         power=parameter
+65:         for _ in range(n.bit_length()-1):power=c.mul(power,power)
+66:         denominator=c.add(c.one,power)
+67:         if denominator==c.zero:
+68:             checkpoint('shared_coefficient_and_closure_preparation')
+69:             return finish(None,'singular_filter')
+70:         closure.append(c.inv(denominator))
+71:         scaled.append([c.mul(parameter,v) for v in roots])
+72:     checkpoint('shared_coefficient_and_closure_preparation')
+73:     current=list(query);intermediate_support=[]
+74:     for a,b,shift,index in filters:
+75:         permutation=[(a*j+shift)%n for j in range(n)]
+76:         cycle_order(permutation)
+77:         current=[c.sub(value,c.mul(scaled[index][(b*j)%n],current[permutation[j]]))
+78:                  for j,value in enumerate(current)]
+79:         intermediate_support.append(sum(v!=c.zero for v in current))
+80:     checkpoint('all_composed_source_rows')
+81:     defects=[(j,v) for j,v in enumerate(current) if v!=c.zero]
+82:     if len(defects)>max_defects:
+83:         return finish(None,'composed_defect_budget_exceeded',actual_defects=len(defects),
+84:                       intermediate_support=intermediate_support)
+85:     current=[c.zero]*n
+86:     for j,value in defects:
+87:         for k in range(n):current[k]=c.add(current[k],c.mul(value,roots[(j*k)%n]))
+88:     checkpoint('complete_sparse_defect_transform')
+89:     for a,b,shift,index in reversed(filters):
+90:         inverse_a=pow(a,-1,n)
+91:         permutation=[inverse_a*(k+b)%n for k in range(n)]
+92:         coefficients=[scaled[index][(-shift*j)%n] for j in permutation]
+93:         current=prepared_cycle_solve(c,permutation,coefficients,current,closure[index])
+94:     checkpoint('reverse_order_target_cycle_solves')
+95:     return finish(current,'accepted',actual_defects=len(defects),
+96:                   intermediate_support=intermediate_support,
+97:                   expected_total=(1+len(lambdas)+6*len(filters)+2*len(defects))*n
+98:                                  +len(lambdas)*(n.bit_length()+1)+len(filters))
+99: 
+100: 
+101: def composed_fft_or_fallback(field,query,q,filters,lambdas,max_defects=1):
+102:     """All-input wrapper; for fixed d,r,s the failed attempt adds O(N) work."""
+103:     result,meta=try_composed_fourier(field,query,q,filters,lambdas,max_defects)
+104:     meta['composition_accepted']=meta['accepted']
+105:     if result is not None:return result,meta
+106:     result,baseline=ordinary_fft(field,query,q)
+107:     meta['fallback_field_operations']=baseline
+108:     meta['stages']['ordinary_fft_fallback']=baseline
+109:     meta['field_operations']=dict(Counter(meta['field_operations'])+Counter(baseline))
+110:     meta.update(accepted=True,full_output_writes=len(query),ordinary_fft_calls=1)
+111:     return result,meta

@@ -1,0 +1,39 @@
+"""Freshly extract Phase20 and run all Phase12-20 test suites from nested ZIPs.
+Usage: python verify_full_lineage.py /absolute/path/to/fft_green_research_phase20_2026-10-09.zip
+"""
+from __future__ import annotations
+import pathlib,tempfile,subprocess,sys,os,zipfile
+
+
+def validate(archive):
+    archive=pathlib.Path(archive).resolve()
+    with tempfile.TemporaryDirectory(prefix='phase20_full_lineage_') as tmp:
+        root=pathlib.Path(tmp)
+        with zipfile.ZipFile(archive) as z:
+            assert z.testzip() is None, 'Phase20 archive has corrupted members'
+            z.extractall(root)
+        directory=root/'fft_green_phase20_weyl_shared_state'
+        if not (directory/'tests').is_dir():raise RuntimeError('missing Phase20 test directory')
+        env=os.environ.copy();env['OPENBLAS_NUM_THREADS']='1';env['PYTHONPATH']=str(directory)
+        result=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'],
+                              cwd=directory,env=env,capture_output=True,text=True,timeout=240)
+        print('PHASE 20 TESTS: status=',result.returncode)
+        print('\n'.join((result.stdout+result.stderr).splitlines()[-5:]))
+        if result.returncode:raise RuntimeError('Phase20 tests failed')
+        phase19zip=directory/'previous_full_phase19_checkpoint.zip'
+        with zipfile.ZipFile(phase19zip) as z:
+            assert z.testzip() is None
+            z.extractall(root/'older')
+        old_runner=root/'older'/'fft_green_phase19_dual_green'/'verify_full_lineage.py'
+        if not old_runner.is_file():raise RuntimeError('missing previous lineage verifier')
+        old=subprocess.run([sys.executable,str(old_runner),str(phase19zip)],
+                           env=env,capture_output=True,text=True,timeout=240)
+        print(old.stdout)
+        if old.returncode:
+            print(old.stderr)
+            raise RuntimeError('Prior Phase12-19 lineage failed')
+        print('TOTAL VERIFIED: 74 NEW + 128 INHERITED = 202 TESTS, PHASES 12 THROUGH 20')
+
+if __name__=='__main__':
+    if len(sys.argv)!=2:raise SystemExit('Usage: python verify_full_lineage.py /absolute/archive.zip')
+    validate(sys.argv[1])

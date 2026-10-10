@@ -1,0 +1,124 @@
+"""Exact 25 polynomial equations in 21 variables over Z[z]/(z^4+1).
+
+Uses Fourier-support elimination of five rank-one B constraints. The
+resulting equations have degree at most 6 after clearing t*(z-1), with
+no denominators in the exported coefficients. Necessary/sufficient for
+the 30 quartics on patch t=C70 !=0, s=C07 !=0, B70 !=0.
+
+Generator variables y: [t, V1..V6, h0..h6, eta1..eta6, beta],
+where h_i = s U_i, s = W7 = h0; eta_j = W_j/s. Other stage patch
+conditions (invertibility, inverse-corner, B upper anchor) STILL needed
+to claim a genuine Fourier factorization.
+"""
+import json,hashlib
+from pathlib import Path
+import numpy as np
+from inverse_quartic import (ZERO,ONE,cpowroot,cadd,poly_constant,poly_var,
+    padd,pscale,pmul,sum_polys,fourier_image_polys,eq_entries,
+    poly_eval,SHUFFLE,root8,fftmod,identities,N,char_stage)
+
+LAM=cadd(cpowroot(1),(-1,0,0,0)) # zeta-1
+
+def construct_clear_polys():
+    y=[poly_var(i) for i in range(21)]
+    t=y[0]
+    V=[t]+y[1:7]+[{}]
+    H=y[7:14] # h0..h6
+    ETA=[{}]+y[14:20]+[poly_constant()]
+    beta=y[20]
+    one=poly_constant()
+    D=pscale(t,LAM)
+    bn=padd(padd(t,one,-1),pmul(beta,padd(H[0],one,-1)))
+    Ti={}
+    for i in range(1,7):
+        middle=padd(padd(one,pmul(beta,H[0]),-1),pmul(beta,H[i]))
+        first=pscale(middle,LAM)
+        second=pscale(bn,cadd(cpowroot(-i),(-1,0,0,0)))
+        Ti[i]=padd(first,second)
+    C=[]
+    for i in range(N):
+        row=[]
+        for j in range(N):
+            if i==j:v=D
+            elif i>j:
+                if i==7:v=pmul(D,V[j])
+                else:v=pmul(Ti[i],V[j])
+            else:
+                if j==7:v=pmul(D,H[i])
+                else:v=pmul(pmul(D,H[i]),ETA[j])
+            row.append(v)
+        C.append(row)
+    return C,D
+
+def construct_equations():
+    C,D=construct_clear_polys()
+    B=fourier_image_polys(C)
+    eqs=eq_entries(B)
+    expected={f'lower_{i}_1' for i in range(2,7)}
+    vanish={name for name,poly in eqs if not poly}
+    assert vanish==expected,(vanish,expected)
+    out=[(name,p) for name,p in eqs if name not in expected]
+    assert len(out)==25
+    return out,C,B,D
+
+def mod_check(repeats=16):
+    eqs,Ctilde,Btilde,D=construct_equations()
+    tests={}
+    for prime in (12289,65537):
+        for root_type in (0,1):
+            omega=root8(prime,root_type)
+            rng=np.random.default_rng(20261009+prime+root_type)
+            passed=0;generic_other_fail=0
+            for _ in range(repeats):
+                y=rng.integers(1,prime,size=21,dtype=np.int64)
+                t=int(y[0]);V=[t]+list(map(int,y[1:7]))+[0]
+                h=list(map(int,y[7:14]));s=h[0]
+                eta=list(map(int,y[14:20]));beta=int(y[20])
+                U=[1]+[h[i]*pow(s,-1,prime)%prime for i in range(1,7)]+[0]
+                W=[0]+[s*q%prime for q in eta]+[s]
+                b_num=(t-1+beta*(s-1))%prime
+                b=b_num*pow((omega-1)%prime,-1,prime)%prime
+                a=(1-beta*s-b)%prime
+                xi=pow(omega,-1,prime)
+                L=[0]+[(a+b*pow(xi,i,prime)+beta*h[i])*pow(t,-1,prime)%prime for i in range(1,7)]+[1]
+                z=L[1:7]+V[:7]+U[1:7]+W[1:8]
+                assert len(z)==26
+                cm=char_stage(z,prime)
+                d=(omega-1)*t%prime
+                # Formula for every cleared-entry polynomial, not just equations.
+                cmtilde=np.array([[poly_eval(Ctilde[i][j],y,prime,omega) for j in range(8)] for i in range(8)],dtype=np.int64)
+                assert np.array_equal(cmtilde,cm*d%prime)
+                bm=fftmod(prime,omega)@cm[:,np.array(SHUFFLE)]%prime
+                assert all((int(bm[i,1])-beta*int(bm[i,0]))%prime==0 for i in range(2,8))
+                E=identities(bm,prime)
+                # map original 30 eqs to 25 remaining
+                names=[f'lower_{i}_{j}' for i in range(2,7) for j in range(1,i)] + [f'upper_{i}_{j}' for i in range(1,6) for j in range(i+1,7)]
+                emap=dict(zip(names,E))
+                assert all(poly_eval(eq,y,prime,omega)==(emap[name]*d*d)%prime for name,eq in eqs)
+                passed+=1;generic_other_fail+=any(emap[name] for name,eq in eqs)
+            tests[str((prime,root_type))]={'primitive_eighth_root':omega,
+                    'direct_entry_and_25_equation_evaluations':passed,
+                    'remaining_system_random_nonsolutions':generic_other_fail}
+    return tests
+
+def export(path):
+    eqs,_,_,_=construct_equations()
+    data={'ring':'Z[z]/(z^4+1)','stage_order':1,'n':8,'shuffle':SHUFFLE,
+       'variables':['t']+[f'V{i}' for i in range(1,7)]+[f'h{i}' for i in range(7)] +
+                  [f'eta{i}' for i in range(1,7)]+['beta'],
+       'denominator_cleared':'D=t*(z-1); require D !=0',
+       'equations':[{'name':name,'terms':[[list(mon),list(co)] for mon,co in sorted(poly.items())]} for name,poly in eqs]}
+    out=json.dumps(data,sort_keys=True,separators=(',',':')).encode()+b'\n'
+    Path(path).write_bytes(out)
+    return {'equations':len(eqs),'variables':21,
+         'max_degree':max(len(mon) for _,p in eqs for mon in p),
+         'total_nonzero_terms':sum(len(p) for _,p in eqs),
+         'distinct_monomials':len({mon for _,p in eqs for mon in p}),
+         'sha256':hashlib.sha256(out).hexdigest()}
+
+if __name__=='__main__':
+    here=Path(__file__).resolve().parent
+    stats=export(here/'reduced_sextic_equations.json')
+    stats['modular_verification']=mod_check()
+    (here/'reduced_sextic_results.json').write_text(json.dumps(stats,indent=2)+'\n')
+    print(json.dumps(stats,indent=2))

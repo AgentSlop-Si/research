@@ -1,0 +1,172 @@
+   1	#!/usr/bin/env python3
+   2	"""Independent exact checks. No uploaded code is imported or executed."""
+   3	from fractions import Fraction as F
+   4	from itertools import permutations
+   5	import json
+   6	import random
+   7	from pathlib import Path
+   8	import sympy as sp
+   9	from apply_allpass import AllPassCycle
+  10	
+  11	BASE=Path(__file__).resolve().parent
+  12	rng=random.Random(1232)
+  13	
+  14	def signed_cycle(n):
+  15	    m=sp.zeros(n)
+  16	    m[0,n-1]=-1
+  17	    for j in range(1,n): m[j,j-1]=1
+  18	    return m
+  19	
+  20	def zero(a):
+  21	    return all(sp.expand(x)==0 for x in a)
+  22	
+  23	def monomial(n):
+  24	    perm=list(range(n)); rng.shuffle(perm)
+  25	    q=sp.zeros(n)
+  26	    phases=[sp.Integer(1),sp.Integer(-1),sp.I,-sp.I]
+  27	    for j,p in enumerate(perm): q[p,j]=rng.choice(phases)
+  28	    return q
+  29	
+  30	def norm1(a):
+  31	    return max(sum(sp.Abs(a[i,j]) for i in range(a.rows)) for j in range(a.cols))
+  32	
+  33	def solver(x, reverse=False):
+  34	    n=len(x)
+  35	    a=F(1)
+  36	    for _ in range(n-1): a*=F(1,2)
+  37	    h=1/(2+a)
+  38	    order=list(range(n-1,-1,-1)) if reverse else list(range(n))
+  39	    xx=[x[j] for j in order]
+  40	    b=F(0)
+  41	    for j in range(1,n): b=(xx[j]+b)/2
+  42	    zz=[(xx[0]-b)*h]
+  43	    for j in range(1,n): zz.append((xx[j]+zz[-1])/2)
+  44	    yy=[2*xx[j]-3*zz[j] for j in range(n)]
+  45	    out=[None]*n
+  46	    for j,k in enumerate(order): out[k]=yy[j]
+  47	    return out
+  48	
+  49	exact=[]
+  50	for n in [3,4,5,6,7,8,10,12]:
+  51	    eye=sp.eye(n); s=signed_cycle(n)
+  52	    d=monomial(n); m=d*s*d.H
+  53	    k=eye+(eye-m).inv()
+  54	    u=(eye-2*m)*(2*eye-m).inv()
+  55	    v=u.H
+  56	    den=2**n+1
+  57	    up=(2**(n-1)+2)*eye
+  58	    vp=(2**(n-1)+2)*eye
+  59	    power=eye
+  60	    for j in range(1,n):
+  61	        power=power*m
+  62	        up-=3*2**(n-1-j)*power
+  63	        vp+=3*2**(j-1)*power
+  64	    up/=den; vp/=den
+  65	    assert zero(m**n+eye)
+  66	    assert zero(k.H*k-(2*eye+(2*eye-m-m.H).inv()))
+  67	    assert sp.expand(k.det()-sp.Rational(2**n+1,2))==0
+  68	    assert zero(u.H*u-eye) and zero(v*u-eye)
+  69	    assert zero(u-up) and zero(v-vp)
+  70	    assert zero(v-k*(eye+(eye-m.H).inv()).inv())
+  71	    c=sp.Rational(2**(n+1)-1,den)
+  72	    assert norm1(u)==c and norm1(v)==c
+  73	    assert len(set(sp.Abs(u[i,0]) for i in range(n)))>=2
+  74	    q=monomial(n)
+  75	    for eps in [1,-1]:
+  76	        for reverse in [False,True]:
+  77	            m2=q.H*(m.H if reverse else m)*q
+  78	            k2=eye+(eye-m2).inv()
+  79	            pair=(k if eps==1 else k.inv())*q*(k2.inv() if eps==1 else k2)
+  80	            expected=((v if eps==1 else u) if reverse else eye)*q
+  81	            assert zero(pair-expected) and zero(pair.H*pair-eye)
+  82	    us=(eye-2*s)*(2*eye-s).inv()
+  83	    vs=us.H
+  84	    for trial in range(3):
+  85	        x=[F(rng.randint(-9,9),rng.randint(1,9)) for _ in range(n)]
+  86	        ux=solver(x); vx=solver(x,True)
+  87	        assert zero(sp.Matrix(ux)-us*sp.Matrix(x))
+  88	        assert zero(sp.Matrix(vx)-vs*sp.Matrix(x))
+  89	        assert solver(ux,True)==x and solver(vx)==x
+  90	    exact.append({'N':n,'all_exact_checks':True,'c_N':str(c),'forward_inverse_round_trips':6})
+  91	
+  92	orientation=[]
+  93	for n in range(3,8):
+  94	    edges={frozenset((j,(j+1)%n)) for j in range(n)}
+  95	    valid=[]
+  96	    checked=0
+  97	    for tail in permutations(range(1,n)):
+  98	        order=(0,)+tail
+  99	        checked+=1
+ 100	        ee={frozenset((order[j],order[(j+1)%n])) for j in range(n)}
+ 101	        if ee==edges: valid.append(order)
+ 102	    assert len(valid)==2
+ 103	    assert (0,)+tuple(range(1,n)) in valid
+ 104	    assert (0,)+tuple(range(n-1,0,-1)) in valid
+ 105	    orientation.append({'N':n,'directed_cycles_checked':checked,'orientations_found':len(valid)})
+ 106	
+ 107	class Count:
+ 108	    operations=0
+ 109	    def __init__(self,x): self.x=x.x if isinstance(x,Count) else F(x)
+ 110	    def op(self,other,fn):
+ 111	        Count.operations+=1
+ 112	        return Count(fn(self.x,Count(other).x))
+ 113	    def __add__(self,o): return self.op(o,lambda a,b:a+b)
+ 114	    __radd__=__add__
+ 115	    def __sub__(self,o): return self.op(o,lambda a,b:a-b)
+ 116	    def __rsub__(self,o): return Count(o).__sub__(self)
+ 117	    def __mul__(self,o): return self.op(o,lambda a,b:a*b)
+ 118	    __rmul__=__mul__
+ 119	    def __truediv__(self,o): return self.op(o,lambda a,b:a/b)
+ 120	    def __rtruediv__(self,o): return Count(o).__truediv__(self)
+ 121	
+ 122	def counted(n):
+ 123	    half=Count(F(1,2)); a=Count(1)
+ 124	    Count.operations=0
+ 125	    for _ in range(n-1): a=a*half
+ 126	    h=1/(2+a)
+ 127	    prep=Count.operations
+ 128	    x=[Count(F(j-2,j+1)) for j in range(n)]
+ 129	    Count.operations=0
+ 130	    b=Count(0)
+ 131	    for j in range(1,n): b=(x[j]+b)*half
+ 132	    z=[(x[0]-b)*h]
+ 133	    for j in range(1,n): z.append((x[j]+z[-1])*half)
+ 134	    y=[2*x[j]-3*z[j] for j in range(n)]
+ 135	    run=Count.operations
+ 136	    assert prep==n+1 and run==7*n-2
+ 137	    assert [a.x for a in y]==solver([a.x for a in x])
+ 138	    return {'N':n,'preparation_field_operations':prep,'application_field_operations':run}
+ 139	
+ 140	counts=[counted(n) for n in [3,4,8,16,32,64,128,256]]
+ 141	
+ 142	powers=[]
+ 143	for n in [3,4,5,6,8,9,10,12]:
+ 144	    eye=sp.eye(n); s=signed_cycle(n)
+ 145	    u=(eye-2*s)*(2*eye-s).inv()
+ 146	    for power in [-5,-3,-1,0,1,2,4,7]:
+ 147	        v=u**(-power)
+ 148	        assert zero(v.T*v-eye)
+ 149	        assert all(x.is_Rational and sp.denom(x)%2==1 for x in v)
+ 150	        assert any(x*x != sp.Rational(1,n) for x in v)
+ 151	        powers.append({'N':n,'exponent':power,'exact_checks':True})
+ 152	
+ 153	reusable=[]
+ 154	for n in [3,4,5,8,12,16]:
+ 155	    order=list(range(n)); rng.shuffle(order)
+ 156	    weights=[sp.Integer(1)]*n
+ 157	    for j in range(1,n): weights[j]=rng.choice([sp.Integer(1),sp.Integer(-1),sp.I,-sp.I])
+ 158	    weights[0]=-1/sp.prod(weights[1:])
+ 159	    m=sp.zeros(n)
+ 160	    for j in range(n): m[order[j],order[j-1]]=weights[j]
+ 161	    eye=sp.eye(n); u=(eye-2*m)*(2*eye-m).inv()
+ 162	    evaluator=AllPassCycle(n,order,weights)
+ 163	    x=[sp.Rational(rng.randint(-5,5),rng.randint(1,5))+sp.I*sp.Rational(rng.randint(-5,5),rng.randint(1,5)) for _ in range(n)]
+ 164	    ux=evaluator.apply(x); vx=evaluator.apply(x,True)
+ 165	    assert zero(sp.Matrix(ux)-u*sp.Matrix(x))
+ 166	    assert zero(sp.Matrix(vx)-u.H*sp.Matrix(x))
+ 167	    assert zero(sp.Matrix(evaluator.apply(ux,True))-sp.Matrix(x))
+ 168	    reusable.append({'N':n,'exact_weighted_cycle_and_inverse':True})
+ 169	results={'status':'PASS','exact_matrix_tests':exact,'orientation_enumeration':orientation,
+ 170	         'operation_counts':counts,'fixed_cycle_power_checks':powers,'reusable_evaluator_checks':reusable,'scope':'Finite exact checks corroborate; PROOF.md provides all-N proof. No general Fourier speedup.'}
+ 171	(BASE/'results.json').write_text(json.dumps(results,indent=2)+'\n')
+ 172	print(json.dumps(results,indent=2))

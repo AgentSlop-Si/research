@@ -1,0 +1,292 @@
+1: """Finite phasor-table decoder with bounded-word guarded lane addition.
+2: 
+3: This is a functional prototype, not a fast Python FFT. ``eager`` charges a cold,
+4: complete first table. ``lazy`` is only a functional demonstrator and is never
+5: evidence for the cold asymptotic theorem. Samples use phase 0,1,2,3 = 1,i,-1,-i.
+6: Returned integer pairs divided by ``denominator`` are the algorithmic outputs;
+7: Python complex values are a convenience conversion after the algorithm.
+8: """
+9: 
+10: from collections import Counter
+11: from math import ceil, factorial, log2, pi, sqrt
+12: 
+13: 
+14: def _power_two_at_least(n):
+15:     return 1 << (max(1, ceil(n)) - 1).bit_length()
+16: 
+17: 
+18: def _nearest(a, b):
+19:     """Nearest integer to a/b; ties away from zero."""
+20:     if b <= 0:
+21:         raise ValueError("positive denominator required")
+22:     return (a + b // 2) // b if a >= 0 else -((-a + b // 2) // b)
+23: 
+24: 
+25: class WordAudit:
+26:     """Check that each explicitly counted arithmetic operand/result is one word.
+27: 
+28:     Counters record arithmetic and table memory operations, not Python object
+29:     allocations or interpreter instructions. Loop/index/control overhead is
+30:     separately bounded in THEOREM.md and has the same asymptotic cost.
+31:     """
+32: 
+33:     def __init__(self, width):
+34:         self.width = width
+35:         self.limit = 1 << width
+36:         self.counts = Counter()
+37:         self.max_bits = 0
+38: 
+39:     def check(self, value, signed=False):
+40:         self.max_bits = max(self.max_bits, abs(value).bit_length())
+41:         bound = self.limit // 2 if signed or value < 0 else self.limit
+42:         if abs(value) >= bound:
+43:             raise OverflowError(f"{abs(value).bit_length()} bits exceeds word {self.width}")
+44:         return value
+45: 
+46:     def op(self, name, value, *operands):
+47:         signed = value < 0 or any(operand < 0 for operand in operands)
+48:         for operand in operands:
+49:             self.check(operand, signed=signed)
+50:         self.counts[name] += 1
+51:         return self.check(value, signed=signed)
+52: 
+53:     def rounded(self, a, b):
+54:         self.check(a, signed=a < 0)
+55:         self.check(b, signed=a < 0)
+56:         self.check(abs(a) + b // 2, signed=a < 0)
+57:         self.counts["round_integer_division"] += 1
+58:         return self.check(_nearest(a, b))
+59: 
+60: 
+61: def _pi_fixed(P, W):
+62:     """Machin's formula using only integer word operations.
+63: 
+64:     Internal guard precision bounds accumulated floor error. For P>=8 the
+65:     returned value divided by 2**P differs from pi by less than 2**(-P).
+66:     """
+67:     guard = (128 * (P + 1) ** 2).bit_length()
+68:     R = W.op("shift", 1 << (P + guard))
+69: 
+70:     def atan(q):
+71:         qpow, total, sign, m = q, 0, 1, 0
+72:         while True:
+73:             denominator = W.op("multiply", qpow * (2 * m + 1), qpow, 2 * m + 1)
+74:             term = W.op("integer_division", R // denominator, R, denominator)
+75:             if term == 0:
+76:                 break
+77:             total = W.op("add", total + sign * term, total, term)
+78:             qpow = W.op("multiply", qpow * q * q, qpow, q * q)
+79:             sign, m = -sign, m + 1
+80:         return total
+81: 
+82:     a, b = atan(5), atan(239)
+83:     value = W.op("add", 16 * a - 4 * b, 16 * a, 4 * b)
+84:     W.counts["multiply"] += 2
+85:     return W.rounded(value, 1 << guard)
+86: 
+87: 
+88: def _trig_parameters(bits):
+89:     if bits < 8:
+90:         raise ValueError("trig_bits must be at least 8")
+91:     d = 1
+92:     while 4 ** (d + 1) * 2 ** (bits + 4) > factorial(d + 1):
+93:         d += 1
+94:     P = bits + (256 * (d + 1)).bit_length() + 4
+95:     return d, P
+96: 
+97: 
+98: def _phasors(Q, bits, W):
+99:     """Certified fixed-point samples exp(2*pi*i*a/Q), a=0,...,Q-1.
+100: 
+101:     Complex absolute approximation error is at most 2**(-bits). The Taylor
+102:     degree and working precision depend on requested accuracy only.
+103:     """
+104:     d, P = _trig_parameters(bits)
+105:     S = W.op("shift", 1 << P)
+106:     piS = _pi_fixed(P, W)
+107:     output = []
+108:     for a in range(Q):
+109:         centered = a if 2 * a <= Q else a - Q
+110:         product = W.op("multiply", 2 * piS * centered, 2 * piS, centered)
+111:         theta = W.rounded(product, Q)
+112:         term_re, term_im = S, 0
+113:         total_re, total_im = S, 0
+114:         for n in range(1, d + 1):
+115:             den = W.op("multiply", S * n, S, n)
+116:             new_re = W.rounded(W.op("multiply", -term_im * theta, term_im, theta), den)
+117:             new_im = W.rounded(W.op("multiply", term_re * theta, term_re, theta), den)
+118:             term_re, term_im = new_re, new_im
+119:             total_re = W.op("add", total_re + term_re, total_re, term_re)
+120:             total_im = W.op("add", total_im + term_im, total_im, term_im)
+121:         output.append((total_re, total_im))
+122:         W.counts["table_write"] += 2
+123:     return output, S, {"degree": d, "precision_bits": P, "complex_error_bound": 2.0 ** -bits}
+124: 
+125: 
+126: class GuardedDecoder:
+127:     def __init__(self, N, sample_count, *, block_size=4, phase_grid=32,
+128:                  slope_grid=None, group_size=1, lane_step_bits=5,
+129:                  trig_bits=24, word_bits=None, table_mode="eager",
+130:                  max_table_entries=1_000_000):
+131:         B, Q0, g, K = block_size, phase_grid, group_size, sample_count
+132:         Q1 = _power_two_at_least(B * Q0) if slope_grid is None else slope_grid
+133:         if N < 1 or B < 1 or g < 1 or K < 1 or K % g:
+134:             raise ValueError("positive parameters and sample_count divisible by group_size required")
+135:         if Q0 < 4 or Q0 & (Q0 - 1) or Q1 < Q0 or Q1 & (Q1 - 1):
+136:             raise ValueError("phase grids must be powers of two with slope_grid >= phase_grid >= 4")
+137:         if lane_step_bits < 0 or table_mode not in ("eager", "lazy"):
+138:             raise ValueError("invalid rounding precision or table mode")
+139:         self.N, self.K, self.B, self.g, self.G = N, K, B, g, K // g
+140:         self.Q0, self.Q1 = Q0, Q1
+141:         self.H = 1 << lane_step_bits
+142:         self.q0_bits = Q0.bit_length() - 1
+143:         self.p = self.q0_bits + Q1.bit_length() - 1
+144:         self.D = Q0 * Q1
+145:         self.table_entries = self.D ** g
+146:         _, P = _trig_parameters(trig_bits)
+147:         self.r = (2 * self.H * self.G).bit_length()
+148:         default_width = max(4 * max(1, N.bit_length()) + 4 * P + 64,
+149:                             self.p * g + 1, self.r + 1)
+150:         self.w = default_width if word_bits is None else word_bits
+151:         if self.w < max(self.r, self.p * g + 1, 2 * P + 32):
+152:             raise ValueError("word_bits too small for packed keys or certified fixed-point construction")
+153:         self.L = self.w // self.r
+154:         self.words_per_row = (B + self.L - 1) // self.L
+155:         self.mask = (1 << self.r) - 1
+156:         self.W = WordAudit(self.w)
+157:         self.trig, self.S, self.trig_info = _phasors(Q1, trig_bits, self.W)
+158:         self.table_mode = table_mode
+159:         if table_mode == "eager":
+160:             if self.table_entries > max_table_entries:
+161:                 raise ValueError("eager table exceeds explicit max_table_entries cap")
+162:             self.table = [None] * self.table_entries
+163:             for key in range(self.table_entries):
+164:                 self.table[key] = self._row(key)
+165:         else:
+166:             self.table = {}
+167:         self.cold_counts = dict(self.W.counts)
+168:         self.decoder_bound = pi / Q0 + pi * (B - 1) / Q1 + 2.0 ** -trig_bits + sqrt(2) / (2 * self.H)
+169: 
+170:     def _row(self, key):
+171:         W = self.W
+172:         descriptors = []
+173:         remaining = key
+174:         for _ in range(self.g):
+175:             descriptor = W.op("bit_and", remaining & (self.D - 1), remaining, self.D - 1)
+176:             remaining = W.op("shift", remaining >> self.p, remaining)
+177:             a0 = W.op("bit_and", descriptor & (self.Q0 - 1), descriptor, self.Q0 - 1)
+178:             a1 = W.op("shift", descriptor >> self.q0_bits, descriptor)
+179:             descriptors.append((a0 * (self.Q1 // self.Q0), a1))
+180:             W.counts["multiply"] += 1
+181:         rows = [[0] * self.words_per_row, [0] * self.words_per_row]
+182:         denominator = W.op("multiply", self.g * self.S, self.g, self.S)
+183:         for t in range(self.B):
+184:             sums = [0, 0]
+185:             for a0, a1 in descriptors:
+186:                 exponent = W.op("bit_and", (a0 + t * a1) & (self.Q1 - 1), a0 + t * a1, self.Q1 - 1)
+187:                 W.counts["multiply"] += 1
+188:                 W.counts["add"] += 1
+189:                 pair = self.trig[exponent]
+190:                 W.counts["table_read"] += 2
+191:                 for c in range(2):
+192:                     sums[c] = W.op("add", sums[c] + pair[c], sums[c], pair[c])
+193:             index, lane = divmod(t, self.L)
+194:             for c in range(2):
+195:                 quantized = W.rounded(W.op("multiply", sums[c] * self.H, sums[c], self.H), denominator)
+196:                 quantized = min(self.H, max(-self.H, quantized))
+197:                 W.counts["comparison"] += 2
+198:                 code = W.op("add", quantized + self.H, quantized, self.H)
+199:                 shifted = W.op("shift", code << (lane * self.r), code)
+200:                 rows[c][index] = W.op("bit_or", rows[c][index] | shifted, rows[c][index], shifted)
+201:         W.counts["table_write"] += 2 * self.words_per_row
+202:         return tuple(rows[0]), tuple(rows[1])
+203: 
+204:     def decode(self, samples):
+205:         if len(samples) != self.K:
+206:             raise ValueError("sample count differs from constructed decoder")
+207:         if any(not (0 <= j < self.N and phase in (0, 1, 2, 3)) for j, phase in samples):
+208:             raise ValueError("sample indices/phases out of range")
+209:         W = self.W
+210:         start_counts = Counter(W.counts)
+211:         slopes = []
+212:         for j, _ in samples:
+213:             product = W.op("multiply", self.Q1 * j, self.Q1, j)
+214:             slope = W.op("bit_and", -W.rounded(product, self.N) & (self.Q1 - 1), self.Q1 - 1)
+215:             slopes.append(slope)
+216:         outputs = []
+217:         for m0 in range(0, self.N, self.B):
+218:             keys = [0] * self.G
+219:             for i, ((j, phase), slope) in enumerate(zip(samples, slopes)):
+220:                 product = W.op("multiply", j * m0, j, m0)
+221:                 residue = W.op("remainder", product % self.N, product, self.N)
+222:                 scaled = W.op("multiply", self.Q0 * residue, self.Q0, residue)
+223:                 start = W.op("bit_and", (phase * (self.Q0 // 4) - W.rounded(scaled, self.N)) & (self.Q0 - 1), self.Q0 - 1)
+224:                 W.counts["multiply"] += 1
+225:                 W.counts["add"] += 1
+226:                 shifted = W.op("shift", slope << self.q0_bits, slope)
+227:                 descriptor = W.op("bit_or", start | shifted, start, shifted)
+228:                 group, position = divmod(i, self.g)
+229:                 packed = W.op("shift", descriptor << (position * self.p), descriptor)
+230:                 keys[group] = W.op("bit_or", keys[group] | packed, keys[group], packed)
+231:             sums = [[0] * self.words_per_row, [0] * self.words_per_row]
+232:             for key in keys:
+233:                 if self.table_mode == "lazy" and key not in self.table:
+234:                     self.table[key] = self._row(key)
+235:                 row = self.table[key]
+236:                 for c in range(2):
+237:                     for z in range(self.words_per_row):
+238:                         W.counts["table_read"] += 1
+239:                         sums[c][z] = W.op("packed_word_add", sums[c][z] + row[c][z], sums[c][z], row[c][z])
+240:             for t in range(min(self.B, self.N - m0)):
+241:                 z, lane = divmod(t, self.L)
+242:                 pair = []
+243:                 for c in range(2):
+244:                     shifted = W.op("shift", sums[c][z] >> (lane * self.r), sums[c][z])
+245:                     code = W.op("bit_and", shifted & self.mask, shifted, self.mask)
+246:                     pair.append(W.op("add", code - self.G * self.H, code, self.G * self.H))
+247:                     W.counts["output_write"] += 1
+248:                 outputs.append(tuple(pair))
+249:         denominator = self.G * self.H
+250:         online_counts = dict(Counter(W.counts) - start_counts)
+251:         return {
+252:             "values": [complex(a / denominator, b / denominator) for a, b in outputs],
+253:             "integer_outputs": outputs,
+254:             "denominator": denominator,
+255:             "error_bound": self.decoder_bound,
+256:             "counts": {"cold": self.cold_counts, "online": online_counts,
+257:                        "total": dict(W.counts), "max_operand_bits": W.max_bits},
+258:             "parameters": {"N": self.N, "sample_count": self.K, "block_size": self.B,
+259:                            "group_size": self.g, "groups": self.G,
+260:                            "phase_grid": self.Q0, "slope_grid": self.Q1,
+261:                            "descriptor_bits": self.p, "key_bits": self.p * self.g,
+262:                            "word_bits": self.w, "lane_bits": self.r,
+263:                            "lanes_per_word": self.L, "words_per_row_per_component": self.words_per_row,
+264:                            "table_mode": self.table_mode, "possible_table_rows": self.table_entries,
+265:                            "materialized_table_rows": len(self.table), "trig": self.trig_info},
+266:         }
+267: 
+268: 
+269: def decode_samples(N, samples, **kwargs):
+270:     return GuardedDecoder(N, len(samples), **kwargs).decode(samples)
+271: 
+272: 
+273: def asymptotic_parameters(N, epsilon, gamma=0.5):
+274:     """Explicit theoretical tuning; does not construct its often huge table.
+275: 
+276:     Returns ``None`` in the finite small-N base regime. Bounds assume epsilon
+277:     and polynomial failure exponent fixed as N grows.
+278:     """
+279:     if N < 2 or not (0 < epsilon < 1 and 0 < gamma < 1):
+280:         raise ValueError("N>=2 and epsilon,gamma in (0,1) required")
+281:     B = max(1, N.bit_length() - 1)
+282:     Q0 = _power_two_at_least(64 / epsilon)
+283:     Q1 = _power_two_at_least(B * Q0)
+284:     p = Q0.bit_length() + Q1.bit_length() - 2
+285:     gamma_numerator, gamma_denominator = gamma.as_integer_ratio()
+286:     g = (gamma_numerator * (N.bit_length() - 1)) // (gamma_denominator * p)
+287:     if not g:
+288:         return None
+289:     hbits = ceil(log2(32 / epsilon))
+290:     return {"block_size": B, "phase_grid": Q0, "slope_grid": Q1,
+291:             "group_size": g, "lane_step_bits": hbits,
+292:             "trig_bits": max(8, ceil(log2(32 / epsilon)))}

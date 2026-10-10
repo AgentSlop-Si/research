@@ -1,0 +1,253 @@
+1: """Exact reversible q-Weyl affine updates and transparent batched reuse.
+2: 
+3: Finite-field implementation. All online operations are emitted elementary gates.
+4: Reference ADD_T is explicitly quadratic; no fast T primitive is assumed here.
+5: """
+6: from collections import Counter
+7: 
+8: 
+9: def prepare(n, p=998244353, primitive=3):
+10:     if n < 2 or n & (n - 1) or (p - 1) % n:
+11:         raise ValueError('need a power-of-two N >= 2 dividing p-1')
+12:     q = pow(primitive, (p - 1) // n, p)
+13:     if pow(q, n // 2, p) != p - 1:
+14:         raise ValueError('root has wrong order')
+15:     powers = [1]
+16:     for _ in range(n - 1):
+17:         powers.append(powers[-1] * q % p)
+18:     diagonal = [(1 + powers[-j % n]) % p for j in range(n)]
+19:     weights = [(q - powers[-j % n]) % p for j in range(n - 1)]
+20:     weights.append(-q * pow(n, -1, p) % p)
+21:     assert diagonal[n // 2] == 0 and all(weights)
+22:     f, kernel = 1, [1]
+23:     for j in range(1, n):
+24:         f = f * (1 - powers[j]) % p
+25:         kernel.append(pow(f, -1, p))
+26:     m, word = n // 2, []
+27:     for offset in range(n - 1):
+28:         j = (m - 1 - offset) % n
+29:         ratio = diagonal[j] * pow(weights[j], -1, p) % p
+30:         word.append(('shear', (j + 1) % n, j, ratio))
+31:     for j in range(n - 1):
+32:         word.append(('swap', j, j + 1))
+33:     for j, value in enumerate(weights):
+34:         word.append(('scale', j, value))
+35:     return {'n': n, 'p': p, 'q': q, 'diagonal': diagonal,
+36:             'weights': weights, 'kernel': kernel, 'word': word}
+37: 
+38: 
+39: def inverse(word, p):
+40:     out = []
+41:     for gate in reversed(word):
+42:         if gate[0] == 'shear':
+43:             _, i, j, a = gate
+44:             out.append(('shear', i, j, -a % p))
+45:         elif gate[0] == 'scale':
+46:             _, i, a = gate
+47:             out.append(('scale', i, pow(a, -1, p)))
+48:         else:
+49:             out.append(gate)
+50:     return out
+51: 
+52: 
+53: def offset(word, start):
+54:     out = []
+55:     for gate in word:
+56:         if gate[0] == 'shear':
+57:             _, i, j, a = gate
+58:             out.append(('shear', i + start, j + start, a))
+59:         elif gate[0] == 'scale':
+60:             _, i, a = gate
+61:             out.append(('scale', i + start, a))
+62:         else:
+63:             _, i, j = gate
+64:             out.append(('swap', i + start, j + start))
+65:     return out
+66: 
+67: 
+68: def execute(word, registers, p):
+69:     registers = list(registers)
+70:     for gate in word:
+71:         if gate[0] == 'shear':
+72:             _, i, j, a = gate
+73:             registers[i] = (registers[i] + a * registers[j]) % p
+74:         elif gate[0] == 'scale':
+75:             _, i, a = gate
+76:             registers[i] = a * registers[i] % p
+77:         else:
+78:             _, i, j = gate
+79:             registers[i], registers[j] = registers[j], registers[i]
+80:     return registers
+81: 
+82: 
+83: def add_t_word(plan, source, target, sign=1):
+84:     n, p = plan['n'], plan['p']
+85:     return [('shear', target + i, source + j,
+86:              sign * plan['kernel'][i - j] % p)
+87:             for i in range(n) for j in range(i + 1)]
+88: 
+89: 
+90: def batched_word(plan, batches):
+91:     """Banks: x, dirty w, then arbitrary targets y_0,...,y_(R-1).
+92: 
+93:     Net: y_r += T(I+B)^r x, x and w unchanged. Two ADD_T calls.
+94:     """
+95:     if batches < 1:
+96:         raise ValueError('positive batch count required')
+97:     n, p = plan['n'], plan['p']
+98:     jword = offset(plan['word'], n)
+99:     jiword = inverse(jword, p)
+100:     word = []
+101:     def trajectory(sign):
+102:         for r in range(batches):
+103:             word.extend(('shear', (2 + r) * n + i, n + i, sign % p)
+104:                         for i in range(n))
+105:             if r + 1 < batches:
+106:                 word.extend(jword)
+107:         for _ in range(batches - 1):
+108:             word.extend(jiword)
+109:     trajectory(-1)
+110:     word.extend(add_t_word(plan, 0, n, 1))
+111:     trajectory(1)
+112:     word.extend(add_t_word(plan, 0, n, -1))
+113:     return word
+114: 
+115: 
+116: def independent_word(plan, batches):
+117:     """Comparison: replay ADD_T independently for each related source."""
+118:     n, p = plan['n'], plan['p']
+119:     kword = [('shear', j, j+1, plan['weights'][j]) for j in range(n-1)]
+120:     kiword = inverse(kword, p)
+121:     word = []
+122:     for r in range(batches):
+123:         word.extend(add_t_word(plan, 0, (2+r)*n))
+124:         if r+1 < batches:
+125:             word.extend(kword)
+126:     for _ in range(batches-1):
+127:         word.extend(kiword)
+128:     return word
+129: 
+130: 
+131: def serpentine_word(plan, batches):
+132:     """Two affine walks, carrying the source to the far end and restoring it.
+133: 
+134:     Same net map as batched_word with only 2(R-1) J/J^-1 calls, plus
+135:     2(R-1) cheaper K/K^-1 calls. Both x and arbitrary dirty w are restored.
+136:     """
+137:     if batches < 1:
+138:         raise ValueError('positive batch count required')
+139:     n, p = plan['n'], plan['p']
+140:     jword = offset(plan['word'], n)
+141:     jiword = inverse(jword, p)
+142:     kword = [('shear', j, j+1, plan['weights'][j]) for j in range(n-1)]
+143:     kiword = inverse(kword, p)
+144:     word = []
+145:     for r in range(batches):
+146:         word.extend(('shear', (2+r)*n+i, n+i, p-1) for i in range(n))
+147:         if r+1 < batches:
+148:             word.extend(jword)
+149:             word.extend(kword)
+150:     word.extend(add_t_word(plan, 0, n, 1))
+151:     for r in reversed(range(batches)):
+152:         word.extend(('shear', (2+r)*n+i, n+i, 1) for i in range(n))
+153:         if r > 0:
+154:             word.extend(jiword)
+155:             word.extend(kiword)
+156:     word.extend(add_t_word(plan, 0, n, -1))
+157:     return word
+158: 
+159: 
+160: def anchor_word(plan, batches):
+161:     """One ADD_T; use the first arbitrary target as the evolving anchor.
+162: 
+163:     The legacy dirty w bank is untouched and can be omitted entirely.
+164:     Banks follow the same audit layout x,w,y_0,...,y_(R-1).
+165:     """
+166:     if batches < 1:
+167:         raise ValueError('positive batch count required')
+168:     n, p = plan['n'], plan['p']
+169:     jword = offset(plan['word'], 2*n)
+170:     jiword = inverse(jword, p)
+171:     kword = [('shear', j, j+1, plan['weights'][j]) for j in range(n-1)]
+172:     kiword = inverse(kword, p)
+173:     word = []
+174:     for r in range(1, batches):
+175:         word.extend(jword)
+176:         word.extend(kword)
+177:         word.extend(('shear', (2+r)*n+i, 2*n+i, p-1) for i in range(n))
+178:     word.extend(add_t_word(plan, 0, 2*n, 1))
+179:     for r in reversed(range(1, batches)):
+180:         word.extend(('shear', (2+r)*n+i, 2*n+i, 1) for i in range(n))
+181:         word.extend(jiword)
+182:         word.extend(kiword)
+183:     return word
+184: 
+185: 
+186: def expand_scalar(word, p):
+187:     """Reversible source scales and register additions, no destructive moves.
+188: 
+189:     All emitted coefficients are nonzero; inverses are cached preparation.
+190:     """
+191:     out, reciprocal = [], {}
+192:     for gate in word:
+193:         if gate[0] == 'shear':
+194:             _, i, j, a = gate
+195:             if a == 0:
+196:                 continue
+197:             if a not in reciprocal:
+198:                 reciprocal[a] = pow(a, -1, p)
+199:             out.extend([('scale', j, a), ('add', i, j),
+200:                         ('scale', j, reciprocal[a])])
+201:         elif gate[0] == 'scale':
+202:             out.append(gate)
+203:         else:
+204:             _, i, j = gate
+205:             out.extend([('add', i, j), ('sub', j, i),
+206:                         ('add', i, j), ('scale', j, p-1)])
+207:     return out
+208: 
+209: 
+210: def execute_scalar(word, registers, p):
+211:     registers = list(registers)
+212:     for gate in word:
+213:         kind, i, j = gate
+214:         if kind == 'scale':
+215:             registers[i] = registers[i] * j % p
+216:         elif kind == 'add':
+217:             registers[i] = (registers[i] + registers[j]) % p
+218:         else:
+219:             registers[i] = (registers[i] - registers[j]) % p
+220:     return registers
+221: 
+222: 
+223: def charge(word):
+224:     counts = Counter(gate[0] for gate in word)
+225:     # Each shear is charged one multiplication and one addition even for ±1.
+226:     # The reversible scalar expansion uses 3 instructions per shear, one per
+227:     # scale, and 4 per swap. Every instruction has O(1) register addressing.
+228:     return {'shears': counts['shear'], 'scalings': counts['scale'],
+229:             'swaps': counts['swap'],
+230:             'field_multiplications': counts['shear'] + counts['scale'],
+231:             'field_additions': counts['shear'],
+232:             'expanded_scalar_multiplications': 2*counts['shear'] + counts['scale'] + counts['swap'],
+233:             'expanded_scalar_additions': counts['shear'] + 3*counts['swap'],
+234:             'expanded_scalar_instructions': 3*counts['shear'] + counts['scale'] + 4*counts['swap'],
+235:             'gate_count': len(word)}
+236: 
+237: 
+238: def apply_t(plan, x):
+239:     n, p = plan['n'], plan['p']
+240:     return [sum(plan['kernel'][i-j] * x[j] for j in range(i+1)) % p
+241:             for i in range(n)]
+242: 
+243: 
+244: def apply_k(plan, x):
+245:     n, p = plan['n'], plan['p']
+246:     return [(x[j] + plan['weights'][j] * x[j+1]) % p
+247:             for j in range(n-1)] + [x[-1]]
+248: 
+249: 
+250: def apply_j(plan, x):
+251:     n, p = plan['n'], plan['p']
+252:     return [(plan['diagonal'][j] * x[j] +
+253:              plan['weights'][j] * x[(j+1) % n]) % p for j in range(n)]

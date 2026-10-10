@@ -1,0 +1,51 @@
+0001 """Independent read-only integrity checker; never imports supplied source code."""
+0002 from pathlib import Path, PurePosixPath
+0003 import hashlib
+0004 import json
+0005 import stat
+0006 import zipfile
+0007 
+0008 ROOT = Path(__file__).resolve().parent
+0009 
+0010 def sha(data):
+0011     return hashlib.sha256(data).hexdigest()
+0012 
+0013 def main():
+0014     payloads = 0
+0015     for line in (ROOT / 'SHA256SUMS').read_text().splitlines():
+0016         expected, name = line.split('  ', 1)
+0017         rel = PurePosixPath(name)
+0018         assert not rel.is_absolute() and '..' not in rel.parts
+0019         assert sha((ROOT / name).read_bytes()) == expected, name
+0020         payloads += 1
+0021     provenance = json.loads((ROOT / 'PROVENANCE.json').read_text())
+0022     total_members = 0
+0023     for record in provenance:
+0024         archive = ROOT / record['package_archive_path']
+0025         assert sha(archive.read_bytes()) == record['archive_sha256'], archive.name
+0026         expected_names = set()
+0027         with zipfile.ZipFile(archive) as z:
+0028             for entry in z.infolist():
+0029                 q = PurePosixPath(entry.filename)
+0030                 assert not q.is_absolute() and '..' not in q.parts
+0031                 assert not stat.S_ISLNK(entry.external_attr >> 16)
+0032             for entry in record['files']:
+0033                 # Extraction used one branch directory before the actual ZIP name.
+0034                 member = str(PurePosixPath(entry['path']).relative_to(PurePosixPath(entry['path']).parts[0]))
+0035                 expected_names.add(member)
+0036                 data = z.read(member)
+0037                 assert len(data) == entry['size'], member
+0038                 assert sha(data) == entry['sha256'], member
+0039                 total_members += 1
+0040             actual_names = {i.filename for i in z.infolist() if not i.is_dir()}
+0041             assert actual_names == expected_names, archive.name
+0042             assert len(actual_names) == sum(not i.is_dir() for i in z.infolist()), 'duplicate archive members'
+0043         print('PASS archive and members:', archive.name)
+0044     hero = next(r for r in provenance if 'hero17_phase_union' in r['package_archive_path'])
+0045     note = next(x for x in hero['files'] if x['path'].endswith('/RESEARCH.md'))
+0046     assert note['sha256'] == '503cf095980e7114f8d9bff39d7e33fe600a7747bfbb8756cd5c7729cf63c2b9'
+0047     print(f'PASS: {payloads} payload files; {len(provenance)} original archives; {total_members} preserved members.')
+0048     print('No supplied code was imported, executed, compiled, or extracted by this checker.')
+0049 
+0050 if __name__ == '__main__':
+0051     main()

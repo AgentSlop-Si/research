@@ -1,0 +1,180 @@
+1: """Native cold-call timings, exact-zero/approximate checks, and NumPy comparison."""
+2: import ctypes as ct
+3: import hashlib
+4: import json
+5: import os
+6: import platform
+7: from pathlib import Path
+8: import random
+9: import subprocess
+10: import time
+11: import numpy as np
+12: 
+13: ROOT=Path(__file__).resolve().parent
+14: FIELDS=('butterflies visited_nodes threshold_tests pruned_nodes pruned_outputs '
+15:         'computed_outputs norm_value_volume zero_value_tests root_pairs '
+16:         'full_output_writes max_stack').split()
+17: class Stats(ct.Structure):_fields_=[(x,ct.c_uint64) for x in FIELDS]
+18: 
+19: 
+20: def build():
+21:     command=['g++','-O3','-std=c++17','-march=native','-fPIC','-shared',
+22:              str(ROOT/'native_fft.cpp'),'-o',str(ROOT/'native_fft.so')]
+23:     subprocess.run(command,check=True,capture_output=True,text=True)
+24:     return command
+25: 
+26: 
+27: def load():
+28:     lib=ct.CDLL(str(ROOT/'native_fft.so'))
+29:     pointer=ct.POINTER(ct.c_double)
+30:     lib.native_fft.argtypes=[pointer,pointer,ct.c_size_t,ct.c_int,ct.c_double,ct.POINTER(Stats)]
+31:     lib.native_fft.restype=ct.c_int
+32:     lib.consume.argtypes=[pointer,ct.c_size_t];lib.consume.restype=ct.c_double
+33:     def transform(x,algorithm,epsilon=0.,instrument=False):
+34:         out=np.empty_like(x);stats=Stats() if instrument else None
+35:         status=lib.native_fft(x.ctypes.data_as(pointer),out.ctypes.data_as(pointer),len(x),
+36:                               algorithm,epsilon,ct.byref(stats) if stats is not None else None)
+37:         if status:raise ValueError(f'native FFT failed with status {status}')
+38:         return out,{name:int(getattr(stats,name)) for name in FIELDS} if stats is not None else None
+39:     def consume(out):return float(lib.consume(out.ctypes.data_as(pointer),len(out)))
+40:     return transform,consume
+41: 
+42: 
+43: def families(n,rng):
+44:     j=np.arange(n)
+45:     result={
+46:         'gaussian':rng.normal(size=n)+1j*rng.normal(size=n),
+47:         'pure_tone':np.exp(2j*np.pi*17*j/n),
+48:         'constant_exact':np.ones(n,dtype=complex),
+49:         'impulse_diffuse_spectrum':np.eye(1,n,dtype=complex).ravel(),
+50:     }
+51:     for name,support in [('fifteen_tones',15),('threshold_64_tones',64)]:
+52:         spectrum=np.zeros(n,dtype=complex)
+53:         indices=rng.choice(n,support,replace=False)
+54:         spectrum[indices]=np.exp(1j*rng.uniform(-np.pi,np.pi,support))
+55:         result[name]=np.fft.ifft(spectrum,norm='ortho')
+56:     spectrum=np.exp(1j*rng.uniform(-np.pi,np.pi,n))/np.sqrt(np.arange(1,n+1))
+57:     result['heavy_tail_spectrum']=np.fft.ifft(spectrum,norm='ortho')
+58:     return result
+59: 
+60: 
+61: def error_ratio(out,reference,x):
+62:     scale=max(float(np.max(np.abs(x.real))),float(np.max(np.abs(x.imag))))
+63:     if scale==0:return float(np.max(np.abs(out)))
+64:     scaled=x.real/scale+1j*(x.imag/scale)
+65:     diff=(out.real-reference.real)/scale+1j*((out.imag-reference.imag)/scale)
+66:     return float(np.max(np.abs(diff))/np.linalg.norm(scaled))
+67: 
+68: 
+69: def usefulness(out,reference,x):
+70:     scale=max(float(np.max(np.abs(x.real))),float(np.max(np.abs(x.imag))))
+71:     if scale==0:return {'relative_l2_error':0.,'all_zero_output':True,'retained_energy_fraction':1.}
+72:     scaled=x.real/scale+1j*(x.imag/scale)
+73:     diff=(out.real-reference.real)/scale+1j*((out.imag-reference.imag)/scale)
+74:     out_scaled=out.real/scale+1j*(out.imag/scale)
+75:     denominator=float(np.vdot(scaled,scaled).real)
+76:     return {'relative_l2_error':float(np.linalg.norm(diff)/np.sqrt(denominator)),
+77:             'all_zero_output':bool(np.all(out==0)),
+78:             'retained_energy_fraction':float(np.vdot(out_scaled,out_scaled).real/denominator)}
+79: 
+80: 
+81: def timing_summary(values):
+82:     arr=np.asarray(values)
+83:     return {'median_seconds':float(np.median(arr)),
+84:             'q25_seconds':float(np.quantile(arr,.25)),
+85:             'q75_seconds':float(np.quantile(arr,.75)),
+86:             'minimum_seconds':float(np.min(arr)),
+87:             'raw_seconds':list(map(float,arr))}
+88: 
+89: 
+90: def main():
+91:     command=build();transform,consume=load()
+92:     rng=np.random.default_rng(20261011);schedule_rng=random.Random(9382)
+93:     rows=[];checks=[];consumed=[]
+94:     repeats=int(os.getenv('FFT_BENCH_REPEATS','9'))
+95:     sizes=tuple(map(int,os.getenv('FFT_BENCH_SIZES','4096,65536,262144').split(',')))
+96:     for n in sizes:
+97:         for family,x in families(n,rng).items():
+98:             reference=np.fft.fft(x,norm='ortho')
+99:             methods={'native_dit':(0,0.),'native_dif':(1,0.),
+100:                      'zero_pruned':(2,0.),'epsilon_0.125':(2,.125),
+101:                      'epsilon_0.25':(2,.25),'epsilon_0.5':(2,.5),'numpy':None}
+102:             outputs={};stats={};timings={name:[] for name in methods}
+103:             for name,spec in methods.items():
+104:                 out,stat=(reference,None) if spec is None else transform(x,*spec,instrument=True)
+105:                 outputs[name]=out;stats[name]=stat
+106:                 err=error_ratio(out,reference,x)
+107:                 allowed=spec[1] if spec is not None else 0.
+108:                 assert err<=allowed+2e-12,(n,family,name,err,allowed)
+109:             # One untimed warmup of code/caches; each measured call still rebuilds
+110:             # roots/workspace. This is cold algorithmic setup, not cold hardware.
+111:             for name,spec in methods.items():
+112:                 out=np.fft.fft(x,norm='ortho') if spec is None else transform(x,*spec)[0]
+113:                 consumed.append(consume(out))
+114:             for _ in range(repeats):
+115:                 order=list(methods);schedule_rng.shuffle(order)
+116:                 for name in order:
+117:                     spec=methods[name]
+118:                     started=time.perf_counter_ns()
+119:                     out=np.fft.fft(x,norm='ortho') if spec is None else transform(x,*spec)[0]
+120:                     checksum=consume(out)
+121:                     elapsed=(time.perf_counter_ns()-started)*1e-9
+122:                     consumed.append(checksum);timings[name].append(elapsed)
+123:             fast_baseline=min(np.median(timings['native_dit']),np.median(timings['native_dif']))
+124:             for name,spec in methods.items():
+125:                 row={'n':n,'family':family,'method':name,
+126:                      **timing_summary(timings[name]),
+127:                      'ratio_to_faster_native_baseline':float(np.median(timings[name])/fast_baseline),
+128:                      'ratio_to_numpy':float(np.median(timings[name])/np.median(timings['numpy'])),
+129:                      'max_error_over_input_l2':error_ratio(outputs[name],reference,x),
+130:                      **usefulness(outputs[name],reference,x),
+131:                      'stats':stats[name]}
+132:                 rows.append(row)
+133:             print(f'completed n={n} {family}',flush=True)
+134:     # Dynamic range and cancellation controls, not included in ordinary timing medians.
+135:     for n in (1,2,8,1024):
+136:         for scale in (0.,1e-200,1.,1e200):
+137:             x=(rng.normal(size=n)+1j*rng.normal(size=n))*scale
+138:             reference=np.fft.fft(x,norm='ortho')
+139:             for eps in (0.,.125,.25,.5):
+140:                 out,stat=transform(x,2,eps,instrument=True)
+141:                 err=error_ratio(out,reference,x)
+142:                 assert err<=eps+3e-12,(n,scale,eps,err)
+143:                 assert stat['computed_outputs']+stat['pruned_outputs']==n
+144:                 checks.append({'n':n,'scale':scale,'epsilon':eps,'error_ratio':err})
+145:     # A tiny nonzero branch must not be discarded by squared-norm underflow
+146:     # in zero-only mode. eps=0 uses component comparisons directly.
+147:     x=np.zeros(8,dtype=complex);x[0]=x[4]=1.;x[1]=1e-200;x[5]=-1e-200
+148:     out,stat=transform(x,2,0.,instrument=True)
+149:     reference=np.fft.fft(x,norm='ortho')
+150:     assert np.all(out[1::2]!=0),out
+151:     assert error_ratio(out,reference,x)<1e-14
+152:     special={'zero_mode_component_tests':True,'underflow_prone_odd_outputs_preserved':4,
+153:              'near_underflow_error':error_ratio(out,reference,x)}
+154:     report={'status':'PASS','compiler_command':command,
+155:             'compiler':subprocess.run(['g++','--version'],capture_output=True,text=True).stdout.splitlines()[0],
+156:             'platform':platform.platform(),'python':platform.python_version(),'numpy_version':np.__version__,
+157:             'hardware':subprocess.run(['lscpu'],capture_output=True,text=True).stdout,
+158:             'affinity_cpu_count':len(os.sched_getaffinity(0)) if hasattr(os,'sched_getaffinity') else None,
+159:             'thread_environment':{key:os.environ.get(key) for key in (
+160:                 'OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','NUMEXPR_NUM_THREADS')},
+161:             'repeats':repeats,'sizes':sizes,'methodology':[
+162:                 'Fresh native work/root allocation and root preparation on every measured call.',
+163:                 'Native validation, input scaling, threshold tests, full output and output checksum included.',
+164:                 'Code warmed once; repeated identical given inputs; no prepared FFT plans retained.',
+165:                 'Randomized method ordering; medians, quartiles and all raw samples retained.',
+166:                 'Instrumentation disabled for timings and collected in separate executions.',
+167:                 'Native baseline is faster median of iterative DIT and DIF with identical cold setup.',
+168:                 'NumPy comparison is its ordinary FFT plus identical output checksum; implementation/setup differ.',
+169:                 'Ideal-arithmetic threshold theorem is not a certified floating-point error bound.'
+170:             ],'results':rows,'dynamic_range_checks':checks,'negative_controls':special,
+171:             'checksum_calls':len(consumed),'checksum_digest':hashlib.sha256(np.asarray(consumed).tobytes()).hexdigest()}
+172:     (ROOT/'results.json').write_text(json.dumps(report,indent=2)+'\n')
+173:     subset=[r for r in rows if r['method'].startswith('epsilon')]
+174:     print(json.dumps({'cases':len(subset),'wins_native':sum(r['ratio_to_faster_native_baseline']<1 for r in subset),
+175:         'ratio_native_min':min(r['ratio_to_faster_native_baseline'] for r in subset),
+176:         'ratio_native_max':max(r['ratio_to_faster_native_baseline'] for r in subset),
+177:         'wins_numpy':sum(r['ratio_to_numpy']<1 for r in subset)},indent=2))
+178: 
+179: 
+180: if __name__=='__main__':main()

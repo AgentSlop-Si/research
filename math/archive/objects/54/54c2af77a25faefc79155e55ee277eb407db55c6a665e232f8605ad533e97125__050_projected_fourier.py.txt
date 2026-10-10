@@ -1,0 +1,171 @@
+"""Projected relation-aware Fourier state with no O(r*N) spectrum storage.
+
+A consumer fixes q Fourier bins.  Instead of storing every basis spectrum, it
+stores only the r-by-q projection of the basis onto those bins.  After this
+preprocessing, N appears only in phase generation for sparse point edits.
+
+For state x = sum_i c_i b_i + e, where e is sparse and all updates arrive as
+trusted relation metadata, the view supports O(1) metadata updates and chooses
+at query time between:
+
+* replay H logged deltas: O(q H), or
+* rebuild from current relation: O(q (r+k)), k = current sparse support.
+
+Thus a query after H updates costs O(q * (1 + min(H, r+k))) in this model, provided
+the needed recent events are retained.  This is a structured/dynamic result;
+it does not compute the first arbitrary dense DFT or discover the relation.
+"""
+from __future__ import annotations
+from collections import deque
+from dataclasses import dataclass
+from itertools import islice
+import math
+from typing import Iterable, Sequence
+import numpy as np
+
+
+@dataclass(frozen=True)
+class ProjectedStats:
+    strategy: str
+    backlog: int
+    q: int
+    r: int
+    k: int
+    retained_events: int
+
+
+class ProjectedFourierState:
+    def __init__(self, n: int, bins: Sequence[int], basis_projection: np.ndarray,
+                 coefficients: Sequence[complex] | None = None,
+                 sparse_residual: Iterable[tuple[int, complex]] = (),
+                 *, event_capacity: int | None = None,
+                 prepared_positions: Sequence[int] | None = None):
+        self.n=int(n)
+        if self.n<1: raise ValueError('n must be positive')
+        b=np.asarray(bins,dtype=np.int64)
+        if b.ndim!=1 or b.size<1 or np.any(b<0) or np.any(b>=self.n):
+            raise ValueError('bad frequency bins')
+        self.bins=b.astype(np.intp,copy=True); self.q=len(self.bins)
+        proj=np.asarray(basis_projection,dtype=np.complex128)
+        if proj.ndim!=2 or proj.shape[1]!=self.q:
+            raise ValueError('basis_projection must have shape (r,q)')
+        self.projection=np.ascontiguousarray(proj); self.r=proj.shape[0]
+        if coefficients is None: self.coefficients=np.zeros(self.r,dtype=np.complex128)
+        else:
+            c=np.asarray(coefficients,dtype=np.complex128)
+            if c.shape!=(self.r,): raise ValueError('bad coefficients')
+            self.coefficients=c.copy()
+        self.sparse={}
+        for j,d in sparse_residual:
+            self._point_update(int(j),complex(d),log=False)
+
+        self._prepared_row={}; self._prepared_phase=None
+        if prepared_positions is not None:
+            unique=list(dict.fromkeys(int(x) for x in prepared_positions))
+            if any(j<0 or j>=self.n for j in unique): raise ValueError('bad prepared position')
+            self._prepared_row={j:i for i,j in enumerate(unique)}
+            self._prepared_phase=np.exp((-2j*np.pi/self.n)*np.outer(np.asarray(unique,float),self.bins.astype(float)))
+
+        self.version=0; self.view_version=0
+        # None means keep enough history until explicit compact(); otherwise a
+        # bounded deque forces stale views to rebuild, keeping memory finite.
+        self.event_capacity=None if event_capacity is None else max(0,int(event_capacity))
+        self.events=deque()  # (version, kind, key, delta)
+        self.cached=self._rebuild_value()
+        self.last_stats=ProjectedStats('initial',0,self.q,self.r,len(self.sparse),0)
+
+    def _phase(self,j:int):
+        row=self._prepared_row.get(j)
+        if row is not None and self._prepared_phase is not None:
+            return self._prepared_phase[row]
+        return np.exp((-2j*np.pi*j/self.n)*self.bins.astype(float))
+
+    def _append(self,kind,key,delta):
+        self.version+=1
+        self.events.append((self.version,kind,int(key),complex(delta)))
+        if self.event_capacity is not None:
+            while len(self.events)>self.event_capacity: self.events.popleft()
+
+    def add_coefficient(self,i:int,delta:complex):
+        """Trusted metadata fast path; caller guarantees 0<=i<r and finiteness."""
+        z=complex(delta)
+        if z==0j:return
+        i=int(i); self.coefficients[i]+=z; self._append('c',i,z)
+
+    def _point_update(self,j:int,d:complex,*,log=True):
+        if not 0<=j<self.n: raise ValueError('point outside signal')
+        if d==0j:return
+        v=self.sparse.get(j,0j)+d
+        if v==0j:self.sparse.pop(j,None)
+        else:self.sparse[j]=v
+        if log:self._append('p',j,d)
+
+    def add_point(self,j:int,delta:complex):
+        """Trusted numeric delta with index validation."""
+        self._point_update(int(j),complex(delta),log=True)
+
+    def _rebuild_value(self):
+        y=np.asarray(self.coefficients@self.projection,dtype=np.complex128)
+        for j,d in self.sparse.items(): y += d*self._phase(j)
+        return y
+
+    def _history_available(self):
+        if self.view_version==self.version:return True
+        if not self.events:return False
+        return self.events[0][0] <= self.view_version+1
+
+    def query(self):
+        H=self.version-self.view_version
+        if H==0:
+            self.last_stats=ProjectedStats('cached',0,self.q,self.r,len(self.sparse),len(self.events))
+            return self.cached.copy()
+        d=self.r+len(self.sparse)
+        # The key theorem-level planner: do not even scan a long event log if
+        # rebuilding from current factorized state is cheaper.
+        if H>max(1,d) or not self._history_available():
+            self.cached=self._rebuild_value(); self.view_version=self.version
+            self.last_stats=ProjectedStats('rebuild',H,self.q,self.r,len(self.sparse),len(self.events))
+            return self.cached.copy()
+
+        # H <= r+k: replay exactly the chronological deltas.  No coalescing is
+        # required for the O(qH) guarantee and this path is friendly to a C++
+        # implementation consisting of q-wide AXPYs.
+        # A deque has no O(1) random-access slice. Iterate from its right end
+        # and collect exactly the H unread records, then replay chronologically.
+        # Scanning from the left used O(E) work for E retained records even
+        # when H=1, violating the stated replay bound without manual compact().
+        recent = list(islice(reversed(self.events), H))
+        for ver,kind,key,delta in reversed(recent):
+            if kind=='c': self.cached += delta*self.projection[key]
+            else: self.cached += delta*self._phase(key)
+        self.view_version=self.version
+        self.last_stats=ProjectedStats('replay',H,self.q,self.r,len(self.sparse),len(self.events))
+        return self.cached.copy()
+
+    def compact(self):
+        """Discard history through the last answered query."""
+        while self.events and self.events[0][0]<=self.view_version: self.events.popleft()
+
+    @property
+    def storage_bytes(self):
+        base=self.projection.nbytes+self.coefficients.nbytes+self.cached.nbytes
+        phase=0 if self._prepared_phase is None else self._prepared_phase.nbytes
+        # Python object/dict overhead is intentionally excluded; this is the
+        # numeric payload size used for asymptotic/storage comparisons.
+        # Each retained event has numeric version/index/delta fields. The
+        # string kind tag and Python object/container overhead remain excluded.
+        event_numeric_bytes = len(self.events) * (8+8+16)
+        return int(base+phase+len(self.sparse)*(8+16)+event_numeric_bytes)
+
+    def storage_report(self):
+        """Numeric payload accounting, including the retained event log."""
+        phase = 0 if self._prepared_phase is None else self._prepared_phase.nbytes
+        return {'projection_bytes':self.projection.nbytes,
+                'coefficient_bytes':self.coefficients.nbytes,
+                'cached_output_bytes':self.cached.nbytes,
+                'prepared_phase_bytes':phase,
+                'sparse_numeric_bytes':len(self.sparse)*24,
+                'retained_events':len(self.events),
+                'event_numeric_bytes':len(self.events)*32,
+                'total_numeric_bytes':self.storage_bytes,
+                'includes_python_object_overhead':False}

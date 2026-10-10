@@ -1,0 +1,44 @@
+   1 """Exact finite-field checks of cyclic-shift Vandermonde displacement rank.
+   2 This tests algebraic identities, not a runtime lower bound or FFT speedup.
+   3 """
+   4 import itertools, json
+   5 from pathlib import Path
+   6 
+   7 def rank(a,p):
+   8     a=[row[:] for row in a]; r=0
+   9     for j in range(len(a[0])):
+  10         pivot=next((i for i in range(r,len(a)) if a[i][j]%p),None)
+  11         if pivot is None: continue
+  12         a[r],a[pivot]=a[pivot],a[r]
+  13         inv=pow(a[r][j],-1,p); a[r]=[(x*inv)%p for x in a[r]]
+  14         for i in range(r+1,len(a)):
+  15             c=a[i][j]; a[i]=[(x-c*y)%p for x,y in zip(a[i],a[r])]
+  16         r+=1
+  17         if r==len(a): break
+  18     return r
+  19 
+  20 def main():
+  21     results=[]
+  22     for N,p in [(5,11),(7,29),(11,23)]:
+  23         zeta=next(z for z in range(2,p) if pow(z,N,p)==1)
+  24         count=0
+  25         for mask in range(1,1<<(N-1)):
+  26             zs=[pow(zeta,j,p) for j in range(1,N) if mask>>(j-1)&1]
+  27             for B in range(1,N):
+  28                 V=[[pow(z,r,p) for z in zs] for r in range(B)]
+  29                 for t in range(1,B+1):
+  30                     defect=[[(V[r][s]*pow(z,t,p)-V[(r+t)%B][s])%p
+  31                              for s,z in enumerate(zs)] for r in range(B)]
+  32                     expected=[[0 if r+t<B else
+  33                                (pow(z,B,p)-1)*pow(z,r+t-B,p)%p for z in zs]
+  34                               for r in range(B)]
+  35                     assert defect==expected
+  36                     assert rank(defect,p)==min(t,len(zs))
+  37                     count+=1
+  38         results.append(dict(N=N,field_prime=p,root=zeta,checks=count))
+  39     out=dict(status='passed',arithmetic='exact modular integers',tests=results,
+  40              total=sum(x['checks'] for x in results),
+  41              limitation='Finite test cases supplement the proof; no operation-count lower bound.')
+  42     Path(__file__).with_name('displacement_checks.json').write_text(json.dumps(out,indent=2)+'\n')
+  43     print(json.dumps(out,indent=2))
+  44 if __name__=='__main__': main()

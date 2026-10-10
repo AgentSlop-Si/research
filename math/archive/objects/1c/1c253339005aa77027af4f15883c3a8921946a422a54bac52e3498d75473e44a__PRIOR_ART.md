@@ -1,0 +1,9 @@
+# Phase 28 prior-art and attribution boundaries
+
+- **Good–Thomas / CRT (classical):** coprime factor permutations produce a twiddle-free tensor DFT. Used in Phase 27; not new here.
+- **Shmuel Winograd (1976, 1978):** short DFTs written as integer preweave, diagonal scalings, integer postweave; nesting the diagonals across factors is an established way to reduce multiplications. https://pmc.ncbi.nlm.nih.gov/articles/PMC430186/
+- **Burrus et al., classical WFTA presentations:** the 15-point WFTA is described with 17 complex-scalar multiplies and a central expansion to 18 channels; nesting orders affect additions. https://eng.libretexts.org/Bookshelves/Electrical_Engineering/Signal_Processing_and_Modeling/Fast_Fourier_Transforms_%28Burrus%29/09%3A_The_Prime_Factor_and_Winograd_Fourier_Transform_Algorithms/9.03%3A_The_Winograd_Fourier_Transform_Algorithm
+- **Historical WFTA tables:** published 60-point WFTA arithmetic tables exist, including real-operation counts; arithmetic conventions (pure imaginary constants and free sign/swaps) differ from this report's exact field-operation proxy. https://opg.optica.org/ao/abstract.cfm?uri=ao-21-18-3273
+- **Existing Phase 27 checkpoint:** distinct full scalar GT15 + dyadic circuit, exactly tested. Phase 28 explicitly preserves its original ZIP and uses its unchanged comparator code in replays.
+
+**Novelty statement:** The mathematics of Winograd nesting and short tensor diagonalization is **not novel**. The verified output here is a project-specific, reproducible integration with the full all-input Phase 27 graph, with a transparent addition-order exchange certificate, finite-field validation, exact characteristic-zero cyclotomic checks and charged cold setup. Whether that integration is independently publishable is unassessed. This checkpoint makes no historical first-priority claim.

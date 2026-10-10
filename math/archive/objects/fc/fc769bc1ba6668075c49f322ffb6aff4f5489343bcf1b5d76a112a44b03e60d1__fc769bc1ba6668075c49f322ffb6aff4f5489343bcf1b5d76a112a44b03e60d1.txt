@@ -1,0 +1,139 @@
+"""Exact global Green's stages over F_998244353: two sweeps per solve.
+
+Explores dense O(N)-work *nonunitary* maps, not a novel fast FFT.
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+P = 998244353
+
+@dataclass(frozen=True)
+class TriPlan:
+    p: int
+    diagonal: tuple[int, ...]
+    lower: tuple[int, ...]
+    upper: tuple[int, ...]
+    multipliers: tuple[int, ...]
+    inverse_pivot: tuple[int, ...]
+
+    @classmethod
+    def build(cls, diagonal, lower, upper, p=P):
+        n=len(diagonal)
+        if not n or len(lower)!=n-1 or len(upper)!=n-1:
+            raise ValueError('invalid tridiagonal dimensions')
+        d=[int(x)%p for x in diagonal]
+        lo=tuple(int(x)%p for x in lower)
+        up=tuple(int(x)%p for x in upper)
+        ell=[]; piv=[d[0]]
+        if not piv[0]: raise ValueError('zero initial pivot')
+        for i in range(1,n):
+            e=lo[i-1]*pow(piv[i-1],p-2,p)%p
+            next_piv=(d[i]-e*up[i-1])%p
+            if not next_piv: raise ValueError('zero Thomas pivot')
+            ell.append(e);piv.append(next_piv)
+        return cls(p,tuple(d),lo,up,tuple(ell),tuple(pow(q,p-2,p) for q in piv))
+
+    @property
+    def n(self): return len(self.diagonal)
+
+    def multiply(self, values):
+        if len(values)!=self.n: raise ValueError('length mismatch')
+        p=self.p
+        return [(self.diagonal[i]*values[i]+(self.lower[i-1]*values[i-1] if i else 0)
+                 +(self.upper[i]*values[i+1] if i+1<self.n else 0))%p
+                for i in range(self.n)]
+
+    def apply_inverse(self, values):
+        """Solve T*y = values, with prepared pivots: O(N) field ops."""
+        if len(values)!=self.n: raise ValueError('length mismatch')
+        p=self.p; n=self.n
+        y=[int(x)%p for x in values]
+        for i in range(1,n):
+            y[i]=(y[i]-self.multipliers[i-1]*y[i-1])%p
+        y[-1]=y[-1]*self.inverse_pivot[-1]%p
+        for i in range(n-2,-1,-1):
+            y[i]=(y[i]-self.upper[i]*y[i+1])*self.inverse_pivot[i]%p
+        return y
+
+
+def green_family(n, p=P):
+    """Two strict-SPD-over-reals Toeplitz tridiagonals T and T+I.
+
+    Over F_p these same integer coefficients define valid invertible matrices
+    at all tested lengths. Their Green inverses are dense over the reals.
+    """
+    if n<2:raise ValueError('n>=2')
+    T=TriPlan.build([3]*n,[-1]*(n-1),[-1]*(n-1),p)
+    U=TriPlan.build([4]*n,[-1]*(n-1),[-1]*(n-1),p)
+    V=TriPlan.build([7]*n,[-2]*(n-1),[-2]*(n-1),p)
+    return T,U,V
+
+
+def apply_sum_inverse(T,U,vec):
+    """S*x=(T^-1 + U^-1)*x, 2 sweeps per summand."""
+    a=T.apply_inverse(vec); b=U.apply_inverse(vec)
+    return [(x+y)%T.p for x,y in zip(a,b)]
+
+
+def apply_inverse_of_sum(T,U,TplusU,vec):
+    """(T^-1+U^-1)^-1 = U (T+U)^-1 T, all O(N)."""
+    return U.multiply(TplusU.apply_inverse(T.multiply(vec)))
+
+
+def basis_matrix(apply, n, p=P):
+    cols=[]
+    for j in range(n):
+        e=[0]*n;e[j]=1
+        cols.append(apply(e))
+    return [[cols[j][i]%p for j in range(n)] for i in range(n)]
+
+
+def matmul(A,B,p=P):
+    n=len(A);m=len(B);k=len(B[0]);out=[[0]*k for _ in range(n)]
+    for i in range(n):
+        for h in range(m):
+            if A[i][h]:
+                for j in range(k):out[i][j]=(out[i][j]+A[i][h]*B[h][j])%p
+    return out
+
+
+def inverse_matrix(A,p=P):
+    n=len(A); a=[[(v%p) for v in row]+[int(i==j) for j in range(n)] for i,row in enumerate(A)]
+    for j in range(n):
+        piv=next((i for i in range(j,n) if a[i][j]),None)
+        if piv is None: raise ValueError('singular')
+        a[j],a[piv]=a[piv],a[j]
+        iv=pow(a[j][j],p-2,p)
+        a[j]=[v*iv%p for v in a[j]]
+        for i in range(n):
+            if i==j:continue
+            factor=a[i][j]
+            if factor:
+                a[i]=[(v-factor*w)%p for v,w in zip(a[i],a[j])]
+    return [row[n:] for row in a]
+
+
+def rank_mod(A,p=P):
+    if not A:return 0
+    z=[[v%p for v in row] for row in A]
+    m=len(z);n=len(z[0]);r=0
+    for j in range(n):
+        ix=next((i for i in range(r,m) if z[i][j]),None)
+        if ix is None:continue
+        z[r],z[ix]=z[ix],z[r]
+        inv=pow(z[r][j],p-2,p)
+        z[r]=[v*inv%p for v in z[r]]
+        for i in range(r+1,m):
+            k=z[i][j]
+            if k:z[i]=[(v-k*w)%p for v,w in zip(z[i],z[r])]
+        r+=1
+        if r==m: break
+    return r
+
+
+def cut_orders(A,p=P):
+    n=len(A)
+    return [(rank_mod([row[s:] for row in A[:s]],p),
+             rank_mod([row[:s] for row in A[s:]],p)) for s in range(1,n)]
+
+
+def support_count(A):return sum(bool(v) for row in A for v in row)

@@ -1,0 +1,33 @@
+Cross block sharing in exact sparse Fourier expansion
+Research checkpoint October 9 2026
+
+RESULT
+This pass does not establish a new o(N log k) exact algorithm for arbitrary k-element Fourier supports. It supplies explicit tests and formulas for two proposed reuse shortcuts, and identifies the surviving output cost. No new general FFT or integer multiplication bound is claimed. Novelty of the elementary derived identities is not established.
+
+TARGET
+Compute every f_m = sum_s a_s z_s^m, 0<=m<N, where the k distinct z_s are arbitrary Nth roots and k=Theta(log N). Count all scalar field additions, multiplications, inversions and preprocessing. This is a sparse expansion subproblem; beating its bound would not alone prove a faster arbitrary dense exact FFT. Bit cost and floating-point stability are separate.
+
+FINDINGS
+1. The rank-one correction for one-sample cyclic displacement grows to min(t,k) after t shifts when there are no resonant nodes. A whole block can have rank k. Full rank is not a runtime lower bound.
+2. Even/odd rational-series recursion genuinely shares its denominator across a level. But each child has only a half-sized spectrum. Restoring the missing half-grid is the known FFT-doubling operation.
+3. The half-grid map E satisfies E squared equals a cyclic permutation. This tempting cancellation is interrupted by denominator multiplication: its aliasing correction has rank k on the full degree-less-than-L space. On actual degree-less-than-k numerators its rank is max(0,2k-L), so padding can remove this particular defect. The grid-extension and terminal output costs still need accounting; no circuit lower bound follows.
+4. Even a faster half-grid map alone leaves a terminal output map to pay for. The sufficient target is a combined sub-L log L bound for both maps (or a genuinely cheaper joint application), with L=Theta(k).
+5. Standard dense tiling and the checked structured batching theorems do not provide that bound. A near-linear multiplication-count theorem cannot be promoted to total arithmetic time without counting additions.
+
+FILES
+DISPLACEMENT_PROOF.txt: proof and exact scope of block rank growth.
+SPECTRAL_BRIDGE.txt: common-denominator recursion, spectral extension, aliasing correction, terminal cost and sufficient improvement criterion.
+BATCHING_COSTS.txt: cost models and verified thin-matrix prior-art caveats.
+PRIOR_ART.txt: primary-source references and applicable hypotheses.
+check_displacement.py and displacement_checks.json: exhaustive exact finite-field identity/rank checks, 57,738 cases, all passed.
+check_spectral_bridge.py and spectral_bridge_checks.json: exact half-grid and parity identities on 500 random polynomial cases, 31 columns of the E-squared identity, and 310 random commutation-rank checks on both the full and restricted spaces, all passed.
+
+REPRODUCE
+Requires Python 3 standard library only. Run from this directory:
+python check_displacement.py
+python check_spectral_bridge.py
+
+These are algebraic correctness checks. They do not benchmark a faster FFT, prove asymptotic complexity, or test complex floating-point stability. Proofs and charged cost derivations carry the theoretical claims.
+
+RESEARCH DECISION
+Caching common denominator transforms is valid but already accounted for. An affirmative next result must give a full algorithm for the joint half-grid and terminal maps on the constrained family of children, and show total cost o(N log k), including setup and output. Relabeling a fixed matrix as cached, or reporting multiplication counts without additions, will not meet this criterion.

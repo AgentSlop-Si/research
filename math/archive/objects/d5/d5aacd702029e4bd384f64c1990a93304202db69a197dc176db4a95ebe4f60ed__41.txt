@@ -1,0 +1,180 @@
+   1 """Exact tests of a two-quasiseparable-stage rank obstruction.
+   2 
+   3 A check of necessary matrix rank inequalities; does NOT synthesize an FFT.
+   4 All finite-field calculations are exact. Independent of earlier project modules.
+   5 """
+   6 from __future__ import annotations
+   7 from dataclasses import dataclass
+   8 from random import Random
+   9 
+  10 PRIMES = [(998244353, 3), (2013265921, 31)]
+  11 
+  12 
+  13 def rank(a, p):
+  14     """Matrix rank by modular Gaussian elimination; rows are copied."""
+  15     if not a:
+  16         return 0
+  17     m, n = len(a), len(a[0])
+  18     assert all(len(v) == n for v in a)
+  19     b = [[int(x) % p for x in row] for row in a]
+  20     k = 0
+  21     for col in range(n):
+  22         pivot = next((j for j in range(k, m) if b[j][col]), None)
+  23         if pivot is None: continue
+  24         b[k], b[pivot] = b[pivot], b[k]
+  25         inv = pow(b[k][col], p-2, p)
+  26         b[k] = [v*inv % p for v in b[k]]
+  27         for row in range(k+1, m):
+  28             factor = b[row][col]
+  29             if factor:
+  30                 b[row] = [(u-factor*v) % p for u, v in zip(b[row], b[k])]
+  31         k += 1
+  32         if k == m: break
+  33     return k
+  34 
+  35 
+  36 def fourier(n, p=998244353, primitive_root=3):
+  37     if (p-1) % n:
+  38         raise ValueError('n must divide p-1')
+  39     root = pow(primitive_root, (p-1)//n, p)
+  40     if n > 1 and pow(root, n//2, p) == 1:
+  41         raise ValueError('root not primitive')
+  42     return [[pow(root, i*j, p) for j in range(n)] for i in range(n)]
+  43 
+  44 
+  45 def permute(a, row_order=None, col_order=None):
+  46     n = len(a)
+  47     row_order = list(range(n)) if row_order is None else row_order
+  48     col_order = list(range(n)) if col_order is None else col_order
+  49     return [[a[i][j] for j in col_order] for i in row_order]
+  50 
+  51 
+  52 def stage(n, r, p, rng):
+  53     """A strict upper/lower generator stage with qsrank at most r."""
+  54     dl = [rng.randrange(1, p) for _ in range(n)]
+  55     low_i = [[rng.randrange(p) for _ in range(r)] for _ in range(n)]
+  56     low_j = [[rng.randrange(p) for _ in range(r)] for _ in range(n)]
+  57     up_i = [[rng.randrange(p) for _ in range(r)] for _ in range(n)]
+  58     up_j = [[rng.randrange(p) for _ in range(r)] for _ in range(n)]
+  59     return [[(dl[i] if i == j else
+  60               sum(low_i[i][k]*low_j[j][k] for k in range(r)) if i > j else
+  61               sum(up_i[i][k]*up_j[j][k] for k in range(r))) % p
+  62              for j in range(n)] for i in range(n)]
+  63 
+  64 
+  65 def qsrank(a, p):
+  66     n=len(a)
+  67     return max([0]+[rank([row[c:] for row in a[:c]],p) for c in range(1,n)]+[rank([row[:c] for row in a[c:]],p) for c in range(1,n)])
+  68 
+  69 
+  70 def matmul(a, b, p):
+  71     n=len(a); out=[[0]*n for _ in range(n)]
+  72     for i in range(n):
+  73         for k, v in enumerate(a[i]):
+  74             if v:
+  75                 for j, w in enumerate(b[k]):
+  76                     out[i][j]=(out[i][j]+v*w)%p
+  77     return out
+  78 
+  79 
+  80 def middle_shuffle(a, order):
+  81     """P A, output row i selected from old row order[i]."""
+  82     return [a[j] for j in order]
+  83 
+  84 
+  85 def two_stage_bound(f, s1, s2, order, p):
+  86     """For M=S2 P S1, prove both m-block ranks <= routed_capacity+r1+r2.
+  87 
+  88     Returns the same necessary bounds evaluated on f=actual product M.
+  89     """
+  90     n=len(f); assert n%2==0; m=n//2
+  91     r1=qsrank(s1,p); r2=qsrank(s2,p)
+  92     # S1's first/last m rows are routed into S2's first m columns.
+  93     a=sum(order[i]<m for i in range(m))
+  94     b=m-a
+  95     f0=rank([row[:m] for row in f[:m]],p)
+  96     f1=rank([row[m:] for row in f[:m]],p)
+  97     assert f0<=a+r1+r2, (n,r1,r2,a,f0)
+  98     assert f1<=b+r1+r2, (n,r1,r2,b,f1)
+  99     return {'left_rank':f0,'right_rank':f1,'middle_left_capacity':a,'middle_right_capacity':b,
+ 100             'stage1_qsrank':r1,'stage2_qsrank':r2,
+ 101             'rank_surplus':f0+f1-m,
+ 102             'required_r1_plus_r2':max(0,(f0+f1-m+1)//2)}
+ 103 
+ 104 
+ 105 def endpoint_certificate(f, p):
+ 106     """A generic necessary upper bound for two-stage sum of ranks.
+ 107 
+ 108     For arbitrary endpoint orders and cuts s,j, any two-stage factorization
+ 109     needs r1+r2 >= (rank(top_s, left_j) + rank(top_s,right_N-j) - s)/2.
+ 110     """
+ 111     n=len(f); winner=None
+ 112     for s in range(1,n):
+ 113         for j in range(1,n):
+ 114             left=rank([row[:j] for row in f[:s]],p)
+ 115             right=rank([row[j:] for row in f[:s]],p)
+ 116             score=left+right-s
+ 117             if winner is None or score > winner['surplus']:
+ 118                 winner={'row_cut':s,'col_cut':j,'left_rank':left,'right_rank':right,
+ 119                         'surplus':score,'necessary_rank_sum':max(0,(score+1)//2)}
+ 120     return winner
+ 121 
+ 122 
+ 123 def endpoint_patterns(n):
+ 124     bits=n.bit_length()-1
+ 125     return {
+ 126         'natural':list(range(n)),
+ 127         'parity':list(range(0,n,2))+list(range(1,n,2)),
+ 128         'bit_reversal':[int(f'{i:0{bits}b}'[::-1],2) for i in range(n)],
+ 129     }
+ 130 
+ 131 
+ 132 def run():
+ 133     from pathlib import Path
+ 134     import json
+ 135     rng=Random(20261009)
+ 136     result={'theorem':'r1+r2 >= N/4 for F_N (even N), if one endpoint naturally ordered',
+ 137             'matrix_ranks':[],'shuffle_checks':[],'endpoint_orders':[]}
+ 138     for p,g in PRIMES:
+ 139         for n in (8,16,32,64):
+ 140             f=fourier(n,p,g); m=n//2
+ 141             a=rank([row[:m] for row in f[:m]],p)
+ 142             b=rank([row[m:] for row in f[:m]],p)
+ 143             assert a==b==m
+ 144             perm=list(range(n)); rng.shuffle(perm)
+ 145             a_row=rank([f[i][:m] for i in perm[:m]],p)
+ 146             b_row=rank([f[i][m:] for i in perm[:m]],p)
+ 147             assert a_row==b_row==m
+ 148             a_col=rank([[row[j] for j in perm[:m]] for row in f[:m]],p)
+ 149             b_col=rank([[row[j] for j in perm[m:]] for row in f[:m]],p)
+ 150             assert a_col==b_col==m
+ 151             result['matrix_ranks'].append({'p':p,'n':n,'quadrants':[a,b],
+ 152                 'arbitrary_output_order':[a_row,b_row],'arbitrary_input_order':[a_col,b_col],
+ 153                 'minimum_rank_sum':n//4,'minimum_equal_channel_rank':(n+7)//8})
+ 154             for reps in range(3):
+ 155                 r1=min(4,1+reps);r2=min(4,1+reps)
+ 156                 s1=stage(n,r1,p,rng);s2=stage(n,r2,p,rng)
+ 157                 shuffle=list(range(n));rng.shuffle(shuffle)
+ 158                 fnew=matmul(s2,middle_shuffle(s1,shuffle),p)
+ 159                 cert=two_stage_bound(fnew,s1,s2,shuffle,p)
+ 160                 assert cert['stage1_qsrank']<=r1 and cert['stage2_qsrank']<=r2
+ 161                 result['shuffle_checks'].append({'p':p,'n':n,'r':r1,'cert':cert})
+ 162         for n in (8,16):
+ 163             f=fourier(n,p,g); patterns=endpoint_patterns(n)
+ 164             for ro in patterns:
+ 165                 for co in patterns:
+ 166                     ff=permute(f,patterns[ro],patterns[co])
+ 167                     c=endpoint_certificate(ff,p)
+ 168                     result['endpoint_orders'].append({'p':p,'n':n,'rows':ro,'cols':co,'cert':c})
+ 169     path=Path(__file__).with_name('results.json');path.write_text(json.dumps(result,indent=2)+'\n')
+ 170     print(f"PASS: {len(result['matrix_ranks'])} Fourier/endpoint field certificates")
+ 171     print(f"PASS: {len(result['shuffle_checks'])} randomly shuffled generator products")
+ 172     print(f"PASS: {len(result['endpoint_orders'])} endpoint-order cut-budget scans")
+ 173     for r in result['matrix_ranks']:
+ 174         if r['p']==PRIMES[0][0]:print(f"N={r['n']}, r1+r2 >= {r['minimum_rank_sum']} and each channel rank >= {r['minimum_equal_channel_rank']}")
+ 175     for r in result['endpoint_orders']:
+ 176         if r['p']==PRIMES[0][0] and r['n']==16:
+ 177             print('endpoint16',r['rows'],r['cols'],r['cert']['surplus'],r['cert']['necessary_rank_sum'])
+ 178     return result
+ 179 
+ 180 if __name__=='__main__':run()

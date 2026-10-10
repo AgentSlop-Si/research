@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Fresh checks of Phase19 mathematics; no source code is imported/executed."""
+from pathlib import Path
+import json, itertools
+import numpy as np
+
+BASE=Path(__file__).resolve().parent
+P=97
+def inv(A):
+    A=np.array(A,dtype=np.int64)%P; n=len(A)
+    aug=np.concatenate([A,np.eye(n,dtype=np.int64)],axis=1)
+    for j in range(n):
+        pivot=next((i for i in range(j,n) if aug[i,j]),None)
+        if pivot is None: raise ValueError('singular')
+        aug[[j,pivot]]=aug[[pivot,j]]
+        aug[j]=aug[j]*pow(int(aug[j,j]),-1,P)%P
+        for i in range(n):
+            if i!=j: aug[i]=(aug[i]-aug[i,j]*aug[j])%P
+    return aug[:,n:]
+def mul(*args):
+    out=args[0]
+    for A in args[1:]: out=out@A%P
+    return out
+def sig(X,Y):
+    return sorted(tuple(int(v[i,i]) for v in [X,Y,mul(X,X),mul(X,Y),mul(Y,X),mul(Y,Y)]) for i in range(len(X)))
+def cyclo(n):
+    w=pow(5,(P-1)//n,P)
+    assert pow(w,n,P)==1 and pow(w,n//2,P)!=1
+    rt=next(x for x in range(1,P) if x*x%P==n%P)
+    F=np.array([[pow(w,j*k,P)*pow(rt,-1,P)%P for k in range(n)] for j in range(n)],dtype=np.int64)
+    Z=np.roll(np.eye(n,dtype=np.int64),1,axis=0)
+    D=np.diag([pow(w,j,P) for j in range(n)])
+    T=(Z+Z.T)%P; V=(D+inv(D))%P
+    return F,T,V
+rng=np.random.default_rng(1909)
+exact=[]
+for n in [4,8,16,32]:
+    F,T,V=cyclo(n)
+    assert np.array_equal(mul(F,T),mul(V,F)) and np.array_equal(mul(F,V),mul(T,F))
+    while True:
+        A=rng.integers(0,P,size=(n,n),dtype=np.int64)
+        try: Ai=inv(A); break
+        except ValueError: continue
+    perm=rng.permutation(n); q=rng.integers(1,P,size=n,dtype=np.int64)
+    C=np.diag(q)@np.eye(n,dtype=np.int64)[perm]
+    B=mul(inv(C),Ai,F); Bi=inv(B)
+    U1=mul(Ai,V,A); U2=mul(Ai,T,A)
+    W1=mul(B,T,Bi); W2=mul(B,V,Bi)
+    assert sig(U1,U2)==sig(W1,W2)
+    assert np.array_equal(mul(U1,C),mul(C,W1)) and np.array_equal(mul(U2,C),mul(C,W2))
+    assert np.array_equal(mul(A,C,B),F)
+    B0=(np.eye(n,dtype=np.int64)+2*T)%P
+    try:
+        B0i=inv(B0)
+        unequal=sig(T,V)!=sig(mul(B0,T,B0i),mul(B0,V,B0i))
+        first=np.array_equal(mul(F,B0,T),mul(V,F,B0))
+        second=np.array_equal(mul(F,B0,V),mul(T,F,B0))
+        assert first and not second and unequal
+    except ValueError:
+        unequal=None;first=None;second=None
+    exact.append({'N':n,'positive_joint_identity':True,'positive_signature':True,'adversary_first_pass':first,'adversary_second_pass':second,'adversary_signature_reject':unequal})
+
+centralizers=[]
+for n in [4,8]:
+    F,T,V=cyclo(n); H=(T+V)%P
+    cycle=np.zeros((n,n),dtype=np.int64)
+    for j in range(n): cycle[j,(j+1)%n]=cycle[(j+1)%n,j]=1
+    graphs=[];diags=[]
+    for p in itertools.permutations(range(n)):
+        if np.array_equal(cycle[np.ix_(p,p)],cycle):
+            graphs.append(p)
+            if np.array_equal(np.diag(H)[list(p)],np.diag(H)): diags.append(p)
+    assert len(graphs)==2*n and set(diags)=={tuple(range(n)),tuple((-j)%n for j in range(n))}
+    centralizers.append({'N':n,'cycle_automorphisms':len(graphs),'diagonal_preserving_automorphisms':len(diags)})
+
+stable=[]
+for n in [4,8,16,32,64,128]:
+    lo=np.diag(np.ones(n-1),-1);up=lo.T;T=lo+up
+    B=np.eye(n)+0.75j*T+0.2*up
+    a=0.8;b=np.sqrt(3.25)+0.2
+    sv=np.linalg.svd(B,compute_uv=False)
+    actual=float(np.linalg.norm(np.linalg.inv(B),1));bound=b/a**2*(1+2*(b/a)**2)
+    assert sv[-1]>=a-1e-12 and sv[0]<=b+1e-12 and actual<=bound
+    Bn=np.eye(n)-0.5*(1-1/n)*T
+    eig=np.linalg.eigvalsh(Bn)
+    lam=1-(1-1/n)*np.cos(np.pi/(n+1))
+    assert abs(eig[0]-lam)<1e-12
+    g=float(np.linalg.norm(np.linalg.inv(Bn),1))
+    assert 1/eig[0]<=g+1e-9 and g<=n+1e-9
+    stable.append({'N':n,'min_sv':float(sv[-1]),'max_sv':float(sv[0]),'inverse_one_norm':actual,'bound':bound,'near_resonant_min_eigenvalue':float(eig[0]),'near_resonant_inverse_one_norm':g})
+out={'field':P,'joint_gate_checks':exact,'harper_centralizer_checks':centralizers,'stable_inverse_checks':stable,'uploaded_code_executed':False}
+(BASE/'independent_phase19_results.json').write_text(json.dumps(out,indent=2)+'\n')
+print(json.dumps(out,indent=2))

@@ -1,0 +1,158 @@
+"""Cold total-cost microbenchmarks. No work is done in the timed callback without
+being accounted for, except preallocated external test input/version metadata.
+All paths materialize identical complete outputs unless labeled partial.
+Baseline is explicitly optimized to reuse unchanged Fourier factors.
+"""
+from __future__ import annotations
+import gc
+import json
+import time
+from pathlib import Path
+
+import numpy as np
+from scipy import fft
+from algebra_fft import AlgebraFFT
+
+
+def median_ms(fn, repeats=5):
+    times=[]
+    sink=0.
+    for _ in range(repeats):
+        gc.collect()
+        t0=time.perf_counter()
+        sink+=float(fn())
+        times.append((time.perf_counter()-t0)*1000)
+    return float(np.median(times))
+
+
+def dataset(n):
+    rng=np.random.default_rng(3498+n)
+    vals=[rng.standard_normal(n).astype(np.float64)/np.sqrt(n) for _ in range(5)]
+    versions=[(int(t),float(d)) for t,d in zip(rng.integers(0,n,size=60),rng.uniform(-.005,.005,size=60))]
+    return vals,versions
+
+
+def bench(n,degree=1,versions=48,partial=False):
+    arrays, changes=dataset(n)
+    A,B,C,D,E=arrays
+    changes=changes[:versions]
+    queried=np.array([0,1,7,n//7,n//2,n-1],dtype=np.int64)
+
+    def fresh():
+        FA,FB,FC,FD,FE=[fft.rfft(x) for x in arrays]
+        unchanged=FC*FD*FE if degree != 2 else FB*FC
+        checksum=0.
+        for t,delta in changes:
+            a=A.copy(); a[t]+=delta
+            W=fft.rfft(a)
+            if degree==1:
+                f=W*FB+unchanged
+            elif degree==2:
+                f=W*W+unchanged
+            else:
+                f=W*W*W + 2*W*FB +unchanged
+            out=fft.irfft(f,n=n)
+            checksum+=float(np.sum(out[queried])) if partial else float(out[0])
+        return checksum
+
+    def adaptive():
+        eng=AlgebraFFT(n,max_spectrum_cache_bytes=32*1024**2)
+        a,b,c,d,e=[eng.signal(x) for x in arrays]
+        if degree==1:
+            root=eng.add(eng.mul(a,b),eng.mul(c,d,e))
+        elif degree==2:
+            root=eng.add(eng.mul(a,a),eng.mul(b,c))
+        else:
+            root=eng.add(eng.mul(a,a,a),eng.scale(eng.mul(a,b),2),eng.mul(c,d,e))
+        prep=eng.prepare(root,a,max_degree=3)
+        checksum=0.
+        for t,delta in changes:
+            out=prep.single(t,delta,indices=queried if partial else None)
+            checksum+=float(np.sum(out)) if partial else float(out[0])
+        return checksum
+
+    init=AlgebraFFT(n)
+    a,b,c,d,e=[init.signal(x) for x in arrays]
+    root=(init.add(init.mul(a,b),init.mul(c,d,e)) if degree==1 else
+          init.add(init.mul(a,a),init.mul(b,c)) if degree==2 else
+          init.add(init.mul(a,a,a),init.scale(init.mul(a,b),2),init.mul(c,d,e)))
+    prepared=init.prepare(root,a,max_degree=3)
+    base_arr=prepared.kernels[0]
+    K1=prepared.kernels[1] if degree>0 else None
+    if degree==1:
+        # A hand-specialized leave-one-out update, with all setup accounted.
+        def specialized():
+            FA,FB,FC,FD,FE=[fft.rfft(x) for x in arrays]
+            base=fft.irfft(FA*FB+FC*FD*FE,n=n)
+            checksum=0.
+            for t,delta in changes:
+                out=base+delta*np.roll(B,t)
+                checksum+=float(np.sum(out[queried])) if partial else float(out[0])
+            return checksum
+        specialized_ms=median_ms(specialized)
+    elif degree==2:
+        # Known closed form for A*A+B*C, with no jet dispatcher.
+        def specialized():
+            FA,FB,FC,FD,FE=[fft.rfft(x) for x in arrays]
+            base=fft.irfft(FA*FA+FB*FC,n=n)
+            checksum=0.
+            for t,delta in changes:
+                out=base+2*delta*np.roll(A,t)
+                out[(2*t)%n]+=delta*delta
+                checksum+=float(np.sum(out[queried])) if partial else float(out[0])
+            return checksum
+        specialized_ms=median_ms(specialized)
+    else:
+        def specialized():
+            FA,FB,FC,FD,FE=[fft.rfft(x) for x in arrays]
+            base=fft.irfft(FA**3+2*FA*FB+FC*FD*FE,n=n)
+            k1=fft.irfft(3*FA*FA+2*FB,n=n)
+            checksum=0.
+            for t,delta in changes:
+                if partial:
+                    out=base[queried].copy()
+                    out+=delta*k1[(queried-t)%n]
+                    out+=(delta**2)*3*A[(queried-2*t)%n]
+                    out+=(delta**3)*(queried==(3*t)%n)
+                    checksum+=float(np.sum(out))
+                else:
+                    out=base+delta*np.roll(k1,t)+3*(delta**2)*np.roll(A,2*t)
+                    out[(3*t)%n]+=delta**3
+                    checksum+=float(out[0])
+            return checksum
+        specialized_ms=median_ms(specialized)
+
+    # Validate identical numerical results before claiming speed ratios.
+    x1=fresh();x2=adaptive()
+    if not np.isclose(x1,x2,rtol=1e-5,atol=3e-6):
+        raise AssertionError(f'checksum mismatch {n=} {degree=} {partial=} {x1=} {x2=}')
+    baseline_ms=median_ms(fresh)
+    adaptive_ms=median_ms(adaptive)
+    result={
+        'n':n,'degree':degree,'versions':len(changes),'output':'6 coefficients per version' if partial else 'full N coefficients per version',
+        'fresh_prepared_kernel_scipy_total_ms':round(baseline_ms,4),
+        'phase8_including_prep_ms':round(adaptive_ms,4),
+        'specialized_formula_including_prep_ms':round(specialized_ms,4),
+        'speedup_vs_recomputation':round(baseline_ms/adaptive_ms,3),
+        'relative_to_specialized':round(specialized_ms/adaptive_ms,3),
+        'prepared_kernel_bytes':sum(x.nbytes for x in prepared.kernels if x is not None),
+        'prepared_frequency_coefficients_bytes':sum(x.nbytes for x in prepared.frequency_coefficients),
+        'seed_bytes':sum(x.nbytes for x in init._seeds.values())+sum(x.nbytes for x in init._seed_fft.values()),
+        'root_reachable_nodes':init.reachable_count(root),
+        'sumcheck':round(float(x2),8),
+    }
+    print(json.dumps(result),flush=True)
+    return result
+
+
+def main():
+    results=[]
+    for n in [4096,16384,65536,262144]:
+        for degree in [1,2,3]:
+            results.append(bench(n,degree,versions=48))
+        results.append(bench(n,degree=3,versions=48,partial=True))
+    path=Path(__file__).parent/'benchmark_results.json'
+    path.write_text(json.dumps({'model':'scipy double-precision, real circular convolution, cold setup included','results':results},indent=2)+'\n')
+    print('saved',str(path),flush=True)
+
+if __name__=='__main__':main()

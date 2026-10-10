@@ -1,0 +1,120 @@
+1: """Focused independent checks of the root's fusion interface and edge cases."""
+2: import hashlib
+3: import json
+4: from pathlib import Path
+5: from unittest.mock import patch
+6: 
+7: import control_variate as candidate
+8: from verify_fusion_identity import fit as reference_fit
+9: 
+10: 
+11: class StubDecoder:
+12:     """An intentionally artificial decoder isolates output scaling algebra."""
+13:     N = 3
+14:     K = 1
+15:     w = 128
+16:     called = False
+17: 
+18:     def decode(self, samples):
+19:         self.called = True
+20:         return {"integer_outputs": [(2, -1), (3, 4), (-5, 6)],
+21:                 "denominator": 7, "error_bound": 0.125, "counts": {}}
+22: 
+23: 
+24: def main():
+25:     checks = []
+26:     examples = [
+27:         [(0, 0)], [(7, -4)], [(1, 2), (3, 4)],
+28:         [(1, 0), (2, 0), (2, 0)],  # A genuinely fractional retained mean.
+29:         [(1, 1), (-1, -1), (0, 0)],  # q=1 nonzero residual, zero mean.
+30:         [(100, 0)] + [(0, 0)] * 6,  # Mean worsens l1; must select zero.
+31:         [(9, 2), (-4, 7), (0, -1), (2, 0),
+32:          (0, 2), (-4, 0), (1, -1), (2, 0),
+33:          (0, 3), (-5, 0), (1, -1), (2, 0)],
+34:         [(2**120, -(2**119)), (2**120 + 1, -(2**119) + 3),
+35:          (2**120 - 2, -(2**119) + 1)],
+36:     ]
+37:     for xs in examples:
+38:         result = candidate.fit_periodic(xs)
+39:         residual, spectrum, scale = reference_fit(xs, scaled=True)
+40:         assert result["residual"] == residual and result["scale"] == scale
+41:         assert all(result["baseline_spectrum"].get(i, (0, 0)) == v for i, v in enumerate(spectrum))
+42:         assert result["residual_numerator_mass"] <= scale * result["input_mass"]
+43:         checks.append({"check": "independent_fit_identity", "N": len(xs)})
+44:     assert candidate.fit_periodic(examples[5])["chosen_sums"] == [[0, 0]]
+45:     mixed = candidate.fit_periodic(examples[6])
+46:     assert mixed["chosen_sums"][0] == [0, 7]
+47:     assert mixed["chosen_sums"][1] == [-13, 0]
+48:     checks.append({"check": "independent_coordinate_rollback"})
+49: 
+50:     # Explicit Gaussian rotations, including a negative-sign fourth root.
+51:     spectrum = candidate.quarter_spectrum([(1, 2), (3, 4), (5, 6), (7, 8)], 3)
+52:     assert spectrum == {0: (16, 20), 3: (-8, 0), 6: (-4, -4), 9: (0, -8)}
+53:     checks.append({"check": "quarter_turn_sign_and_frequency_support"})
+54: 
+55:     exact_input = [(2, -1), (5, 3), (0, 7), (-4, -2)] * 3
+56:     exact = candidate.fuse(exact_input)
+57:     assert exact["exact"] and not exact["failed"] and exact["denominator"] == 1
+58:     assert exact["decoder_counts"] is None and exact["sampler_counts"] is None
+59:     assert exact["integer_outputs"][1] == (0, 0)
+60:     assert exact["output_component_writes"] == 2 * len(exact_input) + 2 * exact["fit"]["period"]
+61:     checks.append({"check": "zero_residual_exact_bypass"})
+62: 
+63:     xs = [(1, 0), (2, 0), (2, 0)]
+64:     decoder = StubDecoder()
+65:     with patch.object(candidate, "sample_atoms", return_value={"failed": False, "samples": [(0, 0)], "counts": {}}):
+66:         output = candidate.fuse(xs, decoder)
+67:     # n=3; rho=(-2,1,1); mass=4; denominator=3*7=21.
+68:     # DC is corrected to the exact raw sum 5, independent of stub output.
+69:     assert decoder.called and output["denominator"] == 21
+70:     assert output["integer_outputs"] == [(105, 0), (12, 16), (-20, 24)]
+71:     assert output["output_component_writes"] == 8
+72:     checks.append({"check": "scaled_residual_denominator_and_exact_DC_override"})
+73: 
+74:     decoder = StubDecoder()
+75:     with patch.object(candidate, "sample_atoms", return_value={"failed": True, "samples": [], "counts": {"sentinel": 1}}):
+76:         output = candidate.fuse(xs, decoder)
+77:     assert output["failed"] and not output["exact"] and not decoder.called
+78:     assert output["sampler_counts"] == {"sentinel": 1}
+79:     assert output["integer_outputs"] == [(0, 0)] * 3
+80:     assert output["output_component_writes"] == 6
+81:     checks.append({"check": "sampling_cap_failure_is_explicit_and_skips_decode"})
+82: 
+83:     # Check the stated conservative word-growth bound with a very large input
+84:     # magnitude. This is a bit-growth check, not an asymptotic claim for
+85:     # unrestricted integer magnitudes.
+86:     xs = examples[-1]
+87:     decoder = StubDecoder()
+88:     with patch.object(candidate, "sample_atoms", return_value={"failed": False, "samples": [(0, 0)], "counts": {}}):
+89:         output = candidate.fuse(xs, decoder)
+90:     b = max(abs(v).bit_length() for p in xs for v in p)
+91:     bound = b + 2 * len(xs).bit_length() + (7).bit_length() + 4
+92:     assert max(abs(v).bit_length() for p in output["integer_outputs"] for v in p) <= bound
+93:     assert output["required_word_bits"] >= bound
+94:     checks.append({"check": "final_numerator_word_growth", "conservative_bits": bound})
+95: 
+96:     rejected = 0
+97:     for xs in ([], [(1.5, 2)], [(True, 2)]):
+98:         try:
+99:             candidate.fit_periodic(xs)
+100:         except ValueError:
+101:             rejected += 1
+102:         else:
+103:             raise AssertionError("invalid input accepted")
+104:     for wrong in (None, type("Wrong", (), {"N": 7})()):
+105:         try:
+106:             candidate.fuse([(1, 0), (2, 0), (2, 0)], wrong)
+107:         except ValueError:
+108:             rejected += 1
+109:         else:
+110:             raise AssertionError("missing/mismatched decoder accepted")
+111:     checks.append({"check": "invalid_input_or_decoder_rejections", "count": rejected})
+112:     report = {"status": "PASS", "checks": checks, "check_groups": len(checks),
+113:               "source_sha256": hashlib.sha256(Path(candidate.__file__).read_bytes()).hexdigest(),
+114:               "scope": "Independent edge/interface checks; stubs deliberately isolate algebra and failure semantics, not approximation accuracy."}
+115:     Path("review_edge_results.json").write_text(json.dumps(report, indent=2) + "\n")
+116:     print(json.dumps({k: report[k] for k in ("status", "check_groups", "source_sha256")}))
+117: 
+118: 
+119: if __name__ == "__main__":
+120:     main()

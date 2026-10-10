@@ -1,0 +1,94 @@
+   1 """New exact controls; no imported or executed uploaded code."""
+   2 import json
+   3 from pathlib import Path
+   4 p=65537
+   5 
+   6 def ident(n): return [[int(i==j) for j in range(n)] for i in range(n)]
+   7 def add(A,B): return [[(a+b)%p for a,b in zip(ar,br)] for ar,br in zip(A,B)]
+   8 def scale(c,A): return [[c*a%p for a in row] for row in A]
+   9 def sub(A,B): return add(A,scale(-1,B))
+  10 def mul(A,B):
+  11     Bt=list(zip(*B)); return [[sum(a*b for a,b in zip(row,col))%p for col in Bt] for row in A]
+  12 def mv(A,v): return [sum(a*b for a,b in zip(row,v))%p for row in A]
+  13 def inv(A):
+  14     n=len(A); M=[row[:]+eye for row,eye in zip(A,ident(n))]
+  15     for j in range(n):
+  16         k=next(k for k in range(j,n) if M[k][j])
+  17         M[j],M[k]=M[k],M[j]; z=pow(M[j][j],-1,p); M[j]=[a*z%p for a in M[j]]
+  18         for i in range(n):
+  19             if i!=j and M[i][j]:
+  20                 z=M[i][j]; M[i]=[(a-z*b)%p for a,b in zip(M[i],M[j])]
+  21     return [row[n:] for row in M]
+  22 def nonzero(A): return any(any(row) for row in A)
+  23 def rowsupp(A): return max(sum(a!=0 for a in row) for row in A)
+  24 def green_apply(c,w,cycle,x):
+  25     n=len(w); pref=1; total=0
+  26     for i in cycle:
+  27         total=(total+pref*x[i])%p
+  28         pref=pref*c*w[i]%p
+  29     z=[0]*n; z[cycle[0]]=total*pow((1-pref)%p,-1,p)%p
+  30     for k in range(n-1,0,-1):
+  31         i=cycle[k]; nxt=cycle[(k+1)%n]
+  32         z[i]=(x[i]+c*w[i]*z[nxt])%p
+  33     return z
+  34 
+  35 def make_case(n,cycle,w,a,b,lam,seed_control=False):
+  36     I=ident(n); W=[[0]*n for _ in range(n)]; e=[0]*n
+  37     for k,i in enumerate(cycle): W[i][cycle[(k+1)%n]]=w[i]; e[i]=1 if k%2==0 else p-1
+  38     E=[[e[i] if i==j else 0 for j in range(n)] for i in range(n)]
+  39     rho=1
+  40     for wi in w: rho=rho*wi%p
+  41     assert all((1-pow(c,n,p)*rho)%p for c in (a,b))
+  42     Ca=sub(scale(2,inv(sub(I,scale(a,W)))),I)
+  43     Cb=sub(scale(2,inv(sub(I,scale(b,W)))),I)
+  44     A=Ca; B=scale(lam,mul(Cb,E)); K=mul(B,A)
+  45     assert mul(E,mul(W,E))==scale(-1,W)
+  46     assert mul(K,K)==scale(lam*lam,I)
+  47     assert any(K[i][j] != (K[0][0] if i==j else 0) for i in range(n) for j in range(n))
+  48     H=sub(I,K); Jfb=sub(I,mul(A,B)); qden=pow((1-lam*lam)%p,-1,p)
+  49     T=mul(inv(H),B)
+  50     Tformula=scale(qden,add(scale(lam,mul(Cb,E)),scale(lam*lam,inv(Ca))))
+  51     assert T==Tformula
+  52     assert T==scale(qden,add(B,mul(K,B)))
+  53     P=mul(sub(I,scale(b,W)),add(I,scale(a,W)))
+  54     PT=mul(P,T)
+  55     expected=scale(qden,add(scale(lam,mul(mul(add(I,scale(a,W)),add(I,scale(b,W))),E)),scale(lam*lam,mul(sub(I,scale(b,W)),sub(I,scale(a,W))))))
+  56     assert PT==expected and rowsupp(P)<=3 and rowsupp(PT)<=3
+  57     om=pow(3,(p-1)//n,p); F=[[pow(om,i*j,p) for j in range(n)] for i in range(n)]
+  58     D=[[pow(om,i,p) if i==j else 0 for j in range(n)] for i in range(n)]
+  59     S=[[int(i==(j+1)%n) for j in range(n)] for i in range(n)]
+  60     cov=sub(mul(D,T),mul(T,S))
+  61     c1=sub(mul(H,mul(D,B)),mul(B,mul(S,Jfb)))
+  62     assert c1==mul(H,mul(cov,Jfb))
+  63     if n>9 or (a==0 and n>4): assert nonzero(cov)
+  64     ones=[1]*n; e0=[int(i==0) for i in range(n)]
+  65     seed=(mv(T,e0)==ones)
+  66     assert seed == (mv(H,ones)==mv(B,e0))
+  67     if seed_control: assert seed
+  68     checked_vectors=0
+  69     for j in range(n):
+  70         x=[int(i==j) for i in range(n)]
+  71         def appA(v): return [(2*u-z)%p for u,z in zip(green_apply(a,w,cycle,v),v)]
+  72         def appB(v):
+  73             ev=[s*z%p for s,z in zip(e,v)]
+  74             return [lam*(2*u-z)%p for u,z in zip(green_apply(b,w,cycle,ev),ev)]
+  75         ax=appA(x); bx=appB(x)
+  76         assert ax==mv(A,x) and bx==mv(B,x)
+  77         horner=[qden*(u+v)%p for u,v in zip(bx,appB(appA(bx)))]
+  78         assert horner==mv(T,x)
+  79         checked_vectors+=1
+  80     return dict(N=n,a=a,b=b,lambda_=lam,seed_control=seed_control,seed_pass=seed,covariance_pass=not nonzero(cov),exact_minimal_degree=2,max_P_rowsupp=rowsupp(P),max_PT_rowsupp=rowsupp(PT),basis_vectors=checked_vectors)
+  81 
+  82 def main():
+  83     result=[]
+  84     for n in (2,4,8,16,32,64):
+  85         for reverse in (False,True):
+  86             cycle=list(range(n)) if not reverse else [0]+list(range(n-1,0,-1))
+  87             w=[i+2 for i in range(n)]
+  88             result.append(make_case(n,cycle,w,3,5,2))
+  89         w=[1]*n; w[0]=3; w[-1]=3*pow(5,-1,p)%p
+  90         result.append(make_case(n,list(range(n)),w,0,1,2,True))
+  91     summary={'status':'PASS','prime':p,'cases':len(result),'dense_two_cayley_cases':sum(not x['seed_control'] for x in result),'seed_passing_controls':sum(x['seed_control'] for x in result),'basis_vectors_checked':sum(x['basis_vectors'] for x in result),'operator_output_entries_checked':sum(3*x['N']*x['basis_vectors'] for x in result),'non_scalar_quadratic_checks':len(result),'sparse_multiplied_identities':len(result),'cubic_residual_identities':len(result),'cases_detail':result}
+  92     out=Path(__file__).with_name('TWO_CAYLEY_RESULTS.json'); out.write_text(json.dumps(summary,indent=2)+'\n')
+  93     print(json.dumps({k:v for k,v in summary.items() if k!='cases_detail'},indent=2))
+  94 if __name__=='__main__': main()

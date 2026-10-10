@@ -1,0 +1,90 @@
+"""Exact corner-rank necessary certificate for S2 P S1 two-stage quasiseparable matrices.
+
+Works over finite fields of sufficient root-of-unity order. This is a necessary
+condition ONLY; a positive/low certificate does not mean a factorization exists.
+
+Both endpoint orderings and arbitrary internal permutation are explicit.
+"""
+from two_stage_ct import P,root,modular_rank,TwoStage
+import random
+try:
+    import numpy as np
+except ImportError:
+    np=None
+
+
+def rank_np(rows, cols, powers):
+    """Exact modular rank, using int64 vectors (products < 998244353^2 < 2^63)."""
+    if not rows or not cols:return 0
+    if np is None:
+        return modular_rank([[powers[(i*j)%len(powers)] for j in cols] for i in rows])
+    n=len(powers)
+    a=np.array([[powers[(i*j)%n] for j in cols] for i in rows],dtype=np.int64)
+    m, nc=a.shape
+    rk=0
+    for j in range(nc):
+        sub=np.flatnonzero(a[rk:,j])
+        if not len(sub):continue
+        pivot=int(sub[0])+rk
+        if pivot!=rk:a[[rk,pivot],:]=a[[pivot,rk],:]
+        if rk+1<m:
+            rr=np.flatnonzero(a[rk+1:,j])+rk+1
+            if len(rr):
+                factors=(a[rr,j]*pow(int(a[rk,j]),-1,P))%P
+                a[rr,j:]=(a[rr,j:]-factors[:,None]*a[rk,j:])%P
+        rk+=1
+        if rk==m:break
+    return rk
+
+
+def bitrev(n):
+    b=n.bit_length()-1
+    return [int(f'{i:0{b}b}'[::-1],2) for i in range(n)]
+
+
+def exact_corner_bound(input_order, output_order, shuffle, cuts=None):
+    """Return best lower bound on r1+r2 from all 4 Fourier corner minors.
+
+    shuffle: maps stage2 input coordinate -> stage1 output coordinate;
+    the stage1/2 input/output orders are as in TwoStage.
+    """
+    n=len(input_order)
+    assert n==len(output_order)==len(shuffle) and sorted(shuffle)==list(range(n))
+    w=root(n); powers=[pow(w,i,P) for i in range(n)]
+    if cuts is None:cuts=list(range(1,n))
+    best={'bound':0}
+    for k in cuts:
+        # Cumulative count first k stage2 middle wires found in first m stage1 positions.
+        histogram=[0]*n
+        for idx in shuffle[:k]:histogram[idx]=1
+        for m in cuts:
+            a=sum(histogram[:m])
+            middle_free=[a,k-a,m-a,n-k-m+a]
+            row_parts=[output_order[:k],output_order[k:]]
+            col_parts=[input_order[:m],input_order[m:]]
+            for ri,ci,mid in [(0,0,middle_free[0]),(0,1,middle_free[1]),(1,0,middle_free[2]),(1,1,middle_free[3])]:
+                rank=rank_np(row_parts[ri],col_parts[ci],powers)
+                excess=rank-mid
+                if excess>best['bound']:
+                    best={'bound':excess,'k':k,'m':m,'corner':[ri,ci],
+                          'fourier_minor_rank':rank,'free_middle_wires':mid}
+    return best
+
+
+def quick_tests():
+    for a,b in [(2,2),(4,4),(4,8),(8,8)]:
+        ct=TwoStage(a,b)
+        n=ct.n
+        cuts=[n//2] if n>=64 else None
+        value=exact_corner_bound(ct.input_order,ct.output_order,ct.shuffle,cuts=cuts)
+        assert value['bound']<=sum(ct.channel_ceiling),(ct,value)
+        print('cooley_tukey',n,'r1+r2',sum(ct.channel_ceiling),'bound',value)
+    for n in (8,16,32):
+        rng=random.Random(n)
+        shuffled=list(range(n));rng.shuffle(shuffled)
+        value=exact_corner_bound(list(range(n)),bitrev(n),shuffled,cuts=[n//2])
+        print('natural_input_bitrev_output',n,'halfcut_bound',value)
+        value=exact_corner_bound(bitrev(n),bitrev(n),shuffled,cuts=[n//2])
+        print('bitrev_both',n,'halfcut_bound',value)
+
+if __name__=='__main__':quick_tests()

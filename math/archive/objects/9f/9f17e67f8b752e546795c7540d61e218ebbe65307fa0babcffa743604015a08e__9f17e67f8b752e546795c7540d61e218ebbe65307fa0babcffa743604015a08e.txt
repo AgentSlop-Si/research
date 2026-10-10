@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import math
+import unittest
+
+import numpy as np
+
+from prototype import (
+    MajorityGridState,
+    balanced_exclusive_scan,
+    balanced_one_row_estimate,
+    bernoulli_half_kl,
+    decode_sequential_low_precision,
+    direct_row_estimate,
+    draw_state,
+    majority_failure_bound,
+    fixed_rows_failure_bound,
+    fixed_rows_required_g,
+    majority_grid_finalize,
+    majority_grid_update,
+    majority_uniform_error_bound,
+    required_rows,
+    streaming_majority_fft,
+    streaming_memory_words_proxy,
+)
+from prototype_base_v7 import compress_blocks, exact_unitary_dft
+
+
+class StreamingMajorityStableTests(unittest.TestCase):
+    def test_balanced_scan_matches_exact_prefixes(self) -> None:
+        rng = np.random.default_rng(1)
+        for n in [1, 2, 3, 8, 31, 64, 257]:
+            x = rng.normal(size=n) + 1j * rng.normal(size=n)
+            got = balanced_exclusive_scan(x)
+            ref = np.concatenate([[0.0 + 0.0j], np.cumsum(x)[:-1]])
+            self.assertLess(float(np.max(np.abs(got - ref))), 2e-12)
+
+    def test_balanced_decoder_matches_materialized_projection(self) -> None:
+        rng = np.random.default_rng(2)
+        for n, m in [(64, 4), (256, 8), (1024, 16), (4096, 16)]:
+            x = rng.normal(size=n) + 1j * rng.normal(size=n)
+            state = draw_state(n, rng)
+            got = balanced_one_row_estimate(x, m, state)
+            ref = direct_row_estimate(x, m, state)
+            self.assertLess(float(np.max(np.abs(got - ref))), 2e-10)
+
+    def test_balanced_low_precision_beats_long_sequential_path(self) -> None:
+        rng = np.random.default_rng(3)
+        n, m = 65536, 64
+        x = rng.normal(size=n) + 1j * rng.normal(size=n)
+        state = draw_state(n, rng)
+        d = compress_blocks(x, m, state)
+        ref = direct_row_estimate(x, m, state)
+        seq = decode_sequential_low_precision(d, n, m, state, np.complex64)
+        bal = balanced_one_row_estimate(x, m, state, np.complex64)
+        seq_err = float(np.max(np.abs(seq.astype(np.complex128) - ref)))
+        bal_err = float(np.max(np.abs(bal.astype(np.complex128) - ref)))
+        self.assertLess(bal_err, 0.75 * seq_err)
+
+    def test_three_shift_grid_majority_lemma_adversarial(self) -> None:
+        # More than half the values lie in [mu-tau,mu+tau]; outliers and order
+        # are deliberately adversarial.  The theorem radius is 5 tau / 2.
+        tau, mu = 1.0, 0.37
+        good = [mu - tau, mu + tau, mu - 0.9, mu + 0.8, mu, mu + 0.1]
+        bad = [1e6, -1e6, 777.0, -888.0, 50.0]
+        sequences = [good + bad, bad + good, [bad[0], *good[:3], *bad[1:], *good[3:]]]
+        for values in sequences:
+            state = MajorityGridState.zeros(1)
+            for value in values:
+                majority_grid_update(state, np.array([value]), tau)
+            got = float(majority_grid_finalize(state, tau)[0])
+            self.assertLessEqual(abs(got - mu), 2.5 * tau + 1e-12)
+
+    def test_grid_majority_random_stress(self) -> None:
+        rng = np.random.default_rng(4)
+        tau = 1.0
+        for _ in range(1000):
+            mu = float(rng.normal() * 100)
+            rows = 31
+            ngood = int(rng.integers(16, 28))
+            vals = np.concatenate([
+                mu + rng.uniform(-tau, tau, size=ngood),
+                mu + rng.normal(scale=1000, size=rows-ngood),
+            ])
+            rng.shuffle(vals)
+            state = MajorityGridState.zeros(1)
+            for value in vals:
+                majority_grid_update(state, np.array([value]), tau)
+            got = float(majority_grid_finalize(state, tau)[0])
+            self.assertLessEqual(abs(got-mu), 2.5*tau + 1e-10)
+
+    def test_failure_bound_and_required_rows(self) -> None:
+        n, g, delta = 2**20, 4.0, 1e-3
+        rows = required_rows(n, g, delta)
+        self.assertEqual(rows % 2, 1)
+        self.assertLessEqual(majority_failure_bound(n, rows, g), delta)
+        self.assertGreater(bernoulli_half_kl(1/(g*g)), 0.0)
+
+
+    def test_fixed_row_combinatorial_tradeoff(self) -> None:
+        n, rows, delta = 2**30, 5, 1e-2
+        g = fixed_rows_required_g(n, rows, delta)
+        self.assertLessEqual(fixed_rows_failure_bound(n, rows, g), delta * (1.0 + 1e-12))
+        s = (rows + 1)//2
+        # The exponent in g is N^(1/(2s)), recovering the v7 fixed-row scale.
+        self.assertEqual(s, 3)
+
+    def test_streaming_interface_zero_and_nonzero(self) -> None:
+        rng = np.random.default_rng(5)
+        zero = np.zeros(1024, dtype=np.complex128)
+        self.assertTrue(np.all(streaming_majority_fft(zero, 16, 9, 3.0, rng) == 0))
+        x = rng.normal(size=1024) + 1j*rng.normal(size=1024)
+        got = streaming_majority_fft(x, 16, 17, 3.0, rng)
+        self.assertEqual(got.shape, x.shape)
+        self.assertTrue(np.all(np.isfinite(got)))
+        self.assertGreater(majority_uniform_error_bound(x, 16, 3.0), 0.0)
+
+    def test_memory_proxy_independent_of_rows(self) -> None:
+        n, m = 2**20, 64
+        baseline = streaming_memory_words_proxy(n, m)
+        for _rows in [3, 33, 333, 3333]:
+            self.assertEqual(streaming_memory_words_proxy(n, m), baseline)
+        self.assertLess(baseline, 20*n)
+
+    def test_asymptotic_time_is_little_o(self) -> None:
+        # With f=sqrt(log log N), ratio is O(1/sqrt(log log N)).
+        ratios = []
+        eps = 0.25
+        for ell in [64, 256, 1024, 4096, 16384]:
+            # ell = log log N; constants omitted in the asymptotic test.
+            f = math.sqrt(ell)
+            ratios.append(f/(eps*ell))
+        self.assertLess(ratios[-1], ratios[0])
+        self.assertLess(ratios[-1], 0.05)
+
+    def test_bound_scale_matches_theorem(self) -> None:
+        rng = np.random.default_rng(6)
+        x = rng.normal(size=4096) + 1j*rng.normal(size=4096)
+        m, g = 16, 3.0
+        expected = 5*g*math.sqrt(m/len(x))*np.linalg.norm(x)
+        self.assertAlmostEqual(majority_uniform_error_bound(x,m,g), expected, places=12)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

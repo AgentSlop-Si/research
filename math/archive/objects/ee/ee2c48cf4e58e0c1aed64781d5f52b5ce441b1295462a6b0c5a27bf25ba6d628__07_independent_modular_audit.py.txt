@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Independent finite-field gate checks. Reads only inert JSON; imports no uploaded code.
+Run independent_exact_audit.py first. Python standard library only.
+"""
+from pathlib import Path
+import json,random,itertools,time,collections
+HERE=Path(__file__).resolve().parent
+DATA=json.loads((HERE/'independent_polynomials.json').read_text())
+P=(7,0,6,3,4,1,2,5);IP=[P.index(j) for j in range(8)]
+ROWS=[0,1,2,5,6,7,8,9,10]
+
+def rank(M,p):
+    A=[[v%p for v in row] for row in M];r=0
+    for j in range(len(A[0])):
+        q=next((i for i in range(r,len(A)) if A[i][j]),None)
+        if q is None:continue
+        A[q],A[r]=A[r],A[q]
+        c=pow(A[r][j],-1,p);A[r]=[v*c%p for v in A[r]]
+        for i in range(r+1,len(A)):
+            if A[i][j]:
+                c=A[i][j];A[i]=[(u-c*v)%p for u,v in zip(A[i],A[r])]
+        r+=1
+        if r==len(A):break
+    return r
+
+def determinant(M,p):
+    A=[[v%p for v in row] for row in M];d=1
+    for j in range(len(A)):
+        q=next((i for i in range(j,len(A)) if A[i][j]),None)
+        if q is None:return 0
+        if q!=j:A[q],A[j]=A[j],A[q];d=-d
+        d=d*A[j][j]%p;c=pow(A[j][j],-1,p)
+        for i in range(j+1,len(A)):
+            v=A[i][j]*c%p
+            for k in range(j+1,len(A)):A[i][k]=(A[i][k]-v*A[j][k])%p
+    return d%p
+
+def inverse(M,p):
+    n=len(M);A=[[v%p for v in row]+[int(i==j) for j in range(n)] for i,row in enumerate(M)]
+    for j in range(n):
+        q=next((i for i in range(j,n) if A[i][j]),None)
+        if q is None:raise ValueError('singular')
+        A[q],A[j]=A[j],A[q];c=pow(A[j][j],-1,p);A[j]=[v*c%p for v in A[j]]
+        for i in range(n):
+            if i!=j:
+                c=A[i][j];A[i]=[(u-c*v)%p for u,v in zip(A[i],A[j])]
+    return [r[n:] for r in A]
+
+def multiply(A,B,p):return [[sum(u*v for u,v in zip(row,col))%p for col in zip(*B)] for row in A]
+
+def reduced(p,z):
+    return {name:[(mon,sum(c*pow(z,i,p) for i,c in enumerate(cs))%p) for mon,cs in item['terms']] for name,item in DATA.items()}
+
+def ev(terms,h,p):
+    total=0
+    for mon,c in terms:
+        for j in mon:c=c*h[j]%p
+        total=(total+c)%p
+    return total
+
+def lift(h,p,z,polys):
+    s,a,b,x=h;D=ev(polys['Delta'],h,p);T=ev(polys['T'],h,p);V=ev(polys['V'],h,p)
+    r=[1,pow(z,7,p),pow(z,6,p)]
+    A=sum(r)%p;B=sum(r[i]*r[j] for i in range(3) for j in range(i+1,3))%p;C=r[0]*r[1]*r[2]%p
+    H=[s,a,b]
+    for _ in range(3):H.append((A*H[-1]-B*H[-2]+C*H[-3])%p)
+    H+=[x,0]
+    L=[0]+[((z-1)*(D+V*(H[k]-s))+(T-D+V*(s-1))*(pow(z,(-k)%8,p)-1))%p for k in range(1,7)]+[(z-1)*T%p]
+    return H,L,D,T,V
+
+def gate(Q,U,L,p):
+    Y={j:[[Q[i][j],sum(Q[i][k]*U[k] for k in range(j))%p,sum(Q[i][k]*L[k] for k in range(j+1,8))%p] for i in range(4 if j==4 else 5)] for j in (1,2,4,5)}
+    eta=[(-1)**i*determinant(Y[4][:i]+Y[4][i+1:],p)%p for i in range(4)]
+    ell=[sum(eta[i]*Y[1][i][j] for i in range(4))%p for j in range(3)]
+    K=[Y[1][i]+[(-v)%p for v in Y[2][i]]+[0]*3 for i in range(5)]+[Y[1][i]+[0]*3+[(-v)%p for v in Y[5][i]] for i in range(5)]+[ell+[0]*6]
+    return K,eta
+
+def primitive_root8(p):
+    return next(z for z in range(2,p) if pow(z,4,p)==p-1)
+
+start=time.monotonic();rng=random.Random(709321)
+spot=[]
+for p in (17,97,12289,65537):
+    z=primitive_root8(p);polys=reduced(p,z);F=[[pow(z,i*k,p) for k in range(8)] for i in range(8)]
+    for _ in range(64):
+        h=[rng.randrange(p) for _ in range(4)];U,L,D,T,V=lift(h,p,z,polys);K,eta=gate(F,U,L,p)
+        assert determinant([K[i] for i in ROWS],p)==ev(polys['Dhat'],h,p)
+    spot.append({'prime':p,'root':z,'all_parameter_tests_including_zero_guards':64})
+print('256 polynomial/full-matrix determinant comparisons passed',flush=True)
+
+p=17;z=9;polys=reduced(p,z);F=[[pow(z,i*k,p) for k in range(8)] for i in range(8)]
+counter=collections.Counter();slice_checks=[]
+for s in range(1,p):
+    for a,b,x in itertools.product(range(p),repeat=3):
+        h=[s,a,b,x]
+        if ev(polys['W'],h,p):continue
+        U,L,D,T,V=lift(h,p,z,polys)
+        if not D or not T:continue
+        K,eta=gate(F,U,L,p);rr=rank(K,p);counter[rr]+=1
+assert dict(counter)=={9:3266,8:1203,7:125,6:2},counter
+print('GF17 rank distribution',dict(counter),flush=True)
+
+controls=[]
+for p in (97,12289,65537):
+    counts=collections.Counter();rankcounts=collections.Counter();etamodes=collections.Counter()
+    for mode in range(7):
+        accepted=0
+        while accepted<30:
+            # Nonzero diagonals or intentional zero diagonal, with independent U,W,L,V.
+            Cgens=[[rng.randrange(p) for _ in range(8)] for _ in range(5)]
+            Dgens=[[rng.randrange(p) for _ in range(8)] for _ in range(5)]
+            if mode==1:Dgens[2][4]=0    # output column 4 upper multiplier zero
+            if mode==2:Dgens[2][5]=0
+            if mode==3:Dgens[2][6]=0
+            if mode==4:Dgens[2][7]=0
+            if mode==5:Dgens[1][:5]=[0]*5 # all selected upper projections zero
+            if mode==6:Cgens[0][4]=0;Dgens[2][4]=0 # zero C diagonal, still invertible
+            def stage(g):
+                d,U,W,L,V=g
+                return [[d[i] if i==j else U[i]*W[j]%p if i<j else L[i]*V[j]%p for j in range(8)] for i in range(8)]
+            C=stage(Cgens);D=stage(Dgens)
+            try:Ci=inverse(C,p);inverse(D,p)
+            except ValueError:continue
+            Q=multiply([[row[IP[j]] for j in range(8)] for row in D],Ci,p)
+            QC=multiply(Q,C,p)
+            assert [[row[P[j]] for j in range(8)] for row in QC]==D
+            K,eta=gate(Q,Cgens[1],Cgens[3],p);rr=rank(K,p)
+            assert rr<=8,(p,mode,rr)
+            if mode in (1,6):assert not any(eta)
+            accepted+=1;counts[mode]+=1;rankcounts[rr]+=1
+            if not any(eta):etamodes[mode]+=1
+    controls.append({'prime':p,'passes':sum(counts.values()),'modes':dict(counts),'ranks':dict(rankcounts),'zero_eta_by_mode':dict(etamodes)})
+print('630 independently generated invertible positive controls passed',flush=True)
+# Exact finite-field counterexample to a literal statement permitting C=0:
+# Retain these generators but set all diagonal and column generators W,V to zero.
+p=17;z=9;polys=reduced(p,z);F=[[pow(z,i*k,p) for k in range(8)] for i in range(8)]
+U,L,_,_,_=lift([1,0,0,2],p,z,polys);KK,_=gate(F,U,L,p)
+assert rank(F,p)==8 and rank(KK,p)==9 and determinant([KK[i] for i in ROWS],p)==3
+counterexample={'field':'GF(17)','root':9,'C':'zero matrix; diagonal d=0, column generators W=V=0','D':'zero matrix','Q':'F8 with root 9','U':U,'L':L,'gate_rank':9,'selected_minor':3,'scope':'Only refutes standalone wording if invertible C/nonzero column coefficients are omitted; no counterexample to the intended invertible factorization lemma.'}
+result={'uploaded_code_executed':False,'full_matrix_spot_checks':spot,'GF17_distribution':dict(counter),'GF17_total':sum(counter.values()),'positive_controls':controls,'missing_invertibility_counterexample':counterexample,'elapsed_seconds':round(time.monotonic()-start,3)}
+(HERE/'modular_results.json').write_text(json.dumps(result,indent=2)+'\n')
+print(json.dumps(result,indent=2),flush=True)

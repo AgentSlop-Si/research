@@ -1,0 +1,146 @@
+RETAINED-CARRIER SCRATCH RECLAMATION: EXACT BIT-SIDE TEST
+8 October 2026
+
+RESULT
+
+This concrete bit-side change does not beat the strongest pinned baseline.
+It is slightly worse. At h=23 it emits exactly the same circuit. At h=25 it
+uses four extra scalar XORs and changes a few child ranks while keeping the
+same 36,586 roles. The changed profile strictly increases the recurrence
+moment for every saving 0<a<1. It fails the baseline's certified bit saving.
+
+This is an exact rejection of the specified candidate, not a lower bound on
+other bit networks, scratch reclamation methods, or integer multiplication.
+
+BASELINE AND SUCCESS CRITERION
+
+CrocSwap/integer-mult-bounds at commit
+56b66d58297deca1d7dd130247d720e960f77a37, PR62 pair-assembly graph compiled by
+PR57's joint-frame compiler, with PR61's selected exact assembly parameters.
+
+  Baseline bit saving a_b = 102039046058023/2000000000000000000
+  Baseline kappa = 25508460085039/500000000000000000
+                = 0.000051016920170078
+  Complex saving retained at 717/10000000
+  Arity m = 575; physical roles W = 137,151,806
+  Total residual rank = 78,860,441,550
+  Deficit Wm-s = 1,846,900; largest child = 529
+
+The comparison is against the stronger compiled witness, not the uncompiled
+pair-assembly witness or the weaker Swapnil round-six complex certificate.
+The assembly retains beta=1/20 and the selected backoff h=10^-18; there is no
+parameter sweep. Success required a fully checked overall kappa above the
+pinned value, with all children, copied centers, endpoints and precision
+charges retained.
+
+ONE BOUNDED CHANGE
+
+The compiler clears retired scratch using current output values as anchors.
+The candidate additionally permits the current block's retained carrier slots
+as anchors at both allocation sites: dependent outputs and duplicated uses.
+These carrier slots already have the current frame. They are XOR sources,
+so their values are untouched; their future consumer envelopes contain that
+frame. The scalar producer, matching, block order and frame geometry are fixed.
+
+The patch is applied only in memory by run_axis.py. Its only algorithmic
+changes initialize a per-block carrier list, append slots labeled 'carry',
+and include that list in the two acquire calls. Added counters only measure
+whether the changed path was exercised. No external repository was changed.
+
+EXACT FINITE RESULTS
+
+Axis 23:
+  Both have 27,918 roles and 148,958 scalar XORs.
+  The complete emitted JSON words are byte-identical.
+  All fixed-basis profile entries agree.
+  31,460 input/dirty basis vectors are replayed in each orientation.
+  36,769 distinct transition matrices, including 6,049 CRT checks.
+  The candidate is exercised at 9,044 of 26,948 acquire calls, with 9,113
+  retained-anchor occurrences; these do not improve this axis.
+
+Axis 25:
+  Both have 36,586 roles; scalar XORs change from 205,650 to 205,654.
+  41,186 input/dirty basis vectors are replayed in each orientation.
+  Candidate checks 50,878 distinct transition matrices (baseline 50,881),
+  including 8,127 CRT checks. There are zero modular profile disagreements.
+  The candidate is exercised at 10,956 of 35,376 acquire calls, with
+  10,956 retained-anchor occurrences.
+  Relative to the baseline the candidate child counts change by:
+    rank 1: +2; rank 3: +2; rank 4: +1; rank 5: -1; rank 7: -1.
+  All other child counts, total rank and role count are unchanged.
+
+Both full serialized words pass the independent input/dirty-scratch replay,
+both orientations, actual-word frame inclusion reconstruction, copied-center
+and endpoint checks, and fixed-I+J bounded-minor/CRT profiling. The fresh
+baseline words and profiles match their pinned upstream records.
+
+WHY THIS CANDIDATE IS STRICTLY WORSE
+
+The h=25 profile change is precisely the replacement of a rank-5 child by
+rank-1 and rank-4 children, and a rank-7 child by ranks 1, 3 and 3. These
+changes are replicated 1,771 times in the full bit network. Total rank and
+W remain fixed.
+
+For 0<a<1, x^(1-a) is strictly subadditive on positive x. Thus each split
+strictly increases the weighted recurrence moment
+
+  M(a) = sum_t n_t*(t/m)^(1-a)/W.
+
+This proves a loss throughout the admissible saving range, not merely at a
+single floating-point sample. Exact rational log/exp bounds independently
+show that, at the selected baseline a_b, the candidate's moment exceeds 1
+by at least approximately 1.0923667639536057e-11. The baseline moment remains
+strictly below 1 under the same independent method.
+
+The balanced assembly's upper ceiling is a/(1+a). To match the baseline
+kappa, any admissible a would have to exceed kappa/(1-kappa). The candidate
+moment's exact lower bound also exceeds 1 at that threshold. Since M(a) is
+strictly increasing, this candidate cannot reach the pinned kappa in the
+retained assembly family, even with idealized backoff.
+
+As a positive control, a conservative smaller saving a_b-3*10^-11 passes
+the exact moment and all 47 assembly inequalities at the same h=10^-18,
+with kappa=0.000051016890173138. This is a valid weaker witness, not a
+claim that this conservative value is its optimum.
+
+SCOPE AND ASSUMPTIONS
+
+The whole-word checks are finite exact algebra, not numerical FFT tests.
+The rank profiles are freshly reconstructed from the emitted XOR words;
+no uncharged role removal or untouched-profile assumption is used.
+The 47 strict inequalities and seven final margins are recomputed. The
+bit wire count, halving degree, copied centers, largest child, row-stock
+degree and complex semantic constants do not change.
+
+The original OpenAI #109 model, analytic reduction, residual compiler,
+fixed-tape recursion, all-size interfaces, and finite-to-asymptotic transfer
+remain inherited assumptions. No complete multiplication implementation,
+fresh Lean proof, practical runtime benchmark, or literature novelty claim
+is supplied. No general impossibility follows from this bounded candidate.
+
+REPRODUCTION
+
+Python 3.12 and a C++17 compiler; Python dependencies are standard library.
+From this directory:
+
+  c++ -O3 -std=c++17 -I upstream/references/frame-compiler/pr48/scripts/partial_swap upstream/scripts/experiments/binary_frame_profiles.cpp -o profiles
+  python3 run_axis.py 23 baseline
+  python3 run_axis.py 23 carrier
+  python3 run_axis.py 25 baseline
+  python3 run_axis.py 25 carrier
+  python3 verify_results.py
+
+The final command checks input Git-blob hashes, compares the actual words,
+reconstructs the complete 27-width bit profile, and rechecks the exact
+moment and assembly. result.json contains exact rational certificates;
+results/ holds serialized words and replay/profile receipts.
+
+Sources and attribution:
+https://github.com/CrocSwap/integer-mult-bounds/tree/56b66d58297deca1d7dd130247d720e960f77a37/research/pair-assembly
+https://github.com/CrocSwap/integer-mult-bounds/blob/56b66d58297deca1d7dd130247d720e960f77a37/scripts/experiments/binary_frame_compiler.py
+https://github.com/CrocSwap/integer-mult-bounds/blob/56b66d58297deca1d7dd130247d720e960f77a37/research/matrix-exponent-synthesis/candidate/arithmetic.json
+
+The baseline mechanisms and sources retain their authors' notices and
+Apache-2.0 licensing in upstream/LICENSE and upstream/NOTICE. The candidate,
+driver and audit were prepared with OpenAI assistance. This certificate
+supplies no new winning network or priority claim.

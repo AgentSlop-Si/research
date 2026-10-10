@@ -1,0 +1,120 @@
+"""Independent checks of O_g(N) multi-shear orbit recovery and DFT."""
+from __future__ import annotations
+import random,unittest
+import phase_union_general as phase
+import shear_gauge_union as single
+import multishear_union as multi
+from test_shear_gauge import primitive_n_root,dft_slow,rank_mod
+
+
+def choose_parameters(p,m,eta,g,starting=2):
+    subgroup={pow(eta,j,p) for j in range(m)}
+    mus=[]
+    for v in range(starting,p):
+        if all(v*pow(other,-1,p)%p not in subgroup for other in mus):mus.append(v)
+        if len(mus)==g:break
+    if len(mus)!=g:raise AssertionError('not enough cosets')
+    return [(j+1,mus[j]) for j in range(g)]
+
+
+def build_case(n,q,p,g,seed=5):
+    omega=primitive_n_root(p,n);m=n//q
+    rng=random.Random(seed+n+g)
+    params=choose_parameters(p,m,pow(omega,q,p),g)
+    items=[]
+    from delta_graph import direct_row_dft
+    subroots=phase.phase_table(m,p,pow(omega,q,p))
+    for a,mu in params:
+        for _ in range(100):
+            base=[rng.randrange(p) for _ in range(m)]
+            if all(direct_row_dft(base,p,subroots)):break
+        else:raise AssertionError("could not produce nondegenerate fixture")
+        items.append((a,mu,base))
+    x=multi.synthesize_orbits(n,p,q,items)
+    return x,omega,items
+
+
+class MultiShearTest(unittest.TestCase):
+    def test_square_solver(self):
+        rng=random.Random(1717);p=998244353
+        for g in range(1,6):
+            for repeat in range(15):
+                x=[rng.randrange(p) for _ in range(g)]
+                A=[[rng.randrange(p) for _ in range(g)] for _ in range(g)]
+                rhs=[sum(v*c for v,c in zip(row,x))%p for row in A]
+                got=multi.solve_square(A,rhs,p)
+                if got is not None:self.assertEqual(got,x)
+
+    def test_orbit_recovery_many_g_and_lengths(self):
+        cases=[(64,8,998244353),(72,8,1009),(144,12,1009),
+               (256,16,998244353),(1024,32,998244353)]
+        for n,q,p in cases:
+            for g in range(1,min(n//q,q//2,4)+1):
+                for repeat in range(3):
+                    x,w,items=build_case(n,q,p,g,seed=100+repeat)
+                    cert=multi.recognize(x,p,w,g,q)
+                    self.assertIsNotNone(cert,(n,q,g,repeat))
+                    self.assertEqual({(o.shift,o.scalar) for o in cert.orbits},
+                                     {(a,mu) for a,mu,_ in items})
+                    out,count=multi.transform_certified(cert,True)
+                    self.assertEqual(out,dft_slow(x,p,w))
+                    self.assertEqual(count['first_row_direct_dft_ops'],2*g*(n//q)**2)
+                    self.assertEqual(count['output_geometric_terms'],g*n)
+                    self.assertEqual(count['raw_checked'],n)
+
+    def test_multiorbit_strict_extension_of_single_gauge(self):
+        n=256;q=16;p=998244353
+        x,w,items=build_case(n,q,p,2,seed=444)
+        # One moving frame cannot make the other component's first-order
+        # temporal spectra sparse under these distinct multiplier cosets.
+        for d in (1,2,3):
+            self.assertIsNone(single.recognize(x,p,w,d,q,q))
+        cert=multi.recognize(x,p,w,2,q)
+        self.assertIsNotNone(cert)
+        self.assertEqual(multi.transform_certified(cert),dft_slow(x,p,w))
+        rows=[[x[t+q*u] for u in range(n//q)] for t in range(q)]
+        self.assertEqual(rank_mod(rows,p),n//q)
+
+    def test_reject_degenerate_equal_shifts(self):
+        n=256;q=16;p=998244353;w=primitive_n_root(p,n)
+        rng=random.Random(712)
+        # Same shift a but distinct mu: trace collapses to one Fourier mode.
+        items=[(1,2,[rng.randrange(p) for _ in range(n//q)]),
+               (1,7,[rng.randrange(p) for _ in range(n//q)])]
+        x=multi.synthesize_orbits(n,p,q,items)
+        self.assertIsNone(multi.recognize(x,p,w,2,q))
+
+    def test_reject_degenerate_empty_orbit(self):
+        n=64;q=8;p=998244353;w=primitive_n_root(p,n)
+        x=multi.synthesize_orbits(n,p,q,[(1,2,[1]*8),(2,7,[0]*8)])
+        self.assertIsNone(multi.recognize(x,p,w,2,q))
+
+    def test_random_dense_reject_or_certified(self):
+        rng=random.Random(202617)
+        for n,q,p in [(64,8,998244353),(72,8,1009),(256,16,998244353)]:
+            w=primitive_n_root(p,n)
+            for _ in range(30):
+                x=[rng.randrange(p) for j in range(n)]
+                for g in [1,2,3]:
+                    cert=multi.recognize(x,p,w,g,q)
+                    if cert is not None:
+                        self.assertEqual(multi.transform_certified(cert),dft_slow(x,p,w))
+
+    def test_valid_root_and_invalid_root(self):
+        n=64;p=998244353
+        x=[(i*i+3*i)%p for i in range(n)]
+        with self.assertRaises(ValueError):multi.recognize(x,p,1,2,8)
+
+    def test_complexity_phase_preparation(self):
+        n=4096;q=m=64;p=998244353
+        x,w,items=build_case(n,q,p,3,seed=271)
+        c=multi.recognize(x,p,w,3,q)
+        self.assertIsNotNone(c)
+        out,counters=multi.transform_certified(c,True)
+        roots=phase.phase_table(n,p,w)
+        for k in [0,1,2,3,8,31,63,64,65,127,255,511,1023,2023,4095]:
+            reference=sum(x[j]*roots[(-j*k)%n] for j in range(n))%p
+            self.assertEqual(out[k],reference)
+        self.assertEqual(counters['raw_checked'],n)
+
+if __name__=='__main__':unittest.main()

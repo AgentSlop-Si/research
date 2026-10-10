@@ -1,0 +1,212 @@
+   1 #!/usr/bin/env python3
+   2 """Independent bridge audit. Standard library only; no source programs imported.
+   3 Basic matrix primitives reused from the auditor-authored sparse-prefix checker.
+   4 All bridge, mutation, adjugate, gauge and solve controls authored separately here.
+   5 """
+   6 import argparse,itertools as it,json,math,random
+   7 from pathlib import Path
+   8 
+   9 def rank(A, p):
+  10     B=[list(map(lambda x:x%p,row)) for row in A]
+  11     if not B:return 0
+  12     h=0
+  13     for j in range(len(B[0])):
+  14         z=next((z for z in range(h,len(B)) if B[z][j]),None)
+  15         if z is None:continue
+  16         B[z],B[h]=B[h],B[z]
+  17         u=pow(B[h][j],-1,p)
+  18         B[h]=[x*u%p for x in B[h]]
+  19         for z in range(h+1,len(B)):
+  20             u=B[z][j]
+  21             if u:B[z]=[(x-u*y)%p for x,y in zip(B[z],B[h])]
+  22         h+=1
+  23         if h==len(B):break
+  24     return h
+  25 
+  26 
+  27 def inv(A,p):
+  28     n=len(A);B=[[(x%p) for x in row]+[int(i==j) for j in range(n)] for i,row in enumerate(A)]
+  29     for j in range(n):
+  30         z=next((z for z in range(j,n) if B[z][j]),None)
+  31         assert z is not None
+  32         B[z],B[j]=B[j],B[z]
+  33         u=pow(B[j][j],-1,p);B[j]=[x*u%p for x in B[j]]
+  34         for i in range(n):
+  35             if i!=j and B[i][j]:
+  36                 u=B[i][j];B[i]=[(x-u*y)%p for x,y in zip(B[i],B[j])]
+  37     return [row[n:] for row in B]
+  38 
+  39 
+  40 def ident(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+  41 def sub(A,X,Y):return [[A[i][j] for j in Y] for i in X]
+  42 def product(A,B,p):return [[sum(x*y for x,y in zip(row,col))%p for col in zip(*B)] for row in A]
+  43 
+  44 
+  45 def plus(A,B,p):return [[(a+b)%p for a,b in zip(x,y)] for x,y in zip(A,B)]
+  46 def scale(c,A,p):return [[c*x%p for x in row] for row in A]
+  47 def vec(A,b,p):return [sum(x*y for x,y in zip(row,b))%p for row in A]
+  48 def addvec(a,b,p):return [(x+y)%p for x,y in zip(a,b)]
+  49 
+  50 
+  51 def det(A,p):
+  52     B=[row[:] for row in A];ans=1
+  53     for j in range(len(A)):
+  54         z=next((z for z in range(j,len(A)) if B[z][j]%p),None)
+  55         if z is None:return 0
+  56         if z!=j:B[z],B[j]=B[j],B[z];ans=-ans
+  57         u=B[j][j]%p;ans=ans*u%p;iu=pow(u,-1,p)
+  58         for i in range(j+1,len(A)):
+  59             f=B[i][j]*iu%p
+  60             if f:
+  61                 for k in range(j+1,len(A)):B[i][k]=(B[i][k]-f*B[j][k])%p
+  62     return ans%p
+  63 
+  64 
+  65 def adj_cofactors(A,p):
+  66     n=len(A)
+  67     return [[((-1)**(i+j)*det([[A[u][v] for v in range(n) if v!=i] for u in range(n) if u!=j],p))%p for j in range(n)] for i in range(n)]
+  68 
+  69 
+  70 def matpow(A,k,p):
+  71     R=ident(len(A))
+  72     for _ in range(k):R=product(R,A,p)
+  73     return R
+  74 
+  75 
+  76 def cycden(n,p,rng,zero=False):
+  77     order=list(range(n));rng.shuffle(order);succ=[0]*n
+  78     for i,j in enumerate(order):succ[j]=order[(i+1)%n]
+  79     w=[rng.randrange(1,p) for _ in range(n)]
+  80     if zero:w[order[0]]=0
+  81     if math.prod(w)%p==1:w[order[0]]=0
+  82     A=ident(n)
+  83     for i in range(n):A[i][succ[i]]=(A[i][succ[i]]-w[i])%p
+  84     return A,order,succ,w
+  85 
+  86 
+  87 def solve_cycle(order,succ,w,b,p):
+  88     # No inversion of individual edge weights, so zero edges are supported.
+  89     z=1;beta=0
+  90     for i in order:beta=(beta+z*b[i])%p;z=z*w[i]%p
+  91     assert z!=1
+  92     x=[0]*len(w);x[order[0]]=beta*pow((1-z)%p,-1,p)%p
+  93     for i in reversed(order[1:]):x[i]=(b[i]+w[i]*x[succ[i]])%p
+  94     return x,{'multiplications':3*len(w),'add_subtractions':2*len(w),'inversions':1}
+  95 
+  96 
+  97 def primality(x):return x>=2 and all(x%d for d in range(2,math.isqrt(x)+1))
+  98 def fourier(n):
+  99     k=20
+ 100     while not primality(n*k+1):k+=1
+ 101     p=n*k+1;factors=[q for q in range(2,n+1) if n%q==0 and primality(q)]
+ 102     for a in range(2,p):
+ 103         w=pow(a,k,p)
+ 104         if all(pow(w,n//q,p)!=1 for q in factors):break
+ 105     assert pow(w,n,p)==1
+ 106     return p,w,[[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+ 107 
+ 108 
+ 109 def model_trials():
+ 110     rng=random.Random(727126);out=[];cofactor_cases=0;solve_cases=0
+ 111     for n in [2,3,5,7,8,11,13]:
+ 112         p,w,F=fourier(n)
+ 113         for trial in range(4):
+ 114             pars=[cycden(n,p,rng,(j+trial)%3==0) for j in range(4)]
+ 115             A,B,C,D=[z[0] for z in pars];AI,BI,CI,DI=[inv(z,p) for z in [A,B,C,D]]
+ 116             X=plus(A,B,p);Y=plus(C,D,p);K=product(C,B,p)
+ 117             M=product(plus(AI,BI,p),plus(CI,DI,p),p)
+ 118             sand=product(product(A,M,p),D,p)
+ 119             bridge=product(product(X,inv(K,p),p),Y,p)
+ 120             assert sand==bridge
+ 121             assert product(product(AI,bridge,p),DI,p)==M
+ 122             Kdet=det(K,p);Kadj=scale(Kdet,inv(K,p),p)
+ 123             assert scale(Kdet,sand,p)==product(product(X,Kadj,p),Y,p)
+ 124             assert det(M,p)*math.prod(det(z,p) for z in [A,B,C,D])%p==det(X,p)*det(Y,p)%p
+ 125             assert Kadj==product(scale(det(B,p),BI,p),scale(det(C,p),CI,p),p)
+ 126             if n<=5:assert Kadj==adj_cofactors(K,p);cofactor_cases+=1
+ 127             for Z,order,succ,ww in pars:
+ 128                 assert det(Z,p)==(1-math.prod(ww))%p
+ 129                 T=[[(int(i==j)-Z[i][j])%p for j in range(n)] for i in range(n)]
+ 130                 assert matpow(T,n,p)==scale(math.prod(ww),ident(n),p)
+ 131                 G=ident(n);power=ident(n)
+ 132                 for _ in range(1,n):power=product(power,T,p);G=plus(G,power,p)
+ 133                 assert G==scale(det(Z,p),inv(Z,p),p)
+ 134                 b=[rng.randrange(p) for _ in range(n)];sol,cost=solve_cycle(order,succ,ww,b,p)
+ 135                 assert vec(Z,sol,p)==b;solve_cases+=1
+ 136             b=[rng.randrange(p) for _ in range(n)]
+ 137             z,c1=solve_cycle(*pars[2][1:],b,p)
+ 138             z,c2=solve_cycle(*pars[1][1:],z,p)
+ 139             assert vec(K,z,p)==b
+ 140             # Gauge-independent covariance and initial-column certificate for F.
+ 141             assert all(F[i][(j+1)%n]==pow(w,i,p)*F[i][j]%p for i in range(n) for j in range(n))
+ 142             assert all(F[i][0]==1 for i in range(n))
+ 143             S=ident(n)
+ 144             for i in range(n):
+ 145                 for j in range(n):S[i][j]=int(i==(j+1)%n)
+ 146             diag=[[pow(w,i,p)*int(i==j)%p for j in range(n)] for i in range(n)]
+ 147             assert product(F,S,p)==product(diag,F,p)
+ 148             scaled=scale(2,F,p);assert product(scaled,S,p)==product(diag,scaled,p) and scaled[0][0]!=1
+ 149             ones=[[1]*n for _ in range(n)];assert product(ones,S,p)!=product(diag,ones,p)
+ 150             wrong=product(product(X,inv(product(B,C,p),p),p),Y,p)
+ 151             explicit_max=lambda Z:max(max(sum(x!=0 for x in row) for row in Z),max(sum(x!=0 for x in col) for col in zip(*Z)))
+ 152             assert explicit_max(K)<=4 and explicit_max(X)<=3 and explicit_max(Y)<=3
+ 153             F_gate=scale(Kdet,product(product(A,F,p),D,p),p)==product(product(X,Kadj,p),Y,p)
+ 154             assert F_gate==(M==F)
+ 155             out.append({'N':n,'field':p,'trial':trial,'bridge_pass':True,'Fourier_gate_pass':F_gate,
+ 156                         'wrong_order_rejected':wrong!=bridge,'B_C_commute':product(B,C,p)==product(C,B,p),
+ 157                         'K_sparsity':explicit_max(K),'X_sparsity':explicit_max(X),'Y_sparsity':explicit_max(Y)})
+ 158     assert any(z['wrong_order_rejected'] for z in out)
+ 159     return {'trials':out,'cofactor_adjugate_controls':cofactor_cases,'cycle_solve_controls':solve_cases}
+ 160 
+ 161 
+ 162 def singular_guard_control():
+ 163     n=3;p=13;S=[[int(j==(i+1)%n) for j in range(n)] for i in range(n)];I=ident(n)
+ 164     B=plus(I,scale(-1,S,p),p);C=plus(I,scale(-3,S,p),p);A=D=I
+ 165     K=product(C,B,p);Adj=adj_cofactors(K,p);F=[[pow(3,i*j,p) for j in range(n)] for i in range(n)]
+ 166     left=scale(det(K,p),F,p);right=product(product(plus(A,B,p),Adj,p),plus(C,D,p),p)
+ 167     assert det(A,p)==det(D,p)==1 and det(B,p)==det(C,p)==0 and rank(K,p)==1
+ 168     assert left==right==[[0]*n for _ in range(n)]
+ 169     return {'N':n,'field':p,'A_D_invertible':True,'B_C_determinants':[0,0],'K_rank':1,'adjK_zero':True,'polynomial_equation_vacuous_for_any_target':True}
+ 170 
+ 171 
+ 172 def scalar_det_control():
+ 173     n=3;p=13;omega=3;F=[[pow(omega,i*j,p) for j in range(n)] for i in range(n)]
+ 174     S=[[int(j==(i+1)%n) for j in range(n)] for i in range(n)];I=ident(n)
+ 175     choices=[a for a in range(p) if pow(a,n,p)!=1]
+ 176     mats={a:plus(I,scale(-a,S,p),p) for a in choices};ivs={a:inv(mats[a],p) for a in choices}
+ 177     for aa,bb,cc,dd in it.product(choices,repeat=4):
+ 178         # Eigenvalue product cheaply chooses a determinant match, then full matrix checks it.
+ 179         ev=[((pow((1-aa*pow(omega,k,p))%p,-1,p)+pow((1-bb*pow(omega,k,p))%p,-1,p))*(pow((1-cc*pow(omega,k,p))%p,-1,p)+pow((1-dd*pow(omega,k,p))%p,-1,p)))%p for k in range(n)]
+ 180         if math.prod(ev)%p!=det(F,p):continue
+ 181         A,B,C,D=[mats[a] for a in [aa,bb,cc,dd]]
+ 182         M=product(plus(ivs[aa],ivs[bb],p),plus(ivs[cc],ivs[dd],p),p)
+ 183         assert M!=F and det(M,p)==det(F,p)
+ 184         assert det(F,p)*math.prod(det(z,p) for z in [A,B,C,D])%p==det(plus(A,B,p),p)*det(plus(C,D,p),p)%p
+ 185         return {'N':n,'field':p,'constant_weights':[aa,bb,cc,dd],'Fourier_determinant':det(F,p),'product_determinant':det(M,p),'product_is_Fourier':False,'M':M,'F':F}
+ 186     raise AssertionError('No determinant-only control found')
+ 187 
+ 188 
+ 189 def gauge_scope_control():
+ 190     n=5;p=101;I=ident(n);S=[[int(j==(i+1)%n) for j in range(n)] for i in range(n)]
+ 191     A=plus(I,scale(-2,S,p),p);B=product(plus(I,scale(-3,S,p),p),matpow(S,2,p),p)
+ 192     C=plus(I,scale(-4,S,p),p);D=plus(I,scale(-5,S,p),p)
+ 193     assert all(det(Z,p) for Z in [A,B,C,D])
+ 194     X=plus(A,B,p);Y=plus(C,D,p);K=product(C,B,p)
+ 195     M=product(plus(inv(A,p),inv(B,p),p),plus(inv(C,p),inv(D,p),p),p)
+ 196     assert product(product(A,M,p),D,p)==product(product(X,inv(K,p),p),Y,p)
+ 197     assert all(sum(v!=0 for v in row)==4 for row in X)
+ 198     return {'N':n,'field':p,'general_bridge_still_valid':True,'gauged_sum_row_support':4,'gauged_sum_column_support':4,'A':'I-2S','B':'(I-3S)S^2'}
+ 199 
+ 200 
+ 201 def main():
+ 202     ap=argparse.ArgumentParser();ap.add_argument('--output',default='INDEPENDENT_RESULTS.json');args=ap.parse_args()
+ 203     trials=model_trials()
+ 204     report={'status':'PASS','uploaded_code_executed':False,'classification':'equivalent synthesis obligation, no Fourier construction',
+ 205             'model_trials':trials,'missing_denominator_guard':singular_guard_control(),
+ 206             'determinant_only_false_accept':scalar_det_control(),'monomial_gauge_scope':gauge_scope_control()}
+ 207     Path(args.output).write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+ 208     print('PASS independent bridge controls; trials',len(trials['trials']))
+ 209     print('Wrong order rejected:',sum(x['wrong_order_rejected'] for x in trials['trials']))
+ 210     print('Fourier passes:',sum(x['Fourier_gate_pass'] for x in trials['trials']))
+ 211     print('Scalar-only false accept:',report['determinant_only_false_accept'])
+ 212 if __name__=='__main__':main()

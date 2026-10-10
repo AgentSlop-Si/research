@@ -1,0 +1,62 @@
+1: import collections
+2: import unittest
+3: import numpy as np
+4: from multi_view import SharedProjectedFourierStore
+5: from view_optimizer import AdaptiveSpectralOrganizer
+6: 
+7: 
+8: class CountDeque(collections.deque):
+9:     visited = 0
+10:     def __iter__(self):
+11:         for row in super().__iter__():
+12:             self.visited += 1
+13:             yield row
+14:     def __reversed__(self):
+15:         for row in super().__reversed__():
+16:             self.visited += 1
+17:             yield row
+18: 
+19: 
+20: class TestOptimizerHardening(unittest.TestCase):
+21:     def make(self, consumers=2, q=1, rank=4):
+22:         views = {str(i): list(range(q)) for i in range(consumers)}
+23:         st = SharedProjectedFourierStore(max(8,q), list(range(q)),
+24:                 np.ones((rank,q)), views, promote_after=None)
+25:         org = AdaptiveSpectralOrganizer(st, min_history=2,
+26:                 replan_every=100000, replan_min_updates=100000)
+27:         for history in org.history.values(): history.extend([0,1])
+28:         org.replan()
+29:         self.assertEqual(len(org.groups), 1)
+30:         return st, org
+31: 
+32:     def test_group_replay_inspects_only_missing_suffix(self):
+33:         st, org = self.make()
+34:         for _ in range(10000): org.add_coefficient(0, 1)
+35:         org.query('0')
+36:         st.events = CountDeque(st.events)
+37:         org.add_coefficient(0, 1)
+38:         self.assertEqual(org.query('0')[0], 10001)
+39:         self.assertLessEqual(st.events.visited, 2)
+40:         self.assertEqual(next(iter(org.groups.values())).strategy, 'group_replay')
+41: 
+42:     def test_group_suffix_replay_preserves_chronological_order(self):
+43:         st, org = self.make()
+44:         for delta in (1e16, -1e16, 1): org.add_coefficient(0, delta)
+45:         self.assertEqual(org.query('0')[0], 1)
+46:         self.assertEqual(next(iter(org.groups.values())).strategy, 'group_replay')
+47: 
+48:     def test_group_cache_hit_publishes_only_requested_member(self):
+49:         st, org = self.make(consumers=32, q=8)
+50:         org.add_coefficient(0, 2)
+51:         org.query('0')
+52:         old = {name: view.cached for name, view in st.views.items()}
+53:         got = org.query('0')
+54:         replaced = [name for name in st.views if st.views[name].cached is not old[name]]
+55:         self.assertEqual(replaced, ['0'])
+56:         np.testing.assert_array_equal(got, np.full(8, 2))
+57:         got[:] = 12345
+58:         np.testing.assert_array_equal(org.query('0'), np.full(8, 2))
+59:         np.testing.assert_array_equal(org.query('31'), np.full(8, 2))
+60: 
+61: 
+62: if __name__ == '__main__': unittest.main()

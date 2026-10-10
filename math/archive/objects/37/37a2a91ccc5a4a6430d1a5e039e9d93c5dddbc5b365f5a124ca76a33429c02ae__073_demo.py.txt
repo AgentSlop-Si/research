@@ -1,0 +1,31 @@
+"""Small examples with numerical and exact reference checks."""
+import json
+from pathlib import Path
+import numpy as np
+from scipy import fft
+from projected_circuit import ProjectedCircuit
+from range_product import SegmentProductIndex
+from modular_bridge import integer_product
+
+n=128
+x=np.zeros(n);x[0]=1;x[3]=.125
+y=np.zeros(n);y[0]=1;y[7]=-.25
+engine=ProjectedCircuit(n,[0,1,17,63,127])
+a,b=engine.register(x),engine.register(y)
+mixed=engine.relation([(a,2,3),(b,-1,0)],[(19,.0625)])
+root=engine.product([mixed,a,b,a])
+branch=root.edit(2,11,.125)
+chosen=branch.frequencies()
+source=2*np.roll(x,3)-y;source[19]+=.0625
+edited=y.copy();edited[11]+=.125
+expected=fft.fft(source)*fft.fft(x)*fft.fft(edited)*fft.fft(x)
+np.testing.assert_allclose(chosen,expected[engine.bins],atol=2e-12)
+index=SegmentProductIndex.from_circuit(root)
+np.testing.assert_allclose(index.branch().edit_many([(2,11,.125)]).query('range'),chosen,atol=2e-12)
+answer,certificate=integer_product(-123456789012345,9876543210)
+assert answer==-123456789012345*9876543210
+result={'selected_bins':engine.bins.tolist(),'max_abs_error':float(max(abs(chosen-expected[engine.bins]))),
+        'exact_product':answer,'integer_certificate':certificate,'memory':engine.memory_report()}
+Path('results/demo.json').write_text(json.dumps(result,indent=2)+'\n')
+Path('results/example_circuit.json').write_text(json.dumps(engine.export([root.root,branch.root]),indent=2)+'\n')
+print(json.dumps(result,indent=2))

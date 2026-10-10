@@ -1,0 +1,149 @@
+# Independent Green fusion review
+
+2026-10-09. **Verdict: the proposed fusion identities, exact norm formula, and
+charged field-operation counts are correct.** They provide useful compatible
+mixers; they do not supply a sub-NlogN factorization of the Fourier matrix.
+
+## Cycle Green mixer
+
+Assume M is a single weighted N-cycle, every edge has modulus one, and
+M^N=−I. Over C, M is unitary. For K=I+(I−M)⁻¹,
+
+\[
+K=\tfrac32I+\tfrac12\sum_{j=1}^{N-1}M^j,
+\qquad
+K^{-1}=\frac{(2^{N-1}+1)I-
+\sum_{j=1}^{N-1}2^{N-1-j}M^j}{2^N+1}.
+\]
+
+Distinct powers occupy distinct coordinates in every row and column. Thus
+there are no hidden cancellations in the absolute column sums, and
+
+\[
+\|K\|_1=(N+2)/2,\quad
+\|K^{-1}\|_1=2^N/(2^N+1),\quad
+\kappa_1(K)=\frac{(N+2)2^{N-1}}{2^N+1}.
+\]
+
+These statements include N=1: K=[3/2] and κ₁=1. At N=2, κ₁=8/5.
+Every entry of K and K⁻¹ is nonzero over C. This density assertion is not
+valid uniformly over finite fields: our F3,N=2 check has only two nonzero
+entries in K while both implemented actions remain correct.
+
+The spectral condition number is different. The eigenvalues of M have
+phases θ_j=(2j+1)π/N, and K's singular values are
+
+\[
+\sigma_j=\sqrt{2+\frac1{4\sin^2(\theta_j/2)}}.
+\]
+
+For even N this gives exactly the candidate's sine/cosine κ₂ formula.
+In particular κ₂=1 at N=2; we independently verified K* K=(5/2)I there.
+As N grows, κ₂∼2N/(3π), whereas κ₁∼N/2. For odd N, the smallest singular
+value is 3/2 because the spectrum includes −1; N=1 again has κ₂=1.
+Condition estimates alone do not establish floating-point forward stability
+of the implemented cyclic solves.
+
+## Costs and exact bit growth
+
+Independent outer probes agree with all stated counts:
+
+| Operation | Charged field gates |
+|---|---:|
+| Signed-cycle K, including construction of 1/2 | 3N+1 |
+| Prepare affine source/target K and K⁻¹ | 2N+log₂N+4 |
+| Apply prepared K | 5N+1 |
+| Apply prepared K⁻¹ | 6N+1 |
+
+The signed-cycle application alone is 3N−1 gates; its two setup gates are
+included in the first row. The affine cycle solver executes two N-step
+backward traversals and one closure multiplication, giving 4N+1 gates.
+The additional vector operations produce the other counts. N=2 is covered;
+the root-based affine constructor deliberately rejects N=1.
+
+Indexing, full-cycle validation, reads, and output writes require O(N)
+bounded-word operations when integer descriptors fit O(log N) bits. This
+does **not** make exact field arithmetic constant-cost on such words.
+For a signed-cycle basis input, inverse output coefficients have denominator
+2^N+1; the nonidentity numerators are powers of two and are relatively prime
+to that denominator. Each reduced denominator therefore needs N+1 bits.
+Materializing N ordinary exact rational outputs can cost Ω(N²) bits. Even
+if a common denominator is stored once, explicitly expanded numerators have
+Θ(N²) total bit length. Compact symbolic exponents would be a different
+output representation. The candidate appropriately makes no linear exact
+bit-time claim.
+
+The modular exceptions are real: the affine constructor correctly rejects
+(p,N)=(5,2),(17,4),(257,8),(65537,16), where 2^N+1 vanishes. The complex norm
+proof must not be transferred to those finite-field specializations.
+
+## Path Green Fourier bridge
+
+The independently checked bridge is exact. If T has diagonal 3 and adjacent
+off-diagonal −1, it is the cyclic operator 3I−C−C⁻¹ plus its two removed-wrap
+edge corrections. Positive-exponent Fourier conjugation therefore gives
+
+\[
+(FTF^{-1}y)_k=(3-q^k-q^{-k})y_k
++\frac1N\sum_lq^ly_l+\frac{q^{-k}}N\sum_ly_l.
+\]
+
+The correction is rank at most two. The code's Woodbury factors and signs
+match this formula. For S=T⁻¹+(T+I)⁻¹, direct rational-function division gives
+
+\[
+S^{-1}=\tfrac12T+\tfrac14I-\tfrac18(T+\tfrac12I)^{-1},
+\]
+
+and the same identity holds for the Fourier-conjugate operator. No Fourier
+call is required inside these source or target actions. This is an
+intertwining identity, not an implementation that obtains Fx from x.
+Vector-length validation was added during review to the four primitive
+public methods; composites inherit it.
+
+The separate stronger original-family bound κ₁(S)≤29/7 also checks
+algebraically: G=(2T+I)⁻¹ has column sums at most 1/3 and G_jj≥1/7 by its
+positive Neumann series. The signed column-sum formula gives
+∥S⁻¹∥₁≤58/21; ∥S∥₁≤3/2 yields 29/7. This bounded-condition S family is
+distinct from the growing-condition cycle K family.
+
+## Accounting correction in the original gauge source
+
+Source inspection confirms the reported undercount. `Gauge.action` starts
+its dot product at zero and adds N products, then performs N output
+additions: 2N literal additions. Its counter reports 2N−1. Each call is
+short by one, or 2(log₂N−1) over the supplied dressed transform. A modified
+dot-product implementation could save the initial addition, but the original
+code does not implement that optimization. This discrepancy does not change
+the asymptotic result.
+
+## Bounded independent checks
+
+Run `python3 verify_review.py`. It uses independently implemented dense
+rational/modular arithmetic, DFT matrices, matrix inversion, and operation
+probes, importing only the evaluated production interfaces.
+
+All checks pass:
+
+- six exact rational norm/density cases at N=1,2,3,4,8,12, with 30 signed
+  basis applications and their exact cold counts;
+- 15 modular affine cases, including F3,N=2, with complete basis checks of
+  source/target K and inverses and all charged counts;
+- four singular modular exceptions and four malformed-cycle rejections;
+- 80 individual entries of the path Fourier rank-two identity, plus twelve
+  dense-reference operator comparisons at N=4,8 and invalid-length checks;
+- an exact denominator-growth witness at N=32.
+
+The full candidate suites were not redundantly rerun. `results.json`
+records the tested production hashes. The conclusions are bounded by the
+stated field and output models, with no new universal Fourier claim.
+
+
+## Reviewed source hashes
+
+| File | SHA-256 |
+|---|---|
+| fft_green_fusion_research/resolvent_escape.py | 5a5ad7fb7adc6f586addbbe0948f950f0b917b9f785f1ec1be4809d36a046cc2 |
+| fft_green_conditioned_bridge_research/green_bridge.py | e35d36462a6314ff7c491a4cae4fab3c05e6e2b0b8d1189dc054a06a28a7429f |
+| fft_green_independent_review/verify_review.py | 42d1db6d9d3aa5715403b671e35434d3568fe4875a21e0c38bb5b89b5783803a |
+| fft_new_fusion_materials_20261009/green/fft_global_green_gauge/gauge_fft.py | ca75c080eccfee026aa54c9002e258e64bea8d9fb32db29aad4a53c6a9322704 |

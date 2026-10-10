@@ -1,0 +1,324 @@
+
+===== SOURCE 18 6bf41a2e14ac7dd7f3594914d732881a150df579c35db7f090e6e486cd7f9a73 fft_materials_extension_20261009/fft_rational_reuse_research/audit_defects.py | 2662 bytes 48 lines =====
+   1 import json
+   2 from pathlib import Path
+   3 from fourier_rational import (prepare_fourier_rational,source_solve,
+   4                              corrected_fourier_output,try_recurrence_fourier)
+   5 from prior_exact_arithmetic import PrimeField,CyclotomicField,fourier,mv
+   6 
+   7 
+   8 def main():
+   9     accepted=declined=0;rows=[]
+  10     cases=[(PrimeField(p),n) for p in (65537,998244353) for n in (4,8,16,32)]
+  11     cases += [(CyclotomicField(n),n) for n in (4,8)]
+  12     for field,n in cases:
+  13         q=field.root(n)
+  14         lam=next(field.integer(v) for v in range(2,100) if field.power(field.integer(v),n)!=field.one)
+  15         plan=prepare_fourier_rational(field,n,q,lam)
+  16         F=fourier(field,n)
+  17         for support in (0,1,2):
+  18             forcing=[field.zero]*n
+  19             for j in range(support):forcing[n-1-j]=field.integer(j+1)
+  20             x,_=source_solve(field,plan,forcing)
+  21             output,info=try_recurrence_fourier(field,plan,x,max_defects=support)
+  22             assert info['accepted'] and info['defect_support']==support
+  23             assert output==mv(field,F,x)
+  24             if support==1:assert all(a!=field.zero for a in x)
+  25             accepted+=1
+  26             if support:
+  27                 output,bad=try_recurrence_fourier(field,plan,x,max_defects=support-1)
+  28                 assert output is None and not bad['accepted'];declined+=1
+  29             rows.append(dict(n=n,field=getattr(field,'p',f'Q(zeta_{n})'),support=support,
+  30                              dense_input=all(a!=field.zero for a in x),
+  31                              cold_preparation=plan.preparation,online=info))
+  32         anchor=[field.integer(j+1) for j in range(n)]
+  33         anchor_y=mv(field,F,anchor)
+  34         forcing=list(anchor);forcing[n//2]=field.add(forcing[n//2],field.integer(7))
+  35         query,_=source_solve(field,plan,forcing)
+  36         output,info=corrected_fourier_output(field,plan,anchor,anchor_y,query,max_defects=1)
+  37         assert output==mv(field,F,query) and info['defect_support']==1;accepted+=1
+  38         # A truly dense residual must decline at the small advertised cap.
+  39         query,_=source_solve(field,plan,[field.one]*n)
+  40         output,info=try_recurrence_fourier(field,plan,query,max_defects=2)
+  41         assert output is None and info['defect_support']==n;declined+=1
+  42     report=dict(status='PASS',accepted_exact_full_dfts=accepted,declined_controls=declined,
+  43                 cases=rows,scope='Fresh structured or sparse-corrected related input; supplied shift, no universal FFT bound.')
+  44     Path(__file__).with_name('defect_results.json').write_text(json.dumps(report,indent=2)+'\n')
+  45     print(json.dumps({k:v for k,v in report.items() if k!='cases'},indent=2))
+  46 
+  47 
+  48 if __name__=='__main__':main()
+
+===== SOURCE 19 96e2e96b0cac37287d92d5537614a0698661870b16afd0e647adea512d779b5e fft_materials_extension_20261009/fft_rational_reuse_research/audit_detector.py | 8994 bytes 188 lines =====
+   1 """Focused exact audit of deterministic shift discovery and cold evaluation."""
+   2 from collections import Counter
+   3 import json
+   4 from pathlib import Path
+   5 from random import Random
+   6 import sys
+   7 
+   8 from detected_fourier import try_detected_fourier
+   9 from fourier_rational import prepare_fourier_rational,source_solve,Counted
+  10 from prior_exact_arithmetic import PrimeField,CyclotomicField,fourier,mv
+  11 
+  12 ROOT=Path(__file__).resolve().parent
+  13 
+  14 
+  15 def encoded(field, info):
+  16     value=dict(info)
+  17     if 'detected_shift' in value:
+  18         value['detected_shift']=field.encode(value['detected_shift'])
+  19     return value
+  20 
+  21 
+  22 def e_matrix(field,n,q):
+  23     powers=[field.power(q,j) for j in range(n)]
+  24     matrix=[[field.zero]*n for _ in range(n)]
+  25     for i in range(n):
+  26         matrix[i][i]=field.neg(powers[i])
+  27         if i+1<n:
+  28             matrix[i][i+1]=field.neg(field.mul(powers[i],field.sub(powers[i+1],field.one)))
+  29     return matrix
+  30 
+  31 
+  32 def triangular_fixture(field,matrix,shift,rhs,last_eigenvector=False):
+  33     n=len(rhs)
+  34     result=[field.zero]*n
+  35     start=n-1
+  36     if last_eigenvector:
+  37         result[-1]=field.one
+  38         start=n-2
+  39     for i in range(start,-1,-1):
+  40         value=rhs[i]
+  41         if i+1<n:
+  42             value=field.sub(value,field.mul(matrix[i][i+1],result[i+1]))
+  43         result[i]=field.mul(value,field.inv(field.sub(matrix[i][i],shift)))
+  44     return result
+  45 
+  46 
+  47 def check_ledger(info):
+  48     count=Counter()
+  49     for stage in info['stages'].values():
+  50         count.update(stage)
+  51     assert dict(count)==info['field_operations']
+  52     assert info['ordinary_fft_calls']==0
+  53     assert info['paid_anchor_transform_calls']==0
+  54 
+  55 
+  56 def main():
+  57     rng=Random(918271)
+  58     rows=[];accepted=declined=0
+  59     fields=[(PrimeField(p),n) for p in (65537,998244353) for n in (4,8,16,32)]
+  60     fields += [(CyclotomicField(n),n) for n in (4,8)]
+  61     for field,n in fields:
+  62         q=field.root(n)
+  63         F=fourier(field,n)
+  64         E=e_matrix(field,n,q)
+  65         shift=next(field.integer(v) for v in range(2,100)
+  66                    if field.power(field.integer(v),n)!=field.one)
+  67         plan=prepare_fourier_rational(field,n,q,shift)
+  68         zero=[field.zero]*n
+  69         one_sparse=list(zero);one_sparse[-1]=field.integer(3)
+  70         two_sparse=list(one_sparse);two_sparse[0]=field.integer(2)
+  71         dense,unused=source_solve(field,plan,one_sparse)
+  72         assert all(x!=field.zero for x in dense)
+  73         cases=[('zero',zero,0,'sparse_input'),
+  74                ('one_sparse',one_sparse,1,'sparse_input'),
+  75                ('two_sparse',two_sparse,1,'sparse_input'),
+  76                ('dense_one_defect',dense,1,'detected_recurrence')]
+  77         if n>=8:
+  78             forcing=list(one_sparse);forcing[n//2]=field.integer(7)
+  79             outlier,unused=source_solve(field,plan,forcing)
+  80             assert sum(x!=field.zero for x in outlier)>4
+  81             cases.append(('dense_two_defects',outlier,2,'detected_recurrence'))
+  82         records=[]
+  83         for name,x,cap,path in cases:
+  84             result,info=try_detected_fourier(field,n,q,x,max_defects=cap)
+  85             assert info['accepted'] and info['path']==path
+  86             assert result==mv(field,F,x),(name,n)
+  87             assert len(result)==info['full_output_writes']==n
+  88             if path=='detected_recurrence':
+  89                 assert info['detected_shift']==shift
+  90                 assert info['stages']['cold_rational_preparation']==plan.preparation
+  91                 assert sum(info['stages']['root_powers_and_E_action'].values())==6*n-4
+  92                 assert sum(info['stages']['full_residual_verification'].values())==2*n
+  93                 assert sum(info['stages']['target_solve'].values())==9*n
+  94                 support=info['defect_support']
+  95                 assert sum(info['stages']['sparse_defect_evaluation'].values())==(2*n-1)*support
+  96             check_ledger(info)
+  97             accepted+=1
+  98             records.append(dict(case=name,cap=cap,result=encoded(field,info)))
+  99 
+ 100         # Dense vectors whose majority shift is excluded by the solver contract.
+ 101         zero_shift_query=triangular_fixture(field,E,field.zero,one_sparse)
+ 102         root_shift=E[-1][-1]
+ 103         eigenvector=triangular_fixture(field,E,root_shift,zero,last_eigenvector=True)
+ 104         for name,x,reason in (
+ 105             ('invalid_zero_shift',zero_shift_query,'zero_shift_excluded'),
+ 106             ('invalid_root_shift',eigenvector,'root_of_unity_shift_excluded')):
+ 107             assert all(a!=field.zero for a in x)
+ 108             result,info=try_detected_fourier(field,n,q,x,max_defects=1)
+ 109             assert result is None and not info['accepted'] and info['reason']==reason
+ 110             check_ledger(info)
+ 111             declined+=1
+ 112             records.append(dict(case=name,cap=1,result=encoded(field,info)))
+ 113 
+ 114         # Zero coordinates must still participate in the full residual check.
+ 115         # This preserves a majority shift but adds an independent defect at 0.
+ 116         hidden_zero=list(dense);hidden_zero[0]=field.zero
+ 117         no_majority=None
+ 118         for _ in range(500):
+ 119             x=[field.integer(rng.randrange(1,100)) for _ in range(n)]
+ 120             result,info=try_detected_fourier(field,n,q,x,max_defects=1)
+ 121             if info.get('reason')=='no_strict_ratio_majority':
+ 122                 no_majority=x
+ 123                 break
+ 124         assert no_majority is not None
+ 125         for x,expected_reason in ((hidden_zero,'candidate_defect_too_dense'),
+ 126                                   (no_majority,'no_strict_ratio_majority')):
+ 127             result,info=try_detected_fourier(field,n,q,x,max_defects=1)
+ 128             reason=info.get('reason')
+ 129             assert reason==expected_reason
+ 130             image=mv(field,E,x)
+ 131             # Exhaust all potentially relevant ratios to independently
+ 132             # check that this declined fixture has no admissible shift.
+ 133             for i,xi in enumerate(x):
+ 134                 if xi==field.zero:continue
+ 135                 candidate=field.mul(image[i],field.inv(xi))
+ 136                 if candidate==field.zero or field.power(candidate,n)==field.one:continue
+ 137                 support=sum(field.sub(a,field.mul(candidate,b))!=field.zero
+ 138                             for a,b in zip(image,x))
+ 139                 assert support>1
+ 140             assert result is None
+ 141             check_ledger(info)
+ 142             declined+=1
+ 143             records.append(dict(case=reason,cap=1,result=encoded(field,info)))
+ 144         rows.append(dict(field=getattr(field,'p',f'Q(zeta_{n})'),n=n,records=records))
+ 145 
+ 146     # Larger exact same-input comparisons; these are gate ledgers, not timings.
+ 147     sys.path.insert(0,str(ROOT.parent/'fft_qbasis_research'))
+ 148     from orbit_kernel import fft,fft_plan
+ 149     large=[]
+ 150     field=PrimeField(998244353)
+ 151     for n in (128,512,2048,8192):
+ 152         q=field.root(n)
+ 153         plan=prepare_fourier_rational(field,n,q,field.integer(2))
+ 154         forcing=[field.zero]*n;forcing[-1]=field.one
+ 155         x,_=source_solve(field,plan,forcing)
+ 156         result,info=try_detected_fourier(field,n,q,x,max_defects=1)
+ 157         c=Counted(field);ordinary=fft_plan(c,n//2,q)
+ 158         oracle=fft(c,ordinary,x)
+ 159         assert info['accepted'] and result==oracle
+ 160         check_ledger(info)
+ 161         accepted+=1
+ 162         large.append(dict(n=n,input_support=sum(a!=field.zero for a in x),
+ 163             defect_support=info['defect_support'],cold_detector_scalar_operations=sum(info['field_operations'].values()),
+ 164             cold_ordinary_scalar_operations=sum(c.count.values()),
+ 165             detector=encoded(field,info),ordinary_ledger=dict(c.count),
+ 166             input_generation='Fixture generation outside both cold evaluation ledgers; input x is supplied identically.',
+ 167             comparison_scope='Same fresh input and full output; no timing or arbitrary-input improvement claim.'))
+ 168 
+ 169     invalid=0
+ 170     for kwargs in (dict(n=2,q=1,query=[0,0],max_defects=1),
+ 171                    dict(n=4,q=1,query=[0]*3,max_defects=1),
+ 172                    dict(n=4,q=1,query=[0]*4,max_defects=-1),
+ 173                    dict(n=4,q=1,query=[0]*4,max_defects=True)):
+ 174         try:try_detected_fourier(field,**kwargs)
+ 175         except ValueError:invalid+=1
+ 176         else:raise AssertionError('invalid argument accepted')
+ 177     result=dict(status='PASS',accepted_exact_outputs=accepted,decline_controls=declined,
+ 178         invalid_argument_controls=invalid,field_size_configurations=len(rows),
+ 179         rows=rows,large_same_input_comparisons=large,
+ 180         model='All detection, phase setup, cold solve preparation and full outputs paid; no supplied lambda or anchor; conditional acceptance only.',
+ 181         review_status='Root source review and independent adverse-case/count review complete; no unresolved issue within the stated contract.')
+ 182     (ROOT/'detector_results.json').write_text(json.dumps(result,indent=2)+'\n')
+ 183     print(json.dumps({k:result[k] for k in ('status','accepted_exact_outputs','decline_controls','invalid_argument_controls','field_size_configurations')},indent=2))
+ 184     for row in large:
+ 185         print(json.dumps({k:row[k] for k in ('n','cold_detector_scalar_operations','cold_ordinary_scalar_operations')}))
+ 186 
+ 187 
+ 188 if __name__=='__main__':main()
+
+===== SOURCE 20 45da7f1c76dfa543e879322026f11f83e7792028fa46dcc0ead8a2c7241fa163 fft_materials_extension_20261009/fft_rational_reuse_research/audit_fourier.py | 4402 bytes 82 lines =====
+   1 from collections import Counter
+   2 import json
+   3 from pathlib import Path
+   4 import random
+   5 import sys
+   6 from fourier_rational import (prepare_fourier_rational,source_solve,source_action,
+   7                              verified_fourier_output,Counted)
+   8 from rational_reuse import apply_band
+   9 from prior_exact_arithmetic import PrimeField,CyclotomicField,fourier,mv
+  10 
+  11 ROOT=Path(__file__).resolve().parent.parent
+  12 sys.path.insert(0,str(ROOT/'fft_qbasis_research'))
+  13 from orbit_kernel import fft,fft_plan
+  14 
+  15 
+  16 def main():
+  17     rng=random.Random(90261009)
+  18     checks=[];basis=mixed=rejects=0
+  19     cases=[(PrimeField(p),n) for p in (65537,998244353) for n in (4,8,16,32)]
+  20     cases += [(CyclotomicField(n),n) for n in (4,8)]
+  21     for field,n in cases:
+  22         q=field.root(n)
+  23         lam=next(field.integer(v) for v in range(2,100) if field.power(field.integer(v),n)!=field.one)
+  24         plan=prepare_fourier_rational(field,n,q,lam)
+  25         F=fourier(field,n)
+  26         vectors=[[field.one if i==j else field.zero for i in range(n)] for j in range(n)]
+  27         vectors += [[field.integer(rng.randrange(-5,6)) for _ in range(n)] for _ in range(3)]
+  28         for index,x in enumerate(vectors):
+  29             y=mv(field,F,x)
+  30             query,source_count=source_solve(field,plan,x)
+  31             result,detail=verified_fourier_output(field,plan,x,y,query)
+  32             assert result==mv(field,F,query)
+  33             assert source_action(field,plan,query)==x
+  34             assert apply_band(field,plan.target,result)==y
+  35             # Direct full-matrix intertwining, including the lambda shift.
+  36             assert mv(field,F,source_action(field,plan,x))==apply_band(field,plan.target,y)
+  37             if index<n:basis+=1
+  38             else:mixed+=1
+  39         for invalid in (field.zero,field.one,q,field.neg(q)):
+  40             try:prepare_fourier_rational(field,n,q,invalid)
+  41             except ValueError:rejects+=1
+  42             else:raise AssertionError('bad shift accepted')
+  43         bad=list(query);bad[0]=field.add(bad[0],field.one)
+  44         try:verified_fourier_output(field,plan,x,y,bad)
+  45         except ValueError:rejects+=1
+  46         else:raise AssertionError('wrong relation accepted')
+  47         checks.append(dict(n=n,field=getattr(field,'p',f'Q(zeta_{n})'),preparation=plan.preparation,
+  48                            source_online=source_count,verified_output_online=detail))
+  49     field=PrimeField(998244353);comparisons=[]
+  50     for n in (128,512,2048,8192):
+  51         q=field.root(n);c=Counted(field)
+  52         ordinary=fft_plan(c,n//2,q)
+  53         fft_setup=dict(c.count)
+  54         plan=prepare_fourier_rational(field,n,q,field.integer(2))
+  55         x=[field.integer(rng.randrange(-100,101)) for _ in range(n)]
+  56         c=Counted(field);y=fft(c,ordinary,x);anchor=dict(c.count)
+  57         graph=Counter(fft_setup);graph.update(anchor);graph.update(plan.preparation)
+  58         fresh=Counter(fft_setup);fresh.update(anchor);fresh.update(plan.common_preparation)
+  59         changes=[]
+  60         for _ in range(16):
+  61             query,source=source_solve(field,plan,x)
+  62             output,detail=verified_fourier_output(field,plan,x,y,query)
+  63             c=Counted(field);truth=fft(c,ordinary,query)
+  64             assert output==truth
+  65             graph.update(source);graph.update(detail['field_operations'])
+  66             fresh.update(source);fresh.update(c.count)
+  67             changes.append(sum(a!=b for a,b in zip(query,x)))
+  68             x,y=query,output
+  69         comparisons.append(dict(n=n,additional_queries=16,graph_scalar_operations=sum(graph.values()),
+  70                                 ordinary_scalar_operations=sum(fresh.values()),graph_ledger=dict(graph),
+  71                                 ordinary_ledger=dict(fresh),minimum_changed_coordinates=min(changes),
+  72                                 every_query_verified=True,all_n_outputs_returned=True,
+  73                                 supplied_root_order=n))
+  74     report=dict(status='PASS',target='FULL positive-sign DFT, unnormalized',basis_vectors=basis,
+  75                 mixed_vectors=mixed,invalid_shift_or_relation_rejections=rejects,
+  76                 cases=checks,comparisons=comparisons,
+  77                 scope='Related-query batch, initial ordinary FFT, every relation, all setup/output charged. Field counts, not timings.')
+  78     Path(__file__).with_name('fourier_results.json').write_text(json.dumps(report,indent=2)+'\n')
+  79     print(json.dumps({k:v for k,v in report.items() if k!='cases'},indent=2))
+  80 
+  81 
+  82 if __name__=='__main__':main()

@@ -1,0 +1,104 @@
+"""End-to-end comparisons against the same evaluator with rewrites disabled.
+
+Input generation is excluded; input copying/rFFTs, graph construction, cache
+preparation, planner/index maintenance, every full inverse FFT and returned
+array are timed. Both modes use the corrected cached-parent traversal.
+"""
+import argparse,gc,json,platform,sys,time
+from collections import Counter
+from pathlib import Path
+from statistics import median
+import numpy as np
+import scipy
+from cache_rewrite import CacheRewriteFFT
+
+
+def data_for(n,degree,versions):
+    rng=np.random.default_rng(89231+n)
+    x=rng.normal(0,.02/np.sqrt(n),(degree+3+versions,n));x[:,0]+=1
+    return x
+
+
+def run_once(arrays,scenario,enabled,degree=24,versions=8):
+    n=arrays.shape[1];entry=(n//2+1)*16
+    capacity={'stream_tight':3,'stream_fit':128,'zero_cache':0}.get(scenario,128)
+    begin=time.perf_counter_ns()
+    e=CacheRewriteFFT(n,rewrite=enabled,cache_bytes=entry*capacity)
+    count=degree+1
+    if scenario=='cold_nested':count+=2
+    if scenario=='unrelated':count+=versions
+    seeds=[e.signal(a) for a in arrays[:count]]
+    registered=time.perf_counter_ns()
+    g=e.mul(*seeds[:degree]);b=seeds[degree];p=e.mul(g,b)
+    if scenario=='cold_nested':
+        q=e.mul(e.add(g,e.one),b);c,h=seeds[-2:]
+        roots=[e.add(p,e.mul(c,e.add(q,h)))]
+        roots=[e.factor_common(root) for root in roots]
+    elif scenario=='cold_factored':
+        roots=[e.factor_common(e.add(p,e.mul(e.add(g,e.one),b)))]
+    elif scenario=='unrelated':roots=[p]+[e.mul(a,b) for a in seeds[degree+1:]]
+    else:
+        roots=[p]+[e.mul(e.add(g,e.const(i+.5 if scenario=='noninteger' else i+1)),b)
+                   for i in range(versions)]
+    constructed=time.perf_counter_ns()
+    outputs=[];queries=[]
+    for root in roots:
+        t=time.perf_counter_ns();outputs.append(e.evaluate_time(root));dt=time.perf_counter_ns()-t
+        queries.append({'full_output_ns':dt,'stats':e.last_stats,'witnesses':e.proof_records()})
+    end=time.perf_counter_ns()
+    counts=Counter()
+    for q in queries:
+        for k in ('vector_multiplies','vector_adds','vector_scales','fills','candidate_probes',
+                  'accepted_rewrites','planning_ns','new_graph_nodes','cost_nodes','signature_nodes'):
+            counts[k]+=q['stats'].get(k,0)
+    record={'n':n,'scenario':scenario,'rewrite':enabled,'degree':degree,'versions':versions,
+            'input_generation_timed':False,'input_ffts':e.stats['input_ffts'],
+            'full_inverse_ffts':len(outputs),'cache_capacity_bytes':entry*capacity,
+            'registration_ns':registered-begin,'construction_ns':constructed-registered,
+            'evaluation_ns':end-constructed,'end_to_end_ns':end-begin,
+            'counts':dict(counts),'queries':queries,
+            'seed_payload_bytes':e.last_stats['seed_payload_bytes'],
+            'peak_cache_bytes':max(q['stats']['peak_cache_bytes'] for q in queries),
+            'max_retained_evaluation_payload_bytes':max(q['stats']['retained_evaluation_payload_bytes'] for q in queries),
+            'index_references':e.last_stats['index_references'],
+            'graph_nodes':len(e.nodes)}
+    return record,outputs
+
+
+def main():
+    ap=argparse.ArgumentParser();ap.add_argument('--repeats',type=int,default=7)
+    ap.add_argument('--output',default='results/benchmark.json');args=ap.parse_args()
+    cases=[(n,s) for n in (256,4096,65536,262144)
+           for s in ('cold_nested','stream_tight','stream_fit','unrelated')]
+    cases += [(65536,s) for s in ('zero_cache','noninteger','cold_factored')]
+    result={'environment':{'python':sys.version,'platform':platform.platform(),
+                          'numpy':np.__version__,'scipy':scipy.__version__},
+            'method':'alternating order, fresh engine each run, median of paired repeated cold runs',
+            'repeats':args.repeats,'cases':[]}
+    # Warm the FFT library and Python imports outside all measured cases.
+    for enabled in (False,True):run_once(data_for(1024,24,8),'stream_tight',enabled)
+    for n,scenario in cases:
+        arrays=data_for(n,24,8);runs={False:[],True:[]};max_error=0;max_relative=0
+        for r in range(args.repeats):
+            pair={}
+            for enabled in ((False,True) if r%2==0 else (True,False)):
+                gc.collect();record,out=run_once(arrays,scenario,enabled)
+                runs[enabled].append(record);pair[enabled]=out
+            for a,b in zip(pair[False],pair[True]):
+                err=float(np.max(np.abs(a-b)));max_error=max(max_error,err)
+                max_relative=max(max_relative,err/max(float(np.max(np.abs(a))),1e-300))
+                np.testing.assert_allclose(a,b,rtol=2e-11,atol=2e-11)
+        base=median(x['end_to_end_ns'] for x in runs[False]);opt=median(x['end_to_end_ns'] for x in runs[True])
+        base_eval=median(x['evaluation_ns'] for x in runs[False]);opt_eval=median(x['evaluation_ns'] for x in runs[True])
+        row={'n':n,'scenario':scenario,'baseline_median_ms':base/1e6,'rewrite_median_ms':opt/1e6,
+             'end_to_end_speedup':base/opt,'evaluation_speedup':base_eval/opt_eval,
+             'max_absolute_difference':max_error,'max_normwise_relative_difference':max_relative,
+             'baseline_runs':runs[False],'rewrite_runs':runs[True]}
+        result['cases'].append(row)
+        print(f'{n:7} {scenario:14} total {base/opt:5.2f}x  eval {base_eval/opt_eval:5.2f}x  '
+              f'mult {runs[False][0]["counts"]["vector_multiplies"]}->{runs[True][0]["counts"]["vector_multiplies"]}',flush=True)
+    dest=Path(args.output);dest.parent.mkdir(exist_ok=True,parents=True)
+    dest.write_text(json.dumps(result,indent=2)+'\n')
+
+
+if __name__=='__main__':main()

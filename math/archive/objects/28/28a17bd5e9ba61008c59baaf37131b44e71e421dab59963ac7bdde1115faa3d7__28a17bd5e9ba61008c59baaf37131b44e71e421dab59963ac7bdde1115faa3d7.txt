@@ -1,0 +1,138 @@
+from __future__ import annotations
+from typing import Iterable
+
+MOD = 998244353
+GENERATOR = 3
+
+
+def inv(a: int, p: int = MOD) -> int:
+    a %= p
+    if a == 0:
+        raise ZeroDivisionError
+    return pow(a, p - 2, p)
+
+
+def eye(n: int) -> list[list[int]]:
+    return [[1 if i == j else 0 for j in range(n)] for i in range(n)]
+
+
+def zeros(n: int, m: int) -> list[list[int]]:
+    return [[0 for _ in range(m)] for _ in range(n)]
+
+
+def mat_add(a, b, p: int = MOD):
+    return [[(x + y) % p for x, y in zip(ar, br)] for ar, br in zip(a, b)]
+
+
+def mat_sub(a, b, p: int = MOD):
+    return [[(x - y) % p for x, y in zip(ar, br)] for ar, br in zip(a, b)]
+
+
+def mat_scale(c: int, a, p: int = MOD):
+    c %= p
+    return [[c * x % p for x in row] for row in a]
+
+
+def mat_mul(a, b, p: int = MOD):
+    n, k, m = len(a), len(b), len(b[0])
+    assert len(a[0]) == k
+    bt = list(zip(*b))
+    return [[sum(x * y for x, y in zip(row, col)) % p for col in bt] for row in a]
+
+
+def mat_vec(a, x, p: int = MOD):
+    return [sum(v * w for v, w in zip(row, x)) % p for row in a]
+
+
+def mat_pow(a, e: int, p: int = MOD):
+    n = len(a)
+    out = eye(n)
+    base = [row[:] for row in a]
+    while e:
+        if e & 1:
+            out = mat_mul(out, base, p)
+        base = mat_mul(base, base, p)
+        e >>= 1
+    return out
+
+
+def rank_mod(a, p: int = MOD) -> int:
+    if not a:
+        return 0
+    m = [list(map(lambda z: z % p, row)) for row in a]
+    nrow, ncol = len(m), len(m[0])
+    r = 0
+    for c in range(ncol):
+        pivot = next((i for i in range(r, nrow) if m[i][c] % p), None)
+        if pivot is None:
+            continue
+        m[r], m[pivot] = m[pivot], m[r]
+        z = inv(m[r][c], p)
+        m[r] = [(v * z) % p for v in m[r]]
+        for i in range(nrow):
+            if i != r and m[i][c] % p:
+                f = m[i][c]
+                m[i] = [(x - f * y) % p for x, y in zip(m[i], m[r])]
+        r += 1
+        if r == nrow:
+            break
+    return r
+
+
+def inv_mod(a, p: int = MOD):
+    n = len(a)
+    aug = [list(map(lambda z: z % p, a[i])) + eye(n)[i] for i in range(n)]
+    r = 0
+    for c in range(n):
+        pivot = next((i for i in range(r, n) if aug[i][c] % p), None)
+        if pivot is None:
+            raise ValueError("singular")
+        aug[r], aug[pivot] = aug[pivot], aug[r]
+        z = inv(aug[r][c], p)
+        aug[r] = [(v * z) % p for v in aug[r]]
+        for i in range(n):
+            if i != r and aug[i][c] % p:
+                f = aug[i][c]
+                aug[i] = [(x - f * y) % p for x, y in zip(aug[i], aug[r])]
+        r += 1
+    return [row[n:] for row in aug]
+
+
+def permutation_matrix(perm: list[int]) -> list[list[int]]:
+    n = len(perm)
+    if sorted(perm) != list(range(n)):
+        raise ValueError("not a permutation")
+    out = zeros(n, n)
+    for j, i in enumerate(perm):
+        out[i][j] = 1
+    return out
+
+
+def cycle_shift(n: int) -> list[list[int]]:
+    return permutation_matrix([(j + 1) % n for j in range(n)])
+
+
+def poly_matrix(coeffs: list[int], pmat, p: int = MOD):
+    n = len(pmat)
+    out = zeros(n, n)
+    power = eye(n)
+    for c in coeffs:
+        if c % p:
+            out = mat_add(out, mat_scale(c, power, p), p)
+        power = mat_mul(power, pmat, p)
+    return out
+
+
+def submatrix(a, rows: Iterable[int], cols: Iterable[int]):
+    rows, cols = list(rows), list(cols)
+    return [[a[i][j] for j in cols] for i in rows]
+
+
+def primitive_root_of_order(n: int, p: int = MOD, generator: int = GENERATOR) -> int:
+    if (p - 1) % n:
+        raise ValueError(f"order {n} does not divide p-1")
+    w = pow(generator, (p - 1) // n, p)
+    if pow(w, n, p) != 1:
+        raise AssertionError
+    # caller uses n that is prime or power of two in this package
+    return w

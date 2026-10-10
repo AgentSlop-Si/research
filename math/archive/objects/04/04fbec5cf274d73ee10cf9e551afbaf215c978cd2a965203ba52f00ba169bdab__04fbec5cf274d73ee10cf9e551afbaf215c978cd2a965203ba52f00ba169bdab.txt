@@ -1,0 +1,62 @@
+import sys
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT))
+import json
+import unittest
+import random
+from fast_mincut import ScanFlowOracle
+from scan_flow import make_graph,mincut_bound
+from radix2_control import Radix2Control
+from cut_rank_gate import bitrev, rank_np
+from two_stage_ct import P,root,full_dft,TwoStage
+from verify_certificate import verify
+from stress_network import stress
+
+class NetworkTest(unittest.TestCase):
+    def test_independent_certificate(self):
+        self.assertTrue(verify())
+
+    def test_network_tighter_than_old_interval(self):
+        obj=json.loads((ROOT/'new_network_certificate_N64.json').read_text())
+        self.assertEqual(obj['old_interval_upper_bound'],17)
+        self.assertEqual(obj['new_network_maximum_rank'],16)
+        self.assertEqual(obj['complex_rank_at_least'],17)
+
+    def test_networkx_scipy_agree(self):
+        rng=random.Random(3393)
+        for n in (8,16,32):
+            p=list(range(n));rng.shuffle(p)
+            g,big=make_graph(n,[2,1,2],[p,p[::-1]])
+            fast=ScanFlowOracle(n,[2,1,2],[p,p[::-1]])
+            for _ in range(15):
+                R=rng.sample(range(n),rng.randrange(1,n+1))
+                C=rng.sample(range(n),rng.randrange(1,n+1))
+                slow=mincut_bound(g,big,n,3,R,C)[0]
+                self.assertEqual(slow,fast.bound(R,C))
+
+    def test_cooley_tukey_control(self):
+        rng=random.Random(888)
+        for a,b in ((2,2),(4,4),(4,8)):
+            ct=TwoStage(a,b)
+            oracle=ScanFlowOracle(ct.n,list(ct.channel_ceiling),[ct.shuffle])
+            pw=[pow(root(ct.n),i,P) for i in range(ct.n)]
+            for _ in range(24):
+                R=rng.sample(range(ct.n),rng.randrange(1,ct.n+1))
+                C=rng.sample(range(ct.n),rng.randrange(1,ct.n+1))
+                rk=rank_np([ct.output_order[i] for i in R],
+                           [ct.input_order[j] for j in C],pw)
+                self.assertLessEqual(rk,oracle.bound(R,C))
+
+    def test_exact_multistage_radix2_control(self):
+        for n in (8,16,32):
+            fft=Radix2Control(n)
+            for j in range(n):
+                e=[int(k==j) for k in range(n)]
+                self.assertEqual(fft.apply(e),full_dft(e))
+            self.assertEqual(fft.operation_count(),3*(n//2)*(n.bit_length()-1))
+
+    def test_actual_quasiseparable_generator_stress(self):
+        stress(seed=20261009)
+
+if __name__=='__main__':unittest.main()

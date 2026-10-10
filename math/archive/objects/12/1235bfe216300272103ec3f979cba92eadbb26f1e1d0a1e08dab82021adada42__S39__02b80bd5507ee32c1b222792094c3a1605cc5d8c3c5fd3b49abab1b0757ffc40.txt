@@ -1,0 +1,39 @@
+   1 #!/usr/bin/env python3
+   2 """Re-run all Phase 10 tests/certificates and check the resulting JSON evidence."""
+   3 import json
+   4 from pathlib import Path
+   5 import subprocess
+   6 import sys
+   7 
+   8 BASE=Path(__file__).resolve().parent
+   9 COMMANDS=[
+  10     ([sys.executable,'-m','unittest','-v','test_phase10'],'test_phase10.log'),
+  11     ([sys.executable,'audit_phase10.py'],'audit_phase10.log'),
+  12     ([sys.executable,'operator_schmidt_gate.py'],'operator_schmidt.log'),
+  13     ([sys.executable,'operator_schmidt_general.py'],'operator_schmidt_general.log'),
+  14 ]
+  15 
+  16 def main():
+  17     for cmd,logname in COMMANDS:
+  18         print('RUN', ' '.join(cmd),flush=True)
+  19         p=subprocess.run(cmd,cwd=BASE,text=True,stdout=subprocess.PIPE,
+  20                          stderr=subprocess.STDOUT,check=True)
+  21         (BASE/logname).write_text(p.stdout,encoding='utf-8')
+  22         print(p.stdout[-1700:],flush=True)
+  23     a=json.loads((BASE/'AUDIT_RESULTS.json').read_text())
+  24     b=json.loads((BASE/'SCHMIDT_AUDIT.json').read_text())
+  25     c=json.loads((BASE/'SCHMIDT_GENERAL_AUDIT.json').read_text())
+  26     w=a['witness']
+  27     assert w['input_nonzeros']==w['n']
+  28     assert w['polyphase_rank']==w['m']
+  29     assert w['hankel_rank']==w['maximum_hankel_rank']
+  30     assert w['occupied_green_phase_modes']==w['m']
+  31     assert w['phase9_one_step_innovation_rank']==w['m']-2
+  32     assert w['exact_full_dft_mismatches']==0
+  33     assert all(r['exact_modular_realignment_rank']==r['exact_theoretical_rank']
+  34                for r in c['cases'])
+  35     assert all(r['exact_fourier_realignment_rank']==r['n']
+  36                for r in b['records'])
+  37     print('ALL PHASE 10 TESTS + EXACT EVIDENCE CHECKS PASSED',flush=True)
+  38 
+  39 if __name__=='__main__':main()

@@ -1,0 +1,189 @@
+   1 """Phase 9: bounded algebraic-jet code generation with fused native execution.
+   2 
+   3 The symbolic expansion is built by the Phase-8 AlgebraFFT object. This module
+   4 specializes its already-verified coefficient kernels and emits a fused loop:
+   5   y[q] = C0[q] + sum_h delta**h C_h[(q-h*pos) % n].
+   6 Symbolically sparse C_h are applied as point updates outside the dense loop.
+   7 
+   8 Numba JIT is OPTIONAL. JIT compilation and all initial FFT/jet preparation
+   9 must be charged in cold-start timings. This is a dynamic convolution update,
+  10 not an arbitrary faster Fourier transform.
+  11 """
+  12 from __future__ import annotations
+  13 from dataclasses import dataclass
+  14 from typing import Sequence
+  15 import math
+  16 import time
+  17 import numpy as np
+  18 
+  19 try:
+  20     from numba import njit
+  21 except ImportError:
+  22     njit = None
+  23 
+  24 
+  25 def _valid_input(n: int, position: int, delta: float) -> tuple[int, float]:
+  26     p = int(position)
+  27     if p != position or not 0 <= p < n:
+  28         raise IndexError("position must be an integer inside the signal")
+  29     d = float(delta)
+  30     if not np.isfinite(d):
+  31         raise ValueError("edit amplitude must be finite")
+  32     return p, d
+  33 
+  34 
+  35 def _generate_source(dense_degrees: tuple[int, ...],
+  36                      sparse_degrees: tuple[int, ...],
+  37                      *, partial: bool) -> str:
+  38     """Generate only numeric literals from validated degrees (no source input)."""
+  39     inputs = "base, dense, sparse_positions, sparse_amplitudes, indices, position, delta" if partial else "base, dense, sparse_positions, sparse_amplitudes, position, delta"
+  40     src = [f"def run({inputs}):",
+  41            "    n = len(base)"]
+  42     if partial:
+  43         src += ["    out = np.empty(len(indices), dtype=np.float64)"]
+  44     else:
+  45         src += ["    out = np.empty(n, dtype=np.float64)"]
+  46     for j,h in enumerate(dense_degrees):
+  47         src += [f"    shift_{j} = ({h} * position) % n",
+  48                 f"    scale_{j} = delta ** {h}"]
+  49     for j,h in enumerate(sparse_degrees):
+  50         src += [f"    sparse_at_{j} = (sparse_positions[{j}] + {h} * position) % n",
+  51                 f"    sparse_scale_{j} = (delta ** {h}) * sparse_amplitudes[{j}]"]
+  52     src += ["    for ii in range(len(indices)):" if partial else "    for ii in range(n):"]
+  53     src += ["        q = indices[ii]" if partial else "        q = ii",
+  54             "        value = base[q]"]
+  55     for j,h in enumerate(dense_degrees):
+  56         src += [f"        idx_{j} = q - shift_{j}",
+  57                 f"        if idx_{j} < 0:",
+  58                 f"            idx_{j} += n",
+  59                 f"        value += scale_{j} * dense[{j}, idx_{j}]"]
+  60     if partial:
+  61         for j,h in enumerate(sparse_degrees):
+  62             src += [f"        if q == sparse_at_{j}:",
+  63                     f"            value += sparse_scale_{j}"]
+  64     src += ["        out[ii] = value"]
+  65     if not partial:
+  66         for j,h in enumerate(sparse_degrees):
+  67             src += [f"    out[sparse_at_{j}] += sparse_scale_{j}"]
+  68     src += ["    return out"]
+  69     return "\n".join(src) + "\n"
+  70 
+  71 
+  72 _FUNCTION_CACHE = {}  # reuse compiled kernels across plans and FFT sizes
+  73 
+  74 def _build_function(source: str, use_numba: bool):
+  75     key = (source, use_numba)
+  76     if key in _FUNCTION_CACHE:
+  77         return _FUNCTION_CACHE[key]
+  78     scope = {"np": np}
+  79     exec(compile(source, "<fft_phase9_generated>", "exec"), scope)
+  80     f = scope["run"]
+  81     if use_numba:
+  82         if njit is None:
+  83             raise RuntimeError("numba is not installed. Use backend='python'.")
+  84         f = njit(f, fastmath=False, nogil=True, cache=False)
+  85     _FUNCTION_CACHE[key] = f
+  86     return f
+  87 
+  88 
+  89 @dataclass
+  90 class SpecializedJet:
+  91     n: int
+  92     degree: int
+  93     base: np.ndarray
+  94     dense: np.ndarray
+  95     dense_degrees: tuple[int, ...]
+  96     sparse_positions: np.ndarray
+  97     sparse_amplitudes: np.ndarray
+  98     sparse_degrees: tuple[int, ...]
+  99     full_source: str
+ 100     partial_source: str
+ 101     _full: object
+ 102     _partial: object
+ 103     backend: str
+ 104     compiler_wall_s: float
+ 105     jit_wall_s: float
+ 106 
+ 107     @property
+ 108     def data_bytes(self) -> int:
+ 109         return (self.base.nbytes + self.dense.nbytes +
+ 110                 self.sparse_positions.nbytes + self.sparse_amplitudes.nbytes)
+ 111 
+ 112     @property
+ 113     def generated_source(self) -> str:
+ 114         return self.full_source
+ 115 
+ 116     def single(self, position: int, delta: float, indices: Sequence[int] | None = None) -> np.ndarray:
+ 117         pos, d = _valid_input(self.n, position, delta)
+ 118         if indices is None:
+ 119             return self._full(self.base, self.dense, self.sparse_positions,
+ 120                               self.sparse_amplitudes, pos, d)
+ 121         q = np.asarray(indices)
+ 122         if q.ndim == 1 and q.size == 0:
+ 123             return np.empty(0, dtype=np.float64)
+ 124         if q.ndim != 1 or not np.issubdtype(q.dtype, np.integer):
+ 125             raise TypeError("indices must be a 1D integer array")
+ 126         if np.any(q < 0) or np.any(q >= self.n):
+ 127             raise IndexError("output coefficient index outside signal")
+ 128         q = np.ascontiguousarray(q, dtype=np.int64)
+ 129         return self._partial(self.base, self.dense, self.sparse_positions,
+ 130                              self.sparse_amplitudes, q, pos, d)
+ 131 
+ 132 
+ 133 def compile_prepared(prepared, *, backend: str = "numba", max_degree: int = 8,
+ 134                      max_sparse_terms: int = 64,
+ 135                      warm_compile: bool = True) -> SpecializedJet:
+ 136     """Prepare code from Phase-8 PreparedEdit, without rediscovering its graph.
+ 137 
+ 138     Bounds on degree and sparse terms avoid pathological code generation.
+ 139     The compiler trusts Phase-8's symbolic sparsity certificates, NOT tiny
+ 140     float values rounded to zero.
+ 141     """
+ 142     t0 = time.perf_counter()
+ 143     if backend not in {"numba", "python"}:
+ 144         raise ValueError("backend must be 'numba' or 'python'")
+ 145     degree = int(prepared.degree)
+ 146     if not 0 <= degree <= max_degree or max_degree > 16:
+ 147         raise ValueError("degree exceeds bounded code-generation limit")
+ 148     n = int(prepared.n)
+ 149     base = np.ascontiguousarray(prepared.kernels[0], dtype=np.float64)
+ 150     dense_list, dense_degrees = [], []
+ 151     sparse_positions, sparse_amplitudes, sparse_degrees = [], [], []
+ 152     for h in range(1, degree + 1):
+ 153         sparse = prepared.sparse_coefficients[h] if prepared.sparse_coefficients else None
+ 154         if sparse is not None:
+ 155             for t, weight in sorted(sparse.items()):
+ 156                 if weight:
+ 157                     sparse_positions.append(int(t))
+ 158                     sparse_amplitudes.append(float(weight))
+ 159                     sparse_degrees.append(h)
+ 160         else:
+ 161             dense_list.append(np.asarray(prepared.kernels[h], dtype=np.float64))
+ 162             dense_degrees.append(h)
+ 163     if len(sparse_positions) > max_sparse_terms:
+ 164         raise ValueError("too many symbolic sparse terms to inline")
+ 165     dense = np.ascontiguousarray(np.stack(dense_list, axis=0), dtype=np.float64) if dense_list else np.empty((0,n),dtype=np.float64)
+ 166     sp = np.asarray(sparse_positions, dtype=np.int64)
+ 167     sv = np.asarray(sparse_amplitudes, dtype=np.float64)
+ 168     dense_degree_tuple = tuple(dense_degrees)
+ 169     sparse_degree_tuple = tuple(sparse_degrees)
+ 170     full_source = _generate_source(dense_degree_tuple, sparse_degree_tuple, partial=False)
+ 171     partial_source = _generate_source(dense_degree_tuple, sparse_degree_tuple, partial=True)
+ 172     full = _build_function(full_source, use_numba=backend=="numba")
+ 173     partial = _build_function(partial_source, use_numba=backend=="numba")
+ 174     t1 = time.perf_counter()
+ 175     jit_s = 0.0
+ 176     if backend == "numba" and warm_compile:
+ 177         start = time.perf_counter()
+ 178         # Real code JIT compilation is a cost; do not silently omit it.
+ 179         _ = full(base,dense,sp,sv,0,0.0)
+ 180         _ = partial(base,dense,sp,sv,np.asarray([0],dtype=np.int64),0,0.0)
+ 181         jit_s = time.perf_counter() - start
+ 182     return SpecializedJet(n,degree,base,dense,dense_degree_tuple,sp,sv,sparse_degree_tuple,
+ 183                           full_source,partial_source,full,partial,backend,t1-t0,jit_s)
+ 184 
+ 185 
+ 186 def compile_expression(engine, root:int, leaf:int, *, backend="numba", max_degree=4):
+ 187     """Public Phase-9 end-to-end compilation entrypoint."""
+ 188     prepared = engine.prepare(root,leaf,max_degree=max_degree)
+ 189     return compile_prepared(prepared,backend=backend,max_degree=max_degree)

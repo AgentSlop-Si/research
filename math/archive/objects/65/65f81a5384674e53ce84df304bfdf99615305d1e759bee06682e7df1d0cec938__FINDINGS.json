@@ -1,0 +1,215 @@
+[
+  {
+    "id": "F01",
+    "severity": "high",
+    "title": "Unconditional PASS in the all-length experiment runner",
+    "source_indexes": [
+      6
+    ],
+    "locations": "06_prototype.py:389-488,491-505",
+    "analysis": "main() reports status PASS after collecting experiment values; it never checks lift error, truncation ratio, variance ratio, or robust ratio against an acceptance threshold, and never invokes the unittest suite. The result collection can therefore report PASS when a ratio exceeds one. Default JSON serialization also permits non-finite values. This is a definite acceptance-design flaw, established from control flow, not a claim that the saved experiments actually failed.",
+    "recommended_action": "Separate run completion from validation. Enforce finite values and explicit deterministic thresholds, report statistical observations separately, and include test completion and dependency identity in any acceptance receipt.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  },
+  {
+    "id": "F02",
+    "severity": "medium",
+    "title": "The all-length API has untested boundary inconsistencies",
+    "source_indexes": [
+      6,
+      7
+    ],
+    "locations": "06_prototype.py:49-68,150-184,212-249,296-325;07_test_checkpoint.py:17-147",
+    "analysis": "At rank=0, the FFT-based Bessel/Taylor lifts sum zero terms and return zero, while the direct Taylor kernel keeps its constant term and the direct Bessel kernel keeps J_0. Thus the purported independent implementations disagree on an accepted, unguarded input. A nonempty length-one signal produces Q=1 and streaming_all_length_fft calls choose_dyadic_block(1), which rejects it despite the arbitrary-length description. Supplied q with n=0 can reach division by zero in nearest_grid_map. Rank positivity, one-dimensional input shape and finite x/g values are not consistently enforced. The tests cover n>=2 and positive ranks, missing these cases.",
+    "recommended_action": "Define supported dimensions and rank semantics, special-case N=1 or explicitly restrict the API, validate shape and finiteness, and add rank=0/negative, N=0/1, invalid g and malformed-array tests.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  },
+  {
+    "id": "F03",
+    "severity": "medium",
+    "title": "Streaming row count does not imply O(N) auxiliary storage for variable rank",
+    "source_indexes": [
+      6,
+      7
+    ],
+    "locations": "06_prototype.py:92-102,138-147,187-210,252-281,362-365,469-486;07_test_checkpoint.py:108-142",
+    "analysis": "Each lifted row materializes a Python list of rank length-N Chebyshev or Taylor coefficient arrays, so auxiliary coefficient storage is Theta(rank*N), plus O(Q) work buffers and O(N) majority state. For rank growing like log N/log log N this is not O(N) storage. The work expression is explicitly a proxy: it omits normalization/setup distinctions, grid uniqueness work and special-function precision/cost, and does not establish an observed running time. Formal size tables up to 2^120 are accounting evaluations, not executable transforms at those sizes. Exact control transforms use conventional NumPy FFTs.",
+    "recommended_action": "Report time and memory with rank, rows, requested precision and preprocessing visible. Generate Chebyshev terms incrementally for linear space, charge repeated setup and Bessel evaluation, and keep asymptotic arithmetic claims separate from finite implementation benchmarks.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  },
+  {
+    "id": "F04",
+    "severity": "high-boundary",
+    "title": "Middle-monomial feasibility is not Fourier acceptance",
+    "source_indexes": [
+      12,
+      16,
+      19,
+      23
+    ],
+    "locations": "16_joint_gate.py:59-97;12_audit.py:21-67;19_dual_intertwiner.py:19-30;23_weyl_gate.py:70-119",
+    "analysis": "The joint gate correctly decides the two T/V intertwining relations within its permutation cap, and explicitly acknowledges it can accept F(aI+bJ). Both sparse dualities therefore do not certify a normalized Fourier matrix. The phase19 control itself constructs 3F+5FJ passing both dualities and rejected by column-one calibration. The phase18 primitive Weyl gate is weaker still: passing its diagonal/two-cycle invariants, or finding a middle diagonal for one relation, is only necessary. No source is faulty merely for returning possible; using that state as Fourier success would be faulty.",
+    "recommended_action": "Keep impossible / possible / inconclusive as distinct states. An acceptance path needs a complete separating calibration and correct normalization; a passing necessary invariant must never be promoted to a factorization.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  },
+  {
+    "id": "F05",
+    "severity": "high",
+    "title": "Numerical rank is labeled as a guaranteed error certificate",
+    "source_indexes": [
+      9,
+      11
+    ],
+    "locations": "09_commutator_audit.py:15-41;11_numeric_audit.py:55-74",
+    "analysis": "analyze_stationary labels sqrt(max(0,1/2-rank/N)) a guaranteed_error_floor while rank is estimated using an absolute 1e-7 threshold on a floating-point commutator. A numerical rank underestimate can make this stronger than the justified lower bound. The source already has the safe structural upper budget 2*q*t, which should be used for a structural certificate. It also reports full_fourier_commutator_rank=N for every input, without the even/dyadic guard: for odd N, D-Z has determinant zero and Fourier commutator rank is N-1. Numerical and exact finite-field outputs must remain separate.",
+    "recommended_action": "Use the structural rank budget for guaranteed bounds, label tolerance-based rank as diagnostic, validate the intended N/q/t domain, and assert all reported numerical inequalities if they are used as acceptance gates.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  },
+  {
+    "id": "F06",
+    "severity": "medium",
+    "title": "Validation is largely assertions or implicit array assumptions",
+    "source_indexes": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      8,
+      10,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24
+    ],
+    "locations": "Multiple sources; per-source reviews give exact guards",
+    "analysis": "Assertions enforce many field-length assumptions, postconditions, archive identity checks and certificate claims. Optimized Python can remove them while hardcoded True/status fields remain. Dense helpers generally do not reject ragged or non-square matrices; zip-based add/intertwiner paths can silently truncate. Oracle gates assume deterministic linear same-field length-N outputs but do not establish those assumptions. cross_ratio_witness checks literal zero rather than zero modulo P before inversion; a noncanonical representative such as P can raise instead of producing a zero-entry rejection.",
+    "recommended_action": "Use explicit validation/errors for public verifier inputs and decisive acceptance checks; state canonical-residue, shape, linearity and determinism contracts; reject invalid inputs without turning them into positive evidence.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  },
+  {
+    "id": "F07",
+    "severity": "medium",
+    "title": "Same basenames identify different dependency versions",
+    "source_indexes": [
+      1,
+      2,
+      6,
+      7,
+      8,
+      10,
+      12,
+      19,
+      22,
+      23,
+      24
+    ],
+    "locations": "DEPENDENCY_IDENTITIES.json",
+    "analysis": "The phase20 weyl_gate imported by projective_gate/audit/commutator_mod is a2ee70df98f74b5ffdc5c67de06522a99f5dabcd4b2e9a39f1166ff5a8e79c8b. The reviewed phase18 weyl_gate is 201fd3bda04dba269dfbed1bf7a054ed4bb09062b93352fa6f2782379fc9390d and exposes a different interface. The chirp dependency is unit_step_core 6a95e865e6489abd11d312d0b46336e7b2a21320ffff054ada74f145a5130182. Frozen occurrence paths resolve these intended versions, but Python runtime import identity and NumPy/SciPy distribution versions are unpinned. Full dependency closure is not established by this batch.",
+    "recommended_action": "Bind any execution/certificate receipt to exact package paths and hashes, including numerical library versions. Preserve separately named phases or package-qualified imports. Do not infer review credit from a basename.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  },
+  {
+    "id": "F08",
+    "severity": "medium-boundary",
+    "title": "Finite controls do not establish a universal construction or obstruction",
+    "source_indexes": [
+      1,
+      2,
+      3,
+      4,
+      8,
+      10,
+      11,
+      12,
+      14,
+      15,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24
+    ],
+    "locations": "All finite experiment loops and seeded constructors",
+    "analysis": "The controls cover finite N/seed/parameter sets. Exact field calculations are exact for that field instance, not empirical floating-point approximations, but they are not a uniform theorem over every length, every Green parameter or arbitrary complex coefficients. A complex exclusion from a modular obstruction requires the stated specialization/denominator bridge for the fixed algebraic instance. Dense Harper polynomial reconstruction and a dense real eigenbasis are valid controls without giving a fast Fourier executor. Approximate chirp output has coordinatewise/additive fixed-input statistical scope; it is not exact DFT factorization or uniform all-input operator approximation.",
+    "recommended_action": "Preserve the exact quantifiers and norm/probability regime. Link uniform proofs separately; identify seeded rejections as fixed-instance exclusions and complete full-matrix finite checks as such.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  },
+  {
+    "id": "F09",
+    "severity": "medium",
+    "title": "Audit aggregation leaves some claimed numerical checks unasserted",
+    "source_indexes": [
+      7,
+      8,
+      11,
+      22
+    ],
+    "locations": "08_audit.py:51-73;11_numeric_audit.py:43-86;07_test_checkpoint.py:64-106;22_test_phase18.py:9-40",
+    "analysis": "The phase20 explicit fail-closed section checks several controls but does not compare random_sparse_covariance.actual against guaranteed, inverse_sparse_floor.actual_operator_error against guaranteed_floor, or stationary numerical actual_spectral_error against its reported floor. These helpers mostly return values rather than enforce the inequalities. Tests called exact_enumerated_unbiasedness/variance use exhaustive finite state enumeration but floating complex arithmetic and tolerances; a single seeded robust run is not a probability validation.",
+    "recommended_action": "Add finite-value and inequality checks for each claimed numerical audit, distinguish floating enumeration from exact arithmetic, and use proof or calibrated statistical testing for probability guarantees.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  },
+  {
+    "id": "F10",
+    "severity": "medium",
+    "title": "Dense and exhaustive verifier costs must remain charged",
+    "source_indexes": [
+      1,
+      3,
+      4,
+      10,
+      12,
+      14,
+      15,
+      16,
+      18,
+      20,
+      21,
+      23,
+      24
+    ],
+    "locations": "Per-source complexity sections",
+    "analysis": "Most Green/Harper verification paths allocate dense matrices and perform cubic elimination/SVD/products. allowed_symmetries enumerates N! permutations. The reduced commutant system stores N^2 by (2N-2) coefficients, hence Theta(N^3) storage with a dense-elimination upper bound O(N^4). Joint signature duplicates can require up to the configured permutation cap times quadratic gauge work and store factorial-size option lists within that cap. Comments that an underlying tridiagonal operator admits O(N) application do not turn these verifier scripts into O(N) executors.",
+    "recommended_action": "Keep verifier/precomputation/forward costs separate. State caps and dimensions and do not use dense-oracle timings as transform timings.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  },
+  {
+    "id": "F11",
+    "severity": "medium",
+    "title": "Harper controls have additional unstated domain and arithmetic limits",
+    "source_indexes": [
+      18,
+      20,
+      21
+    ],
+    "locations": "18_commutant_dimension.py:28-44;20_harper_certificate.py:131-143;21_spectral_basis_control.py:7-27",
+    "analysis": "commutant_dimension imports root_n but never calls it: audit(6), for example, constructs only the assumed support system even though F_998244353 has no primitive sixth root. Its commuting_with_V interpretation is therefore conditional on an unverified root/eigenspace premise outside the tested dyadic domain. spectral_basis_control assumes the even-N parity decomposition without guarding it. harper_certificate uses omega**(N/2-1) before modular reduction in expected_odd, causing unnecessary growing-integer exponentiation rather than modular pow.",
+    "recommended_action": "Validate the dyadic/field-root domain at every entrypoint, guard even parity dimensions, and use modular exponentiation for the top-coefficient control.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  },
+  {
+    "id": "F12",
+    "severity": "medium",
+    "title": "Archive hash verification is provenance evidence only and is resource-unbounded",
+    "source_indexes": [
+      5
+    ],
+    "locations": "05_audit_provenance.py:6-58",
+    "analysis": "The script compares original archive bytes, extracted bytes, declared inventory and embedded manifests; it never mathematically reviews members. Its security/path checks and mismatch checks use assertions. It reads every member into memory and recursively follows ZIP magic without limits on expansion ratio, total bytes, depth or member count. Archive symlink flags are rejected, but existing extracted filesystem symlinks are not resolved to establish containment. Top-level metadata filenames are trusted. The reported uploaded_code_executed=False is a description of this script, not evidence about other processes.",
+    "recommended_action": "Keep provenance separate from source acceptance; use explicit checks, validated paths and recursive resource budgets. Do not execute this supplied verifier as part of inert review.",
+    "evidence_method": "inert source inspection and mathematical/control-flow reasoning; no supplied-program execution"
+  }
+]

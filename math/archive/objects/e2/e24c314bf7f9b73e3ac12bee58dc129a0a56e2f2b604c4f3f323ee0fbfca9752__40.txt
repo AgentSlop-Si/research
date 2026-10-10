@@ -1,0 +1,606 @@
+   1 """Relation-aware FFT dispatcher — research implementation, real 1D inputs only.
+   2 
+   3 Supported relations are provided by the producer, not guessed from arbitrary
+   4 unrelated data: known sparse edits, known shifts, and known linear combinations.
+   5 Output can remain lazy (selected bins) or be materialized by several algorithms.
+   6 
+   7 SciPy (or NumPy) implements the full numerical FFT. This does NOT implement
+   8 OpenAI's exact #130 algorithm and is not a new worst-case FFT theorem.
+   9 """
+  10 from __future__ import annotations
+  11 
+  12 from collections import Counter, OrderedDict
+  13 from dataclasses import dataclass
+  14 import hashlib
+  15 import math
+  16 import time
+  17 import weakref
+  18 from typing import Iterable, Sequence
+  19 
+  20 import numpy as np
+  21 try:
+  22     from scipy import fft as _fft
+  23 except ImportError:
+  24     from numpy import fft as _fft
+  25 
+  26 from phase import phases_tiled
+  27 
+  28 
+  29 def _signal(x):
+  30     a = np.asarray(x)
+  31     if a.ndim != 1 or a.size < 1 or np.iscomplexobj(a):
+  32         raise ValueError('expected nonempty 1-D real input')
+  33     if not np.issubdtype(a.dtype, np.number):
+  34         raise ValueError('expected numeric real input')
+  35     a = np.array(a, dtype=np.float64, order='C', copy=True)
+  36     if not np.isfinite(a).all():
+  37         raise ValueError('NaN/Inf not supported')
+  38     return a
+  39 
+  40 
+  41 def _validate_spectrum(z, n):
+  42     # Real-input rFFT must have real DC and (if N even) real Nyquist.
+  43     z[0] = complex(z[0].real)
+  44     if n % 2 == 0:
+  45         z[-1] = complex(z[-1].real)
+  46     return z
+  47 
+  48 
+  49 class Base:
+  50     """Immutable raw input and rFFT shared by multiple state versions."""
+  51     def __init__(self, signal, spectrum):
+  52         self.signal = signal
+  53         self.spectrum = spectrum
+  54         self.signal.flags.writeable = False
+  55         self.spectrum.flags.writeable = False
+  56 
+  57     @property
+  58     def memory_bytes(self):
+  59         return self.signal.nbytes + self.spectrum.nbytes
+  60 
+  61 
+  62 class SpectralState:
+  63     """Linear combination of shifted cached bases plus sparse input edits.
+  64 
+  65     State never implicitly creates a new dense spectrum after a known edit.
+  66     Editing and forking are cheap in the number of distinct terms/edits.
+  67     Note: users must not mutate dictionary internals; public methods validate.
+  68     """
+  69     def __init__(self, engine, n, terms, edits=None):
+  70         self.engine = engine
+  71         self.n = int(n)
+  72         self.terms = dict(terms)        # {(Base, right_shift): real scalar}
+  73         self.edits = dict(edits or {})  # {input_index: real delta}
+  74         self._cached_output = None
+  75         self._cached_bytes = 0
+  76         self._mutations = 0
+  77         engine._states.add(self)
+  78 
+  79     @property
+  80     def distinct_edits(self):
+  81         return len(self.edits)
+  82 
+  83     @property
+  84     def term_count(self):
+  85         return len(self.terms)
+  86 
+  87     def fork(self):
+  88         return SpectralState(self.engine, self.n, self.terms, self.edits)
+  89 
+  90     def edit(self, position, delta):
+  91         p = int(position)
+  92         d = float(delta)
+  93         if not (0 <= p < self.n) or not math.isfinite(d):
+  94             raise ValueError('invalid edit position/delta')
+  95         value = self.edits.get(p, 0.0) + d
+  96         if not math.isfinite(value):
+  97             raise ValueError('edit overflow')
+  98         if value == 0.0:
+  99             self.edits.pop(p, None)
+ 100         else:
+ 101             self.edits[p] = value
+ 102         self._invalidate()
+ 103         self.engine.stats['edits'] += 1
+ 104         return self
+ 105 
+ 106     def _invalidate(self):
+ 107         self._cached_output = None
+ 108         self._cached_bytes = 0
+ 109         self._mutations += 1
+ 110 
+ 111     def shift(self, amount):
+ 112         """Return a new right-circular-shifted state without moving N samples."""
+ 113         s = int(amount) % self.n
+ 114         terms = {(base, (offset + s) % self.n): value
+ 115                  for (base, offset), value in self.terms.items()}
+ 116         edits = {(p+s) % self.n: value for p, value in self.edits.items()}
+ 117         return SpectralState(self.engine, self.n, terms, edits)
+ 118 
+ 119     def bin(self, frequency):
+ 120         return self.engine.bin(self, frequency)
+ 121 
+ 122     def bins(self, frequencies):
+ 123         return self.engine.bins(self, frequencies)
+ 124 
+ 125     def spectrum(self, method='auto', cache_output=False, copy=True):
+ 126         return self.engine.materialize(self, method, cache_output, copy)
+ 127 
+ 128     def signal(self):
+ 129         return self.engine.signal(self)
+ 130 
+ 131 
+ 132 @dataclass(frozen=True)
+ 133 class Profile:
+ 134     n: int
+ 135     k: int
+ 136     r: int
+ 137     has_shift: bool
+ 138     median_seconds: dict
+ 139     best_method: str
+ 140 
+ 141 
+ 142 class RelationFFT:
+ 143     """Cost-aware dispatcher with bounded *internal* caches.
+ 144 
+ 145     max_cache_bytes limits strong references held for implicit exact lookup.
+ 146     max_phase_bytes limits cached phase-vector bytes. Explicitly held states
+ 147     and bases belong to the caller; they are separately reported as live bytes.
+ 148 
+ 149     The conservative fallback avoids expensive data-driven relation searches.
+ 150     Relation metadata (edit index/shift/basis coefficients) is passed explicitly.
+ 151     Optional calibrate(state) benchmarks methods on actual state and selects a
+ 152     method for future states of the same size/shape.
+ 153     """
+ 154     def __init__(self, *, max_cache_bytes=64*1024**2,
+ 155                  max_phase_bytes=32*1024**2,
+ 156                  max_temp_bytes=192*1024**2,
+ 157                  small_native_cutoff=4096):
+ 158         self.max_cache_bytes = int(max_cache_bytes)
+ 159         self.max_phase_bytes = int(max_phase_bytes)
+ 160         self.max_temp_bytes = int(max_temp_bytes)
+ 161         self.small_native_cutoff = int(small_native_cutoff)
+ 162         if min(self.max_cache_bytes, self.max_phase_bytes, self.max_temp_bytes) < 0:
+ 163             raise ValueError('byte budgets must be nonnegative')
+ 164         self._exact: OrderedDict[tuple, Base] = OrderedDict()
+ 165         self._exact_bytes = 0
+ 166         self._phase: OrderedDict[tuple, np.ndarray] = OrderedDict()
+ 167         self._phase_bytes = 0
+ 168         self._states = weakref.WeakSet()
+ 169         self._bases = weakref.WeakSet()
+ 170         self._profiles: dict[tuple, Profile] = {}
+ 171         self._auto_cache_misses = 0
+ 172         self._auto_cache_skips = 0
+ 173         self.stats = Counter()
+ 174         self.last_method = None
+ 175 
+ 176     @staticmethod
+ 177     def _key(a):
+ 178         # Digest then mandatory full-array verification: hashes alone NEVER prove equality.
+ 179         return (int(a.size), hashlib.blake2b(a.tobytes(), digest_size=16).digest())
+ 180 
+ 181     def _fetch(self, a, *, populate):
+ 182         key = self._key(a)
+ 183         base = self._exact.get(key)
+ 184         if base is not None and np.array_equal(a, base.signal):
+ 185             self._exact.move_to_end(key)
+ 186             self.stats['exact_hits'] += 1
+ 187             return base
+ 188         self.stats['exact_misses'] += 1
+ 189         z = np.asarray(_fft.rfft(a), dtype=np.complex128)
+ 190         base = Base(a, z)
+ 191         self._bases.add(base)
+ 192         if populate and base.memory_bytes <= self.max_cache_bytes:
+ 193             prior = self._exact.pop(key, None)
+ 194             if prior is not None:
+ 195                 self._exact_bytes -= prior.memory_bytes
+ 196             self._exact[key] = base
+ 197             self._exact_bytes += base.memory_bytes
+ 198             while self._exact_bytes > self.max_cache_bytes:
+ 199                 _, victim = self._exact.popitem(last=False)
+ 200                 self._exact_bytes -= victim.memory_bytes
+ 201                 self.stats['cache_evictions'] += 1
+ 202         return base
+ 203 
+ 204     def register(self, signal, *, cache_exact=False):
+ 205         x = _signal(signal)
+ 206         base = self._fetch(x, populate=cache_exact) if cache_exact else Base(x, np.asarray(_fft.rfft(x), dtype=np.complex128))
+ 207         self._bases.add(base)
+ 208         self.stats['reference_ffts'] += 1
+ 209         return SpectralState(self, len(x), {(base, 0): 1.0})
+ 210 
+ 211     def fft(self, signal, *, cache='auto', copy=True):
+ 212         """Unannotated input: conservative exact cache or native FFT.
+ 213 
+ 214         cache=True: always hash, exact-verify hits, store when within budget.
+ 215         cache=False: always invoke native FFT.
+ 216         cache='auto' (default): stop hashing after three consecutive misses;
+ 217             periodically probe (1 of every 8 later requests) so it can resume.
+ 218         Explicitly supplied relations never need this slow discovery route.
+ 219         """
+ 220         if cache not in (True, False, 'auto'):
+ 221             raise ValueError("cache must be True, False, or 'auto'")
+ 222         x = _signal(signal)
+ 223         should_try = cache is True or (cache == 'auto' and self._auto_cache_misses < 3)
+ 224         if cache == 'auto' and not should_try:
+ 225             self._auto_cache_skips += 1
+ 226             should_try = self._auto_cache_skips % 8 == 0
+ 227         if not should_try or self.max_cache_bytes == 0:
+ 228             self.last_method = 'native'
+ 229             self.stats['native_ffts'] += 1
+ 230             if cache == 'auto': self.stats['hash_bypasses'] += 1
+ 231             return np.asarray(_fft.rfft(x), dtype=np.complex128)
+ 232         prev_hits=self.stats['exact_hits']
+ 233         base = self._fetch(x, populate=True)
+ 234         hit=self.stats['exact_hits']>prev_hits
+ 235         if cache == 'auto':
+ 236             self._auto_cache_misses = 0 if hit else self._auto_cache_misses + 1
+ 237         self.last_method = 'exact_hit' if hit else 'native_cached'
+ 238         z = base.spectrum.copy() if copy else base.spectrum.view()
+ 239         if not copy: z.flags.writeable = False
+ 240         return z
+ 241 
+ 242     def combine(self, states: Sequence[SpectralState], coefficients: Sequence[float]):
+ 243         """Build x=sum c_i * x_i, without forming any signal or spectrum."""
+ 244         if len(states) != len(coefficients) or not states:
+ 245             raise ValueError('states and coefficients must have same positive length')
+ 246         n = states[0].n
+ 247         terms, edits = {}, {}
+ 248         for state, raw_c in zip(states, coefficients):
+ 249             if state.engine is not self or state.n != n:
+ 250                 raise ValueError('states must belong to this engine and share length')
+ 251             c = float(raw_c)
+ 252             if not math.isfinite(c):
+ 253                 raise ValueError('nonfinite combination coefficient')
+ 254             for key, a in state.terms.items():
+ 255                 terms[key] = terms.get(key, 0.0) + c*a
+ 256             for p, delta in state.edits.items():
+ 257                 edits[p] = edits.get(p, 0.0) + c*delta
+ 258         terms = {key: val for key, val in terms.items() if val}
+ 259         edits = {key: val for key, val in edits.items() if val}
+ 260         return SpectralState(self, n, terms, edits)
+ 261 
+ 262     def states_from_bases(self, basis_signals, coefficient_matrix):
+ 263         """M different signals described by M x r supplied coefficients.
+ 264 
+ 265         Cost of forming spectra after preparation: O(M*r*N).
+ 266         """
+ 267         matrix = np.asarray(coefficient_matrix, dtype=np.float64)
+ 268         if matrix.ndim != 2 or not np.isfinite(matrix).all():
+ 269             raise ValueError('coefficient_matrix must be finite 2D')
+ 270         bases = [self.register(x) for x in basis_signals]
+ 271         if len(bases) != matrix.shape[1]:
+ 272             raise ValueError('number of bases != coefficient columns')
+ 273         return [self.combine(bases, row) for row in matrix]
+ 274 
+ 275     def _phase_vector(self, n, position, count):
+ 276         position = int(position) % n
+ 277         key = (int(n), position, int(count))
+ 278         existing = self._phase.get(key)
+ 279         if existing is not None:
+ 280             self._phase.move_to_end(key)
+ 281             self.stats['phase_hits'] += 1
+ 282             return existing
+ 283         self.stats['phase_misses'] += 1
+ 284         phase = phases_tiled(n, position, count=count)
+ 285         phase.flags.writeable = False
+ 286         if phase.nbytes <= self.max_phase_bytes:
+ 287             self._phase[key] = phase
+ 288             self._phase_bytes += phase.nbytes
+ 289             while self._phase_bytes > self.max_phase_bytes:
+ 290                 _, old = self._phase.popitem(last=False)
+ 291                 self._phase_bytes -= old.nbytes
+ 292         return phase
+ 293 
+ 294     @staticmethod
+ 295     def _profile_key(state):
+ 296         return (state.n, state.distinct_edits, state.term_count,
+ 297                 any(shift for (_,shift) in state.terms))
+ 298 
+ 299     def recommend(self, state):
+ 300         self._check_state(state)
+ 301         k, r, n = state.distinct_edits, state.term_count, state.n
+ 302         if r == 1 and k == 0:
+ 303             ((base,shift), c), = state.terms.items()
+ 304             if shift == 0 and c == 1.0:
+ 305                 return 'reuse'
+ 306         if r == 0 and k == 0:
+ 307             return 'zero'
+ 308         key = self._profile_key(state)
+ 309         if key in self._profiles:
+ 310             return self._profiles[key].best_method
+ 311         # Deliberately conservative: SciPy is far faster than Python bookkeeping
+ 312         # on modest arrays. Only inexpensive known relationships are preferred.
+ 313         if n < self.small_native_cutoff:
+ 314             return 'native'
+ 315         if not k and r <= 2:
+ 316             return 'linear'
+ 317         if k == 1 and r <= 2 and n >= 16384:
+ 318             return 'direct'
+ 319         if k <= 2 and r <= 2 and n >= 65536:
+ 320             return 'direct'
+ 321         return 'native'
+ 322 
+ 323     def _check_state(self, state):
+ 324         if not isinstance(state, SpectralState) or state.engine is not self:
+ 325             raise TypeError('state must belong to this RelationFFT instance')
+ 326 
+ 327     def signal(self, state):
+ 328         self._check_state(state)
+ 329         out = np.zeros(state.n, dtype=np.float64)
+ 330         for (base, shift), c in state.terms.items():
+ 331             if shift:
+ 332                 out += c*np.roll(base.signal, shift)
+ 333             else:
+ 334                 out += c*base.signal
+ 335         for position, delta in state.edits.items():
+ 336             out[position] += delta
+ 337         return out
+ 338 
+ 339     def bin(self, state, frequency):
+ 340         self._check_state(state)
+ 341         q = int(frequency)
+ 342         if not 0 <= q <= state.n//2:
+ 343             raise IndexError('rfft frequency index out of range')
+ 344         val = 0j
+ 345         for (base, shift), c in state.terms.items():
+ 346             angle = -2*math.pi*((q*shift)%state.n)/state.n
+ 347             val += c*base.spectrum[q]*complex(math.cos(angle), math.sin(angle))
+ 348         for p, d in state.edits.items():
+ 349             angle = -2*math.pi*((q*p)%state.n)/state.n
+ 350             val += d*complex(math.cos(angle),math.sin(angle))
+ 351         if q == 0 or (state.n % 2 == 0 and q == state.n//2):
+ 352             return complex(val.real)
+ 353         return val
+ 354 
+ 355     def bins(self, state, frequencies: Iterable[int]):
+ 356         self._check_state(state)
+ 357         q = np.asarray(list(frequencies), dtype=np.int64)
+ 358         if (q < 0).any() or (q > state.n//2).any():
+ 359             raise IndexError('rfft frequency index out of range')
+ 360         out = np.zeros(q.size, dtype=np.complex128)
+ 361         for (base, shift), c in state.terms.items():
+ 362             if shift:
+ 363                 phase = np.exp(-2j*np.pi*((q*shift) % state.n)/state.n)
+ 364                 out += c*base.spectrum[q]*phase
+ 365             else:
+ 366                 out += c*base.spectrum[q]
+ 367         for p,d in state.edits.items():
+ 368             out += d*np.exp(-2j*np.pi*((q*p) % state.n)/state.n)
+ 369         mask = (q==0) | ((state.n%2==0) & (q==state.n//2))
+ 370         out[mask] = out[mask].real
+ 371         return out
+ 372 
+ 373     def _linear_spectrum(self, state):
+ 374         n=state.n
+ 375         out = np.zeros(n//2+1, dtype=np.complex128)
+ 376         for (base, shift), c in state.terms.items():
+ 377             if shift:
+ 378                 phase = self._phase_vector(n, shift, out.size)
+ 379                 out += c*base.spectrum*phase
+ 380             else:
+ 381                 out += c*base.spectrum
+ 382         return out
+ 383 
+ 384     def _direct_spectrum(self, state):
+ 385         out = self._linear_spectrum(state)
+ 386         for p,d in state.edits.items():
+ 387             out += d*self._phase_vector(state.n,p,out.size)
+ 388         return _validate_spectrum(out, state.n)
+ 389 
+ 390     def _pruned_spectrum(self,state):
+ 391         """Residue-class decomposition for known sparse changes.
+ 392 
+ 393         b=2^ceil(log2 k), m=n/b. For k edits at t=r+b*l,
+ 394         B[q,r] += delta * exp(-2*pi*i*q*t/n), q in [0,m).
+ 395         Then FFT_b(B[q,:])[j] = D[q+j*m]. Only O(N) input preparation
+ 396         (because m*k<=N), plus N/b length-b FFTs and O(N) output.
+ 397         Fully explicit complex temporary array takes 16*N bytes.
+ 398         This implementation is NUMERICAL, not OpenAI #130.
+ 399         """
+ 400         n = state.n
+ 401         k = state.distinct_edits
+ 402         if not k:
+ 403             return _validate_spectrum(self._linear_spectrum(state),n)
+ 404         if n & (n-1):
+ 405             raise ValueError('pruned mode requires power-of-two length')
+ 406         b=1 << (k-1).bit_length()
+ 407         if b > n or (16*n + 8*(n//b)) > self.max_temp_bytes:
+ 408             raise MemoryError('pruned method exceeds temporary memory budget')
+ 409         m = n//b
+ 410         rows = np.zeros((m,b),dtype=np.complex128)
+ 411         q = np.arange(m,dtype=np.float64)
+ 412         for t,d in state.edits.items():
+ 413             # Floating phase in bounded range; avoid huge multipliers where possible.
+ 414             angle = -2*np.pi*(np.remainder(q*t,n))/n
+ 415             rows[:,t%b] += d*np.exp(1j*angle)
+ 416         transformed = _fft.fft(rows,axis=1)
+ 417         # DFT[k] is indexed as k=q+m*j.
+ 418         delta = transformed.T.ravel()[:n//2+1]
+ 419         return _validate_spectrum(self._linear_spectrum(state)+delta,n)
+ 420 
+ 421     def materialize(self, state, method='auto', cache_output=False, copy=True):
+ 422         self._check_state(state)
+ 423         if method not in ('auto','reuse','zero','linear','direct','pruned','native'):
+ 424             raise ValueError('unknown materialization strategy')
+ 425         if state._cached_output is not None:
+ 426             self.last_method='stored_output'
+ 427             out=state._cached_output.copy() if copy else state._cached_output.view()
+ 428             if not copy: out.flags.writeable=False
+ 429             return out
+ 430         if method=='auto':
+ 431             method=self.recommend(state)
+ 432         self.last_method=method
+ 433         self.stats['strategy_'+method]+=1
+ 434         if method=='reuse':
+ 435             if state.distinct_edits!=0 or state.term_count!=1:
+ 436                 raise ValueError('reuse only valid for one unedited base')
+ 437             ((base,shift),c),=state.terms.items()
+ 438             if shift or c!=1.0:
+ 439                 raise ValueError('reuse requires unshifted unit coefficient')
+ 440             out=base.spectrum.copy()  # protect cache from client modification
+ 441         elif method=='zero':
+ 442             if state.term_count or state.distinct_edits:
+ 443                 raise ValueError('zero strategy only for identically zero state')
+ 444             out=np.zeros(state.n//2+1,dtype=np.complex128)
+ 445         elif method=='linear':
+ 446             if state.distinct_edits:
+ 447                 raise ValueError('linear strategy requires no pending edits')
+ 448             out=_validate_spectrum(self._linear_spectrum(state),state.n)
+ 449         elif method=='direct':
+ 450             out=self._direct_spectrum(state)
+ 451         elif method=='pruned':
+ 452             out=self._pruned_spectrum(state)
+ 453         elif method=='native':
+ 454             out=np.asarray(_fft.rfft(self.signal(state)),dtype=np.complex128)
+ 455         if cache_output:
+ 456             # Explicit opt-in. Live output memory is caller-held, not an LRU item.
+ 457             state._cached_output=out.copy()
+ 458             state._cached_output.flags.writeable=False
+ 459             state._cached_bytes=state._cached_output.nbytes
+ 460         if not copy:
+ 461             out.flags.writeable=False
+ 462         return out
+ 463 
+ 464     def calibrate(self, state, *, repeats=4, include_pruned=True):
+ 465         """Measure true end-to-end reconstruction of this state.
+ 466 
+ 467         The first trial includes cold setup for a given method, the median
+ 468         represents repeat-query throughput (warm-cache). No input relationship
+ 469         discovery is assumed; it is supplied by the producer.
+ 470         """
+ 471         self._check_state(state)
+ 472         if repeats < 2:
+ 473             raise ValueError('repeats must be >=2')
+ 474         if state._cached_output is not None:
+ 475             raise ValueError('cannot calibrate a state with a stored dense result; use a fork()')
+ 476         methods=['native']
+ 477         if state.distinct_edits:
+ 478             methods+=['direct']
+ 479             if include_pruned and state.n & (state.n-1)==0 and state.n*16 <= self.max_temp_bytes:
+ 480                 methods+=['pruned']
+ 481         else:
+ 482             methods+=['linear']
+ 483         benchmark={}
+ 484         reference=np.asarray(_fft.rfft(self.signal(state)),dtype=np.complex128)
+ 485         for method in methods:
+ 486             runs=[]
+ 487             for run in range(repeats):
+ 488                 t0=time.perf_counter_ns()
+ 489                 out=self.materialize(state,method=method,cache_output=False)
+ 490                 elapsed=(time.perf_counter_ns()-t0)*1e-9
+ 491                 np.testing.assert_allclose(out,reference,rtol=2e-8,atol=2e-7)
+ 492                 runs.append(elapsed)
+ 493             benchmark[method] = float(np.median(runs))
+ 494         best=min(benchmark,key=benchmark.get)
+ 495         prof=Profile(state.n,state.distinct_edits,state.term_count,
+ 496                      any(shift for (_,shift) in state.terms),benchmark,best)
+ 497         self._profiles[self._profile_key(state)]=prof
+ 498         return prof
+ 499 
+ 500     def memory_report(self):
+ 501         # These live-state holdings are not subject to the internal LRU budget;
+ 502         # they remain resident because the caller owns a handle to the state.
+ 503         live_bases=list(self._bases)
+ 504         states=list(self._states)
+ 505         return {
+ 506             'internal_exact_cache_bytes':self._exact_bytes,
+ 507             'internal_phase_cache_bytes':self._phase_bytes,
+ 508             'live_base_bytes':sum(base.memory_bytes for base in live_bases),
+ 509             'live_state_dense_output_bytes':sum(s._cached_bytes for s in states),
+ 510             'live_states':len(states),
+ 511             'live_bases':len(live_bases),
+ 512             'internal_cache_budget':self.max_cache_bytes,
+ 513             'phase_cache_budget':self.max_phase_bytes,
+ 514             'max_temp_bytes':self.max_temp_bytes,
+ 515         }
+ 516 
+ 517 
+ 518 def sparse_from_known_changes(base_spectrum, n, changes, method='direct'):
+ 519     """Functional API: a real length-n reference rFFT plus known (position,delta)."""
+ 520     e=RelationFFT(max_cache_bytes=0)
+ 521     original=np.zeros(n)
+ 522     spectrum=np.array(base_spectrum,dtype=np.complex128,copy=True)
+ 523     if spectrum.shape != (n//2+1,):
+ 524         raise ValueError('wrong spectrum shape')
+ 525     b=Base(original,spectrum)
+ 526     state=SpectralState(e,n,{(b,0):1.0})
+ 527     for p,d in changes:
+ 528         state.edit(p,d)
+ 529     if method=='native':
+ 530         raise ValueError('reference spectrum alone insufficient for native recompute')
+ 531     return e.materialize(state,method=method)
+ 532 
+ 533 class TrackedBins:
+ 534     """Maintain Q selected frequencies under known edits in O(Q) per event.
+ 535 
+ 536     This is a live subscription to a FORK of a SpectralState. Edits must be
+ 537     performed via this object's .edit()/.edit_many() methods; external edits of
+ 538     tracked.state cause a RuntimeError instead of silently returning stale bins.
+ 539     It does not construct a new N-element FFT after each edit.
+ 540     """
+ 541     def __init__(self, state: SpectralState, frequencies: Iterable[int],
+ 542                  max_phase_entries=16):
+ 543         self.state=state.fork()
+ 544         self.n=self.state.n
+ 545         q=np.asarray(list(frequencies),dtype=np.int64)
+ 546         if (q<0).any() or (q>self.n//2).any():
+ 547             raise IndexError('rfft frequency index out of range')
+ 548         self.frequencies=q
+ 549         self._values=self.state.bins(q)
+ 550         self._version=self.state._mutations
+ 551         self.max_phase_entries=max(0,int(max_phase_entries))
+ 552         self._phases: OrderedDict[int,np.ndarray]=OrderedDict()
+ 553         self.events=0
+ 554 
+ 555     def _check(self):
+ 556         if self.state._mutations!=self._version:
+ 557             raise RuntimeError('TrackedBins.state mutated outside the tracked edit API')
+ 558 
+ 559     def _phase(self,p):
+ 560         phase=self._phases.get(p)
+ 561         if phase is not None:
+ 562             self._phases.move_to_end(p)
+ 563             return phase
+ 564         phase=np.exp(-2j*np.pi*((self.frequencies*p)%self.n)/self.n)
+ 565         if self.max_phase_entries:
+ 566             self._phases[p]=phase
+ 567             while len(self._phases)>self.max_phase_entries:
+ 568                 self._phases.popitem(last=False)
+ 569         return phase
+ 570 
+ 571     def edit(self,position,delta):
+ 572         self._check()
+ 573         p=int(position); d=float(delta)
+ 574         self.state.edit(p,d)
+ 575         self._values += d*self._phase(p)
+ 576         self._version=self.state._mutations
+ 577         self.events += 1
+ 578         return self
+ 579 
+ 580     def edit_many(self,changes):
+ 581         # Merge repeated positions within an event packet before updating bins.
+ 582         self._check()
+ 583         merged={}
+ 584         for p,d in changes:
+ 585             p=int(p); d=float(d)
+ 586             if not 0<=p<self.n or not math.isfinite(d):
+ 587                 raise ValueError('invalid edit')
+ 588             merged[p]=merged.get(p,0.0)+d
+ 589         for p,d in merged.items():
+ 590             if d: self.edit(p,d)
+ 591         return self
+ 592 
+ 593     def values(self,copy=True):
+ 594         self._check()
+ 595         out=self._values.copy() if copy else self._values.view()
+ 596         if not copy:
+ 597             out.flags.writeable=False
+ 598         return out
+ 599 
+ 600     def current_state(self):
+ 601         self._check()
+ 602         return self.state.fork()
+ 603 
+ 604 
+ 605 def subscribe(state: SpectralState, frequencies, **kwargs):
+ 606     return TrackedBins(state,frequencies,**kwargs)

@@ -1,0 +1,69 @@
+1: """Reproducible exact report: all-basis Fourier/chirp audit and random controls."""
+2: import json
+3: import random
+4: from pathlib import Path
+5: from chirp_exact import (P, make_chirp, dft_direct, dft_ntt, cyclic_convolution,
+6:                          chirp_dft_direct, variable_filter, modular_rank,
+7:                          matrix_lc_h, matrix_c_h, moment_matrix, cyclic_hankel,
+8:                          predicted_full_spectral_probability)
+9: 
+10: 
+11: def main():
+12:     rng = random.Random(20261009)
+13:     report = {'field_prime':P, 'seed':20261009,'convention':'positive DFT exponent',
+14:               'scope':'exact modulo P; powers of 2 with even N and 2N dividing P-1',
+15:               'interpretation':'algebraic and rank audit, no speedup claim','sizes':[]}
+16:     for n in (2,4,8,16,32,64):
+17:         c=make_chirp(n)
+18:         # Every basis vector checked, so the full matrix identity is checked.
+19:         for col in range(n):
+20:             basis=[0]*n;basis[col]=1
+21:             assert chirp_dft_direct(basis,c)==dft_direct(basis,c.omega)
+22:         gauss=sum(c.h)%P
+23:         assert gauss
+24:         spectrum=dft_ntt(c.h,c.omega)
+25:         assert spectrum==[gauss*v%P for v in c.d]
+26:         inv=[pow(a,P-2,P) for a in c.h]
+27:         assert cyclic_convolution(c.h,inv)==[n]+[0]*(n-1)
+28:         ch_rank=modular_rank(matrix_c_h(c))
+29:         lc_rank=modular_rank(matrix_lc_h(c))
+30:         m_rank=modular_rank(moment_matrix(c))
+31:         assert (ch_rank,lc_rank,m_rank)==(n,n-1,n)
+32:         cases=24
+33:         dense_filtered=0
+34:         full_recurrence=0
+35:         all_correct=True
+36:         for _ in range(cases):
+37:             x=[rng.randrange(P) for j in range(n)]
+38:             y=cyclic_convolution(x,c.h)
+39:             assert chirp_dft_direct(x,c)==dft_direct(x,c.omega)
+40:             assert dft_ntt(x,c.omega)==dft_direct(x,c.omega)
+41:             assert dft_ntt(y,c.omega)==dft_direct(y,c.omega)
+42:             filt=variable_filter(y,c)
+43:             dense_filtered+= (all(t!=0 for t in filt))
+44:             full_recurrence+= (modular_rank(cyclic_hankel(y))==n)
+45:         report['sizes'].append({
+46:             'n':n,'all_basis_columns_verified':n,'random_fresh_inputs_verified':cases,
+47:             'chirp_convolution_rank':ch_rank,'filtered_operator_rank':lc_rank,
+48:             'moment_matrix_rank':m_rank,'random_filters_all_nonzero':dense_filtered,
+49:             'random_outputs_full_periodic_recurrence_order':full_recurrence,
+50:             'probability_full_spectral_order_exact_formula':f'(1-1/{P})^{n}',
+51:             'probability_full_spectral_order_approx':predicted_full_spectral_probability(n),
+52:             'probability_filter_has_any_zero_at_most':n/P,
+53:             'dense_chirp_matvec_products':n*n,
+54:             'radix2_ntt_butterflies':(n//2)*(n.bit_length()-1),
+55:             'note':'NTT butterfly count does not include roots, additions and indexing',
+56:         })
+57:     report['totals']={
+58:         'basis_columns_checked':sum(r['all_basis_columns_verified'] for r in report['sizes']),
+59:         'fresh_random_vectors_checked':sum(r['random_fresh_inputs_verified'] for r in report['sizes']),
+60:         'random_filters_dense':sum(r['random_filters_all_nonzero'] for r in report['sizes']),
+61:         'random_outputs_full_periodic_order':sum(r['random_outputs_full_periodic_recurrence_order'] for r in report['sizes']),
+62:         'rank_certificates':len(report['sizes'])*3,
+63:     }
+64:     p=Path(__file__).with_name('audit_results.json')
+65:     p.write_text(json.dumps(report,indent=2)+'\n')
+66:     print(json.dumps(report,indent=2))
+67: 
+68: 
+69: if __name__=='__main__': main()

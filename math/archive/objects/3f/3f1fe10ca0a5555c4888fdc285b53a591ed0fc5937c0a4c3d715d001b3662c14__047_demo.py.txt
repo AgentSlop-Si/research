@@ -1,0 +1,32 @@
+"""Small executable examples of the new interfaces."""
+import numpy as np
+from scipy import fft
+from graph_reuse import KernelCosts, run_graph
+from relation_adapter import GraphRelationFFT
+from support_graph import CosetSpectrum, support_profile
+
+n=65536
+base=np.random.default_rng(37).normal(size=n)
+patches=[{}]
+for i in range(8):
+    p=dict(patches[-1]); p[7+19*i]=float(i+1); patches.append(p)
+outputs,plan,stats=run_graph(base,patches,[(i,i+1) for i in range(8)],costs=KernelCosts(1,1,100))
+for v,patch in enumerate(patches):
+    x=base.copy()
+    for p,d in patch.items():x[p]+=d
+    np.testing.assert_allclose(outputs[v],fft.rfft(x),atol=1e-8)
+print('Chain:',plan.corrected_coordinates,'point corrections; star would use',sum(map(len,patches)))
+
+changes={3+(n//64)*i:float(i+1) for i in range(64)}
+view=CosetSpectrum.from_changes(n,changes)
+print('Coset correction:',view.reduced_length,'complex values;',view.numeric_bytes,'numeric bytes')
+print('Selected correction bins:',view.frequencies([0,1,17]))
+
+engine=GraphRelationFFT()
+root=engine.register(base)
+state=root.fork()
+for p,d in changes.items():state.edit(p,d)
+np.testing.assert_allclose(engine.materialize_quotient(state),fft.rfft(state.signal()),atol=1e-8)
+print('Phase 5 adapter: verified')
+print('Equal-k dependency work:',support_profile(n,range(64)).dirty_output_cells,
+      support_profile(n,changes).dirty_output_cells)

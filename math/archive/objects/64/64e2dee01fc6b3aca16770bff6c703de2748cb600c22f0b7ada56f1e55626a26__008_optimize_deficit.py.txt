@@ -1,0 +1,38 @@
+from scipy.optimize import milp, LinearConstraint, Bounds
+import numpy as np, time, sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from central_partition import bitrev, primitive_root_of_unity, rank_mod
+
+def optimize(n,t=4,limit=40):
+ r=bitrev(n);groups={};orbits=[];seen=set()
+ for i in range(n):
+  if i not in seen:
+   g=sorted(set([i,r[i]]));seen.update(g);orbits.append(g)
+   for a in g:groups[a]=len(orbits)-1
+ h=len(orbits);v=h+(n-1)+1;z=v-1
+ mat=np.zeros((2*(n-1)+2,v))
+ for i in range(n-1):
+  u,w=groups[i],groups[i+1]
+  mat[2*i,u]-=1;mat[2*i,w]+=1;mat[2*i,h+i]+=1
+  mat[2*i+1,u]+=1;mat[2*i+1,w]-=1;mat[2*i+1,h+i]+=1
+ for j,G in enumerate(orbits):
+  mat[-2,j]=-len(G);mat[-1,j]=len(G)
+ mat[-2,z]=mat[-1,z]=1
+ ub=np.full(len(mat),np.inf);ub[-2]=0;ub[-1]=n
+ cons=[LinearConstraint(mat,np.zeros(len(mat)),ub)]
+ c=np.zeros(v);c[h:-1]=t;c[-1]=-1
+ low=np.zeros(v);up=np.ones(v);up[z]=n//2
+ s=time.time()
+ res=milp(c,integrality=np.ones(v),bounds=Bounds(low,up),constraints=cons,options={'time_limit':limit,'mip_rel_gap':0})
+ if res.x is None:return res
+ A=[i for i in range(n) if round(res.x[groups[i]])==0];B=[i for i in range(n) if round(res.x[groups[i]])==1]
+ d=sum(((i in A)!=(i+1 in A)) for i in range(n-1))
+ print('n',n,'status',res.message,'MIPgap',res.mip_gap,'opt possible fullrank excess',-res.fun,'size',len(A),len(B),'cut transitions',d,'time',round(time.time()-s,2),flush=True)
+ if n<=128:
+  p=65537;w=primitive_root_of_unity(n,p)
+  print('  F rank',rank_mod([[pow(w,a*b,p) for b in B] for a in A],p),'bound',t*d,flush=True)
+ print('  A',A,flush=True)
+ return res
+
+for n in (32,64,128): optimize(n,4,40)

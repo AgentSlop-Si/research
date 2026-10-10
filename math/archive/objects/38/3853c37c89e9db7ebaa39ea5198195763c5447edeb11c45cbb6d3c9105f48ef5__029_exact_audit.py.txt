@@ -1,0 +1,52 @@
+"""Independent small-instance audit over F_p[z]/(z^n-1).
+
+This intentionally slow oracle is not the production evaluator. It validates
+the algebraic rewrite without floating-point tolerances or numerical ranks.
+"""
+from fractions import Fraction
+
+
+def coefficient(value,p):
+    f=Fraction(float(value))
+    return (f.numerator*pow(f.denominator,-1,p))%p
+
+
+def circular(a,b,p):
+    n=len(a);out=[0]*n
+    for i,x in enumerate(a):
+        for j,y in enumerate(b):out[(i+j)%n]=(out[(i+j)%n]+x*y)%p
+    return out
+
+
+def evaluate(engine,root,p=257,memo=None):
+    if memo is None:memo={}
+    if root in memo:return memo[root]
+    nd=engine.nodes[root];n=engine.n
+    if nd.op=='seed':out=[coefficient(x,p) for x in engine._seeds[root]]
+    elif nd.op in ('const','impulse'):
+        out=[0]*n;out[nd.index if nd.op=='impulse' else 0]=coefficient(nd.scalar,p)
+    elif nd.op=='scale':
+        out=[x*coefficient(nd.scalar,p)%p for x in evaluate(engine,nd.args[0],p,memo)]
+    elif nd.op=='sum':
+        out=[0]*n
+        for child,w in zip(nd.args,nd.weights):
+            c=coefficient(w,p)
+            out=[(x+c*y)%p for x,y in zip(out,evaluate(engine,child,p,memo))]
+    elif nd.op=='product':
+        out=[coefficient(nd.scalar,p)]+[0]*(n-1)
+        for child in nd.args:out=circular(out,evaluate(engine,child,p,memo),p)
+    else:raise ValueError(nd.op)
+    memo[root]=out
+    return out
+
+
+def audit_witness(engine,w,p=257):
+    memo={}
+    left=evaluate(engine,w.left,p,memo);base=evaluate(engine,w.base,p,memo)
+    delta=evaluate(engine,w.correction,p,memo);right=evaluate(engine,w.right,p,memo)
+    return {
+        'left_equals_base_plus_correction':left==[(x+y)%p for x,y in zip(base,delta)],
+        'target_factorization':evaluate(engine,w.target,p,memo)==circular(left,right,p),
+        'cached_factorization':evaluate(engine,w.cached_product,p,memo)==circular(base,right,p),
+        'replacement_equals_target':evaluate(engine,w.replacement,p,memo)==evaluate(engine,w.target,p,memo),
+    }

@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Independent rational replay and alternate exhaustive anchor-cost check.
+Imports neither search implementation. Standard library only.
+"""
+from collections import Counter
+from fractions import Fraction as F
+from itertools import product
+from pathlib import Path
+import copy,json,time
+ROOT=Path(__file__).resolve().parent
+def synthetic_reference():
+    # Independent four-record, degree-two polynomial DIF construction.
+    # Do not read the target or stage routines from either search program.
+    records=[[[F(2*i+j==k) for k in range(8)] for j in range(2)] for i in range(4)]
+    for width in [4,2]:
+        before=records
+        records=[[v[:] for v in row] for row in before]
+        for base in range(0,4,width):
+            for j in range(width//2):
+                left,right=before[base+j],before[base+j+width//2]
+                records[base+j]=[[x+y for x,y in zip(a,b)] for a,b in zip(left,right)]
+                diff=[[x-y for x,y in zip(a,b)] for a,b in zip(left,right)]
+                shift=-(4//width)*j
+                moved=[None,None]
+                for source in range(2):
+                    quotient,destination=divmod(source+shift,2)
+                    moved[destination]=[(-1 if quotient%2 else 1)*x for x in diff[source]]
+                records[base+j+width//2]=moved
+    return [v for row in records for v in row]
+
+def expected(name):
+    if name.startswith('synthetic'):
+        return synthetic_reference()
+    n=4 if name.startswith('h4') else 8
+    return [[F((-1)**((i&j).bit_count())) for j in range(n)] for i in range(n)]
+
+def replay(c):
+    n=c['n_inputs']; want=expected(c['name'])
+    assert n==len(want) and len(c['outputs'])==n
+    assert [[F(v) for v in row] for row in c['target']]==want
+    vs=[[F(i==j) for j in range(n)] for i in range(n)]
+    ops=Counter();reads=Counter();overlap=0;cancels=0
+    for gate in c['gates']:
+        op=gate['op']; terms=gate['terms'];ops[op]+=1
+        assert op in ['add','double','half']
+        assert len(terms)==(2 if op=='add' else 1)
+        for index,sign in terms:
+            assert isinstance(index,int) and 0<=index<len(vs)
+            assert sign in [-1,1]
+            reads[index]+=1
+        if op=='add':
+            (a,sa),(b,sb)=terms
+            overlap+=int(any(x*y for x,y in zip(vs[a],vs[b])))
+            cancels+=int(any(sa*x*sb*y<0 for x,y in zip(vs[a],vs[b])))
+            v=[sa*x+sb*y for x,y in zip(vs[a],vs[b])]
+        else:
+            a,sa=terms[0];factor=F(2) if op=='double' else F(1,2)
+            v=[sa*factor*x for x in vs[a]]
+        vs.append(v)
+    out=[]
+    for a,s in c['outputs']:
+        assert 0<=a<len(vs) and s in [-1,1]
+        out.append([s*x for x in vs[a]])
+    assert out==want
+    norm=F(c['normalization'])
+    assert norm==(F(1,4) if c['name'].startswith('synthetic') else F(1))
+    return {'operations':dict(ops),'total_operations':sum(ops.values()),
+            'operand_reads':sum(reads.values()),'gate_result_writes':len(c['gates']),
+            'max_operand_fanout':max(reads.values()),
+            'overlapping_addition_gates':overlap,'opposite_sign_overlap_gates':cancels,
+            'max_intermediate_row_l1':str(max(sum(map(abs,v)) for v in vs)),
+            'max_abs_intermediate_coefficient':str(max(abs(x) for v in vs for x in v)),
+            'max_intermediate_denominator':max(x.denominator for v in vs for x in v),
+            'normalization':str(norm),'exact_target_verified':True}
+
+def alternate_min(rows,anchor):
+    # Fix permitted doubled-input mask, minimize each output independently,
+    # and pay smallest extra amount needed to force a cancelling coordinate.
+    n=len(anchor);cases=[]
+    for row in rows:
+        opts=[]
+        for sign in [-1,0,1]:
+            r=[x-sign*y for x,y in zip(row,anchor)]
+            mask=sum(1<<j for j,x in enumerate(r) if abs(x)==2)
+            adds=sum(bool(x) for x in r)-(sign==0)
+            opts.append((mask,adds,any(sign*a*b<0 for a,b in zip(anchor,r))))
+        cases.append(opts)
+    best=10**9
+    for mask in range(1<<n):
+        subtotal=0;delta=10**9
+        for opts in cases:
+            available=[(cost,used) for need,cost,used in opts if need&~mask==0]
+            rowmin=min(cost for cost,used in available)
+            subtotal+=rowmin
+            delta=min(delta,min((cost-rowmin for cost,used in available if used),default=10**9))
+        cost=sum(bool(x) for x in anchor)-1+mask.bit_count()+subtotal+delta
+        best=min(best,cost)
+    return best
+
+def check_family(summary):
+    rows=[[int(v) for v in row] for row in expected(summary['name'])];n=len(rows);hist=Counter()
+    for anchor in product([-1,0,1],repeat=n):
+        first=next((v for v in anchor if v),None)
+        if first!=1:continue
+        hist[alternate_min(rows,anchor)]+=1
+    assert sum(hist.values())==summary['anchors_enumerated']
+    assert dict(hist)=={int(k):v for k,v in summary['operation_histogram'].items()}
+    assert min(hist)==summary['minimum_total_operations_in_template']
+    return {'anchors_checked':sum(hist.values()),'min':min(hist),'histogram_verified':True}
+
+def policy_counts(name):
+    rows=[[int(v) for v in row] for row in expected(name)]
+    n=len(rows);total=0
+    for anchor in product([-1,0,1],repeat=n):
+        if next((v for v in anchor if v),0)!=1:continue
+        cheap=[];force=[]
+        for row in rows:
+            opts=[]
+            for mode in [-1,0,1]:
+                residual=[x-mode*y for x,y in zip(row,anchor)]
+                adds=sum(v!=0 for v in residual)-(mode==0)
+                doubles=sum(abs(v)==2 for v in residual)
+                opts.append((adds+doubles,adds,mode))
+            cheap.append(min(opts)[2]);force.append(min(q for q in opts if q[2])[2])
+        policies={tuple([0]*n),tuple(cheap),tuple(force),tuple(-v for v in force)}
+        for i in range(n):
+            modes=force[:];modes[i]=0;policies.add(tuple(modes))
+        total+=len(policies)
+    return total
+
+def must_fail(c):
+    try:replay(c)
+    except (AssertionError,IndexError,KeyError):return
+    raise AssertionError('corrupted certificate was accepted')
+
+if __name__=='__main__':
+    start=time.monotonic();result={}
+    summaries=json.loads((ROOT/'results/anchor_summary.json').read_text())
+    for s in summaries:
+        c=json.loads((ROOT/'results'/f"{s['name']}_certificate.json").read_text())
+        r=replay(c)
+        assert r['operations'].get('add',0)==s['additions']
+        assert r['operations'].get('double',0)==s['doublings']
+        assert r['total_operations']==s['minimum_total_operations_in_template']
+        r['independent_family_check']=check_family(s)
+        d=copy.deepcopy(c);d['outputs'][0][1]*=-1;must_fail(d)
+        d=copy.deepcopy(c);d['gates'][0]['terms'][0][0]=len(c['gates'])+c['n_inputs'];must_fail(d)
+        d=copy.deepcopy(c);d['gates'][0]['terms'][0][1]=2;must_fail(d)
+        r['three_corruption_checks_passed']=True
+        result[s['name']]=r
+        print(s['name'],r,flush=True)
+    for path in sorted((ROOT/'results').glob('*_certificate.json')):
+        c=json.loads(path.read_text())
+        # Cancelling heuristic certificates keep the same internal name.
+        key=path.name.removesuffix('_certificate.json')
+        if key in result:continue
+        result[key]=replay(c)
+        if 'cancelling' in key or 'known_cancellation' in key:
+            assert result[key]['opposite_sign_overlap_gates']>0
+        print(key,result[key],flush=True)
+    hs=json.loads((ROOT/'results/heuristic_summary.json').read_text())
+    for item in hs:
+        name=item['name']
+        for key,cost in [(name,item['best_cost']),(name+'_cancelling',item['best_cancelling_cost'])]:
+            r=result[key]
+            assert [r['total_operations'],r['operations'].get('add',0),r['operations'].get('double',0)]==cost
+        assert sum(item['operation_histogram'].values())==item['circuits_compiled']
+        assert min(map(int,item['operation_histogram']))==item['best_cost'][0]
+        assert result[name+'_cancelling']['opposite_sign_overlap_gates']==item['best_cancelling_gates']
+    assert result['synthetic_staged_baseline']['total_operations']==16
+    assert result['h4_known_cancellation']['operations']=={'add':7,'double':3}
+    assert result['h8_alman_rao_algorithm5']['operations']=={'double':7,'add':22,'half':1}
+    counts={name:policy_counts(name) for name in ['h4_cse','synthetic_cse']}
+    assert counts=={'h4_cse':299,'synthetic_cse':37144}
+    result['independent_heuristic_policy_counts']=counts
+    result['elapsed_seconds']=time.monotonic()-start
+    (ROOT/'results/audit_verification.json').write_text(json.dumps(result,indent=2))

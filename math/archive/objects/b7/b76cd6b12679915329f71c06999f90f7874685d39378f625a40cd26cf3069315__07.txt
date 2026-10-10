@@ -1,0 +1,120 @@
+   1 """Fresh finite-horizon/packet audit with deterministic table-driven frontiers."""
+   2 from independent_linear import *
+   3 from pathlib import Path
+   4 from fractions import Fraction
+   5 import json
+   6 
+   7 def automaton(n,b):
+   8  # Independent word counter by trailing-zero automaton, not b-step recurrence.
+   9  states=[1]+[0]*(b-1);counts=[1]
+  10  for t in range(n):states=[sum(states)]+states[:-1];counts.append(sum(states))
+  11  return counts
+  12 
+  13 def frontier(x,h,b,W,p):
+  14  N=len(x);n=N.bit_length()-1;mod=2**b
+  15  values=x[:];nxt=[0]*N;stamp=[-1]*N;active=[s for s in range(N) if s%mod];jets=[];contractions=[];sizes=[];edges=weighted=merges=firstvisits=0
+  16  for L in range(n+1):
+  17   jets.append([(s,values[s]) for s in active]);sizes.append(len(active));contractions.append(sum(h[s]*values[s] for s in active)%p)
+  18   if L==n:break
+  19   next_active=[]
+  20   for s in active:
+  21    for digit in [0,1]:
+  22     t=(2*s+digit)%N
+  23     if t%mod==0:continue
+  24     edges+=1
+  25     if stamp[t]!=L:stamp[t]=L;nxt[t]=0;next_active.append(t);firstvisits+=1
+  26     value=values[s]
+  27     if digit:value=value*W[s]%p;weighted+=1
+  28     nxt[t]=(nxt[t]+value)%p;merges+=1
+  29   values,nxt=nxt,values;active=next_active
+  30  return jets,contractions,{'sizes':sizes,'coefficient_slots':sum(sizes),'valid_edge_updates':edges,'weighted_multiplications':weighted,'merge_additions':merges,'new_target_initializations':firstvisits,'marker_multiplications':sum(sizes),'marker_additions':sum(sizes),'one_time_value_and_stamp_slots':3*N,'length_N_reinitializations_per_level':0}
+  31 
+  32 def check_jet(N,b,p):
+  33  n=N.bit_length()-1;w,W=root_table(N,p);r=list(range(0,N,2**b));e=[s for s in range(N) if s%2**b];Q=qmatrix(N,W,p);EE=block(Q,e,e)
+  34  x=[(13*s*s+19*s+7)%p for s in range(N)];h=[(5*s*s+11)%p for s in range(N)]
+  35  jets,marks,ledger=frontier(x,h,b,W,p);v=[x[s] for s in e];a=automaton(n,b);expected=[2**(n-min(n,b+L))*a[min(n,b+L)] for L in range(n+1)]
+  36  assert ledger['sizes']==expected
+  37  for L,items in enumerate(jets):
+  38   vals=dict(items);assert [vals.get(s,0) for s in e]==v;assert dot([h[s] for s in e],v,p)==marks[L]
+  39   d=min(n,b+L);mask=2**d-1;eligible=[s for s in range(N) if '0'*b not in format(s&mask,'0'+str(d)+'b')]
+  40   assert sorted(vals)==eligible
+  41   v=mv(EE,v,p)
+  42  S=sum(expected);assert S<=N*min(n+1,2**(b+1)-2) and 4*S>=N*min(n+1,2**b)
+  43  assert S==N*sum(Fraction(a[t],2**t) for t in range(b,n))+(b+1)*a[n]
+  44  if b==1:assert S==N
+  45  if b==n:assert S==(n+1)*(N-1)
+  46  basis=0
+  47  if N<=16:
+  48   for j in range(N):
+  49    xx=[int(s==j) for s in range(N)];jj,mmark,_=frontier(xx,h,b,W,p);dd=[xx[s] for s in e]
+  50    for L,items in enumerate(jj):
+  51     vals=dict(items);assert [vals.get(s,0) for s in e]==dd;assert mmark[L]==dot([h[s] for s in e],dd,p);dd=mv(EE,dd,p)
+  52    basis+=1
+  53  return {'N':N,'b':b,'p':p,'basis_controls':basis,'root_table_multiplications':N-1,'ledger':ledger}
+  54 
+  55 def packet(N,b,W,z,p):
+  56  m=N//2;r=N//2**b;P=[[0]*m for _ in range(m)];branches=[]
+  57  for a in range(b):
+  58   T=[[0]*m for _ in range(m)]
+  59   for j in range(m):T[(2**(a+1)*j+2**a)%m][j]=W[(2**a*(2*j+1))%N]
+  60   branches.append(T);P=add(P,T,p,pow(z,a+1,p))
+  61  V=[[0]*m for _ in range(r)];Wmap=[[0]*r for _ in range(m)]
+  62  for j in range(m):V[(2*j+1)%r][j]=1
+  63  for j in range(r):Wmap[(2**b*j)%m][j]=W[(2**b*j)%N]
+  64  return add(eye(m),P,p,-1),V,Wmap,branches
+  65 
+  66 def scalar_case(N,b,p,z):
+  67  w,W=root_table(N,p);Q=qmatrix(N,W,p);R=list(range(0,N,2**b));E=[s for s in range(N) if s%2**b];rr=len(R);ee=len(E)
+  68  QR=block(Q,R,R);RE=block(Q,R,E);ER=block(Q,E,R);EE=block(Q,E,E);D=add(eye(ee),EE,p,-z);DI=inverse(D,p)
+  69  P,V,Wmap,branches=packet(N,b,W,z,p);dp=det(P,p);dd=det(D,p);assert dd==dp
+  70  branchguards=[det(add(eye(N//2),T,p,-pow(z,a+1,p)),p) for a,T in enumerate(branches)]
+  71  full=add(eye(N),Q,p,-z);dfull=det(full,p)
+  72  row={'N':N,'b':b,'p':p,'z':z,'D_determinant':dd,'packet_determinant':dp,'full_determinant':dfull,'individual_branch_determinants':branchguards}
+  73  if DI is None:row['chart']='eliminated_zero';return row
+  74  PI=inverse(P,p);assert PI is not None
+  75  S=add(add(eye(rr),QR,p,-z),mm(mm(RE,DI,p),ER,p),p,-z*z)
+  76  S2=add(add(eye(rr),QR,p,-z),mm(mm(V,PI,p),Wmap,p),p,-pow(z,b+1,p));assert S==S2
+  77  assert det(full,p)==dd*det(S,p)%p
+  78  SI=inverse(S,p)
+  79  if SI is None:row['chart']='retained_zero';return row
+  80  x=[(s*s+13*s+5)%p for s in range(N)];h=[(17*s*s+9)%p for s in range(N)]
+  81  dx=mv(DI,[x[s] for s in E],p);rhs=[(x[s]+z*v)%p for s,v in zip(R,mv(RE,dx,p))];yr=mv(SI,rhs,p)
+  82  ye=mv(DI,[(x[s]+z*v)%p for s,v in zip(E,mv(ER,yr,p))],p);y=[0]*N
+  83  for s,v in zip(R,yr):y[s]=v
+  84  for s,v in zip(E,ye):y[s]=v
+  85  assert mv(full,y,p)==x
+  86  left=mm(DI,ER,p);marker=[(h[R[j]]+z*sum(h[E[i]]*left[i][j] for i in range(ee)))%p for j in range(rr)]
+  87  assert dot(h,y,p)==(dot([h[s] for s in E],dx,p)+dot(marker,yr,p))%p
+  88  row['chart']='guarded_solve';return row
+  89 
+  90 def count_only():
+  91  rows=[];total=0
+  92  for n in list(range(1,25))+[32,64,128,256,512]:
+  93   bs=range(1,n+1) if n<=24 else sorted(set([1,2,3,5,n.bit_length()-1,n]))
+  94   for b in bs:
+  95    N=2**n;a=automaton(n,b)
+  96    for t in range(n+1):assert a[t]==(2**t if t<b else sum(a[t-j] for j in range(1,b+1)))
+  97    S=sum(2**(n-min(n,b+L))*a[min(n,b+L)] for L in range(n+1));assert S<=N*min(n+1,2**(b+1)-2) and 4*S>=N*min(n+1,2**b)
+  98    # Rational generating-function value, including b=1.
+  99    numerator=sum(Fraction(1,2**j) for j in range(b));denominator=1-sum(Fraction(1,2**j) for j in range(1,b+1));assert numerator/denominator==2**(b+1)-2
+ 100    if b==1:assert S==N
+ 101    if b==n:assert S==(n+1)*(N-1) and sum(a)==2*N-2
+ 102    total+=1
+ 103    if n>=8 and b==n.bit_length()-1:rows.append({'n':n,'b':b,'S':S,'N':N,'ratio_numerator':S,'ratio_denominator':N*n})
+ 104  return {'exact_integer_cases':total,'loglog_scale_examples':rows}
+ 105 
+ 106 if __name__=='__main__':
+ 107  jets=[check_jet(N,b,p) for p in [257,65537] for N in [2,4,8,16,32,64,128] for b in range(1,N.bit_length())]
+ 108  scalar=[scalar_case(N,b,p,z) for p in [257,65537] for N in [2,4,8,16,32] for b in range(1,N.bit_length()) for z in [0,1,2]]
+ 109  for N in [8,16,32]:
+ 110   p=65537;w,_=root_table(N,p);scalar.append(scalar_case(N,1,p,w))
+ 111  # Search only a bounded exact control for the insufficiency of separate guards.
+ 112  badbranches=[]
+ 113  for N,b,p in [(4,2,17),(8,2,97),(8,3,97),(16,2,97)]:
+ 114   for z in range(1,p):
+ 115    c=scalar_case(N,b,p,z)
+ 116    if not c['D_determinant'] and all(c['individual_branch_determinants']):badbranches.append(c);break
+ 117  assert badbranches
+ 118  out={'status':'passed','constructor_code_executed':False,'jets':jets,'scalar_cases':scalar,'separate_branch_guard_counterexamples':badbranches,'count_only':count_only()}
+ 119  Path('VARIABLE_BLOCK_INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2,sort_keys=True)+'\n')
+ 120  print(json.dumps({'status':'passed','jet_cases':len(jets),'basis_controls':sum(c['basis_controls'] for c in jets),'guarded_solves':sum(c['chart']=='guarded_solve' for c in scalar),'scalar_guard_failures':[c for c in scalar if c['chart']!='guarded_solve'],'separate_guard_counterexamples':badbranches,'count_only_cases':out['count_only']['exact_integer_cases']},sort_keys=True))

@@ -1,0 +1,159 @@
+   1 """Benchmarks for deferred relation-aware spectrum state.
+   2 
+   3 All methods pay for the initial FFT.  Results are exploratory wall-clock
+   4 measurements, not complexity-theorem evidence.
+   5 """
+   6 from __future__ import annotations
+   7 import json, time
+   8 import numpy as np
+   9 try:
+  10     from scipy.fft import fft
+  11 except ImportError:
+  12     from numpy.fft import fft
+  13 
+  14 from lazy_spectrum import LazySpectrum, direct_sparse_correction
+  15 from hybrid_sparse import sparse_dft
+  16 
+  17 rng = np.random.default_rng(20261009)
+  18 
+  19 def timed(fn, reps=3):
+  20     vals=[]
+  21     out=None
+  22     for _ in range(reps):
+  23         t0=time.perf_counter_ns(); out=fn(); vals.append((time.perf_counter_ns()-t0)/1e6)
+  24     return float(np.median(vals)),out
+  25 
+  26 records=[]
+  27 
+  28 # A. Repeated edits at one known location, and only q bins consumed after each edit.
+  29 for n in [16384,65536,262144]:
+  30     updates=200
+  31     qcount=64
+  32     x0=rng.standard_normal(n)
+  33     loc=n//3
+  34     deltas=rng.normal(scale=0.05,size=updates)
+  35     bins=np.sort(rng.choice(n,size=qcount,replace=False))
+  36 
+  37     def fresh_fft_queries():
+  38         x=x0.copy(); out=None
+  39         base=fft(x)  # charged initial transform
+  40         for d in deltas:
+  41             x[loc]+=d
+  42             out=fft(x)[bins]
+  43         return out
+  44 
+  45     def eager_rank1_dense():
+  46         x=x0.copy()
+  47         cached=fft(x) # charged
+  48         k=np.arange(n,dtype=np.float64)
+  49         phase=np.exp((-2j*np.pi*loc/n)*k) # charged preparation
+  50         out=None
+  51         for d in deltas:
+  52             x[loc]+=d
+  53             cached=cached+d*phase
+  54             out=cached[bins]
+  55         return out
+  56 
+  57     def lazy_selected_bins():
+  58         x=x0.copy()
+  59         state=LazySpectrum.from_spectrum(fft(x)) # charged
+  60         out=None
+  61         for d in deltas:
+  62             x[loc]+=d
+  63             state.add_edit(loc,d)
+  64             out=state.bins(bins)
+  65         return out
+  66 
+  67     tf,of=timed(fresh_fft_queries,1)
+  68     te,oe=timed(eager_rank1_dense,1)
+  69     tl,ol=timed(lazy_selected_bins,1)
+  70     # independent truth, not included in timings
+  71     xx=x0.copy();xx[loc]+=float(np.sum(deltas)); truth=fft(xx)[bins]
+  72     assert np.allclose(of,truth,rtol=1e-9,atol=1e-7)
+  73     assert np.allclose(oe,truth,rtol=1e-9,atol=1e-7)
+  74     assert np.allclose(ol,truth,rtol=1e-9,atol=1e-7)
+  75     row=dict(case='fixed_location_partial_bins',n=n,updates=updates,bins=qcount,
+  76              fresh_fft_ms=tf,eager_dense_rank1_ms=te,lazy_ms=tl,
+  77              lazy_vs_fresh=tf/tl,lazy_vs_eager=te/tl)
+  78     records.append(row)
+  79     print('A',row)
+  80 
+  81 # B. Random-location metadata, partial queries every 10 edits, then one final dense flush.
+  82 for n in [16384,65536,262144]:
+  83     updates=128
+  84     query_every=16
+  85     qcount=64
+  86     x0=rng.standard_normal(n)+1j*rng.standard_normal(n)
+  87     locs=rng.choice(n,size=updates,replace=False)
+  88     deltas=rng.normal(scale=.05,size=updates)+1j*rng.normal(scale=.05,size=updates)
+  89     bins=np.sort(rng.choice(n,size=qcount,replace=False))
+  90 
+  91     def fresh_on_queries():
+  92         x=x0.copy(); base=fft(x); out=None
+  93         for i,(j,d) in enumerate(zip(locs,deltas),1):
+  94             x[j]+=d
+  95             if i%query_every==0: out=fft(x)[bins]
+  96         final=fft(x)
+  97         return out,final
+  98 
+  99     def lazy_with_final_flush():
+ 100         x=x0.copy(); state=LazySpectrum.from_spectrum(fft(x)); out=None
+ 101         for i,(j,d) in enumerate(zip(locs,deltas),1):
+ 102             x[j]+=d; state.add_edit(int(j),complex(d))
+ 103             if i%query_every==0: out=state.bins(bins)
+ 104         final,plan=state.materialize(method='auto')
+ 105         return out,final,plan.method
+ 106 
+ 107     tf,of=timed(fresh_on_queries,1)
+ 108     tl,ol=timed(lazy_with_final_flush,1)
+ 109     xx=x0.copy();xx[locs]+=deltas; truth=fft(xx)
+ 110     assert np.allclose(of[1],truth,rtol=1e-9,atol=1e-7)
+ 111     assert np.allclose(ol[1],truth,rtol=1e-9,atol=1e-7)
+ 112     row=dict(case='random_locations_partial_then_dense',n=n,updates=updates,
+ 113              query_every=query_every,bins=qcount,fresh_fft_ms=tf,lazy_ms=tl,
+ 114              speedup=tf/tl,dense_flush_method=ol[2])
+ 115     records.append(row)
+ 116     print('B',row)
+ 117 
+ 118 # C. Dense-flush crossover: direct sparse phase sum vs grouped factorization vs fresh FFT(delta).
+ 119 for n in [65536,262144]:
+ 120     for k in [1,4,16,64,256]:
+ 121         if k>n: continue
+ 122         locs=rng.choice(n,size=k,replace=False)
+ 123         vals=rng.normal(size=k)+1j*rng.normal(size=k)
+ 124         edits={int(j):complex(v) for j,v in zip(locs,vals)}
+ 125         sparse=np.zeros(n,dtype=np.complex128); sparse[locs]=vals
+ 126         td,od=timed(lambda: direct_sparse_correction(n,edits),1)
+ 127         th,oh=timed(lambda: sparse_dft(n,edits.items()),1)
+ 128         tf,of=timed(lambda: fft(sparse),1)
+ 129         assert np.allclose(od,of,rtol=1e-9,atol=1e-7)
+ 130         assert np.allclose(oh,of,rtol=1e-9,atol=1e-7)
+ 131         row=dict(case='dense_flush_crossover',n=n,k=k,direct_ms=td,factorized_ms=th,fresh_sparse_fft_ms=tf,
+ 132                  best=min((td,'direct'),(th,'factorized'),(tf,'fresh_sparse_fft'))[1])
+ 133         records.append(row)
+ 134         print('C',row)
+ 135 
+ 136 # D. Low-rank + sparse, selected bins only.
+ 137 for n in [65536,262144]:
+ 138     r=4;k=64;qcount=64
+ 139     basis_time=rng.standard_normal((r,n))
+ 140     basis_spec=fft(basis_time,axis=1)
+ 141     coeff=rng.normal(size=r)
+ 142     locs=rng.choice(n,size=k,replace=False)
+ 143     vals=rng.normal(size=k)
+ 144     edits=list(zip(locs.tolist(),vals.tolist()))
+ 145     bins=np.sort(rng.choice(n,size=qcount,replace=False))
+ 146 
+ 147     def eager():
+ 148         dense=np.einsum('r,rn->n',coeff,basis_spec)
+ 149         corr=direct_sparse_correction(n,{int(j):complex(v) for j,v in edits})
+ 150         return (dense+corr)[bins]
+ 151     def lazy():
+ 152         s=LazySpectrum.from_basis(basis_spec,coeff,edits=edits)
+ 153         return s.bins(bins)
+ 154     te,oe=timed(eager,1);tl,ol=timed(lazy,1)
+ 155     assert np.allclose(oe,ol,rtol=1e-9,atol=1e-7)
+ 156     row=dict(case='low_rank_sparse_partial_bins',n=n,r=r,k=k,bins=qcount,eager_dense_ms=te,lazy_ms=tl,speedup=te/tl)
+ 157     records.append(row);print('D',row)
+ 158 
+ 159 with open('benchmark_lazy_results.json','w') as f:json.dump(records,f,indent=2)

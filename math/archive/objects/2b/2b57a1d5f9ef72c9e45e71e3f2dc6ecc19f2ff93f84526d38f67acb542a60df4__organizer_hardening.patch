@@ -1,0 +1,106 @@
+--- a/view_optimizer.py
++++ b/view_optimizer.py
+@@ -297,16 +297,25 @@
+ 
+     def _replay_group(self, g: SpectralGroup) -> None:
+         assert g.cached is not None
+-        for ver,kind,key,delta in self.store.events:
+-            if ver <= g.version: continue
++        # Inspect only the missing suffix, then preserve chronological floating-
++        # point accumulation order. A dormant consumer may retain a long log.
++        suffix = []
++        for event in reversed(self.store.events):
++            if event[0] <= g.version: break
++            suffix.append(event)
++        for ver,kind,key,delta in reversed(suffix):
+             if kind == 'c':
+                 g.cached += delta * self.store.projection[key, g.indices]
+             else:
+                 g.cached += delta * self.store._phase_view(key, g.indices)
+ 
+-    def _publish_group(self, g: SpectralGroup, backlog: int, strategy: str) -> None:
++    def _publish_group(self, g: SpectralGroup, backlog: int, strategy: str,
++                       requested: str | None = None) -> None:
+         assert g.cached is not None
+-        for name in g.members:
++        # Refreshes publish every member once. A same-version hit needs only
++        # the requested output, not another copy of the entire group.
++        names = g.members if requested is None else (requested,)
++        for name in names:
+             v = self.store.views[name]
+             v.cached = np.ascontiguousarray(g.cached[g.take[name]])
+             v.version = self.store.version
+@@ -318,7 +327,7 @@
+         if g.cached is not None and g.version == current:
+             g.cache_hits += 1; self.stats.group_cache_hits += 1
+             g.strategy = 'group_cached'; g.uses += 1; self.stats.group_queries += 1
+-            self._publish_group(g, 0, 'group_cached')
++            self._publish_group(g, 0, 'group_cached', requested=requested)
+             return self.store.views[requested].cached.copy()
+ 
+         H = current - g.version if g.cached is not None else current + 1
+--- a/tests/test_optimizer_hardening.py
++++ b/tests/test_optimizer_hardening.py
+@@ -0,0 +1,62 @@
++import collections
++import unittest
++import numpy as np
++from multi_view import SharedProjectedFourierStore
++from view_optimizer import AdaptiveSpectralOrganizer
++
++
++class CountDeque(collections.deque):
++    visited = 0
++    def __iter__(self):
++        for row in super().__iter__():
++            self.visited += 1
++            yield row
++    def __reversed__(self):
++        for row in super().__reversed__():
++            self.visited += 1
++            yield row
++
++
++class TestOptimizerHardening(unittest.TestCase):
++    def make(self, consumers=2, q=1, rank=4):
++        views = {str(i): list(range(q)) for i in range(consumers)}
++        st = SharedProjectedFourierStore(max(8,q), list(range(q)),
++                np.ones((rank,q)), views, promote_after=None)
++        org = AdaptiveSpectralOrganizer(st, min_history=2,
++                replan_every=100000, replan_min_updates=100000)
++        for history in org.history.values(): history.extend([0,1])
++        org.replan()
++        self.assertEqual(len(org.groups), 1)
++        return st, org
++
++    def test_group_replay_inspects_only_missing_suffix(self):
++        st, org = self.make()
++        for _ in range(10000): org.add_coefficient(0, 1)
++        org.query('0')
++        st.events = CountDeque(st.events)
++        org.add_coefficient(0, 1)
++        self.assertEqual(org.query('0')[0], 10001)
++        self.assertLessEqual(st.events.visited, 2)
++        self.assertEqual(next(iter(org.groups.values())).strategy, 'group_replay')
++
++    def test_group_suffix_replay_preserves_chronological_order(self):
++        st, org = self.make()
++        for delta in (1e16, -1e16, 1): org.add_coefficient(0, delta)
++        self.assertEqual(org.query('0')[0], 1)
++        self.assertEqual(next(iter(org.groups.values())).strategy, 'group_replay')
++
++    def test_group_cache_hit_publishes_only_requested_member(self):
++        st, org = self.make(consumers=32, q=8)
++        org.add_coefficient(0, 2)
++        org.query('0')
++        old = {name: view.cached for name, view in st.views.items()}
++        got = org.query('0')
++        replaced = [name for name in st.views if st.views[name].cached is not old[name]]
++        self.assertEqual(replaced, ['0'])
++        np.testing.assert_array_equal(got, np.full(8, 2))
++        got[:] = 12345
++        np.testing.assert_array_equal(org.query('0'), np.full(8, 2))
++        np.testing.assert_array_equal(org.query('31'), np.full(8, 2))
++
++
++if __name__ == '__main__': unittest.main()

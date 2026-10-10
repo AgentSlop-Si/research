@@ -1,0 +1,80 @@
+"""Integer/rational proof checker for an exact F8 local-existence certificate.
+No floating calculation contributes to any asserted inequality.
+"""
+from pathlib import Path
+from fractions import Fraction as Fr
+from math import isqrt
+import json
+D=json.loads(Path(__file__).with_name('CANDIDATE_DATA.json').read_text());n=8
+assert D['N']==8 and D['stages']==3 and D['permutation']==[0,4,2,6,1,5,3,7]
+p=D['permutation'];Q=2**D['center_bits'];R=2**D['inverse_bits'];z=[tuple(a) for a in D['center']];cols=D['selected_columns'];Bn=[[tuple(a) for a in row] for row in D['approximate_inverse']]
+assert len(z)==120 and len(cols)==64 and len(set(cols))==64 and all(0<=k<120 for k in cols)
+assert len(Bn)==64 and all(len(row)==64 for row in Bn)
+assert all(isinstance(x,int) for a in z for x in a)
+zero=(0,0)
+def add(a,b):return (a[0]+b[0],a[1]+b[1])
+def mul(a,b):return (a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0])
+def sc(a,k):return (a[0]*k,a[1]*k)
+def norm(a):return abs(a[0])+abs(a[1])
+def eye(n):return [[(int(i==j),0) for j in range(n)] for i in range(n)]
+def mm(a,b):
+ out=[]
+ for row in a:
+  rr=[]
+  for col in zip(*b):
+   real=imag=0
+   for (ar,ai),(br,bi) in zip(row,col):real+=ar*br-ai*bi;imag+=ar*bi+ai*br
+   rr.append((real,imag))
+  out.append(rr)
+ return out
+q=[[z[s*40+k*8:s*40+(k+1)*8] for k in range(5)] for s in range(3)]
+S=[]
+for s in range(3):
+ A=[]
+ for i in range(n):
+  A.append([sc(q[s][4][i],Q) if i==j else mul(q[s][0][i],q[s][1][j]) if i>j else mul(q[s][2][i],q[s][3][j]) for j in range(n)])
+ S.append(A)
+pre=[eye(n),[S[0][i] for i in p],None];temp=mm(S[1],pre[1]);pre[2]=[temp[i] for i in p]
+post=[None,[[row[i] for i in p] for row in S[2]],eye(n)];temp=mm(post[1],S[1]);post[0]=[[row[i] for i in p] for row in temp]
+Fn=mm(S[2],pre[2]);Q6=Q**6
+Jn=[[zero for _ in range(64)] for _ in range(64)]
+for c,idx in enumerate(cols):
+ s=idx//40;k=(idx%40)//8;l=idx%8;ds=[[zero for _ in range(n)] for _ in range(n)]
+ for i in range(n):
+  for j in range(n):
+   if k==0 and i==l and i>j:ds[i][j]=q[s][1][j]
+   elif k==1 and j==l and i>j:ds[i][j]=q[s][0][i]
+   elif k==2 and i==l and i<j:ds[i][j]=q[s][3][j]
+   elif k==3 and j==l and i<j:ds[i][j]=q[s][2][i]
+   elif k==4 and i==j==l:ds[i][j]=(Q,0)
+ der=mm(mm(post[s],ds),pre[s])
+ for i in range(n):
+  for j in range(n):Jn[i*n+j][c]=der[i][j]
+# Jn/Q^5 is exact derivative. Bn/R is an exact rational approximate inverse.
+BJ=mm(Bn,Jn);den=R*Q**5
+eta=Fr(max(sum(norm((den*int(i==j)-BJ[i][j][0],-BJ[i][j][1])) for j in range(64)) for i in range(64)),den)
+Bnorm=Fr(max(sum(norm(a) for a in row) for row in Bn),R)
+# Exact normalized F8 coordinates: signed 1/4 or signed sqrt(2)/4.
+T=2**100;h=isqrt(2*T*T);assert h*h<=2*T*T<(h+1)*(h+1)
+# (rational coefficient, sqrt2 coefficient) for real and imaginary parts, all over4.
+units=[((0,1),(0,0)),((1,0),(1,0)),((0,0),(0,1)),((-1,0),(1,0)),((0,-1),(0,0)),((-1,0),(-1,0)),((0,0),(0,-1)),((1,0),(-1,0))]
+fnumer=[]
+for i in range(n):
+ for j in range(n):
+  errors=[]
+  for value,(a,b) in zip(Fn[i][j],units[(i*j)%8]):
+   u=4*T*value-a*T*Q6-b*h*Q6;v=4*T*value-a*T*Q6-b*(h+1)*Q6
+   errors.append(max(abs(u),abs(v)))
+  fnumer.append(sum(errors))
+fbound=Fr(max(fnumer),4*T*Q6);beta=Bnorm*fbound
+M=(max(norm(a) for a in z)+Q-1)//Q+1
+# Every matrix entry is a sum of N^2 monomials of degree at most6.
+# On radius<=1 around the center every parameter has complex l1 norm<=M.
+# The second derivative infinity-operator norm is bounded by30*N^2*M^4.
+H=30*n*n*M**4;L=Bnorm*H;r=Fr(1,2**30)
+contraction=eta+L*r;selfmap=beta+eta*r+L*r*r/2
+assert eta<1 and r<=1 and contraction<1 and selfmap<r
+out={'all_exact_checks_passed':True,'norm':'max coordinate complex l1 norm; row-sum complex l1 induced bound','center_bits':D['center_bits'],'inverse_bits':D['inverse_bits'],'selected_complex_variables':64,'frozen_complex_variables':56,'parameter_bound_M':M,'Hessian_bound':H,'inequalities':{}}
+for name,x in [('f_residual_bound',fbound),('B_norm',Bnorm),('beta',beta),('eta',eta),('L',L),('radius',r),('contraction_bound',contraction),('selfmap_bound',selfmap)]:out['inequalities'][name]={'numerator':x.numerator,'denominator':x.denominator,'display_approximation':float(x)}
+Path(__file__).with_name('EXACT_CERTIFICATE_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+print(json.dumps({k:v['display_approximation'] for k,v in out['inequalities'].items()},indent=2));print('EXACT CONTRACTION CERTIFICATE PASSES')

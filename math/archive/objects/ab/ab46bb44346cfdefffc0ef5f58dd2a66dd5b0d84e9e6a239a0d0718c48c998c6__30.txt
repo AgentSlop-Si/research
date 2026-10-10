@@ -1,0 +1,97 @@
+   1 """Optimized support suppression gate for two quasiseparable stages.
+   2 S can be ANY coordinate subset containing J=pi(I), not just interval hull.
+   3 Do not claim pass implies existence.
+   4 """
+   5 from subset_gate import modrank,fourier_matrix,apply_perm_mask
+   6 from itertools import combinations,permutations
+   7 from collections import Counter
+   8 
+   9 
+  10 def gamma(S,J,n,cup=1,cdown=1):
+  11     assert J & S == J
+  12     g=0;i=0
+  13     while i<n:
+  14         if (S>>i)&1: i+=1;continue
+  15         lo=i
+  16         while i<n and not((S>>i)&1):i+=1
+  17         hi=i-1
+  18         if any((J>>j)&1 for j in range(lo)):g+=cdown
+  19         if any((J>>j)&1 for j in range(hi+1,n)):g+=cup
+  20     return g
+  21 
+  22 
+  23 def bc_window(u,v,n,bup=1,bdown=1):
+  24     return (u>0)*bup+(v<n-1)*bdown
+  25 
+  26 
+  27 def all_m_rank(n,p=12289,M=None):
+  28     M=fourier_matrix(n,p) if M is None else M
+  29     mask_cols = [tuple(k for k in range(n) if j>>k&1) for j in range(1<<n)]
+  30     mask_rows = [tuple(k for k in range(n) if not(i>>k&1)) for i in range(1<<n)]
+  31     # m rank where I represents missing row window, S retained C support
+  32     mr={}
+  33     for I in range(1,1<<n):
+  34         rowset=mask_rows[I]
+  35         for S in range(1<<n):
+  36             colset=mask_cols[S]
+  37             mr[I,S]=modrank([[M[k][j] for j in colset] for k in rowset],p) if rowset and colset else 0
+  38     return mr
+  39 
+  40 
+  41 def best_scores(n,mr,cup=1,cdown=1):
+  42     # window I only; all J size t, optimize S superset J
+  43     ans={};arg={}
+  44     ALL=(1<<n)-1
+  45     for u in range(n):
+  46         for v in range(u,n):
+  47             t=v-u+1
+  48             I=sum(1<<k for k in range(u,v+1))
+  49             bcost=bc_window(u,v,n)
+  50             for J in range(1<<n):
+  51                 if J.bit_count()!=t:continue
+  52                 gaps=ALL^J
+  53                 sub=gaps
+  54                 best=-10**6; support=None; best_rank=None
+  55                 while True:
+  56                     S=J|sub
+  57                     r=mr[I,S]
+  58                     score=t-S.bit_count()+r-gamma(S,J,n,cup,cdown)
+  59                     if score>best: best=score;support=S;best_rank=r
+  60                     if sub==0:break
+  61                     sub=(sub-1)&gaps
+  62                 ans[I,J]=(best,bcost)
+  63                 arg[I,J]=(support,best_rank)
+  64     return ans,arg
+  65 
+  66 
+  67 def screen(n,ans):
+  68     stats=Counter(); ex=None;oldw=None
+  69     from prior_window_gate import check_windows
+  70     for pi in permutations(range(n)):
+  71         old=not check_windows(pi)
+  72         new=True;bad=None
+  73         for u in range(n):
+  74             I=0;J=0
+  75             for v in range(u,n):
+  76                 I|=1<<v;J|=1<<pi[v]
+  77                 required,budget=ans[I,J]
+  78                 if required>budget:
+  79                     new=False;bad=(I,J,required,budget);break
+  80             if not new:break
+  81         stats[old,new]+=1
+  82         if old and not new and ex is None:ex=(pi,bad)
+  83         if not old and new and oldw is None:oldw=(pi,bad)
+  84     return dict(stats),ex,oldw
+  85 
+  86 if __name__=='__main__':
+  87     import time,json
+  88     start=time.monotonic()
+  89     n=8;mr=all_m_rank(n)
+  90     print('ranks:',len(mr),'seconds',round(time.monotonic()-start,2),flush=True)
+  91     scores,arg=best_scores(n,mr)
+  92     print('scores:',len(scores),'seconds',round(time.monotonic()-start,2),flush=True)
+  93     st,ex,oldw=screen(n,scores)
+  94     print('counts',st,'new w',ex,'old w',oldw,'seconds',round(time.monotonic()-start,2),flush=True)
+  95     if ex:
+  96         pi,(I,J,v,b)=ex
+  97         print('witness supporting set',arg[I,J])

@@ -1,0 +1,202 @@
+"""Hero #17 continuation: exact delta-graph Fourier transform.
+
+N=Q*M, omega primitive N-th root in F_p.  The first row of the
+Q-by-M polyphase array is arbitrary and may have a dense spectrum.
+Each following row is either a new arbitrary anchor (at most B anchors),
+or a row whose *difference* from the previous row has <=r Fourier
+characters of order M.  Discover this from RAW input, with full checks.
+
+The output is the exact N-point DFT in
+    O_r(N + B*(M**2+N) + E*Q),
+where E<=r(Q-B). With B,r constant and Q,M=Theta(sqrt N) this is O(N).
+All phase preparation and modular inversions are charged; no NTT is used.
+A nonrecognized arbitrary input returns None, never a wrong spectrum.
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Optional, Sequence
+from math import isqrt
+from fiber_union import _solve_modes_fast, _direct_modes
+import phase_union_general as phase
+
+
+@dataclass(frozen=True)
+class DenseAnchor:
+    first: int
+    last: int
+    spectrum: tuple[int, ...]  # dense DFT_M(row_first), unnormalized
+
+
+@dataclass(frozen=True)
+class EdgeEvent:
+    at: int
+    last: int
+    h: int
+    amplitude: int  # difference in ROW is amplitude * eta^(h*u)
+
+
+@dataclass(frozen=True)
+class DeltaCertificate:
+    n: int
+    q: int
+    m: int
+    p: int
+    omega: int
+    r_bound: int
+    max_anchors: int
+    anchors: tuple[DenseAnchor, ...]
+    events: tuple[EdgeEvent, ...]
+    reset_positions: tuple[int, ...]
+
+
+def balanced_q(n: int, bound: int = 4)-> Optional[int]:
+    """Seek a balanced divisor in O(sqrt N) divisibility tests."""
+    if bound < 1: raise ValueError('bound>=1 required')
+    for q in range(isqrt(n), 0, -1):
+        if n%q==0 and (n//q)**2 <= bound*n and q*q<=bound*n:
+            return q
+    return None
+
+
+def direct_row_dft(row: Sequence[int], p: int, subroots: Sequence[int])->tuple[int, ...]:
+    """An explicitly charged O(M^2) DFT; not a hidden FFT."""
+    m=len(row)
+    return tuple(sum(row[u]*subroots[(-u*h)%m] for u in range(m))%p for h in range(m))
+
+
+def recognize(x:Sequence[int], p:int, omega:int, r:int=1,
+              max_anchors:int=1, q: Optional[int]=None,
+              balance_bound:int=4)->Optional[DeltaCertificate]:
+    n=len(x)
+    if n<1 or r<1 or max_anchors<1 or balance_bound<1:
+        raise ValueError('n,r,max_anchors,balance_bound must be positive')
+    q=balanced_q(n,balance_bound) if q is None else q
+    if q is None:return None
+    if not (1<=q<=n and n%q==0):raise ValueError('q must divide n')
+    m=n//q
+    if m*m>balance_bound*n or q*q>balance_bound*n:
+        raise ValueError('chosen factorization is not balanced')
+    roots=phase.phase_table(n,p,omega)
+    subroots=phase.phase_table(m,p,roots[q%n])
+    x=list(z%p for z in x)
+    first=tuple(x[q*u] for u in range(m))
+    anchors=[]
+    edges=[]
+    reset_positions=[0]
+    anchor_at=0
+    anchor_spec=direct_row_dft(first,p,subroots)
+    prev=first
+    for t in range(1,q):
+        current=tuple(x[t+q*u] for u in range(m))
+        delta=tuple((current[u]-prev[u])%p for u in range(m))
+        modes=(_direct_modes(delta,p,subroots,r) if m<3*r
+               else _solve_modes_fast(delta,subroots,p,r))
+        if modes is None:
+            if len(reset_positions)>=max_anchors:
+                return None
+            anchors.append(DenseAnchor(anchor_at,t-1,anchor_spec))
+            anchor_at=t
+            anchor_spec=direct_row_dft(current,p,subroots)
+            reset_positions.append(t)
+        else:
+            for h,c in modes:
+                edges.append(EdgeEvent(t,-1,h,c)) # end filled after grouping
+        prev=current
+    anchors.append(DenseAnchor(anchor_at,q-1,anchor_spec))
+    # close the life span of each delta at the end of its own anchor segment
+    ends=[0]*q
+    for seg in anchors:
+        for t in range(seg.first,seg.last+1):ends[t]=seg.last
+    edges=[EdgeEvent(event.at,ends[event.at],event.h,event.amplitude) for event in edges]
+    return DeltaCertificate(n,q,m,p,omega,r,max_anchors,tuple(anchors),
+                            tuple(edges),tuple(reset_positions))
+
+
+def batch_inverse_nonzero_phase_differences(roots:Sequence[int],p:int)->list[int]:
+    """For k!=0, obtain (1-omega^(-k))^-1 with O(N) mul + ONE inversion.
+
+    Valid because primitive omega^k != 1 for 0<k<N.
+    """
+    n=len(roots)
+    inv=[0]*n
+    if n==1:return inv
+    prefix=[1]*n
+    for k in range(1,n):
+        denominator=(1-roots[(-k)%n])%p
+        if not denominator:raise ValueError('non-primitive root')
+        prefix[k]=prefix[k-1]*denominator%p
+    value=pow(prefix[-1],-1,p)
+    for k in range(n-1,0,-1):
+        denominator=(1-roots[(-k)%n])%p
+        inv[k]=value*prefix[k-1]%p
+        value=value*denominator%p
+    return inv
+
+
+def transform_certified(cert:DeltaCertificate, with_counters:bool=False):
+    """Exact unnormalized DFT_N, no FFT/NTT inside.
+
+    Adds baseline interval kernels and delta-edge suffix kernels.
+    Full N writes + B*N dense updates + E*Q event updates.
+    """
+    n,q,m,p=cert.n,cert.q,cert.m,cert.p
+    roots=phase.phase_table(n,p,cert.omega)
+    inv=batch_inverse_nonzero_phase_differences(roots,p)
+    out=[0]*n
+    dense_updates=0
+    event_updates=0
+
+    def geometric_interval(a:int,b:int,k:int)->int:
+        if k==0:return b-a+1
+        return (roots[(-k*a)%n]-roots[(-k*(b+1))%n])*inv[k]%p
+
+    for seg in cert.anchors:
+        for h,C in enumerate(seg.spectrum):
+            if not C:continue
+            for s in range(q):
+                k=h+m*s
+                out[k]=(out[k]+C*geometric_interval(seg.first,seg.last,k))%p
+                dense_updates+=1
+    for edge in cert.events:
+        for s in range(q):
+            k=edge.h+m*s
+            value=m*edge.amplitude*geometric_interval(edge.at,edge.last,k)
+            out[k]=(out[k]+value)%p
+            event_updates+=1
+    if with_counters:
+        return out,{'n':n,'q':q,'m':m,'anchors':len(cert.anchors),
+                    'delta_events':len(cert.events),
+                    'dense_frequency_updates':dense_updates,
+                    'event_frequency_updates':event_updates,
+                    'total_frequency_updates':dense_updates+event_updates,
+                    'dense_anchor_direct_ops_bound':len(cert.anchors)*m*m,
+                    'phase_preparation_O_n':True}
+    return out
+
+
+def transform_if_recognized(x:Sequence[int],p:int,omega:int,r:int=1,
+                            max_anchors:int=1,q:Optional[int]=None,
+                            balance_bound:int=4):
+    cert=recognize(x,p,omega,r,max_anchors,q,balance_bound)
+    return (None,None) if cert is None else (transform_certified(cert),cert)
+
+
+def make_delta_signal(n:int,p:int,omega:int,q:int,
+                      baseline:Sequence[int], changes:Sequence[Sequence[tuple[int,int]]],
+                      resets:Optional[dict[int,Sequence[int]]]=None)->list[int]:
+    """TEST-ONLY constructor; the recognizer receives just raw x."""
+    if n%q:raise ValueError('q divides n')
+    m=n//q
+    if len(baseline)!=m or len(changes)!=q:raise ValueError('bad dimensions')
+    eta=pow(omega,q,p)
+    powtab=phase.phase_table(m,p,eta)
+    previous=[int(z)%p for z in baseline]
+    x=[0]*n
+    resets=resets or {}
+    for t in range(q):
+        if t in resets:previous=[z%p for z in resets[t]]
+        elif t:
+            previous=[(previous[u]+sum(c*powtab[(h*u)%m]
+                       for h,c in changes[t]))%p for u in range(m)]
+        for u,z in enumerate(previous):x[t+q*u]=z
+    return x

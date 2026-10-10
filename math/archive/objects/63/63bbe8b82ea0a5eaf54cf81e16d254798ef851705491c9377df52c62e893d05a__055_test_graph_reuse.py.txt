@@ -1,0 +1,260 @@
+"""Independent algebra, graph optimality, numerical, and failure-path checks."""
+import itertools
+import unittest
+
+import numpy as np
+from scipy import fft
+
+from support_graph import (CosetSpectrum, coset_parameters, direct_update,
+    normalize_changes, pruned_dft, quotient_update, support_profile)
+from graph_reuse import (Edge, KernelCosts, Plan, RelationBatch, build_edges,
+    execute_plan, minimum_spanning_plan, run_graph, verify_minimum_spanning_plan)
+
+
+def brute_tree_minimum(vertices, edges):
+    """Exhaustive subsets, independently of Kruskal's greedy rule."""
+    best = float("inf")
+    for chosen in itertools.combinations(edges, vertices):
+        reached = {-1}
+        while True:
+            more = set(reached)
+            for e in chosen:
+                if e.u in reached: more.add(e.v)
+                if e.v in reached: more.add(e.u)
+            if more == reached: break
+            reached = more
+        if len(reached) == vertices + 1:
+            best = min(best, sum(e.cost for e in chosen))
+    return best
+
+
+class FourierGraphTests(unittest.TestCase):
+    def test_coset_full_and_selected_outputs(self):
+        rng = np.random.default_rng(815)
+        for n in [1, 2, 3, 4, 7, 12, 32, 63, 128, 1000, 4096]:
+            for stride in [g for g in range(1, min(n, 64) + 1) if n % g == 0] + [n]:
+                residue = int(rng.integers(stride))
+                positions = np.arange(residue, n, stride)
+                values = rng.normal(size=positions.size)
+                dense = np.zeros(n)
+                dense[positions] = values
+                compressed = CosetSpectrum.from_changes(n, zip(positions, values))
+                np.testing.assert_allclose(compressed.materialize(), fft.rfft(dense), atol=3e-10, rtol=3e-11)
+                np.testing.assert_allclose(compressed.materialize(real_half=False), fft.fft(dense), atol=3e-10, rtol=3e-11)
+                qs = [0, n-1, n//2, 0]
+                np.testing.assert_allclose(compressed.frequencies(qs), fft.fft(dense)[qs], atol=3e-10, rtol=3e-11)
+                self.assertEqual(compressed.frequencies([]).size, 0)
+
+    def test_exact_coset_identity_all_ternary_vectors_length8(self):
+        # Positive-sign finite-field analogue, computed with Python integers.
+        n, prime = 8, 17
+        root = pow(3, (prime-1)//n, prime)
+        self.assertEqual(pow(root, n, prime), 1)
+        self.assertNotEqual(pow(root, n//2, prime), 1)
+        powers = [[pow(root, p*q, prime) for p in range(n)] for q in range(n)]
+        for x in itertools.product((-1, 0, 1), repeat=n):
+            support = [p for p, value in enumerate(x) if value]
+            g, r, length = coset_parameters(n, support)
+            z = [x[r+g*t] for t in range(length)]
+            small_root = pow(root, g, prime)
+            small = [sum(v*pow(small_root, t*q, prime) for t,v in enumerate(z)) % prime for q in range(length)]
+            quotient = [(pow(root, r*q, prime) * small[q % length]) % prime for q in range(n)]
+            reference = [sum(v*w for v,w in zip(x, row)) % prime for row in powers]
+            self.assertEqual(quotient, reference)
+
+    def test_dependency_profile_against_forward_butterfly_simulation(self):
+        n = 16
+        for mask in range(1 << 10):
+            support = [i for i in range(10) if mask >> i & 1]
+            active = {int(f"{i:04b}"[::-1], 2) for i in support}
+            writes = 0
+            for bit in range(4):
+                active |= {i ^ (1 << bit) for i in active}
+                writes += len(active)
+            self.assertEqual(support_profile(n, support).dirty_output_cells, writes)
+
+    def test_weighted_coverage_submodularity(self):
+        n = 8
+        sets = [{i for i in range(n) if mask >> i & 1} for mask in range(1 << n)]
+        weights = [support_profile(n, s).dirty_output_cells for s in sets]
+        for a in range(1 << n):
+            for b in range(1 << n):
+                self.assertGreaterEqual(weights[a]+weights[b], weights[a|b]+weights[a&b])
+
+    def test_support_geometry_changes_work_with_equal_k(self):
+        n, k = 65536, 64
+        contiguous = support_profile(n, range(k))
+        comb = support_profile(n, range(0, n, n//k))
+        self.assertEqual(contiguous.k, comb.k)
+        self.assertLess(comb.dirty_output_cells, contiguous.dirty_output_cells / 3)
+
+    def test_zero_and_cancellation(self):
+        for n in [1, 3, 64]:
+            c = CosetSpectrum.from_changes(n, [(0, 3), (0, -3)])
+            self.assertEqual(c.nonzero_changes, 0)
+            np.testing.assert_array_equal(c.materialize(), np.zeros(n//2+1))
+
+    def test_pruned_dft_random_supports(self):
+        rng = np.random.default_rng(775)
+        for n in [1, 2, 8, 16, 32, 256, 4096]:
+            for k in sorted({0, 1, min(n, 3), min(n, 17), n}):
+                ps = rng.choice(n, k, replace=False)
+                vals = rng.normal(size=k)
+                dense = np.zeros(n); dense[ps] = vals
+                np.testing.assert_allclose(pruned_dft(n, zip(ps, vals)), fft.fft(dense), atol=1e-9, rtol=3e-11)
+
+    def test_updates_do_not_modify_parent(self):
+        rng = np.random.default_rng(321)
+        base = rng.normal(size=1024)
+        spec = fft.rfft(base); before = spec.copy()
+        changes = {11: 3.0, 75: -4.0, 139: 1.0}
+        changed = base.copy()
+        for p,d in changes.items(): changed[p] += d
+        for fn in [direct_update, quotient_update]:
+            actual = fn(spec, base.size, changes)
+            np.testing.assert_allclose(actual, fft.rfft(changed), atol=2e-10)
+            np.testing.assert_array_equal(spec, before)
+
+    def test_validation(self):
+        for changes in [[(-1, 1)], [(8, 1)], [(1.5, 1)], [(True, 1)], [(1, float('nan'))], [(1, 2j)], [(1, 1e308), (1, 1e308)]]:
+            with self.assertRaises(ValueError): normalize_changes(8, changes)
+        with self.assertRaises(ValueError): support_profile(7, [0])
+        with self.assertRaises(ValueError): CosetSpectrum.from_changes(8, [(1,1)]).frequencies([0.5])
+
+
+class PlannerTests(unittest.TestCase):
+    def test_mst_matches_exhaustive_search(self):
+        rng = np.random.default_rng(900)
+        for _ in range(20):
+            edges = [Edge(u, v, int(rng.integers(0, 25))) for u in range(-1, 4) for v in range(u+1, 4)]
+            plan = minimum_spanning_plan(4, edges)
+            self.assertEqual(plan.estimated_cost, brute_tree_minimum(4, edges))
+            self.assertTrue(verify_minimum_spanning_plan(4, edges, plan))
+
+    def test_certificate_rejects_nonminimum_tree(self):
+        edges = [Edge(-1,0,5), Edge(-1,1,5), Edge(0,1,1)]
+        bad = Plan((), tuple(edges[:2]), 10, 3)
+        self.assertFalse(verify_minimum_spanning_plan(2, edges, bad))
+
+    def test_chain_uses_linear_edit_count(self):
+        patches = [{}]
+        for i in range(32):
+            patch = dict(patches[-1]); patch[2*i+1] = 1
+            patches.append(patch)
+        batch = RelationBatch(np.arange(128), patches)
+        edges = build_edges(batch, KernelCosts(1, 1, 1000))
+        plan = minimum_spanning_plan(len(batch), edges)
+        self.assertEqual(plan.fresh_transforms, 1)
+        self.assertEqual(plan.corrected_coordinates, 32)
+        self.assertEqual(sum(map(len, patches)), 528)
+        actual, _ = execute_plan(batch, plan)
+        reference = np.asarray([fft.rfft(batch.signal(v)) for v in range(len(batch))])
+        np.testing.assert_allclose(actual, reference, atol=2e-9)
+
+    def test_reverse_edge_and_nonzero_root(self):
+        patches = [{1: 5, 4: 2}, {1: 5}, {}]
+        batch = RelationBatch(np.arange(8), patches)
+        edges = [Edge(-1,2,1,kernel="fresh"), Edge(0,1,1,((4,-2.),)), Edge(1,2,1,((1,-5.),))]
+        plan = minimum_spanning_plan(3, edges)
+        actual, _ = execute_plan(batch, plan)
+        np.testing.assert_allclose(actual, [fft.rfft(batch.signal(v)) for v in range(3)], atol=1e-10)
+
+    def test_random_branching_and_complete_graphs(self):
+        rng = np.random.default_rng(629)
+        for n in [1, 7, 32, 1000]:
+            base = rng.normal(size=n)
+            patches = [{}]
+            candidates = []
+            for v in range(1, 24):
+                parent = int(rng.integers(v))
+                patch = dict(patches[parent])
+                p = int(rng.integers(n)); patch[p] = patch.get(p,0) + int(rng.integers(-3,4))
+                patches.append(patch); candidates.append((parent,v))
+            for pairs in [None, candidates]:
+                out, plan, stats = run_graph(base, patches, pairs, costs=KernelCosts(1, 1, 5, 2))
+                batch = RelationBatch(base, patches)
+                reference = np.asarray([fft.rfft(batch.signal(v)) for v in range(len(batch))])
+                np.testing.assert_allclose(out, reference, atol=4e-9, rtol=3e-11)
+                self.assertTrue(verify_minimum_spanning_plan(len(batch),build_edges(batch,KernelCosts(1,1,5,2),pairs),plan))
+                self.assertEqual(stats['output_bytes'], out.nbytes)
+
+    def test_fresh_fallback_and_sparse_candidates(self):
+        batch = RelationBatch([1, 2, 3, 4], [{}, {0: 2}, {1: 3}])
+        edges = build_edges(batch, KernelCosts(1, 100, 3), [])
+        plan = minimum_spanning_plan(3, edges)
+        self.assertEqual(plan.fresh_transforms, 3)
+        out, _ = execute_plan(batch, plan)
+        np.testing.assert_allclose(out, [fft.rfft(batch.signal(v)) for v in range(3)])
+
+    def test_quotient_kernel_used_in_graph(self):
+        n = 1024
+        batch = RelationBatch(np.zeros(n), [{}, {3+16*i: 1.0+i for i in range(64)}])
+        costs = KernelCosts(1, 2, 20, 2)
+        edges = build_edges(batch, costs)
+        plan = minimum_spanning_plan(2, edges)
+        out, stats = execute_plan(batch, plan)
+        self.assertEqual(stats['correction_kernels']['quotient'], 1)
+        np.testing.assert_allclose(out[1], fft.rfft(batch.signal(1)), atol=1e-9)
+
+    def test_rebase_limits_chain_depth(self):
+        patches = [{0: float(i)} for i in range(100)]
+        batch = RelationBatch(np.arange(16), patches)
+        edges = build_edges(batch, KernelCosts(1,1,1000), [(i,i+1) for i in range(99)])
+        plan = minimum_spanning_plan(100,edges)
+        out, stats = execute_plan(batch,plan,max_reuse_depth=5)
+        self.assertLessEqual(stats['max_reuse_depth'],5)
+        self.assertGreater(stats['fresh_transforms'],1)
+        np.testing.assert_allclose(out,[fft.rfft(batch.signal(v)) for v in range(100)],atol=1e-9)
+
+    def test_immutable_metadata_and_bad_inputs(self):
+        patch = {1: 3}
+        batch = RelationBatch([0,1,2,3], [patch])
+        patch[1] = 900
+        self.assertEqual(batch.patches[0][1],3)
+        with self.assertRaises(TypeError): batch.patches[0][1] = 5
+        with self.assertRaises(ValueError): RelationBatch([float('nan')], [{}])
+        with self.assertRaises(ValueError): KernelCosts(-1,2,3)
+        with self.assertRaises(ValueError): minimum_spanning_plan(2, [Edge(-1,0,1)])
+        with self.assertRaises(ValueError): build_edges(batch,KernelCosts(1,1,1),[(0,0)])
+
+    def test_cold_calibration_path(self):
+        out, _, stats = run_graph(np.arange(128), [{}, {2: 5}])
+        expected = np.arange(128, dtype=float); expected[2] += 5
+        np.testing.assert_allclose(out[1], fft.rfft(expected), atol=1e-9)
+        self.assertGreater(stats['calibration_ms'],0)
+
+
+class AdapterTests(unittest.TestCase):
+    def test_existing_phase5_states_and_cached_base(self):
+        from relation_adapter import GraphRelationFFT
+        engine = GraphRelationFFT(max_phase_bytes=0)
+        root = engine.register(np.arange(128))
+        states = []
+        for i in range(6):
+            s = root.fork()
+            for j in range(i): s.edit(j, 1.5)
+            states.append(s)
+        output, plan, stats = engine.materialize_batch(states, costs=KernelCosts(1,1,100))
+        np.testing.assert_allclose(output, [fft.rfft(s.signal()) for s in states], atol=1e-9)
+        self.assertEqual(stats['fresh_transforms'],0)
+        self.assertEqual(plan.fresh_transforms,0)
+        self.assertEqual(stats['route'],'graph_shared_base')
+        for s, y in zip(states,output):
+            np.testing.assert_allclose(engine.materialize_quotient(s),y,atol=1e-9)
+
+    def test_shifted_basis_fallback_and_quotient(self):
+        from relation_adapter import GraphRelationFFT
+        engine = GraphRelationFFT(max_phase_bytes=0)
+        a = engine.register(np.arange(64))
+        b = engine.register(np.sin(np.arange(64)))
+        c = engine.combine([a.shift(7),b], [2,-3])
+        c.edit(3,2).edit(19,-4)
+        output, plan, stats = engine.materialize_batch([a,c])
+        self.assertIsNone(plan)
+        self.assertEqual(stats['route'],'phase5_individual')
+        np.testing.assert_allclose(engine.materialize_quotient(c),fft.rfft(c.signal()),atol=1e-9)
+        np.testing.assert_allclose(output,[fft.rfft(a.signal()),fft.rfft(c.signal())],atol=1e-9)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

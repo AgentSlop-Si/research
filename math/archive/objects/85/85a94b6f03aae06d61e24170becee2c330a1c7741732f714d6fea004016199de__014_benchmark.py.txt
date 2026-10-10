@@ -1,0 +1,75 @@
+"""Identical-output, single-thread, exact finite-field benchmarks.
+
+Both candidates receive two *fresh* arrays. The adaptive path includes filter
+search, recurrence discovery, sparse work and all output materialization.
+The NTT baseline is the repository's own exact Python implementation, not
+optimized FFTW/SciPy nor OpenAI #130. Do not report as superiority over them.
+"""
+import argparse
+import json
+import random
+import statistics
+import time
+from pathlib import Path
+from fresh_factor import convolve, ntt_convolution, choose_plan
+
+P=998244353
+
+def instances(n,seed=20261009):
+    rng=random.Random(seed+n)
+    b=[rng.randrange(-32,33) for _ in range(n)]
+    a_constant=[7]*n
+    a_arithmetic=[i+1 for i in range(n)]
+    a_geometric=[];val=3
+    for _ in range(n):
+        a_geometric.append(val);val=val*7%P
+    a_fib=[1,1]
+    for _ in range(n-2):a_fib.append((a_fib[-1]+a_fib[-2])%P)
+    a_random=[rng.randrange(2) for _ in range(n)]
+    a_two_runs=[2]*(n//3)+[9]*(n-n//3)
+    return {"constant":(a_constant,b),"arithmetic":(a_arithmetic,b),
+            "geometric":(a_geometric,b),"fibonacci":(a_fib,b),
+            "two_runs":(a_two_runs,b),"random_binary":(a_random,b)}
+
+def measured(func, repeats=3):
+    timings=[];result=None
+    for _ in range(repeats):
+        start=time.perf_counter()
+        result=func()
+        timings.append((time.perf_counter()-start)*1e3)
+    return round(statistics.median(timings),3),result
+
+
+def run(ns=(256,1024,4096),repeats=3):
+    rows=[]
+    for n in ns:
+        for label,(a,b) in instances(n).items():
+            bt,ref=measured(lambda: ntt_convolution(a,b,P),repeats)
+            at,pair=measured(lambda: convolve(a,b,mod=P,mode='auto'),repeats)
+            if pair[0]!=ref:
+                raise AssertionError((n,label,'result mismatch'))
+            plan=pair[1]
+            rows.append(dict(n=n,kind=label,selected=plan.method,
+                             degree_a=len(plan.qa)-1,degree_b=len(plan.qb)-1,
+                             sparsity_a=plan.nnz_a,sparsity_b=plan.nnz_b,
+                             sparse_pairs=plan.multiply_pairs,
+                             baseline_ntt_ms=bt,adaptive_ms=at,
+                             measured_speedup=round(bt/at,3) if at else None,
+                             estimated_work=plan.estimate,
+                             estimated_ntt_work=plan.baseline_estimate))
+    path=Path(__file__).with_name('benchmark_results.json')
+    path.write_text(json.dumps({"setup":"Exact F_998244353; fresh inputs; sequential Python; median runs; all preprocessing charged", "runs":rows},indent=2)+'\n')
+    for x in rows:
+        print(f"N={x['n']:5} {x['kind']:14} mode={x['selected']:10} "
+              f"deg=({x['degree_a']},{x['degree_b']}) nz=({x['sparsity_a']},{x['sparsity_b']}) "
+              f"NTT={x['baseline_ntt_ms']:8.2f}ms adaptive={x['adaptive_ms']:8.2f}ms "
+              f"ratio={x['measured_speedup']:5.2f}x")
+    print('SAVED',path)
+    return rows
+
+if __name__=='__main__':
+    p=argparse.ArgumentParser()
+    p.add_argument('--sizes',type=int,nargs='+',default=[256,1024,4096])
+    p.add_argument('--repeats',type=int,default=3)
+    args=p.parse_args()
+    run(args.sizes,args.repeats)

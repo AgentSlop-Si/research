@@ -1,0 +1,55 @@
+   1 """Exploratory necessary rank-cut checks, NOT an FFT complexity theorem.
+   2 Requires scipy and networkx, plus packaged prior checkpoint source.
+   3 """
+   4 import json,random,sys
+   5 from pathlib import Path
+   6 root=Path(__file__).resolve().parent
+   7 sys.path.insert(0,str(root/'fft_scan_network_gate_2026-10-09'))
+   8 from fast_mincut import ScanFlowOracle
+   9 from scan_flow import make_graph,mincut_bound
+  10 from research_gate import bitrev
+  11 
+  12 def main():
+  13     samples={8:2000,16:2000,32:2000,64:2000,128:1000}
+  14     rng=random.Random(20261010)
+  15     results={}
+  16     for n,limit in samples.items():
+  17         P=bitrev(n)
+  18         oracle=ScanFlowOracle(n,[1,1,1],[P,P])
+  19         small=0;vals=[]
+  20         for i in range(limit):
+  21             mode=i%5
+  22             if mode==0:
+  23                 width=rng.randint(1,n)
+  24                 start=rng.randint(0,n-width)
+  25                 R=list(range(start,start+width))
+  26                 width=rng.randint(1,n)
+  27                 start=rng.randint(0,n-width)
+  28                 C=list(range(start,start+width))
+  29             elif mode==1:
+  30                 k=rng.randint(1,n)
+  31                 R=rng.sample(range(n),k);C=rng.sample(range(n),k)
+  32             elif mode==2:
+  33                 k=rng.randint(1,n)
+  34                 R=list(range(k));C=list(range(n-k,n))
+  35             elif mode==3:
+  36                 k=rng.randint(1,n)
+  37                 R=list(range(n-k,n));C=list(range(k))
+  38             else:
+  39                 k=rng.randint(1,n)
+  40                 R=rng.sample(range(n),k);C=rng.sample(range(n),rng.randint(1,n))
+  41             bound=oracle.bound(R,C)
+  42             if bound<min(len(R),len(C)):
+  43                 small+=1;vals.append([i,R,C,bound])
+  44             if i<4 and n<=32:
+  45                 G,big=make_graph(n,[1,1,1],[P,P])
+  46                 other,_=mincut_bound(G,big,n,3,R,C)
+  47                 assert bound==other
+  48         results[str(n)]={'queries':limit,'cut_below_full_rank_count':small,
+  49                          'first_nonfull_queries':vals[:2]}
+  50         print(n,limit,small,flush=True)
+  51     out=root/'NETWORK_RESULTS.json'
+  52     out.write_text(json.dumps(results,indent=2)+'\n')
+  53     return results
+  54 
+  55 if __name__=='__main__':main()

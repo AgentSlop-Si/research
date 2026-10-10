@@ -1,0 +1,50 @@
+   1 """Independent replay of serialized XOR word and original-envelope frames."""
+   2 import json,sys,gzip
+   3 from pathlib import Path
+   4 from itertools import combinations
+   5 from collections import Counter
+   6 
+   7 def replay(path):
+   8  d=json.loads(gzip.decompress(Path(path).read_bytes()) if str(path).endswith('.gz') else Path(path).read_bytes());h,v,R=d['h'],d['v'],d['R'];F=d['frames'];triples=list(combinations(range(h),3));assert len(triples)==v
+   9  ranks=[1 if c==u else u.bit_count()-c.bit_count()for c,u in F]
+  10  for c,u in F:assert c and not c&~u and(c.bit_count()in(1,2)or c==u and c.bit_count()==3)
+  11  physical=[None]*R;symbols=[0]*R;hist=Counter();sources={int(i):s for i,s in d['sources'].items()};assert len(sources)==v and len(set(sources.values()))==v
+  12  def incidence(s,g):
+  13   old=physical[s]
+  14   if old is not None:
+  15    c,u=F[old];cc,uu=F[g];assert not cc&~c and not u&~uu
+  16    hist[ranks[g]-ranks[old]]+=1
+  17   else:hist[ranks[g]]+=1
+  18   physical[s]=g
+  19  for i,s in sources.items():
+  20   mask=sum(1<<j for j in triples[i]);g=F.index([mask,mask]);incidence(s,g);symbols[s]=1<<i
+  21  for a,b,g in d['ops']:
+  22   assert a!=b;incidence(a,g);incidence(b,g);symbols[a]^=symbols[b]
+  23  scatter=[0]*v;out=set()
+  24  for s,g,common,triple in d['outputs']:
+  25   assert s not in out;out.add(s);incidence(s,g);c,u=F[g]
+  26   expected=sum(1<<i for i,t in enumerate(triples)if common in t and not(set(t)&(set(triple)-{common})))
+  27   assert symbols[s]==expected
+  28   if len(triple)==1:
+  29    assert c==1<<common and u==(1<<h)-1;r=ranks[g];hist[r]+=1;hist[h-r]+=1
+  30    tt=[i for i,t in enumerate(triples)if common in t]
+  31   else:
+  32    assert c==1<<common and u==((1<<h)-1)^sum(1<<j for j in triple if j!=common)
+  33    hist[h-1-ranks[g]]+=1;hist[1]+=1;tt=[triples.index(tuple(triple))]
+  34   for i in tt:scatter[i]^=symbols[s]
+  35  for s,g in enumerate(physical):
+  36   assert g is not None
+  37   if s not in out:hist[h-ranks[g]]+=1
+  38  assert scatter==[1<<i for i in range(v)]
+  39  assert sum(t*n for t,n in hist.items())==h*R+h*(h-1)
+  40  initial=[1<<i for i in range(2*v+R)];M=[(2*v+a,2*v+b)for a,b,g in d['ops']];V=[(2*v+s,i)for i,s in sources.items()];J=[tuple(x)for x in d['scatter']];word=M+J+M[::-1]+V+M+J+M[::-1]+V
+  41  for dual in (False,True):
+  42   x=initial.copy()
+  43   for a,b in reversed(word)if dual else word:
+  44    if dual:a,b=b,a
+  45    x[a]^=x[b]
+  46   assert x[2*v:]==initial[2*v:]
+  47   if dual:assert x[:v]==[initial[i]^initial[v+i]for i in range(v)]and x[v:2*v]==initial[v:2*v]
+  48   else:assert x[v:2*v]==[initial[i]^initial[v+i]for i in range(v)]and x[:v]==initial[:v]
+  49  return dict(status='independent serialized word, exact frames, full input and dirty basis both orientations PASS',h=h,roles=R,output_roles=len(out),elementary_xors=len(M),word_length=len(word),full_basis_vectors=2*v+R,rank_mass=sum(t*n for t,n in hist.items()),histogram=dict(hist))
+  50 if __name__=='__main__':print(json.dumps(replay(sys.argv[1]),indent=2))

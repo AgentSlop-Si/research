@@ -1,0 +1,456 @@
+#!/usr/bin/env python3
+"""Portable, data-only independent audit of the dual/onion Fourier chart.
+
+Uses only Python's standard library. Submitted .py files are never imported or
+executed. Input is either --source-root or the original ZIP in the sibling
+source_archives directory. Polynomial reconstruction is over Z[z]/(z^4+1).
+"""
+import argparse
+from collections import defaultdict, Counter
+import hashlib
+import json
+from pathlib import Path
+import random
+import zipfile
+
+P8 = [7, 0, 6, 3, 4, 1, 2, 5]
+
+class Source:
+    def __init__(self, root=None):
+        self.directory = self.archive = None
+        here = Path(__file__).resolve().parent
+        if root:
+            root = Path(root)
+            if root.is_file():
+                self.archive = zipfile.ZipFile(root)
+            else:
+                candidates = list(root.rglob('dual_twenty_equations.json'))
+                assert len(candidates) == 1, candidates
+                self.directory = candidates[0].parent
+        else:
+            files = list((here.parent.parent/'source_archives').glob('*dual*onion*.zip'))
+            files += list(here.parent.parent.glob('*dual*onion*.zip'))
+            assert len(files) == 1, 'Supply --source-root or retain the original source ZIP.'
+            self.archive = zipfile.ZipFile(files[0])
+        if self.archive:
+            self.members = {Path(n).name:n for n in self.archive.namelist() if not n.endswith('/')}
+    def read(self, name):
+        return (self.directory/name).read_bytes() if self.directory else self.archive.read(self.members[name])
+    def json(self, name): return json.loads(self.read(name))
+
+class Poly:
+    """Integer coefficient indexed by (z exponent in 0..3, variable monomial)."""
+    def __init__(self, terms=None): self.terms = {k:v for k,v in (terms or {}).items() if v}
+    @classmethod
+    def const(cls, n): return cls({(0, ()):n})
+    @classmethod
+    def var(cls, i): return cls({(0, (i,)):1})
+    @classmethod
+    def root(cls, e):
+        e %= 8
+        return cls({(e%4, ()):1 if e<4 else -1})
+    def __add__(self, other):
+        if isinstance(other, int): other = Poly.const(other)
+        d = self.terms.copy()
+        for k,v in other.terms.items(): d[k] = d.get(k,0)+v
+        return Poly(d)
+    __radd__ = __add__
+    def __neg__(self): return Poly({k:-v for k,v in self.terms.items()})
+    def __sub__(self, other): return self + (-other)
+    def __rsub__(self, other): return -self + other
+    def __mul__(self, other):
+        if isinstance(other, int): other = Poly.const(other)
+        d = defaultdict(int)
+        for (e,m),c in self.terms.items():
+            for (f,n),b in other.terms.items():
+                ef=e+f
+                d[(ef%4, tuple(sorted(m+n)))] += c*b*(1 if ef<4 else -1)
+        return Poly(d)
+    __rmul__=__mul__
+    def __eq__(self, other): return isinstance(other, Poly) and self.terms==other.terms
+    def group(self):
+        out=defaultdict(lambda:[0]*4)
+        for (e,m),c in self.terms.items(): out[m][e]=c
+        return dict(out)
+    def encode(self): return [[list(m),c] for m,c in sorted(self.group().items())]
+    def evaluate(self, x, p, z):
+        ans=0
+        for (e,m),c in self.terms.items():
+            v=c*pow(z,e,p)
+            for i in m: v=v*x[i]%p
+            ans=(ans+v)%p
+        return ans
+
+def minors(B, p=None):
+    n=len(B); out={}
+    for i in range(2,n-1):
+        for j in range(1,i):
+            out[f'lower_{i}_{j}']=B[i][j]*B[-1][0]-B[i][0]*B[-1][j]
+    for i in range(1,n-2):
+        for j in range(i+1,n-1):
+            out[f'upper_{i}_{j}']=B[i][j]*B[0][-1]-B[i][-1]*B[0][j]
+    return out if p is None else {k:v%p for k,v in out.items()}
+
+def selected(n, layers):
+    return {f'lower_{i}_{j}' for j in range(1,layers+1) for i in range(j+1,n-1)} | {f'upper_{i}_{j}' for i in range(1,layers+1) for j in range(i+1,n-1)}
+
+def symbolic_dual():
+    x=[Poly.var(i) for i in range(16)]
+    t=x[0]; V=[t]+x[1:7]; H=x[7:14]; beta,gamma=x[14:16]
+    lam=Poly.root(1)-1; D=t*lam
+    # Interpolate C[:,0]-beta*C[:,7] between its two endpoint values.
+    bn=t-1+beta*(H[0]-1)
+    T={i:lam*(1-beta*H[0]+beta*H[i])+bn*(Poly.root(-i)-1) for i in range(1,7)}
+    q=[Poly.root(i)-gamma for i in range(8)]
+    S={j:sum(q[i]*H[i] for i in range(j)) for j in range(1,7)}
+    R={j:q[7]*D+sum(q[i]*T[i] for i in range(j+1,7)) for j in range(1,7)}
+    N={j:-(D*q[j]+V[j]*R[j]) for j in range(1,7)}
+    # Clear each C column separately by d_j = D (endpoints), D*S_j (interior).
+    C=[]
+    for i in range(8):
+        row=[]
+        for j in range(8):
+            if j==0: e=D if i==0 else D*t if i==7 else T[i]*t
+            elif j==7: e=D if i==7 else D*H[i]
+            elif i<j: e=H[i]*N[j]
+            elif i==j: e=D*S[j]
+            elif i==7: e=D*S[j]*V[j]
+            else: e=T[i]*S[j]*V[j]
+            row.append(e)
+        C.append(row)
+    B=[[sum(Poly.root(i*k)*C[k][P8[j]] for k in range(8)) for j in range(8)] for i in range(8)]
+    E=minors(B)
+    eliminated={k for k,v in E.items() if not v.terms}
+    assert eliminated==selected(8,1)
+    assert all(not sum(q[i]*C[i][j] for i in range(8)).terms for j in range(1,7))
+    assert all(not (B[i][1]-beta*B[i][0]).terms for i in range(2,8))
+    gaps_lower={j:D-T[j]*V[j] for j in range(1,7)}
+    gaps_upper={j:D*S[j]-H[j]*N[j] for j in range(1,7)}
+    return {k:v for k,v in E.items() if v.terms},C,B,S,D,gaps_lower,gaps_upper
+
+def compare_export(E, obj):
+    assert obj['variable_order']==['t']+[f'V{i}' for i in range(1,7)]+[f'h{i}' for i in range(7)]+['beta','gamma']
+    assert obj['shuffle']==P8
+    seen=set()
+    for eq in obj['equations']:
+        name=eq['name']; assert name not in seen; seen.add(name)
+        assert eq['terms']==E[name].encode(), name
+    assert seen==set(E)
+    return {'equations':len(E),'variables':16,'maximum_degree':max(len(m) for v in E.values() for _,m in v.terms),
+            'terms':sum(len(v.group()) for v in E.values()),'distinct_monomials':len({m for v in E.values() for _,m in v.terms}),
+            'every_exported_coefficient_matches':True,'ten_eliminated_polynomials_identically_zero':True,
+            'stronger_six_row_and_six_column_linear_identities_formally_zero':True}
+
+def inverse(A,p):
+    n=len(A); M=[[v%p for v in row]+[int(i==j) for j in range(n)] for i,row in enumerate(A)]
+    det=1
+    for j in range(n):
+        r=next((r for r in range(j,n) if M[r][j]),None)
+        if r is None: return None,0
+        if r!=j: M[j],M[r]=M[r],M[j];det=-det
+        a=M[j][j];det=det*a%p;ai=pow(a,-1,p);M[j]=[v*ai%p for v in M[j]]
+        for i in range(n):
+            if i!=j:
+                a=M[i][j];M[i]=[(u-a*v)%p for u,v in zip(M[i],M[j])]
+    return [row[n:] for row in M],det%p
+
+def solve(A,b,p):
+    ai,d=inverse(A,p)
+    if not d: raise ZeroDivisionError('linear system determinant')
+    return [sum(u*v for u,v in zip(row,b))%p for row in ai],d
+
+def primitive(p,n):
+    assert (p-1)%n==0
+    for a in range(2,p):
+        z=pow(a,(p-1)//n,p)
+        if pow(z,n,p)==1 and all(pow(z,d,p)!=1 for d in range(1,n) if n%d==0): return z
+    raise AssertionError('root not found')
+
+def fourier(C,z,perm,p):
+    n=len(C)
+    return [[sum(pow(z,i*k,p)*C[k][perm[j]] for k in range(n))%p for j in range(n)] for i in range(n)]
+
+def stage(H,L,V,eta,p):
+    n=len(L)
+    return [[1 if i==j else L[i]*V[j]%p if i>j else H[i]*eta[j]%p for j in range(n)] for i in range(n)]
+
+def first_column(H,t,beta,z,p):
+    n=len(H)+1
+    b=(t-1+beta*(H[0]-1))*pow(z-1,-1,p)%p;a=(1-beta*H[0]-b)%p
+    return [0]+[(a+b*pow(z,-k,p)+beta*H[k])*pow(t,-1,p)%p for k in range(1,n-1)]+[1]
+
+def row_sums(H,L,gamma,frequency,z,p):
+    n=len(L);q=[(pow(z,frequency*i,p)-gamma)%p for i in range(n)]
+    S={j:sum(q[i]*H[i] for i in range(j))%p for j in range(1,n-1)}
+    R={j:sum(q[i]*L[i] for i in range(j+1,n))%p for j in range(1,n-1)}
+    return q,S,R
+
+def dual_numeric(x,z,p):
+    t=x[0];V=[t]+x[1:7]+[0];H=x[7:14];beta,gamma=x[14:16]
+    if not t or not H[0]:raise ZeroDivisionError('endpoint')
+    L=first_column(H,t,beta,z,p);q,S,R=row_sums(H,L,gamma,1,z,p)
+    eta=[0]+[-(q[j]+V[j]*R[j])*pow(S[j],-1,p)%p for j in range(1,7)]+[1]
+    C=stage(H,L,V,eta,p);return C,fourier(C,z,P8,p),S
+
+def onion(n,x,z,perm,p):
+    t,h0,h1,h2,hlast,beta,gamma1,gamma2=x
+    if not t or not h0:raise ZeroDivisionError('endpoint')
+    xi=pow(z,-1,p)
+    # Independent interpolation, rather than building h* by the source recurrence.
+    coeff,_=solve([[pow(xi,i*j,p) for j in range(3)] for i in range(3)],[h0,h1,h2],p)
+    star=[sum(coeff[j]*pow(xi,i*j,p) for j in range(3))%p for i in range(n)]
+    for i in range(n-3):
+        assert (star[i+3]-(1+xi+xi*xi)*star[i+2]+(xi+xi*xi+xi**3)*star[i+1]-xi**3*star[i])%p==0
+    H=star[:n-2]+[hlast];L=first_column(H,t,beta,z,p)
+    q1,S1,R1=row_sums(H,L,gamma1,1,z,p)
+    q2,S2,R2=row_sums(H,L,gamma2,2,z,p)
+    if any(not s for s in S1.values()):raise ZeroDivisionError('S')
+    V=[t]+[0]*(n-1);eta=[0]*n;eta[-1]=1;deltas=[]
+    # Solve both row equations simultaneously, rather than substituting a quotient.
+    for j in range(1,n-2):
+        pair,det=solve([[R1[j],S1[j]],[R2[j],S2[j]]],[-q1[j],-q2[j]],p)
+        V[j],eta[j]=pair;deltas.append((-det)%p)
+    k=n-2;a=-q1[k]*pow(S1[k],-1,p)%p;b=-R1[k]*pow(S1[k],-1,p)%p
+    pair,boundary_det=solve([[b*star[k],H[k]-star[k]],[1-b*star[k+1],star[k+1]-1]], [1-a*star[k],a*star[k+1]],p)
+    V[k],rho=pair;eta[k]=(a+b*V[k])%p
+    C=stage(H,L,V,eta,p);B=fourier(C,z,perm,p)
+    assert all((B[i][1]-beta*B[i][0])%p==0 for i in range(2,n))
+    assert all((B[i][2]-rho*B[i][0])%p==0 for i in range(3,n))
+    assert all((B[1][j]-gamma1*B[0][j])%p==0 for j in range(2,n))
+    assert all((B[2][j]-gamma2*B[0][j])%p==0 for j in range(3,n))
+    return C,B,{'H':H,'L':L,'V':V,'eta':eta,'S':S1,'Delta':deltas,'boundary_det':boundary_det,'alpha':(eta[k]-rho)%p}
+
+def anchor_audit(C,B,p):
+    A,det=inverse(C,p)
+    return {'det_C':det,'B_lower':B[-1][0],'B_upper':B[0][-1], 'A_lower':A[-1][0] if A else 0,'A_upper':A[0][-1] if A else 0}
+
+def dump(path,obj):path.write_text(json.dumps(obj,indent=2,sort_keys=True)+'\n')
+
+class Circuit:
+    """Exact rational circuit; each node refers only to preceding node IDs."""
+    def __init__(self):self.nodes=[];self.cache={}
+    def node(self,op,*args):
+        key=(op,)+args
+        if key not in self.cache:
+            self.cache[key]=len(self.nodes);self.nodes.append(list(key))
+        return Term(self,self.cache[key])
+    def c(self,n):return self.node('integer',n)
+    def z(self,n):return self.node('root_power',n%8)
+    def x(self,n):return self.node('input',n)
+    def evaluate(self,x,p,z):
+        values=[]
+        for op,*a in self.nodes:
+            if op=='integer':v=a[0]
+            elif op=='root_power':v=pow(z,a[0],p)
+            elif op=='input':v=x[a[0]]
+            elif op=='add':v=values[a[0]]+values[a[1]]
+            elif op=='multiply':v=values[a[0]]*values[a[1]]
+            elif op=='negate':v=-values[a[0]]
+            elif op=='inverse':v=pow(values[a[0]],-1,p)
+            else:raise AssertionError(op)
+            values.append(v%p)
+        return values
+
+class Term:
+    def __init__(self,c,k):self.c,self.k=c,k
+    def coerce(self,o):return self.c.c(o) if isinstance(o,int) else o
+    def __add__(self,o):o=self.coerce(o);return self.c.node('add',self.k,o.k)
+    __radd__=__add__
+    def __neg__(self):return self.c.node('negate',self.k)
+    def __sub__(self,o):return self+-self.coerce(o)
+    def __rsub__(self,o):return self.coerce(o)+-self
+    def __mul__(self,o):o=self.coerce(o);return self.c.node('multiply',self.k,o.k)
+    __rmul__=__mul__
+    def __truediv__(self,o):o=self.coerce(o);return self*self.c.node('inverse',o.k)
+    def __rtruediv__(self,o):return self.coerce(o)/self
+
+def determinant_circuit(A):
+    dp={0:A[0][0].c.c(1)}
+    for row in range(len(A)):
+        new={}
+        for mask,v in dp.items():
+            for j in range(len(A)):
+                if mask>>j&1:continue
+                nm=mask|(1<<j);sign=-1 if (mask>>(j+1)).bit_count()%2 else 1
+                new[nm]=new.get(nm,0)+sign*v*A[row][j]
+        dp=new
+    return dp[(1<<len(A))-1]
+
+def exact_onion_circuit():
+    c=Circuit();t,h0,h1,h2,h6,beta,gamma1,gamma2=[c.x(i) for i in range(8)]
+    hs=[h0,h1,h2]
+    for k in range(5):hs.append((1+c.z(-1)+c.z(-2))*hs[k+2]-(c.z(-1)+c.z(-2)+c.z(-3))*hs[k+1]+c.z(-3)*hs[k])
+    H=hs[:6]+[h6];b=(t-1+beta*(h0-1))/(c.z(1)-1);a=1-beta*h0-b
+    L=[c.c(0)]+[(a+b*c.z(-k)+beta*H[k])/t for k in range(1,7)]+[c.c(1)]
+    qs={r:[c.z(r*i)-g for i in range(8)] for r,g in [(1,gamma1),(2,gamma2)]}
+    S={r:{j:sum(qs[r][i]*H[i] for i in range(j)) for j in range(1,7)} for r in [1,2]}
+    R={r:{j:sum(qs[r][i]*L[i] for i in range(j+1,8)) for j in range(1,7)} for r in [1,2]}
+    delta={j:R[2][j]*S[1][j]-R[1][j]*S[2][j] for j in range(1,6)}
+    V=[t]+[(qs[1][j]*S[2][j]-qs[2][j]*S[1][j])/delta[j] for j in range(1,6)]+[c.c(0),c.c(0)]
+    aa=-qs[1][6]/S[1][6];bb=-R[1][6]/S[1][6]
+    u11=bb*hs[6];u12=h6-hs[6];u21=1-bb*hs[7];u22=hs[7]-1
+    boundary=u11*u22-u12*u21
+    V[6]=((1-aa*hs[6])*u22-u12*aa*hs[7])/boundary
+    rho=(u11*aa*hs[7]-(1-aa*hs[6])*u21)/boundary
+    eta=[c.c(0)]+[-(qs[1][j]+V[j]*R[1][j])/S[1][j] for j in range(1,7)]+[c.c(1)]
+    C=[[c.c(1) if i==j else L[i]*V[j] if i>j else H[i]*eta[j] for j in range(8)] for i in range(8)]
+    B=[[sum(c.z(i*k)*C[k][P8[j]] for k in range(8)) for j in range(8)] for i in range(8)]
+    E=minors(B);guards={'t':t,'h0':h0,'boundary_determinant':boundary,'det_C':determinant_circuit(C),'B70':B[7][0],'B07':B[0][7]}
+    guards.update({f'S1_{j}':v for j,v in S[1].items()});guards.update({f'Delta_{j}':v for j,v in delta.items()})
+    guards.update({f'lower_gap_{j}':1-L[j]*V[j] for j in range(1,7)})
+    guards.update({f'upper_gap_{j}':1-H[j]*eta[j] for j in range(1,7)})
+    obj={'field':'Q[z]/(z^4+1)','variables':['t','h0','h1','h2','h6','beta','gamma1','gamma2'],'permutation':P8,'nodes':c.nodes,
+      'C':[[v.k for v in r] for r in C],'B':[[v.k for v in r] for r in B],
+      'remaining_equations':{k:v.k for k,v in E.items() if k not in selected(8,2)},
+      'identically_satisfied_equations':{k:v.k for k,v in E.items() if k in selected(8,2)},
+      'required_nonzero':{k:v.k for k,v in guards.items()},'diagnostic_alpha':(eta[6]-rho).k,
+      'meaning':'Evaluate nodes in order over a field with primitive eighth root z. Require every inverse operand and every required_nonzero node nonzero. Set all remaining_equations nodes to zero. All omitted rank-one identities then hold by the support proof. The solution search is over the algebraic closure of Q(z), not just Q(z).'}
+    return c,obj
+
+def main(source,out):
+    out.mkdir(parents=True,exist_ok=True)
+    report={'method':'Independent exact reconstruction and finite-field tests; no submitted Python executed/imported.'}
+    E,Cbar,Bhat,S,D,RL,QU=symbolic_dual()
+    report['coefficient_export']=compare_export(E,source.json('dual_twenty_equations.json'))
+    report['coefficient_export']['sha256']=hashlib.sha256(source.read('dual_twenty_equations.json')).hexdigest()
+    primitive_eq=[];degree_counts=Counter()
+    for name,e in E.items():
+        powers={i:min(m.count(i) for _,m in e.terms) for i in [0,7]}
+        terms={}
+        for (z,m),c in e.terms.items():
+            m=list(m)
+            for i,k in powers.items():
+                for _ in range(k):m.remove(i)
+            terms[z,tuple(m)]=c
+        ep=Poly(terms);back=ep
+        for i,k in powers.items():
+            for _ in range(k):back=back*Poly.var(i)
+        assert back==e
+        degree=max(len(m) for _,m in ep.terms);degree_counts[degree]+=1
+        primitive_eq.append({'name':name,'divided_t_power':powers[0],'divided_h0_power':powers[7],'degree':degree,'terms':ep.encode()})
+    dump(out/'primitive_twenty_equations.json',{'ring':'Z[z]/(z^4+1)','variable_order':source.json('dual_twenty_equations.json')['variable_order'],'equations':primitive_eq})
+    report['patch_primitive_equations']={'degree_counts':dict(degree_counts),'removed_factors':{e['name']:{'t':e['divided_t_power'],'h0':e['divided_h0_power']} for e in primitive_eq},'multiplication_back_exact':True}
+    dump(out/'explicit_dual_saturation.json',{'ring':'Z[z]/(z^4+1)','variable_order':source.json('dual_twenty_equations.json')['variable_order'],
+      'saturation_product':'t*h0*product(S_j)*det(Cbar)*Bhat[7,0]*Bhat[0,7]*product(RL_j)*product(QU_j)',
+      'D':D.encode(),'S':{str(j):v.encode() for j,v in S.items()},'RL':{str(j):v.encode() for j,v in RL.items()},'QU':{str(j):v.encode() for j,v in QU.items()},
+      'Cbar_matrix':[[v.encode() for v in row] for row in Cbar],'Bhat_70':Bhat[7][0].encode(),'Bhat_07':Bhat[0][7].encode(),
+      'definitions':'Cbar=C*diag(D,D*S1,...,D*S6,D); Bhat=F*Cbar*P^-1; RL=D-T*V; QU=D*S-h*N. Determinant and saturation product deliberately unexpanded.'})
+    rng=random.Random(9081628);numeric=[]
+    for p in [17,97,257]:
+        root=primitive(p,8)
+        for z in [pow(root,k,p) for k in [1,3,5,7]]:
+            checked=0;attempts=0;regular=0
+            while checked<12:
+                attempts+=1;assert attempts<2000
+                x=[rng.randrange(p) for _ in range(16)]
+                try:C,B,s=dual_numeric(x,z,p)
+                except (ValueError,ZeroDivisionError):continue
+                d=x[0]*(z-1)%p
+                for i in range(8):
+                    for j in range(8):
+                        assert Bhat[i][j].evaluate(x,p,z)==B[i][j]*d*s.get(P8[j],1)%p
+                m=minors(B,p)
+                for name,e in E.items():
+                    kind,i,j=name.split('_');j=int(j)
+                    scale=d*d*s.get(P8[j],1)
+                    if kind=='upper':scale*=s[P8[-1]]
+                    assert e.evaluate(x,p,z)==m[name]*scale%p
+                assert all(m[name]==0 for name in selected(8,1))
+                a=anchor_audit(C,B,p);regular+=all(a.values())
+                # Validate all factored inverse-corner conditions numerically.
+                lower_nonzero=all(v.evaluate(x,p,z) for v in RL.values())
+                upper_nonzero=all(v.evaluate(x,p,z) for v in QU.values())
+                if a['det_C']:
+                    assert bool(a['A_lower'])==lower_nonzero
+                    assert bool(a['A_upper'])==upper_nonzero
+                checked+=1
+            numeric.append({'p':p,'z':z,'samples':checked,'attempts':attempts,'fully_regular_samples':regular})
+    report['dual_modular_checks']=numeric
+    charts=[]
+    for n,p in [(6,97),(7,337),(8,97),(9,109),(10,101),(12,97),(16,257),(32,257),(64,257),(8,12289),(16,12289),(32,12289),(64,12289)]:
+        z=primitive(p,n);perm=[n-1,0,n-2]+rng.sample(list(range(1,n-2)),n-3)
+        if n==8:perm=P8
+        checked=0;attempts=0;regular=0;nonzero=0;singular=0
+        while checked<8:
+            attempts+=1;assert attempts<5000
+            x=[rng.randrange(p) for _ in range(8)]
+            try:C,B,data=onion(n,x,z,perm,p)
+            except (ValueError,ZeroDivisionError):continue
+            m=minors(B,p);sel=selected(n,2);assert len(sel)==4*n-14
+            assert all(m[k]==0 for k in sel)
+            rest={k:v for k,v in m.items() if k not in sel};assert len(rest)==(n-4)*(n-5)
+            nonzero+=any(rest.values());a=anchor_audit(C,B,p);regular+=all(a.values());singular+=not a['det_C']
+            if not data['alpha']:assert not a['det_C']
+            if a['B_lower'] and a['B_upper']:
+                back=[C[-1][0],C[0][-1],C[1][-1],C[2][-1],C[-2][-1],B[-1][1]*pow(B[-1][0],-1,p)%p,B[1][-1]*pow(B[0][-1],-1,p)%p,B[2][-1]*pow(B[0][-1],-1,p)%p]
+                assert back==x
+            checked+=1
+        charts.append({'n':n,'p':p,'z':z,'permutation':perm,'samples':checked,'attempts':attempts,'fully_regular_samples':regular,'singular_samples':singular,'non_solutions':nonzero,'identically_selected':len(sel),'remaining':len(rest)})
+    report['independent_onion_checks']=charts
+    spec=source.json('onion_twelve_system_spec.json');ref=spec['reference_non_solution'];C,B,data=onion(8,ref['parameters'],ref['primitive_root'],P8,ref['prime'])
+    m=minors(B,ref['prime']);assert spec['remaining_equations']==list(k for k in m if k not in selected(8,2))
+    for eq in ref['residuals']:assert m[eq['name']]==eq['value_mod_12289']
+    report['reference_nonsolution']={'all_twelve_values_match':True,**anchor_audit(C,B,ref['prime'])}
+    circuit,circuit_spec=exact_onion_circuit();values=circuit.evaluate(ref['parameters'],ref['prime'],ref['primitive_root'])
+    assert [[values[i] for i in r] for r in circuit_spec['C']]==C
+    assert [[values[i] for i in r] for r in circuit_spec['B']]==B
+    assert all(values[i]==m[k] for k,i in circuit_spec['remaining_equations'].items())
+    assert all(values[i]==0 for i in circuit_spec['identically_satisfied_equations'].values())
+    assert all(values[i] for i in circuit_spec['required_nonzero'].values())
+    crng=random.Random(1831628);circuit_checks=0
+    for p in [97,257,12289]:
+        z=primitive(p,8)
+        for _ in range(30):
+            x=[crng.randrange(p) for _ in range(8)]
+            try:
+                values=circuit.evaluate(x,p,z);cc,bb,_=onion(8,x,z,P8,p)
+            except (ValueError,ZeroDivisionError):continue
+            assert [[values[i] for i in r] for r in circuit_spec['C']]==cc
+            assert [[values[i] for i in r] for r in circuit_spec['B']]==bb
+            mm=minors(bb,p);assert all(values[i]==mm[k] for k,i in circuit_spec['remaining_equations'].items())
+            assert all(values[i]==0 for i in circuit_spec['identically_satisfied_equations'].values())
+            aa=anchor_audit(cc,bb,p)
+            assert values[circuit_spec['required_nonzero']['det_C']]==aa['det_C']
+            assert all(values[i] for i in circuit_spec['required_nonzero'].values())==all(aa.values())
+            circuit_checks+=1
+    dump(out/'onion_eight_variable_exact_circuit.json',circuit_spec)
+    report['new_exact_rational_circuit']={'nodes':len(circuit.nodes),'variables':8,'remaining_equations':12,'required_nonzero_factors':len(circuit_spec['required_nonzero']),'independent_fresh_comparisons':circuit_checks,'reference_comparison':True,'determinant_and_inverse_corner_guards_checked':True}
+    exceptions=[]
+    for w in source.json('exception_s1_witness.json'):
+        p=w['prime'];z=w['omega'];H=w['H'];V=w['V'];eta=w['ETA'];L=first_column(H,w['t'],w['beta'],z,p)
+        C=stage(H,L,V,eta,p);B=fourier(C,z,P8,p);q,s,r=row_sums(H,L,1,1,z,p)
+        a=anchor_audit(C,B,p);m=minors(B,p)
+        assert s[1]==0 and all(a.values()) and all(m[k]==0 for k in selected(8,1))
+        assert sum(bool(v) for k,v in m.items() if k not in selected(8,1))==20
+        assert [a['B_lower'],a['B_upper'],a['A_lower'],a['A_upper']]==[w['corner_B70'],w['corner_B07'],w['inverse_corner_A70'],w['inverse_corner_A07']]
+        exceptions.append({'p':p,'z':z,'S1':s[1],**a,'selected_zero':10,'remaining_nonzero':20})
+    report['supplied_exception_witnesses']=exceptions
+    # A new characteristic-zero witness, specified over Q[z]/(z^4+1).
+    # Nonzero reduction modulo (97,z-primitive(97,8)) proves every required
+    # denominator/anchor nonzero in characteristic zero. Identities follow
+    # algebraically from the row/column construction, not finite sampling.
+    p=97;z=primitive(p,8);H=[1,2,3,4,5,6,7];t=2;beta=3
+    L=first_column(H,t,beta,z,p);q,s,r=row_sums(H,L,1,1,z,p)
+    V=[t,-q[1]*pow(r[1],-1,p)%p,1,2,3,4,5,0]
+    eta=[0,7]+[-(q[j]+V[j]*r[j])*pow(s[j],-1,p)%p for j in range(2,7)]+[1]
+    C=stage(H,L,V,eta,p);B=fourier(C,z,P8,p);a=anchor_audit(C,B,p);m=minors(B,p)
+    assert all(a.values()) and all(s[j] for j in range(2,7)) and r[1] and s[1]==0
+    assert all(m[k]==0 for k in selected(8,1)) and any(v for k,v in m.items() if k not in selected(8,1))
+    witness={'field':'Q[z]/(z^4+1)','t':t,'beta':beta,'gamma1':1,'H':H,'V_2_through_6':[1,2,3,4,5],'eta1':7,
+      'construction':'L from first-column interpolation; q_i=z^i-1; S_j=sum_{i<j}q_i*h_i; R_j=sum_{i>j}q_i*L_i; V1=-q1/R1; eta_j=-(q_j+V_j*R_j)/S_j for j=2..6; eta7=1.',
+      'certificate_reduction':{'p':p,'z':z,'R1':r[1],'S2_through_6':[s[j] for j in range(2,7)],**a,'remaining_residuals':{k:v for k,v in m.items() if k not in selected(8,1)}},
+      'conclusion':'An exact characteristic-zero invertible, corner-regular partial candidate with S1=0 exists; it is not a Fourier factorization.'}
+    dump(out/'characteristic_zero_exception_certificate.json',witness)
+    report['new_characteristic_zero_exception']=witness
+    manifest=[]
+    for line in source.read('SHA256SUMS.txt').decode().splitlines():
+        digest,name=line.split(maxsplit=1);name=name.strip().lstrip('*')
+        got=hashlib.sha256(source.read(name)).hexdigest();assert digest==got,name
+        manifest.append(name)
+    report['top_level_manifest']={'entries_verified':len(manifest),'all_match':True}
+    dump(out/'independent_dual_results.json',report)
+    print(json.dumps(report,indent=2,sort_keys=True))
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser();parser.add_argument('--source-root');parser.add_argument('--output-dir',type=Path,default=Path(__file__).resolve().parent)
+    args=parser.parse_args();main(Source(args.source_root),args.output_dir)

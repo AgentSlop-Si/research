@@ -1,0 +1,55 @@
+   1 import hashlib
+   2 import json
+   3 import math
+   4 from pathlib import Path
+   5 import numpy as np
+   6 from head_energy import head_energy_fft, adversary_prefix_certificate
+   7 
+   8 
+   9 def main():
+  10     exact = []
+  11     for m in range(1,15):
+  12         certificates = [adversary_prefix_certificate(m,h) for h in range(2**m+1)]
+  13         assert all(c['certified_total_lower_bound'] >= c['universal_hybrid_lower_bound']
+  14                    for c in certificates)
+  15         best = min(certificates, key=lambda c: c['certified_total_lower_bound'])
+  16         exact.append({'m':m, 'n':4**m, 'head_sizes_checked':len(certificates),
+  17                       'minimum_certified_butterflies':best['certified_total_lower_bound'],
+  18                       'universal_lower_bound':best['universal_hybrid_lower_bound']})
+  19     numeric = []
+  20     rng = np.random.default_rng(901)
+  21     for n in [64,256,1024,4096]:
+  22         s = math.isqrt(n)
+  23         families = {}
+  24         prefix = np.zeros(n, dtype=complex)
+  25         prefix[:s] = rng.choice([-1.0,1.0],s)
+  26         families['prefix_sqrt_support'] = prefix
+  27         diffuse = rng.choice([-1.0,1.0],n).astype(complex)/n
+  28         diffuse[0] = 1
+  29         families['spike_diffuse_tail'] = diffuse
+  30         families['flat_signs'] = rng.choice([-1.0,1.0],n).astype(complex)
+  31         for name,x in families.items():
+  32             reference = np.fft.fft(x,norm='ortho')
+  33             for h in sorted({0,1,s//2,s}):
+  34                 output, stats = head_energy_fft(x,0.25,h)
+  35                 error = float(np.max(np.abs(output-reference)))
+  36                 assert error <= stats['requested_threshold']+1e-10*max(1,np.linalg.norm(x))
+  37                 numeric.append({'n':n,'family':name,'head':h,
+  38                                 'observed_max_error':error,
+  39                                 'threshold':stats['requested_threshold'],
+  40                                 'head_butterflies':stats['head_fft_butterflies'],
+  41                                 'tail_split_volume':stats['tail'].get('split_value_volume',0),
+  42                                 'total_butterflies':stats['total_butterflies']})
+  43     report = {'status':'PASS', 'exact_adversary_sizes':len(exact),
+  44               'exact_head_sizes_checked':sum(r['head_sizes_checked'] for r in exact),
+  45               'numeric_cases':len(numeric), 'exact_certificates':exact,
+  46               'numerical_checks':numeric,
+  47               'prior_energy_sha256':hashlib.sha256(Path(__file__).with_name('prior_energy_pruned.py').read_bytes()).hexdigest(),
+  48               'scope':'Exact integer work certificates; floating prototype checks, not a numerical error certificate.'}
+  49     Path(__file__).with_name('results.json').write_text(json.dumps(report,indent=2)+'\n')
+  50     print(json.dumps({k:v for k,v in report.items()
+  51                       if k not in ('exact_certificates','numerical_checks')},indent=2))
+  52 
+  53 
+  54 if __name__ == '__main__':
+  55     main()

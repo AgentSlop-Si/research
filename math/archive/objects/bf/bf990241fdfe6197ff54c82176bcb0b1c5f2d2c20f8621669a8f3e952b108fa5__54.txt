@@ -1,0 +1,318 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh exact four-character identities; imports only authored route helpers."""
+   3 from pathlib import Path
+   4 import json
+   5 import random
+   6 import sys
+   7 
+   8 HERE = Path(__file__).resolve().parent
+   9 sys.path.insert(0, str(HERE.parent / "seed_compatibility_gate"))
+  10 from check_n16_outer_gate import PRIME as P, LABELS
+  11 from check_lift_defects import cover_and_splice, fiber, project
+  12 from check_hierarchical_lift import lift
+  13 
+  14 INV4 = pow(4, -1, P)
+  15 
+  16 
+  17 def chi(c, e):
+  18     return -1 if ((c & e).bit_count() & 1) else 1
+  19 
+  20 
+  21 def walsh(x, a, b):
+  22     n = a * b
+  23     return [sum(chi(c, e) * x[j] for e, j in enumerate(fiber(v, a, b))) % P
+  24             for c in range(4) for v in range(n)]
+  25 
+  26 
+  27 def inverse_walsh(z, a, b):
+  28     n = a * b
+  29     x = [0] * (4 * n)
+  30     for v in range(n):
+  31         for e, j in enumerate(fiber(v, a, b)):
+  32             x[j] = INV4 * sum(chi(c, e) * z[c * n + v] for c in range(4)) % P
+  33     return x
+  34 
+  35 
+  36 def apply_green(q, weights, x):
+  37     n = len(q)
+  38     seen, out = bytearray(n), [0] * n
+  39     for start in range(n):
+  40         if seen[start]:
+  41             continue
+  42         order, v = [], start
+  43         while not seen[v]:
+  44             seen[v] = 1
+  45             order.append(v)
+  46             v = q[v]
+  47         assert v == start
+  48         carry, product = 0, 1
+  49         for v in order:
+  50             carry = (x[v] + weights[v] * carry) % P
+  51             product = product * weights[v] % P
+  52         assert product != 1
+  53         previous = carry * pow((1 - product) % P, -1, P) % P
+  54         for v in order:
+  55             previous = (x[v] + weights[v] * previous) % P
+  56             out[v] = previous
+  57     return out
+  58 
+  59 
+  60 def fourier_apply(x, root):
+  61     return [sum(value * pow(root, i * j, P) for j, value in enumerate(x)) % P
+  62             for i in range(len(x))]
+  63 
+  64 
+  65 def fourier_controls(a, b, rng):
+  66     n = a * b
+  67     omega = pow(3, (P - 1) // (4 * n), P)
+  68     zeta = pow(omega, 4, P)
+  69     assert pow(omega, 2 * n, P) == P - 1
+  70     entries = 0
+  71     for c in range(4):
+  72         u, v = divmod(c, 2)
+  73         for row in range(n):
+  74             x, y = divmod(row, b)
+  75             r0, r1 = (2 * b * x + y) % n, (2 * b * x + y + b) % n
+  76             for j in range(4 * n):
+  77                 t, s = divmod(j, 4)
+  78                 direct = sum(chi(c, e) * pow(omega, rr * j, P)
+  79                              for e, rr in enumerate(fiber(row, a, b))) % P
+  80                 if s % 2 != u:
+  81                     expected = 0
+  82                 else:
+  83                     expected = (2 * pow(omega, (2 * b * x + y) * s, P)
+  84                                 * (pow(zeta, r0 * t, P)
+  85                                    + (-1) ** v * pow(omega, b * s, P) * pow(zeta, r1 * t, P))) % P
+  86                 assert direct == expected
+  87                 entries += 1
+  88     xvec = [rng.randrange(P) for _ in range(4 * n)]
+  89     assert inverse_walsh(walsh(xvec, a, b), a, b) == xvec
+  90     shorter = [fourier_apply(xvec[s::4], zeta) for s in range(4)]
+  91     out = [0] * (4 * n)
+  92     for c in range(4):
+  93         u, v = divmod(c, 2)
+  94         for row in range(n):
+  95             xx, yy = divmod(row, b)
+  96             r0, r1 = (2 * b * xx + yy) % n, (2 * b * xx + yy + b) % n
+  97             out[c * n + row] = sum(
+  98                 2 * pow(omega, (2 * b * xx + yy) * s, P)
+  99                 * (shorter[s][r0] + (-1) ** v * pow(omega, b * s, P) * shorter[s][r1])
+ 100                 for s in (u, u + 2)) % P
+ 101     target = fourier_apply(xvec, omega)
+ 102     assert out == walsh(target, a, b)
+ 103     assert inverse_walsh(out, a, b) == target
+ 104     return {"N": n, "a": a, "b": b, "exact_character_residue_entries": entries,
+ 105             "shorter_F_N_applications": 4, "vector_reconstruction_passes": True}
+ 106 
+ 107 
+ 108 def bank_controls(b):
+ 109     rho = pow(3, (P - 1) // (2 * b), P)
+ 110     checked = 0
+ 111     for cout in range(4):
+ 112         u, v = divmod(cout, 2)
+ 113         for cin in range(4):
+ 114             up, w = divmod(cin, 2)
+ 115             for y in range(b):
+ 116                 for z in range(b):
+ 117                     direct = INV4 * sum(
+ 118                         (-1) ** (u * ex + v * ey + up * ex + w * ee)
+ 119                         * pow(rho, (y + ey * b) * (z + ee * b), P)
+ 120                         for ex in (0, 1) for ey in (0, 1) for ee in (0, 1)) % P
+ 121                     expected = 0 if u != up else (
+ 122                         pow(rho, v * y, P) * sum(
+ 123                             pow(rho, 2 * y * t, P) * (-1) ** (w * ((2 * t + v) // b))
+ 124                             for t in range(b) if (2 * t + v) % b == z)) % P
+ 125                     assert direct == expected
+ 126                     checked += 1
+ 127     return {"b": b, "transformed_active_bank_entries": checked,
+ 128             "F_b_applications_per_active_small_block": 4}
+ 129 
+ 130 
+ 131 def build_walsh_route(ps, pl, a, b):
+ 132     n = a * b
+ 133     route, signs, phis = [0] * (4 * n), [0] * (4 * n), []
+ 134     for v in range(n):
+ 135         phi = []
+ 136         for j in fiber(v, a, b):
+ 137             dest = pl[j]
+ 138             assert project(dest, a, b) == ps[v]
+ 139             x, y = divmod(dest, 2 * b)
+ 140             phi.append(2 * (x // a) + y // b)
+ 141         assert sorted(phi) == list(range(4))
+ 142         phis.append(phi)
+ 143         # Extract and independently verify the affine GF(2)^2 description.
+ 144         shift = phi[0]
+ 145         cols = [phi[1] ^ shift, phi[2] ^ shift]
+ 146         assert cols[0] and cols[1] and cols[0] != cols[1]
+ 147         assert all(phi[e] == shift ^ (cols[0] if e & 1 else 0) ^ (cols[1] if e & 2 else 0)
+ 148                    for e in range(4))
+ 149         matrix = [[sum(chi(co, phi[e]) * chi(ci, e) for e in range(4)) // 4
+ 150                    for ci in range(4)] for co in range(4)]
+ 151         assert all(sum(value != 0 for value in row) == 1 for row in matrix)
+ 152         for ci in range(4):
+ 153             choices = [(co, matrix[co][ci]) for co in range(4) if matrix[co][ci]]
+ 154             assert len(choices) == 1
+ 155             co, sign = choices[0]
+ 156             assert sign in (-1, 1)
+ 157             route[ci * n + v] = co * n + ps[v]
+ 158             signs[ci * n + v] = sign
+ 159         assert route[v] == ps[v] and signs[v] == 1
+ 160         # Check W P = signed_route W on each physical fiber basis vector.
+ 161         for e in range(4):
+ 162             got = [0] * 4
+ 163             for ci in range(4):
+ 164                 co = route[ci * n + v] // n
+ 165                 got[co] += signs[ci * n + v] * chi(ci, e)
+ 166             assert got == [chi(co, phi[e]) for co in range(4)]
+ 167     seen, cycles = bytearray(4 * n), []
+ 168     for v in range(4 * n):
+ 169         if seen[v]:
+ 170             continue
+ 171         w, length, product = v, 0, 1
+ 172         while not seen[w]:
+ 173             seen[w] = 1
+ 174             product *= signs[w]
+ 175             length += 1
+ 176             w = route[w]
+ 177         assert w == v
+ 178         cycles.append((length, product, v // n == 0))
+ 179     assert sorted((length, sign) for length, sign, trivial in cycles if not trivial) == [(n, -1), (2 * n, -1)]
+ 180     assert [(length, sign) for length, sign, trivial in cycles if trivial] == [(n, 1)]
+ 181     return route, signs, phis, cycles
+ 182 
+ 183 
+ 184 def c4_transport(ps, phis, a, b):
+ 185     n = a * b
+ 186     order, v = [], 0
+ 187     for _ in range(n):
+ 188         order.append(v)
+ 189         v = ps[v]
+ 190     assert v == 0 and len(set(order)) == n
+ 191     transports = [None] * n
+ 192     transports[0] = list(range(4))
+ 193     for k in range(n - 1):
+ 194         transports[order[k + 1]] = [phis[order[k]][e] for e in transports[order[k]]]
+ 195     monodromy = [phis[order[-1]][e] for e in transports[order[-1]]]
+ 196     rho, e = [], 0
+ 197     for _ in range(4):
+ 198         rho.append(e)
+ 199         e = monodromy[e]
+ 200     assert e == 0 and len(set(rho)) == 4
+ 201     labels = [[0] * 4 for _ in range(n)]
+ 202     for v in range(n):
+ 203         for c in range(4):
+ 204             labels[v][transports[v][rho[c]]] = c
+ 205     for v in range(n):
+ 206         for e in range(4):
+ 207             assert labels[ps[v]][phis[v][e]] == (labels[v][e] + int(ps[v] == 0)) % 4
+ 208     return order, labels, monodromy
+ 209 
+ 210 
+ 211 def apply_c4(x, labels, a, b, iota):
+ 212     n = a * b
+ 213     return [sum(pow(iota, s * labels[v][e], P) * x[j]
+ 214                 for e, j in enumerate(fiber(v, a, b))) % P
+ 215             for s in range(4) for v in range(n)]
+ 216 
+ 217 
+ 218 def route_green_controls(a, b, label_index, rng):
+ 219     n, label = a * b, LABELS[label_index]
+ 220     ts, ps, reps = cover_and_splice(a, b, label)
+ 221     tl, pl, rec = lift(ts, ps, a, b, label)
+ 222     signed_route, signs, phis, cycles = build_walsh_route(ps, pl, a, b)
+ 223     order, c4_labels, monodromy = c4_transport(ps, phis, a, b)
+ 224     omega = pow(3, (P - 1) // (4 * n), P)
+ 225     iota = pow(omega, n, P)
+ 226     assert pow(iota, 2, P) == P - 1
+ 227     tau = pow(label_index + 2, -1, P)
+ 228     big_guard = (1 - pow(tau, 4 * n, P)) % P
+ 229     assert big_guard
+ 230     guards = [(1 - pow(tau, n, P) * pow(iota, s, P)) % P for s in range(4)]
+ 231     product = 1
+ 232     for guard in guards:
+ 233         assert guard
+ 234         product = product * guard % P
+ 235     assert product == big_guard
+ 236     signed_weights = [0] * (4 * n)
+ 237     for source, target in enumerate(signed_route):
+ 238         signed_weights[target] = tau * signs[source] % P
+ 239     vectors = []
+ 240     if n <= 16:
+ 241         vectors = [[int(i == j) for i in range(4 * n)] for j in range(4 * n)]
+ 242     else:
+ 243         vectors = [[rng.randrange(P) for _ in range(4 * n)] for _ in range(3)]
+ 244     for x in vectors:
+ 245         g = apply_green(pl, [tau] * (4 * n), x)
+ 246         assert walsh(g, a, b) == apply_green(signed_route, signed_weights, walsh(x, a, b))
+ 247         c4x = apply_c4(x, c4_labels, a, b, iota)
+ 248         answer = []
+ 249         for s in range(4):
+ 250             weights = [tau] * n
+ 251             weights[0] = tau * pow(iota, s, P) % P
+ 252             answer.extend(apply_green(ps, weights, c4x[s * n:(s + 1) * n]))
+ 253         assert answer == apply_c4(g, c4_labels, a, b, iota)
+ 254     # Exact phase-gauge edge identities for all four homogeneous poles.
+ 255     for s in range(4):
+ 256         beta = pow(omega, s, P)
+ 257         eta = pow(iota, s, P)
+ 258         assert pow(beta, n, P) == eta
+ 259         diagonal = [0] * n
+ 260         for k, v in enumerate(order):
+ 261             diagonal[v] = pow(beta, (-k) % (4 * n), P)
+ 262         for v in range(n):
+ 263             phase = eta if ps[v] == 0 else 1
+ 264             assert phase * diagonal[v] * pow(diagonal[ps[v]], -1, P) % P == beta
+ 265     # General nonzero physical mask, checked in the common Walsh basis.
+ 266     mask = [[1 + v + 3 * e for e in range(4)] for v in range(n)]
+ 267     for v in range(n):
+ 268         hats = [INV4 * sum(chi(c, e) * mask[v][e] for e in range(4)) % P for c in range(4)]
+ 269         for d in range(4):
+ 270             for c in range(4):
+ 271                 direct = INV4 * sum(chi(c, e) * mask[v][e] * chi(d, e) for e in range(4)) % P
+ 272                 assert direct == hats[c ^ d]
+ 273     return {"N": n, "label": label, "walsh_signed_cycles": cycles,
+ 274             "sheet_monodromy": monodromy, "green_vector_checks": len(vectors),
+ 275             "full_entrywise_green_check": n <= 16,
+ 276             "four_channel_wrap_guards": guards,
+ 277             "guard_product_equals_large_guard": True,
+ 278             "homogeneous_pole_phase_gauges_verified": True,
+ 279             "scalar_Green_streams_after_C4_diagonalization": 4}
+ 280 
+ 281 
+ 282 def main():
+ 283     rng = random.Random(456786)
+ 284     geometries = [(2, 2), (4, 2), (4, 4), (8, 4), (8, 8), (16, 8)]
+ 285     fourier, routes = [], []
+ 286     for a, b in geometries:
+ 287         fourier.append(fourier_controls(a, b, rng))
+ 288         for j in range(8):
+ 289             routes.append(route_green_controls(a, b, j, rng))
+ 290         print("four characters", a * b, a, b, flush=True)
+ 291     guard_examples = []
+ 292     for values, expected_nonsingular, expected_nonzero_hats in [
+ 293             ([1, 1, 1, 1], True, 1), ([0, 1, 2, 4], False, 4)]:
+ 294         hats = [INV4 * sum(chi(c, e) * values[e] for e in range(4)) % P for c in range(4)]
+ 295         assert all(values) == expected_nonsingular
+ 296         assert sum(h != 0 for h in hats) == expected_nonzero_hats
+ 297         guard_examples.append({"physical_mask": values, "Walsh_coefficients_mod_p": hats,
+ 298                                "nonsingular": expected_nonsingular,
+ 299                                "nonzero_Walsh_coefficients": expected_nonzero_hats})
+ 300     result = {"status": "PASS", "prime": P,
+ 301               "scope": "Reusable exact decomposition and nonclosure controls; no Fourier-compatible Green coefficients or speedup.",
+ 302               "fourier_blocks": fourier, "bank_blocks": [bank_controls(b) for b in (2, 4, 8, 16)],
+ 303               "green_routes": routes, "mask_guard_controls": guard_examples,
+ 304               "cost_ledger": {"ordinary_F_N_transforms_for_full_F_4N": 4,
+ 305                               "F_b_transforms_per_active_small_bank_block": 4,
+ 306                               "small_scalar_Green_streams_per_eight_term_large_layer": 32,
+ 307                               "small_scalar_Green_streams_for_three_large_layers": 96,
+ 308                               "common_Walsh_signed_scans_per_eight_term_large_layer": 24,
+ 309                               "common_Walsh_scan_total_length_per_eight_term_large_layer": "32N",
+ 310                               "routing_phases_and_basis_work_per_fixed_order": "O(N), explicitly required",
+ 311                               "common_scalar_eight_order_closure": "Not established; common Walsh basis requires a coupled four-state family."},
+ 312               "provenance": "Fresh checker with freshly authored route helpers from the same constructor track; no uploaded code or numerical fitting."}
+ 313     (HERE / "FOUR_CHARACTER_CONTROLS.json").write_text(json.dumps(result, indent=2) + "\n")
+ 314     print(json.dumps({"status": "PASS", "route_instances": len(routes)}), flush=True)
+ 315 
+ 316 
+ 317 if __name__ == "__main__":
+ 318     main()

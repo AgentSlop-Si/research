@@ -1,0 +1,309 @@
+   1 #!/usr/bin/env python3
+   2 """Exact finite checks for a CONDITIONAL Fourier-mass-contraction theory.
+   3 
+   4 This is a verifier, not a new fast FFT. Dense/reference operations in this file
+   5 are deliberately expensive. No factors satisfying the proposed contracting
+   6 Fourier identity are supplied or claimed.
+   7 Python 3 standard library only. Run: python verify.py
+   8 """
+   9 from __future__ import annotations
+  10 from dataclasses import dataclass
+  11 from fractions import Fraction
+  12 from pathlib import Path
+  13 import json
+  14 import math
+  15 import random
+  16 
+  17 P = 65537
+  18 
+  19 @dataclass
+  20 class Ledger:
+  21     multiplications: int = 0
+  22     additions: int = 0
+  23     inversions: int = 0
+  24 
+  25     def as_dict(self) -> dict[str, int]:
+  26         return dict(multiplications=self.multiplications,
+  27                     additions=self.additions, inversions=self.inversions)
+  28 
+  29 
+  30 def root(n: int, p: int = P) -> int:
+  31     if n < 1 or n & (n - 1) or (p - 1) % n:
+  32         raise ValueError('This test helper requires an admissible power of two.')
+  33     w = pow(3, (p - 1) // n, p)
+  34     if pow(w, n, p) != 1 or (n > 1 and pow(w, n // 2, p) == 1):
+  35         raise ValueError('The chosen root did not pass the exact order check.')
+  36     return w
+  37 
+  38 
+  39 def powers(w: int, n: int, p: int = P) -> list[int]:
+  40     out = [1]
+  41     for _ in range(1, n):
+  42         out.append(out[-1] * w % p)
+  43     return out
+  44 
+  45 
+  46 def dft(x: list[int], w: int, p: int = P) -> list[int]:
+  47     """O(n^2) independent reference, NOT a fast implementation."""
+  48     n = len(x)
+  49     tab = powers(w, n, p)
+  50     return [sum(x[j] * tab[k*j % n] for j in range(n)) % p
+  51             for k in range(n)]
+  52 
+  53 
+  54 def matrix_of(apply, n: int) -> list[list[int]]:
+  55     columns = []
+  56     for j in range(n):
+  57         x = [0] * n
+  58         x[j] = 1
+  59         columns.append(apply(x))
+  60     return [[columns[j][i] for j in range(n)] for i in range(n)]
+  61 
+  62 
+  63 def matmul(a: list[list[int]], b: list[list[int]], p: int = P):
+  64     n, k, m = len(a), len(b), len(b[0])
+  65     return [[sum(a[i][r]*b[r][j] for r in range(k)) % p
+  66              for j in range(m)] for i in range(n)]
+  67 
+  68 
+  69 def invert(a: list[list[int]], p: int = P) -> list[list[int]]:
+  70     n = len(a)
+  71     t = [[x % p for x in a[i]] + [int(i == j) for j in range(n)]
+  72          for i in range(n)]
+  73     for j in range(n):
+  74         pivot = next((i for i in range(j, n) if t[i][j]), None)
+  75         if pivot is None:
+  76             raise ValueError('Singular matrix')
+  77         t[j], t[pivot] = t[pivot], t[j]
+  78         inv = pow(t[j][j], -1, p)
+  79         t[j] = [v * inv % p for v in t[j]]
+  80         for i in range(n):
+  81             if i != j and t[i][j]:
+  82                 f = t[i][j]
+  83                 t[i] = [(a-f*b) % p for a, b in zip(t[i], t[j])]
+  84     return [r[n:] for r in t]
+  85 
+  86 
+  87 def weyl_certificate(a: list[list[int]], w: int, p: int = P):
+  88     """S e_j=e_(j+1), D[j,j]=w^j. Full exact matrix check."""
+  89     n = len(a)
+  90     tab = powers(w, n, p)
+  91     first = sum((a[k][(j+1) % n] - tab[k]*a[k][j]) % p != 0
+  92                 for k in range(n) for j in range(n))
+  93     second = sum((tab[j]*a[k][j] - a[(k+1) % n][j]) % p != 0
+  94                  for k in range(n) for j in range(n))
+  95     seed = sum(a[k][0] % p != 1 for k in range(n))
+  96     return dict(shift_residual_entries=first,
+  97                 modulation_residual_entries=second,
+  98                 seed_residual_entries=seed,
+  99                 exact_fourier=(first == second == seed == 0))
+ 100 
+ 101 
+ 102 @dataclass
+ 103 class GreenPlan:
+ 104     order: list[int]
+ 105     weights: list[int]
+ 106     left: list[int]
+ 107     right: list[int]
+ 108     prefix: list[int]
+ 109     reciprocal: int
+ 110     p: int
+ 111     setup: Ledger
+ 112 
+ 113     @classmethod
+ 114     def build(cls, order: list[int], weights: list[int], left: list[int],
+ 115               right: list[int], p: int = P) -> 'GreenPlan':
+ 116         n = len(order)
+ 117         if n == 0:
+ 118             raise ValueError('order must list each cycle vertex exactly once')
+ 119         seen = [False] * n
+ 120         for vertex in order:
+ 121             if not isinstance(vertex, int) or not 0 <= vertex < n or seen[vertex]:
+ 122                 raise ValueError('order must list each cycle vertex exactly once')
+ 123             seen[vertex] = True
+ 124         if any(len(a) != n for a in (weights, left, right)):
+ 125             raise ValueError('All coefficient vectors must have length n')
+ 126         prefix, product = [], 1
+ 127         for i in order:
+ 128             prefix.append(product)
+ 129             product = product * weights[i] % p
+ 130         den = (1-product) % p
+ 131         if not den:
+ 132             raise ValueError('Singular cycle denominator')
+ 133         return cls(order[:], [x % p for x in weights],
+ 134                    [x % p for x in left], [x % p for x in right],
+ 135                    prefix, pow(den, -1, p), p, Ledger(n, 1, 1))
+ 136 
+ 137     def apply(self, x: list[int], ledger: Ledger | None = None) -> list[int]:
+ 138         n, p = len(self.order), self.p
+ 139         if len(x) != n:
+ 140             raise ValueError('Wrong input length')
+ 141         c = ledger if ledger is not None else Ledger()
+ 142         u = [self.right[i]*x[i] % p for i in range(n)]
+ 143         c.multiplications += n
+ 144         numerator = 0
+ 145         for t, i in enumerate(self.order):
+ 146             numerator = (numerator+self.prefix[t]*u[i]) % p
+ 147         c.multiplications += n
+ 148         c.additions += n
+ 149         z = [0]*n
+ 150         z[self.order[0]] = numerator*self.reciprocal % p
+ 151         c.multiplications += 1
+ 152         nxt = z[self.order[0]]
+ 153         for t in range(n-1, 0, -1):
+ 154             i = self.order[t]
+ 155             z[i] = (u[i]+self.weights[i]*nxt) % p
+ 156             nxt = z[i]
+ 157         c.multiplications += n-1
+ 158         c.additions += n-1
+ 159         c.multiplications += n
+ 160         return [self.left[i]*z[i] % p for i in range(n)]
+ 161 
+ 162 
+ 163 def random_green(n: int, rng: random.Random) -> GreenPlan:
+ 164     order = list(range(n))
+ 165     rng.shuffle(order)
+ 166     while True:
+ 167         weights = [rng.randrange(1, P) for _ in range(n)]
+ 168         left = [rng.randrange(1, P) for _ in range(n)]
+ 169         right = [rng.randrange(1, P) for _ in range(n)]
+ 170         try:
+ 171             return GreenPlan.build(order, weights, left, right)
+ 172         except ValueError:
+ 173             continue
+ 174 
+ 175 
+ 176 def two_bank(x: list[int], q: int, m: int, active: set[int] | None = None):
+ 177     """Exact mixed-radix identity; optionally DELETE some second-bank calls.
+ 178 
+ 179     Deleted calls are replaced by identity wires, not by a valid repair.
+ 180     This deliberately invalid shortcut is a negative control.
+ 181     """
+ 182     n = len(x)
+ 183     if q*m != n:
+ 184         raise ValueError('q*m must equal input length')
+ 185     w = root(n)
+ 186     tab = powers(w, n)
+ 187     first = [dft([x[t+q*u] for u in range(m)], pow(w, q, P))
+ 188              for t in range(q)]
+ 189     selected = set(range(m)) if active is None else active
+ 190     out = [0]*n
+ 191     for h in range(m):
+ 192         v = [first[t][h]*tab[h*t % n] % P for t in range(q)]
+ 193         v = dft(v, pow(w, m, P)) if h in selected else v
+ 194         for s in range(q):
+ 195             out[h+m*s] = v[s]
+ 196     return out
+ 197 
+ 198 
+ 199 def recurrence_checks():
+ 200     rows = []
+ 201     # Upper-envelope scalar recurrences, not FFT execution measurements.
+ 202     for rho in [Fraction(1, 2), Fraction(1), Fraction(3, 2), Fraction(2)]:
+ 203         a = Fraction(1)
+ 204         for h in range(1, 25):
+ 205             a = max(a, rho*a+1)
+ 206             if h in [4, 8, 16, 24]:
+ 207                 rows.append(dict(height=h, rho=str(rho),
+ 208                                  normalized_upper_envelope=float(a),
+ 209                                  ratio_to_logN=float(a/(2**h))))
+ 210         if rho < 1:
+ 211             assert a <= 2
+ 212         if rho == 1:
+ 213             assert a == 25
+ 214         if rho > 1:
+ 215             assert a <= (1+1/(rho-1))*rho**24
+ 216     a = Fraction(1)
+ 217     for h in range(2, 100):
+ 218         a = 2*Fraction(h-1, h)*a+1
+ 219         assert h*a/Fraction(2**h) <= Fraction(5, 2)
+ 220     return rows
+ 221 
+ 222 
+ 223 def run():
+ 224     rng = random.Random(20261010)
+ 225     result = {'status': 'CONDITIONAL THEORY; NO CONTRACTING FOURIER FACTORS FOUND OR CLAIMED',
+ 226               'field': P, 'test_groups': [], 'green_counts': [], 'weyl_controls': [],
+ 227               'inverse_density_controls': [], 'recurrence_tables': recurrence_checks()}
+ 228     # Green equation check, including zero weights: no division by weights.
+ 229     green_cases = 0
+ 230     for n in [2, 4, 8, 16, 32, 64, 128]:
+ 231         for trial in range(12):
+ 232             g = random_green(n, rng)
+ 233             if trial == 0:
+ 234                 g.weights[g.order[n//2]] = 0
+ 235                 g = GreenPlan.build(g.order, g.weights, g.left, g.right)
+ 236             x = [rng.randrange(P) for _ in range(n)]
+ 237             count = Ledger()
+ 238             y = g.apply(x, count)
+ 239             z = [y[i]*pow(g.left[i], -1, P) % P for i in range(n)]
+ 240             for t, i in enumerate(g.order):
+ 241                 j = g.order[(t+1) % n]
+ 242                 assert (z[i]-g.weights[i]*z[j]-g.right[i]*x[i]) % P == 0
+ 243             assert count.as_dict() == dict(multiplications=4*n,
+ 244                                          additions=2*n-1, inversions=0)
+ 245             green_cases += 1
+ 246         result['green_counts'].append(dict(n=n, setup=g.setup.as_dict(),
+ 247                                            one_apply=count.as_dict()))
+ 248     result['test_groups'].append({'name': 'weighted cyclic Green solves', 'passed_cases': green_cases})
+ 249     # Exhaustive basis checks for standard mixed-radix controls and deleted-bank failures.
+ 250     checked_columns, checked_coefficients = 0, 0
+ 251     for n in [4, 8, 16, 32, 64]:
+ 252         k = n.bit_length()-1
+ 253         q, m = 2**(k//2), 2**((k+1)//2)
+ 254         f = matrix_of(lambda x: dft(x, root(n)), n)
+ 255         ordinary = matrix_of(lambda x: two_bank(x, q, m), n)
+ 256         assert ordinary == f
+ 257         checked_columns += n
+ 258         checked_coefficients += n*n
+ 259         cert = weyl_certificate(ordinary, root(n))
+ 260         assert cert['exact_fourier']
+ 261         deleted = matrix_of(lambda x: two_bank(x, q, m, set(range(m//2))), n)
+ 262         bad = weyl_certificate(deleted, root(n))
+ 263         assert not bad['exact_fourier'] and deleted != f
+ 264         # The shortcut remains invertible: full rank is not a Fourier certificate.
+ 265         invert(deleted)
+ 266         rowscaled = [[(i+1)*v % P for v in row] for i, row in enumerate(f)]
+ 267         scaled = [[2*v % P for v in row] for row in f]
+ 268         rs, sc = weyl_certificate(rowscaled, root(n)), weyl_certificate(scaled, root(n))
+ 269         assert rs['shift_residual_entries'] == 0 and not rs['exact_fourier']
+ 270         assert sc['shift_residual_entries'] == sc['modulation_residual_entries'] == 0
+ 271         assert sc['seed_residual_entries'] == n
+ 272         result['weyl_controls'].append(dict(n=n, standard=cert, deleted_bank=bad,
+ 273                                             row_scaled=rs, scalar_scaled=sc,
+ 274                                             standard_recursive_mass=2*n,
+ 275                                             deleted_recursive_mass=n+q*(m//2)))
+ 276     result['test_groups'].append(dict(name='ordinary two-bank equality on every basis vector',
+ 277                                      passed_columns=checked_columns,
+ 278                                      passed_coefficients=checked_coefficients))
+ 279     result['test_groups'].append(dict(name='false Fourier certificates rejected', passed_cases=15))
+ 280     # Paired Green sums can have genuinely dense inverses. Not Fourier factors.
+ 281     for n in [8, 16, 32]:
+ 282         g1, g2 = random_green(n, rng), random_green(n, rng)
+ 283         def h(x):
+ 284             return [(a+b) % P for a,b in zip(g1.apply(x), g2.apply(x))]
+ 285         a = matrix_of(h, n)
+ 286         ai = invert(a)
+ 287         nnz = [sum(v != 0 for v in row) for row in ai]
+ 288         assert min(nnz) > 2
+ 289         result['inverse_density_controls'].append(dict(n=n, min_row_nnz=min(nnz),
+ 290                                                        max_row_nnz=max(nnz),
+ 291                                                        Fourier_claim=False))
+ 292     result['test_groups'].append(dict(name='paired-Green inverse-density controls', passed_cases=3))
+ 293     # Pure Green inverse support: explicit check of the inverse product identity.
+ 294     for n in [4, 16, 64]:
+ 295         q = m = math.isqrt(n)
+ 296         assert q*m == n
+ 297         for t in range(8):
+ 298             possible_support = m*(2**t)
+ 299             if t < math.log2(q):
+ 300                 assert possible_support < n
+ 301     result['test_groups'].append(dict(name='bank inverse-support inequality arithmetic', passed_cases=24))
+ 302     result['test_groups'].append(dict(name='four constant-mass and harmonic recurrences', passed=True))
+ 303     result['all_checks_passed'] = True
+ 304     out = Path(__file__).with_name('RESULTS.json')
+ 305     out.write_text(json.dumps(result, indent=2)+'\n')
+ 306     print(json.dumps(result, indent=2))
+ 307 
+ 308 if __name__ == '__main__':
+ 309     run()

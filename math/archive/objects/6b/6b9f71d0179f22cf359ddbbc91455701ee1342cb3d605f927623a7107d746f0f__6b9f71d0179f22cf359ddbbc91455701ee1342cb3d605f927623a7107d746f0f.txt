@@ -1,0 +1,129 @@
+"""Exact two-factor Cooley-Tukey NTT, with freely permuted *both* endpoints.
+
+This is a CONTROL construction, NOT an improved FFT algorithm.
+Every factor is block diagonal, hence quasiseparable with off-diagonal rank
+bounded by half its block size. This shows why fixing an endpoint is essential
+in previous two-stage linear-rank obstruction.
+"""
+from dataclasses import dataclass
+import random
+
+P=998244353
+PRIMITIVE=3
+
+def root(n):
+    assert (P-1)%n==0
+    return pow(PRIMITIVE,(P-1)//n,P)
+
+def full_dft(x):
+    n=len(x); w=root(n); out=[]
+    for k in range(n):
+        wk=pow(w,k,P); y=0; t=1
+        for v in x:
+            y=(y+v*t)%P
+            t=t*wk%P
+        out.append(y)
+    return out
+
+@dataclass
+class TwoStage:
+    a: int
+    b: int
+    def __post_init__(self):
+        assert self.a >= 2 and self.b>=2
+        self.n=self.a*self.b
+        self.w=root(self.n)
+        self.wa=root(self.a)
+        self.wb=root(self.b)
+        # Stage one in/out group by n1, then by n2/k2.
+        self.input_order=[n1+self.a*n2 for n1 in range(self.a) for n2 in range(self.b)]
+        # Stage two in/out group by k2, then by n1/k1.
+        self.output_order=[k2+self.b*k1 for k2 in range(self.b) for k1 in range(self.a)]
+        # P maps stage2 input (k2,n1) to stage1 output (n1,k2).
+        self.shuffle=[n1*self.b+k2 for k2 in range(self.b) for n1 in range(self.a)]
+
+    def stage1(self, reordered_input):
+        a,b=self.a,self.b
+        out=[0]*self.n
+        for n1 in range(a):
+            for k2 in range(b):
+                out[n1*b+k2]=sum(reordered_input[n1*b+n2]*pow(self.wb,n2*k2,P) for n2 in range(b))%P
+        return out
+
+    def stage2(self, stage2_input):
+        a,b=self.a,self.b
+        out=[0]*self.n
+        for k2 in range(b):
+            for k1 in range(a):
+                out[k2*a+k1]=sum(stage2_input[k2*a+n1]*pow(self.w,n1*k2,P)*pow(self.wa,n1*k1,P) for n1 in range(a))%P
+        return out
+
+    def apply_ordered(self, ordered_input):
+        temp=self.stage1(ordered_input)
+        return self.stage2([temp[q] for q in self.shuffle])
+
+    def apply(self, x):
+        v=self.apply_ordered([x[i] for i in self.input_order])
+        out=[0]*self.n
+        for i,k in enumerate(self.output_order):out[k]=v[i]
+        return out
+
+    @property
+    def channel_ceiling(self):
+        return (self.b//2,self.a//2)
+
+    def stage1_matrix(self):
+        n,a,b=self.n,self.a,self.b
+        return [[pow(self.wb,(i%b)*(j%b),P) if i//b==j//b else 0 for j in range(n)] for i in range(n)]
+
+    def stage2_matrix(self):
+        n,a,b=self.n,self.a,self.b
+        return [[pow(self.wa,(i%a)*(j%a),P)*pow(self.w,(j%a)*(i//a),P)%P if i//a==j//a else 0 for j in range(n)] for i in range(n)]
+
+
+def modular_rank(matrix, p=P):
+    if not matrix or not matrix[0]:return 0
+    m=[list(map(lambda z:z%p,row)) for row in matrix]
+    rows=len(m); cols=len(m[0]); rank=0
+    for col in range(cols):
+        piv=next((i for i in range(rank,rows) if m[i][col]),None)
+        if piv is None:continue
+        m[rank],m[piv]=m[piv],m[rank]
+        inv=pow(m[rank][col],-1,p)
+        for i in range(rank+1,rows):
+            if m[i][col]:
+                coef=m[i][col]*inv%p
+                for j in range(col,cols):m[i][j]=(m[i][j]-coef*m[rank][j])%p
+        rank+=1
+        if rank==rows:break
+    return rank
+
+
+def qsrank(matrix):
+    n=len(matrix)
+    return max(max(modular_rank([row[:k] for row in matrix[k:]]),modular_rank([row[k:] for row in matrix[:k]])) for k in range(1,n))
+
+def verify(a,b,random_trials=7):
+    m=TwoStage(a,b)
+    assert sorted(m.input_order)==list(range(m.n))
+    assert sorted(m.output_order)==list(range(m.n))
+    assert sorted(m.shuffle)==list(range(m.n))
+    for j in range(m.n):
+        # Exhaustive full-matrix basis certificate: every column of the transform.
+        v=[int(k==j) for k in range(m.n)]
+        assert m.apply(v)==full_dft(v)
+    for seed in range(random_trials):
+        rng=random.Random(seed+m.n*10000)
+        x=[rng.randrange(P) for _ in range(m.n)]
+        assert m.apply(x)==full_dft(x)
+    # Check individual rank identities in small cases only (matrix rank O(n^4)).
+    ranks=None
+    if m.n<=32:
+        M1=m.stage1_matrix(); M2=m.stage2_matrix()
+        ranks=(qsrank(M1),qsrank(M2))
+        assert ranks==m.channel_ceiling,(ranks,m.channel_ceiling)
+    return {'n':m.n,'a':a,'b':b,'stage_rank_bounds':m.channel_ceiling,'exact_basis':m.n,'fresh_trials':random_trials,'verified_ranks':ranks}
+
+if __name__=='__main__':
+    for a,b in [(2,2),(4,4),(4,8),(8,8),(16,16)]:
+        print(verify(a,b))

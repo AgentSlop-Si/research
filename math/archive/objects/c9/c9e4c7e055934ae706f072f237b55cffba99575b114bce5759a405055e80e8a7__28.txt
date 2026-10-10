@@ -1,0 +1,166 @@
+1: """Exact rank-one cyclic graph feedback with no additional transform call."""
+2: from collections import Counter
+3: from prior_affine_reuse import add_t_word,inverse
+4: 
+5: 
+6: def add_j_word(plan,source,target,sign=1):
+7:     n,p=plan['n'],plan['p']
+8:     result=[]
+9:     for i in range(n):
+10:         value=sign*plan['diagonal'][i]%p
+11:         if value:
+12:             result.append(('shear',target+i,source+i,value))
+13:         result.append(('shear',target+i,source+(i+1)%n,sign*plan['weights'][i]%p))
+14:     return result
+15: 
+16: 
+17: def rank_one_add(p,functional,target,vector):
+18:     """y += vector*(sum_j functional[j]*register[j]); all sources restored.
+19: 
+20:     Source registers and target registers must be disjoint. No clean scratch.
+21:     A source pivot temporarily stores the linear functional, then is uncomputed.
+22:     """
+23:     functional={i:a%p for i,a in functional.items() if a%p}
+24:     vector=[a%p for a in vector]
+25:     if not functional or not any(vector):
+26:         return [],{'functional_nonzeros':len(functional),'output_nonzeros':sum(bool(a) for a in vector),
+27:                    'scalar_instructions':0,'source_pivot_inverse':0}
+28:     if any(target<=i<target+len(vector) for i in functional):
+29:         raise ValueError('source and target registers must be disjoint')
+30:     pivot=min(functional)
+31:     before=[('scale',pivot,functional[pivot])]
+32:     before.extend(('shear',pivot,i,a) for i,a in sorted(functional.items()) if i!=pivot)
+33:     middle=[('shear',target+i,pivot,a) for i,a in enumerate(vector) if a]
+34:     word=before+middle+inverse(before,p)
+35:     m,k=len(functional),sum(bool(a) for a in vector)
+36:     return word,{'functional_nonzeros':m,'output_nonzeros':k,
+37:                  'scalar_instructions':6*m+3*k-4,'source_pivot_inverse':1}
+38: 
+39: 
+40: class Counted:
+41:     def __init__(self,p):
+42:         self.p=p
+43:         self.count=Counter()
+44:     def mul(self,a,b):
+45:         self.count['mul']+=1
+46:         return a*b%self.p
+47:     def add(self,a,b):
+48:         self.count['add']+=1
+49:         return (a+b)%self.p
+50:     def sub(self,a,b):
+51:         self.count['sub']+=1
+52:         return (a-b)%self.p
+53:     def inv(self,a):
+54:         self.count['constant_inverse']+=1
+55:         return pow(a,-1,self.p)
+56: 
+57: 
+58: def prepare_feedback(plan,batches,u,observed):
+59:     """Feedback closes last target to first by u*e_observed^T.
+60: 
+61:     Stores ell_r = (K^T)^(R-1-r) T^T e_observed for every injection vertex r.
+62:     No T action is called: its one needed row is already known kernel data.
+63:     """
+64:     n,p=plan['n'],plan['p']
+65:     if batches<1 or len(u)!=n or not 0<=observed<n:
+66:         raise ValueError('invalid dimensions')
+67:     c=Counted(p)
+68:     a=[int(i==observed) for i in range(n)]
+69:     ell=[plan['kernel'][observed-i] if i<=observed else 0 for i in range(n)]
+70:     rows=[None]*batches
+71:     rows[-1]=ell[:]
+72:     for step in range(batches-1):
+73:         a=[c.add(c.mul(plan['diagonal'][i],a[i]),
+74:                  c.mul(plan['weights'][(i-1)%n],a[(i-1)%n])) for i in range(n)]
+75:         ell=[ell[0]]+[c.add(ell[i],c.mul(plan['weights'][i-1],ell[i-1])) for i in range(1,n)]
+76:         rows[batches-2-step]=ell[:]
+77:     dot=c.mul(a[0],u[0])
+78:     for i in range(1,n):
+79:         dot=c.add(dot,c.mul(a[i],u[i]))
+80:     kappa=c.sub(1,dot)
+81:     if kappa==0:
+82:         raise ValueError('singular feedback: kappa = 0')
+83:     reciprocal=c.inv(kappa)
+84:     output=[c.mul(value,reciprocal) for value in u]
+85:     return {'u':[value%p for value in u],'observed':observed,'batches':batches,
+86:             'a':a,'rows':rows,'kappa':kappa,'output':output,
+87:             'coefficient_preparation':dict(c.count)}
+88: 
+89: 
+90: def feedback_word(plan,feedback,injections):
+91:     """Each (vertex,source_bank) supplies an independent T*x injection.
+92: 
+93:     Sources precede one arbitrary untouched w bank, then R arbitrary targets.
+94:     Targets solve z_0=T*x_0+u*z_last[observed], z_r=T*x_r+J*z_(r-1),
+95:     with absent injections treated as zero. All original registers are retained
+96:     except additive target increments. Repeated source banks are allowed.
+97:     """
+98:     n,p=plan['n'],plan['p']
+99:     batches=feedback['batches']
+100:     if not injections:
+101:         raise ValueError('at least one injection required')
+102:     if any(not 0<=vertex<batches or source<0 for vertex,source in injections):
+103:         raise ValueError('invalid injection')
+104:     source_banks=1+max(source for vertex,source in injections)
+105:     target_base=(source_banks+1)*n
+106:     word=[]
+107:     for r in reversed(range(1,batches)):
+108:         word.extend(add_j_word(plan,target_base+(r-1)*n,target_base+r*n,-1))
+109:     for vertex,source in injections:
+110:         word.extend(add_t_word(plan,source*n,target_base+vertex*n))
+111:     functional={}
+112:     for vertex,source in injections:
+113:         for i,value in enumerate(feedback['rows'][vertex]):
+114:             index=source*n+i
+115:             functional[index]=(functional.get(index,0)+value)%p
+116:     correction,rank_cost=rank_one_add(p,functional,target_base,feedback['output'])
+117:     word.extend(correction)
+118:     for r in range(1,batches):
+119:         word.extend(add_j_word(plan,target_base+(r-1)*n,target_base+r*n,1))
+120:     baseline=3*len(injections)*n*(n+1)//2+2*(batches-1)*(6*n-3)
+121:     return word,{'source_banks':source_banks,'target_base':target_base,
+122:                  'ADD_T_calls':len(injections),'feedback_extra_ADD_T_calls':0,
+123:                  'acyclic_scalar_instructions':baseline,'rank_one_correction':rank_cost,
+124:                  'scalar_instructions':baseline+rank_cost['scalar_instructions'],
+125:                  'coefficient_accumulations':len(injections)*n}
+126: 
+127: 
+128: def gain_update_word(plan,feedback,injections,old_gain,new_gain):
+129:     """Change only the closing-edge gain, using one exact rank-one correction.
+130: 
+131:     No ADD_T is emitted. `feedback` stores the unscaled base edge u*e_j^T;
+132:     both old and new gains must have nonsingular closed loops.
+133:     """
+134:     n,p,R=plan['n'],plan['p'],feedback['batches']
+135:     if not injections:
+136:         raise ValueError('at least one injection required')
+137:     if any(not 0<=vertex<R or source<0 for vertex,source in injections):
+138:         raise ValueError('invalid injection')
+139:     c=Counted(p)
+140:     beta=c.sub(1,feedback['kappa'])
+141:     old_kappa=c.sub(1,c.mul(old_gain,beta))
+142:     new_kappa=c.sub(1,c.mul(new_gain,beta))
+143:     if old_kappa==0 or new_kappa==0:
+144:         raise ValueError('singular old or new feedback gain')
+145:     numerator=c.sub(new_gain,old_gain)
+146:     denominator=c.mul(old_kappa,new_kappa)
+147:     delta=c.mul(numerator,c.inv(denominator))
+148:     vector=[]
+149:     current=feedback['u'][:]
+150:     for r in range(R):
+151:         vector.extend(c.mul(delta,value) for value in current)
+152:         if r+1<R:
+153:             current=[c.add(c.mul(plan['diagonal'][i],current[i]),
+154:                            c.mul(plan['weights'][i],current[(i+1)%n])) for i in range(n)]
+155:     source_banks=1+max(source for vertex,source in injections)
+156:     target_base=(source_banks+1)*n
+157:     functional={}
+158:     for vertex,source in injections:
+159:         for i,value in enumerate(feedback['rows'][vertex]):
+160:             index=source*n+i
+161:             functional[index]=(functional.get(index,0)+value)%p
+162:     word,rank_cost=rank_one_add(p,functional,target_base,vector)
+163:     return word,{'old_gain':old_gain,'new_gain':new_gain,'old_kappa':old_kappa,
+164:                  'new_kappa':new_kappa,'ADD_T_calls':0,'correction_scalar':delta,
+165:                  'rank_one_correction':rank_cost,'coefficient_preparation':dict(c.count),
+166:                  'coefficient_accumulations':len(injections)*n}

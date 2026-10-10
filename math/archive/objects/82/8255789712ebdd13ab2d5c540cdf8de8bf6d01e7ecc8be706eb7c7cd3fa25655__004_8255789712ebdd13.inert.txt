@@ -1,0 +1,95 @@
+# FFT research — canonical checkpoint and do-not-repeat register
+
+**Checkpoint:** 9 October 2026  
+**Purpose:** Prevent the repeated rediscovery, relabeling and overstatement of prior FFT/transform/multiplication experiments. This document is a source-and-claims audit, not a newly proved FFT theorem.
+
+## 0. How this audit was conducted
+
+I revisited the full current conversation's generated-artifact inventory and relevant cross-conversation Library artifacts; inspected the mathematical research notes, source interfaces, negative audits, benchmark reports, documentation, and corresponding archive inventories. The active container held the current-chat projects from first collision caching through Phase 12. Additional Library source/certificate ZIPs were materialized and indexed: exact-width circuit restrictions, current/proposed network constant retunings, reduced-center audit, relation-view and query-engine branches, native binary lookup-table experiments, source-hardening passes, symbolic two-round and cancellation searches, and an independent bit-reclamation rejection.
+
+The inventory operation found **122 conversation artifacts** and **249 Library entries** (some duplicate versions, and not all Library items relevant to FFT). A container-wide audit examined **235 non-bytecode files** including **35 Markdown reports, 108 Python sources (84 distinct SHA-256s), 32 JSON artifacts, and 29 ZIP archives with 1,215 archive members**. ZIP CRC tests passed, every scanned Python module parsed, and every scanned JSON file parsed. **This is source/consistency inspection, not an independent line-by-line formal verification or full regression rerun of every program.** A subset of earlier research files is duplicated across ZIPs and directories; byte-identical copies are not distinct research results.
+
+Do **not** infer novelty from a successful unit test, asymptotic improvement from a single benchmark, or uniform all-input guarantees from special-case algebra. Different parallel branches reuse phase numbers (`Phase 9` and `Phase 10` are ambiguous); name work by its mechanism, not its phase number.
+
+## 1. Primary goal — exactly state the problem
+
+The user's original hypothesis is:
+
+> As N grows, the number of repeated FFT computations grows. Can we exploit that growth to reduce a full fresh FFT on an arbitrary length-N input to O(N), without multiple processors or uncharged memory/precomputation?
+
+This question is **not the same as** (a) updating an old spectrum after known changes, (b) outputting a few bins instead of N, (c) handling highly compressible, periodic or recurrence-generated inputs, (d) caching a repeated request, (e) saving only a constant fraction of butterflies, or (f) proving a faster integer-multiplication bound in another computational model.
+
+The target needs an exact computational contract: arbitrary or distributional inputs; real/complex, finite-field or bit data; exact arithmetic vs finite precision; word-RAM vs bit model vs fixed-tape; full explicit N-vector output vs an implicit handle; charged table construction and indexing; sequential work count. **No prototype here establishes O(N) for an arbitrary fresh exact complex DFT under a standard uniform model.** OpenAI result #130 separately claims an all-length sub-N-log-N bound in a permissive exact-complex-arithmetic model, with much weaker exponent improvement than linear time, not in bit complexity.
+
+## 2. Work already completed — not to repeat under new names
+
+| Track | Existing artifacts | Outcome and originality boundary | Stop rule |
+|---|---|---|---|
+| **Exact input/subtree collisions** | `fft_collision_research.py`, `fft_collision_research_notes.md`; an additional `fft_phase13_collision_limit/analytic_collision.py` local calculation | Shared-DAG FFT memoization works on periodic/small-alphabet subtrees; linear arithmetic for constant-period inputs. For iid random fixed-alphabet inputs, repeated **large** subtrees are rare, and the arithmetic count remains Θ(N log N) even with free lookup. | Don't rerun exact-subtree hash-consing as a proposed worst-case breakthrough. |
+| **Equivalent FFT orbits** | `fft_equivalence_research.py`, `fft_equivalence_findings.md` | Shifts, reversals, complements, scaling and affine permutations save work on related values; symmetry-class size is too small relative to 2^m on random large blocks. Canonicalization cost can exceed savings. | No new equivalent-input cache without a demonstrably stronger orbit and charged recognition. |
+| **Packing two real FFTs** | `fft_packed_dag_research.py`, `fft_packed_dag_findings.md` | One complex FFT encodes two arbitrary **real** FFTs, with O(N) extraction. Packed convolution via the imaginary part of the inverse squared transform. Classical constant-factor improvement; native real-FFT libraries often win. | Do not call this two arbitrary **complex** FFTs from one or a sub-N-log-N result. |
+| **Adaptive cached engine** | `adaptive_fft_engine`; C++/FFTW port and `CPP_FINDINGS.md` | Exact reuse, known sparse deltas, low-rank bases, shifts, shared DAGs, native fallback. Reported wins on repeated inputs; shifted/dense-output variants often lose due to scans, memory traffic and output materialization. | Don't redo high-entropy shift search on every input. Charge relationship discovery. |
+| **Split-radix / compact plan** | `fft_structural_research` | ~30.9% fewer counted nontrivial complex twiddle multiplications at N=4096; still Θ(N log N) total. Implicit O(N)-size twiddle table avoids explicit Θ(N log N) graph storage. Classical. Symbolic interning adds no new identical expressions across disjoint arbitrary-input subtrees. | No claim of asymptotic improvement from a reduced multiplication constant. |
+| **Finite-field tabulated WHT** | `fft_structural_research/RESEARCH.md`, `fft_lookup_research_note.md`, recovery audit | Repeated all-small-block tables across levels yield O(N log N/log log N) in a fixed-field random-access model with preparation charged; previously published by Josh Alman. Field/alphabet must stay closed and table access model must be stated. | Don't transfer the bound to complex FFT or NTT by silently holding exact coefficient size fixed. |
+| **Native binary leaf lookup** | `selective_fft_reproducible_experiment.zip`, `selective_fft_benchmark_report.docx` | C/Python 4/8/16-bit codelets/table experiment already run. At large N an 8-bit table did not reliably beat optimized arithmetic leaves; 16-bit table often worse. Fixed leaf lookup saves fixed bottom levels, not the exponent. | Don't rerun the same bit-leaf sizes without an architectural change and a fair codelet baseline. |
+| **Exact #130 + sparse composition** | `fft130_adaptive_merge`; relation-view notes | Mathematical sparse-input, arbitrary-output and #130 black-box compositions derived. Executable code uses NumPy/SciPy, **not** #130's exact arithmetic circuit. | Don't present the composition as a better uniform #130 exponent or a measured #130 benchmark. |
+| **Lazy spectra / projected queries** | Phase 4–5, `LAZY_RELATION_RESEARCH.md`, `RELATION_VIEW_RESEARCH.md`, `ARBITRARY_QUERY_RESEARCH.md`, query v2/v3 | Known updates, small requested bin sets and low-rank producer metadata admit O(q min(H,r+k)) consumer-query work after basis projection. Classical pruning O(N log q), and multiple consumer view grouping were implemented. These are different output/metadata workloads. | Don't measure four-bin output against full-spectrum FFT and claim a general FFT speedup. |
+| **Multi-consumer view grouping** | `fft_relation_query_engine_v3.zip`, `ADAPTIVE_VIEW_ORGANIZER_RESEARCH.md`, hardened relation bundle | Cost-aware grouping of overlapping, synchronized consumers tested; wins in synchronous cases, regressions for asynchronous schedules and expensive tuning. Updated derivatives exist. | Do not rebuild fusion, tuning or materialized-view clustering as if unattempted. |
+| **Persistent convolution chains** | Phases 6–7, `fft_phase9_unified_reuse.zip`, hardening archive | Known edits update cached products using shifts and leave-one-factor-out convolution. Branch sharing and lazy output are useful on related streams, not unrelated fresh multiplication. Unbalanced chain and subscription bugs identified in a subsequent independent hardening audit. | Avoid copying stale Phase 5–7 versions; use vetted patch lineage. |
+| **Sum/product polynomial jets** | Phases 8–10 `algebra_fft.py`, `compiled_kernels.py`, `two_edit_engine.py`, C++ AOT | Prepared degree-bounded expressions yield O(N) dense updates per constant-size edit after preprocessing; two-factor mixed terms and AOT native kernels implemented. Warm codegen competitive with handwritten code, cold JIT expensive; separate audits identified exactness/timing qualifications. | Don't relabel a prepared algebraic update as faster fresh multiplication. |
+| **Fresh structured convolution / A-k** | Phase 11 `fresh_factor.py`, `barrier_audit.py`, separate `fft_phase10_fresh_input_research.zip` | Short annihilating polynomials, arithmetic/geometric/Fibonacci recurrences, near-power signed-digit decomposition speed fresh **structured** inputs. Over F2, random inputs remain dense under every degree-o(N) filter with high probability (restricted barrier). | Don't rerun `AB=(A-k)B+kB` or short-filter sparsification as a universal guarantee. |
+| **Dense arbitrary-input bilinear rank** | Phase 12 `dense_algebra.py`, `RESEARCH.md` | Karatsuba and 2N−1 optimal bilinear products for degree<N polynomials, but interpolation/evaluation dominates; no all-in algorithm better than NTT or exact #130. Finite low-dimensional baseline menus cannot cover all complex inputs with sparse residuals when r+k<N. | Don't count products alone; evaluation, interpolation and output charge must all be paid. |
+| **Small exact-width H16 circuit search** | `fft_exact_width_certificate_2026-10-08.zip` | 31-call H16 target studied. Exact restricted impossibility for the **tested** local schedule neighborhood (210,833,760 labeled schedules; 556 possible by reachability, all rejected by a bottleneck certificate). A general 31-call circuit remains unexcluded. | Don't restart the same one-call-deletion/local-repair grammar. |
+| **Two-round symbolic/cancellation** | `two_round_symbolic_code_and_certificates.zip`, `cancellation_transform_reproducibility.zip`, corresponding DOCX reports | Restricted no-gain for two butterfly layers, a 16-addition baseline, 37,144 generated circuits, solver timeout at 15 operations (not UNSAT). Output rounding and dirty scratch matter. | Don't announce a finite sharing win just because a dense expansion was beaten. |
+| **Exact #130 network parameter experiments** | `PARAMETER_RETUNING_BREAKTHROUGH.md`, `CHAIN_CHECKPOINT_2026-10-09.md`, `FINISH_LINE_RESULT.md`, reduced-center certificates | Retuning h=24 and eliminating a redundant center were **already derived and numerically/finite-algebra checked**, with stronger exponent-gap candidates in the exact complex model. These are **not independently formalized/general proof-verified** in the saved files and are outside the collision/linear-time thesis. | Do not propose retuning h or dropping the center as a new avenue; audit the existing candidate first if pursuing that separate project. |
+| **CrocSwap bit/complex frame circuits** | `Bit_reclamation_exact_certificate.zip`, `Complex_Fourier_label_audit.docx` + certificate | Independent scoped rank-profile/finite-circuit audits. Retained-carrier scratch reclamation worsened a pinned bit recurrence. Another binary label compression slightly improved a complex histogram but not overall integer-multiplication bound. | These are CrocSwap-like rank optimization; don't confuse with random collision theory or claim a stronger universal result. |
+| **Implementation hardening** | `fft_relation_research_hardened_20261008.zip`, `fft_phase11_audited_20261008.zip` | Original packages had genuine issues: spectrum-only auto reconstruction, non-atomic rejected subscription edits, numerical cancellation/coalescing, planner bookkeeping, and strict exactness/model caveats. The hardening bundle contains test-passing derivative versions and the complete problem reports. | Prefer validated derivative lineage, not merely the highest phase number or most optimistic benchmark. |
+
+**Important:** There are *parallel* Phase 9/10/11 projects in the Library, not one continuous numbered revision chain. `fft_phase9_unified_reuse.zip` is an integration/hardening branch, whereas `fft_phase9_compiler_research.zip` is a Numba code generator. `fft_phase10_fresh_input_research.zip` is **different** from `fft_phase10_aot_two_factor_compiler.zip`.
+
+## 3. Mathematical check of the user's original collision-to-O(N) hypothesis
+
+Let N=2^L. At a recursive level comprising r=N/m disjoint length-m blocks, suppose the input entries are iid uniform from an alphabet of q>=2 values. There are S=q^m possible blocks. The number U_m of distinct blocks satisfies
+
+\[ \mathbb E U_m=S\left(1-(1-1/S)^r\right). \]
+
+Under an *ideally free* exact-subproblem memoization scheme, the butterfly count is
+
+\[ B(N)=\sum_{m=2,4,8,\ldots,N}(m/2) U_m. \]
+
+The bottom levels have many repeats. But for every m at least roughly 3 log_q N, a collision between disjoint random blocks is very unlikely, so almost every subtree at those levels is distinct. There are \(\log_2 N-O(\log\log N)\) such levels, each incurring essentially N/2 butterflies. Thus even this optimistic scheme has
+
+\[ \mathbb E B(N)=\Theta(N\log N) \]
+
+for iid random finite-alphabet inputs, rather than O(N). The saved **fraction** from repeated exact subtrees actually tends to zero as N grows, even though the absolute number of collisions increases. This is restricted to standard recursive exact-match sharing—not a lower bound on all FFT algorithms or on OpenAI #130's unrestricted exact-arithmetic model.
+
+- **Infinite complete answer oracle:** With nonuniform uncharged tables for all possible length-N inputs, O(N) explicit output is trivial for any finite-input function, including multiplication. That no longer constitutes a uniform low-resource algorithm.
+- **Polynomial-size small-block table:** b=O(log N) under fixed input alphabet permits table size polynomial in N, but replacing only bottom b-leaves removes O(log log N) FFT levels, leaving Θ(N log N).
+- **Repeated table at every stage:** Works for fixed-field Walsh–Hadamard, where every intermediate remains in a constant alphabet, yielding the known O(N log N/log log N) improvement. Complex FFT has growing exact intermediate value diversity (even for binary original inputs); standard NTT needs growing field order. Reusing those tables without charging state widths is invalid.
+- **Special signal ensembles:** Fixed-period or low-description-complexity families *can* admit O(N) explicit transforms. That's a valid average-/instance-conditional result, not a uniform worst-case one.
+
+## 4. What would count as *new* evidence?
+
+**Track U — fresh arbitrary input, full N-vector:** Declare a *specific* model and give an input-independent or otherwise provably universal exact algorithm with a complete recurrence and charged precomputation. Compare to the genuine #130 bound **in the same model**; linear-time would need much stronger mathematics than exact collision reuse. Do not restart CrocSwap rank-frame optimization without explicitly choosing that separate competitive track.
+
+**Track C — input-dependent collision theory:** First demonstrate a rigorously specified source family or equivalence class in which the **expected number of distinct expensive subproblems** grows sublinearly enough across *almost all* FFT levels. State entropy, access model and whether input recognition is charged. Existing iid uniform binary model is a negative control, not a candidate for improvement. Do not claim average-case generality from periodic or cached data.
+
+**Track D — persistent/dynamic systems:** Reuse the already-developed hardened projected-spectral/view graph, explicit producer relationship metadata, lazy materialization and calibrated native fallback. Compare against eFFT/FFTW/FFTW-codelets on **identical work and output scope**. This is an engineering benchmark path, not a proof of arbitrary-input O(N).
+
+**Minimal acceptance gate for any proposed breakthrough:** arbitrary versus restricted inputs; first transform versus updated transform; exact versus numerical and bit complexity; same output requirements; one processor; preprocessing, all table/index/descriptor costs charged; no silently supplied cached spectra or known transformations; independent exact verification; a family-of-N bound rather than one finite instance; new idea checked against this prior-work register before coding.
+
+## 5. Recommended action before another experimental phase
+
+Do not write another broad 'Phase 13' engine or rerun known searches yet. Instead choose one precisely stated unsolved proposition and attempt to **falsify it on paper** using the existing occupancy, dimension, bit-size, matrix-ratio, rank and circuit-grammar obstructions. Only then implement a small independent verifier for the surviving hypothesis. Maintain unique descriptive project names and compare SHA/provenance before copying source.
+
+For the user's original hypothesis, the immediate conclusion of the complete audit is clear: **growing input size guarantees more short collisions but does not imply convergence to O(N) work on uniformly random inputs.** Turning that into a different asymptotic theorem requires a new notion of reusable structure, not another implementation of exact-value cache entries.
+
+## 6. Key source locations
+
+Current container main research notes: `fft_collision_research_notes.md`, `fft_equivalence_findings.md`, `fft_packed_dag_findings.md`, `adaptive_fft_engine/RESEARCH_NOTES.md`, `fft_structural_research/RESEARCH.md`, `fft130_adaptive_merge/RESEARCH.md`, `fft_phase4/RESEARCH.md` through `fft_phase12_dense_worstcase/RESEARCH.md`. Parallel Library research/certificate archives were copied into `fft_history_extras/` for inspection; originals remain in the user's Library. Earlier project ZIPs remain unchanged.
+
+Prior-art references: OpenAI #130 `https://github.com/openai/math/blob/main/lean/docs/130.md`; Josh Alman `https://arxiv.org/abs/2211.04643`; Alman–Rao `https://arxiv.org/abs/2211.06459`; CrocSwap `https://github.com/CrocSwap/integer-mult-bounds`; eFFT `https://github.com/raultapia/efft`; FFTW pruned transform notes `https://fftw.org/pruned.html`.
+
+---
+
+**Unresolved result:** No novel, verified uniform O(N) arbitrary complex FFT was found in these files. No verified project-originated theorem improves #130's worst-case exact complex DFT exponent. The known structural, dynamic, and lookup optimizations remain valuable *within their correct problem classes*.

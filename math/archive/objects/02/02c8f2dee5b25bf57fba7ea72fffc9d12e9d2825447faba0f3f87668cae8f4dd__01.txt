@@ -1,0 +1,69 @@
+1: import numpy as np, math, json, time
+2: from scipy.optimize import linprog
+3: 
+4: 
+5: def solve_support(N,S,complex_weights=True,positive=False):
+6:     S=np.array(sorted(set(S)),dtype=int); k=len(S)
+7:     f=np.arange(1,N,dtype=float)[:,None]
+8:     z=np.exp(-2j*np.pi*f*S[None,:]/N)
+9:     A=z.real; B=z.imag
+10:     if complex_weights:
+11:         # vars [a(k), b(k), t]
+12:         rows=[]; rhs=[]
+13:         re=np.hstack([A,-B,-np.ones((N-1,1))])
+14:         im=np.hstack([B, A,-np.ones((N-1,1))])
+15:         rows += [re,-np.hstack([A,-B,np.ones((N-1,1))])]
+16:         # easier explicitly: re<=t, -re<=t
+17:         rows=[]
+18:         rows.append(np.hstack([ A,-B,-np.ones((N-1,1))]))
+19:         rows.append(np.hstack([-A, B,-np.ones((N-1,1))]))
+20:         rows.append(np.hstack([ B, A,-np.ones((N-1,1))]))
+21:         rows.append(np.hstack([-B,-A,-np.ones((N-1,1))]))
+22:         Aub=np.vstack(rows); bub=np.zeros(4*(N-1))
+23:         Aeq=np.zeros((2,2*k+1)); Aeq[0,:k]=1; Aeq[1,k:2*k]=1
+24:         beq=np.array([1.,0.]); c=np.zeros(2*k+1); c[-1]=1
+25:         bounds=[(None,None)]*(2*k)+[(0,None)]
+26:         res=linprog(c,A_ub=Aub,b_ub=bub,A_eq=Aeq,b_eq=beq,bounds=bounds,method='highs')
+27:         if not res.success: return None
+28:         w=res.x[:k]+1j*res.x[k:2*k]
+29:     else:
+30:         # real weights only
+31:         rows=[np.hstack([ A,-np.ones((N-1,1))]),np.hstack([-A,-np.ones((N-1,1))]),
+32:               np.hstack([ B,-np.ones((N-1,1))]),np.hstack([-B,-np.ones((N-1,1))])]
+33:         Aub=np.vstack(rows); bub=np.zeros(4*(N-1))
+34:         Aeq=np.zeros((1,k+1)); Aeq[0,:k]=1; beq=np.array([1.]); c=np.zeros(k+1); c[-1]=1
+35:         bounds=([(0,None)]*k if positive else [(None,None)]*k)+[(0,None)]
+36:         res=linprog(c,A_ub=Aub,b_ub=bub,A_eq=Aeq,b_eq=beq,bounds=bounds,method='highs')
+37:         if not res.success: return None
+38:         w=res.x[:k].astype(complex)
+39:     coeff=z@w
+40:     return {'rect_t':float(res.fun),'maxmag':float(np.max(np.abs(coeff))),
+41:             'support':S.tolist(),'weights':[[float(v.real),float(v.imag)] for v in w]}
+42: 
+43: 
+44: def search(N,k,trials,rng,complex_weights=True,positive=False):
+45:     candidates=[]
+46:     # deterministic arithmetic-ish supports
+47:     candidates.append(np.arange(k))
+48:     candidates.append(np.floor(np.linspace(0,N-1,k)).astype(int))
+49:     if N%k==0: candidates.append(np.arange(k)*(N//k))
+50:     for _ in range(trials):
+51:         rest=rng.choice(np.arange(1,N),size=k-1,replace=False) if k>1 else np.array([],dtype=int)
+52:         candidates.append(np.r_[0,rest])
+53:     best=None
+54:     for S in candidates:
+55:         if len(set(S.tolist()))<k: continue
+56:         r=solve_support(N,S,complex_weights,positive)
+57:         if r and (best is None or r['maxmag']<best['maxmag']): best=r
+58:     return best
+59: 
+60: rng=np.random.default_rng(20261009)
+61: out=[]
+62: for N in [32,64,128,256]:
+63:     for k in [2,3,4,5,6,8,10,12,16]:
+64:         if k>N: continue
+65:         bc=search(N,k,40,rng,True,False)
+66:         bp=search(N,k,20,rng,False,True)
+67:         out.append({'N':N,'k':k,'complex':bc,'positive':bp})
+68:         print(N,k,'complex',bc['maxmag'] if bc else None,'positive',bp['maxmag'] if bp else None)
+69: open('sparse_surrogate_research/complex_surrogate_search_results.json','w').write(json.dumps(out,indent=2))

@@ -1,0 +1,110 @@
+"""O(N) Green inverse for an arbitrary permutation graph; exact field audit.
+
+L=diag(7+omega**k) + 2 P_pi, (P_pi x)[k]=x[pi[k]].
+Every permutation cycle is an independent cyclic first-order recurrence,
+solvable with one O(length) setup and O(length) solve. Over complex numbers,
+||L||<=10, sigma_min(L)>=4 uniformly for ANY permutation and any N.
+This still does NOT compute forcing LF x in linear time for arbitrary x.
+"""
+import random
+from dataclasses import dataclass
+from weyl_green import P,root_for_n
+
+
+def shuffled_permutation(n,seed=1606):
+    out=list(range(n))
+    random.Random(seed+n).shuffle(out)
+    return out
+
+
+def permutation_cycles(pi):
+    n=len(pi)
+    if sorted(pi)!=list(range(n)):
+        raise ValueError('not a permutation')
+    seen=[False]*n
+    cycles=[]
+    for start in range(n):
+        if seen[start]:continue
+        curr=start;nodes=[]
+        while not seen[curr]:
+            seen[curr]=True
+            nodes.append(curr)
+            curr=pi[curr]
+        if curr !=start:
+            raise AssertionError('invalid permutation cycle')
+        cycles.append(nodes)
+    return cycles
+
+
+@dataclass
+class PermutationGreen:
+    pi: list
+    omega: int
+    p: int = P
+    a: int = 7
+    b: int = 2
+    delta: int = 1
+
+    def __post_init__(self):
+        self.n=len(self.pi)
+        self.cycles=permutation_cycles(self.pi)
+        self.w=[pow(self.omega,k,self.p) for k in range(self.n)]
+        self.diag=[(self.a+self.delta*w)%self.p for w in self.w]
+        self.invdiag=[pow(a,-1,self.p) for a in self.diag]
+        self.schedules=[]
+        for cycle in self.cycles:
+            # pi(k) is the successor in original cycle; reversed order
+            # makes it the predecessor in recurrence y_node = c - b*y_prev.
+            order=list(reversed(cycle))
+            h=[];cur=1
+            for node in order:
+                cur=(-self.b*cur*self.invdiag[node])%self.p
+                h.append(cur)
+            den=(1-h[-1])%self.p
+            if not den:
+                raise ValueError('singular permutation-cycle recurrence')
+            self.schedules.append((order,h,pow(den,-1,self.p)))
+
+    def apply_L(self,x):
+        return [(self.diag[k]*x[k]+self.b*x[self.pi[k]])%self.p
+                for k in range(self.n)]
+
+    def solve_L(self,rhs):
+        out=[0]*self.n
+        for order,h,iden in self.schedules:
+            z=[];last=0
+            for node in order:
+                last=((rhs[node]-self.b*last)*self.invdiag[node])%self.p
+                z.append(last)
+            c=z[-1]*iden%self.p
+            for node,zz,hh in zip(order,z,h):
+                out[node]=(zz+hh*c)%self.p
+        return out
+
+    def dft_column(self,j):
+        return [pow(self.omega,k*j,self.p) for k in range(self.n)]
+
+    def rhs_column_direct(self,j):
+        # B=LF: each of its N^2 complex entries is nonzero for 7 > 2+1.
+        return [((self.a+self.delta*self.w[k])*pow(self.omega,k*j,self.p)
+                 +self.b*pow(self.omega,self.pi[k]*j,self.p))%self.p
+                 for k in range(self.n)]
+
+
+def union_find_partition(pi):
+    """Independent DSU certificate of the graph components (not used by solve)."""
+    n=len(pi)
+    parent=list(range(n));size=[1]*n
+    def find(x):
+        while parent[x]!=x:
+            parent[x]=parent[parent[x]];x=parent[x]
+        return x
+    def union(a,b):
+        a,b=find(a),find(b)
+        if a==b:return
+        if size[a]<size[b]:a,b=b,a
+        parent[b]=a;size[a]+=size[b]
+    for k,v in enumerate(pi):union(k,v)
+    d={}
+    for k in range(n):d.setdefault(find(k),[]).append(k)
+    return {frozenset(v) for v in d.values()}

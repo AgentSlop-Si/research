@@ -1,0 +1,196 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh auditor implementation. Constructor and uploaded code are never imported."""
+   3 import json,random
+   4 from pathlib import Path
+   5 
+   6 def zeros(a,b=None):return [[0]*(a if b is None else b) for _ in range(a)]
+   7 def I(n):return [[int(i==j) for j in range(n)] for i in range(n)]
+   8 def add(A,B,p,k=1):return [[(a+k*b)%p for a,b in zip(x,y)] for x,y in zip(A,B)]
+   9 def scale(A,k,p):return [[k*x%p for x in row] for row in A]
+  10 def mm(A,B,p):
+  11     R=zeros(len(A),len(B[0]))
+  12     for i,row in enumerate(A):
+  13         for k,x in enumerate(row):
+  14             if x:
+  15                 for j,y in enumerate(B[k]):
+  16                     if y:R[i][j]=(R[i][j]+x*y)%p
+  17     return R
+  18 def mv(A,x,p):return [sum(a*b for a,b in zip(row,x))%p for row in A]
+  19 def vv(x,y,p,k=1):return [(a+k*b)%p for a,b in zip(x,y)]
+  20 def dot(x,y,p):return sum(a*b for a,b in zip(x,y))%p
+  21 def inv(A,p):
+  22     n=len(A);R=[r[:]+s for r,s in zip(A,I(n))]
+  23     for j in range(n):
+  24         k=next((k for k in range(j,n) if R[k][j]),None)
+  25         if k is None:return None
+  26         R[j],R[k]=R[k],R[j];a=pow(R[j][j],-1,p);R[j]=[x*a%p for x in R[j]]
+  27         for k in range(n):
+  28             if k!=j:
+  29                 a=R[k][j];R[k]=[(x-a*y)%p for x,y in zip(R[k],R[j])]
+  30     return [r[n:] for r in R]
+  31 def det(A,p):
+  32     R=[r[:] for r in A];d=1
+  33     for j in range(len(R)):
+  34         k=next((k for k in range(j,len(R)) if R[k][j]),None)
+  35         if k is None:return 0
+  36         if k!=j:R[j],R[k]=R[k],R[j];d=-d
+  37         d=d*R[j][j]%p;a=pow(R[j][j],-1,p)
+  38         for k in range(j+1,len(R)):
+  39             z=R[k][j]*a%p;R[k]=[(x-z*y)%p for x,y in zip(R[k],R[j])]
+  40     return d%p
+  41 def rank(A,p):
+  42     R=[r[:] for r in A];h=0
+  43     for j in range(len(R[0])):
+  44         k=next((k for k in range(h,len(R)) if R[k][j]),None)
+  45         if k is None:continue
+  46         R[h],R[k]=R[k],R[h];a=pow(R[h][j],-1,p);R[h]=[x*a%p for x in R[h]]
+  47         for k in range(h+1,len(R)):
+  48             a=R[k][j];R[k]=[(x-a*y)%p for x,y in zip(R[k],R[h])]
+  49         h+=1
+  50         if h==len(R):break
+  51     return h
+  52 def sub(A,rows,cols):return [[A[i][j] for j in cols] for i in rows]
+  53 def tr(A):return [list(r) for r in zip(*A)]
+  54 def function(n,m,f,weights):
+  55     A=zeros(n,m)
+  56     for j in range(m):A[f(j)%n][j]=weights[j]
+  57     return A
+  58 def border(A,a,b,c):return [r+[a[i]] for i,r in enumerate(A)]+[b+[c]]
+  59 def disp(X,A,Y,p):return add(mm(X,A,p),mm(A,Y,p),p,-1)
+  60 def poly_eval(Cs,z,p):
+  61     A=zeros(len(Cs[0]),len(Cs[0][0]));t=1
+  62     for C in Cs:A=add(A,C,p,t);t=t*z%p
+  63     return A
+  64 
+  65 def setup(N,p,w):
+  66     n=N.bit_length()-1;m=N//2;l=N//4
+  67     A0=function(N,N,lambda j:2*j,[1]*N);A1=function(N,N,lambda j:2*j+1,[pow(w,j,p) for j in range(N)]);Q=add(A0,A1,p)
+  68     E0=zeros(N);E0[0]=[1]*N;C=zeros(m,N)
+  69     for j in range(m):C[j][j]=pow(w,j,p);C[j][j+m]=-pow(w,j,p)%p
+  70     J=function(N,m,lambda j:2*j+1,[1]*m)
+  71     K=[];H=[];power=I(N)
+  72     for a in range(n):
+  73         k=add(power,E0,p,-1);K.append(k);H.append(mm(mm(C,k,p),J,p));power=mm(A0,power,p)
+  74     ev=list(range(0,m,2));od=list(range(1,m,2));F=[sub(A,ev,ev) for A in H];G=[sub(A,ev,od) for A in H];R=sub(H[0],od,ev);T=sub(H[0],od,od)
+  75     assert all(sub(A,od,ev)==zeros(l) and sub(A,od,od)==zeros(l) for A in H[1:])
+  76     E=zeros(l);E[0]=[1]*l
+  77     V=function(l,l,lambda j:4*j+1,[pow(w,8*j+2,p) for j in range(l)])
+  78     assert F[0]==G[0]==scale(E,-1,p) and F[1]==add(V,E,p,-1)
+  79     assert R==function(l,l,lambda j:2*j,[pow(w,4*j+1,p) for j in range(l)])
+  80     assert T==function(l,l,lambda j:2*j+1,[pow(w,4*j+3,p) for j in range(l)])
+  81     Ws=[I(l)]
+  82     for _ in range(n):Ws.append(mm(T,Ws[-1],p))
+  83     Ms=[]
+  84     for d in range(n+1):
+  85         S=I(l) if d==0 else scale(F[d-1] if d-1<n else zeros(l),-1,p)
+  86         if d>=2:
+  87             for a in range(d-1):S=add(S,mm(mm(G[a],Ws[d-2-a],p),R,p),p,-1)
+  88         beta=[0]*l
+  89         if d==1:beta=[p-1]*l
+  90         if d>=2:beta=scale(mm(mm([[1]*l],Ws[d-2],p),R,p),-1,p)[0]
+  91         Ms.append(border(S,[-int(d==0 and i==0)%p for i in range(l)],beta,(int(d==0)-int(d==1))%p))
+  92     assert sub(Ms[1],range(l),range(l))==E
+  93     assert sub(Ms[2],range(l),range(l))==add(add(scale(V,-1,p),E,p),mm(E,R,p),p)
+  94     return n,m,l,Q,C,J,K,F,G,R,T,Ws,Ms
+  95 
+  96 def main():
+  97     rng=random.Random(12102026);out={'policy':'Only auditor-authored code executed','minors':[],'scalar_identities':[],'marked_recoveries':[],'kernel_controls':[],'formal_recurrences':[],'guard_countercontrols':[]}
+  98     for p,base in [(65537,3),(257,3)]:
+  99       for N in [8,16,32,64,128]:
+ 100         w=pow(base,(p-1)//N,p);assert pow(w,N//2,p)==p-1
+ 101         n,m,l,Q,C,J,K,Fc,Gc,R,T,Ws,Ms=setup(N,p,w)
+ 102         sco=[sub(A,range(l),range(l)) for A in Ms[:3]];charts=[]
+ 103         for style in range(2):
+ 104             weights=[1 if style==0 else rng.randrange(1,p) for j in range(l)]
+ 105             for left,right in [(0,0),(0,1),(7,19)]:
+ 106                 L=function(l,l,lambda j:j+1,weights[:-1]+[left]);B=function(l,l,lambda j:j+1,weights[:-1]+[right]);charts.append(('shift',L,B))
+ 107                 if l>=4:
+ 108                     rows=[4*i+2 for i in range(l//4)];cols=list(range(l//4));mats=[sub(disp(L,A,B,p),rows,cols) for A in sco]
+ 109                     assert mats[:2]==[zeros(l//4)]*2
+ 110                     expected=[[(-pow(w,8*j+2,p)*weights[4*j+1])%p if i==j else 0 for j in cols] for i in cols]
+ 111                     assert mats[2]==expected and det(expected,p)!=0
+ 112                     out['minors'].append({'N':N,'field':p,'chart':'shift','style':style,'wraps':[left,right],'size':l//4,'leading_det':det(expected,p)})
+ 113         for b in [0,1]:
+ 114             weights=[rng.randrange(1,p) for j in range(l)];X=function(l,l,lambda j:2*j+b,weights);charts.append(('tree',X,X))
+ 115             if l>=8:
+ 116                 rows=[8*i+2+b for i in range(l//8)];cols=list(range(l//8));mats=[sub(disp(X,A,X,p),rows,cols) for A in sco]
+ 117                 assert mats[:2]==[zeros(l//8)]*2
+ 118                 expected=[[(-pow(w,8*j+2,p)*weights[4*j+1])%p if i==j else 0 for j in cols] for i in cols]
+ 119                 assert mats[2]==expected and det(expected,p)
+ 120                 out['minors'].append({'N':N,'field':p,'chart':'doubling','b':b,'size':l//8,'leading_det':det(expected,p)})
+ 121             u=[0]*l;u[0]=pow(weights[0],-1,p);u[l//2]=-pow(weights[l//2],-1,p)%p;v=[int(j==1-b) for j in range(l)];A=[[x*y%p for y in v] for x in u]
+ 122             assert rank(A,p)==1 and mm(X,A,p)==mm(A,X,p)==zeros(l) and A[0][1-b]!=0
+ 123             out['kernel_controls'].append({'N':N,'field':p,'b':b,'dimension_at_least':l*l//4})
+ 124         # An arbitrary noncommuting dense intermediary, not a reused tree choice.
+ 125         Y=[[rng.randrange(p) for j in range(l)] for i in range(l)]
+ 126         for z in [0,1,2,5,w]:
+ 127             D=add(I(l),T,p,-z);W=inv(D,p);q=(1-z*pow(w,-1,p))%p;assert det(D,p)==q
+ 128             if W is None:
+ 129                 if N<=32:out['guard_countercontrols'].append({'N':N,'field':p,'z':z,'q':q,'full_det':det(add(I(N),Q,p,-z),p)})
+ 130                 continue
+ 131             F=poly_eval(Fc,z,p);G=poly_eval(Gc,z,p);S=add(add(I(l),F,p,-z),mm(mm(G,W,p),R,p),p,-z*z)
+ 132             beta=vv([-z%p]*l,mm(mm([[1]*l],W,p),R,p)[0],p,-z*z);M=border(S,[-int(i==0)%p for i in range(l)],beta,(1-z)%p);Si=inv(S,p);Mi=inv(M,p)
+ 133             assert add(mm(Y,W,p),mm(W,Y,p),p,-1)==scale(mm(mm(W,disp(Y,T,Y,p),p),W,p),z,p)
+ 134             for name,L,B in charts:
+ 135                 dF=disp(L,F,B,p);dG=add(mm(L,G,p),mm(G,Y,p),p,-1);dR=add(mm(Y,R,p),mm(R,B,p),p,-1);dT=disp(Y,T,Y,p)
+ 136                 inn=add(mm(mm(dG,W,p),R,p),mm(mm(G,W,p),dR,p),p)
+ 137                 inn=add(inn,mm(mm(mm(mm(G,W,p),dT,p),W,p),R,p),p,z)
+ 138                 res=add(add(add(L,B,p,-1),dF,p,-z),inn,p,-z*z);assert disp(L,S,B,p)==res
+ 139                 bl=border(L,[0]*l,[0]*l,9);br=border(B,[0]*l,[0]*l,9)
+ 140                 explicit=border(res,[(-L[i][0]+9*int(i==0))%p for i in range(l)],vv([9*x%p for x in beta],mv(tr(B),beta,p),p,-1),0)
+ 141                 assert disp(bl,M,br,p)==explicit
+ 142                 if Si is not None:assert disp(B,Si,L,p)==scale(mm(mm(Si,res,p),Si,p),-1,p) and rank(disp(B,Si,L,p),p)==rank(res,p)
+ 143                 if Mi is not None:assert disp(br,Mi,bl,p)==scale(mm(mm(Mi,explicit,p),Mi,p),-1,p)
+ 144                 if name=='tree' and Si is not None:assert rank(add(S,mm(mm(L,S,p),Y,p),p,-1),p)>=l//2
+ 145                 out['scalar_identities'].append({'N':N,'field':p,'z':z,'chart':name,'rank':rank(res,p),'S_invertible':Si is not None,'M_invertible':Mi is not None})
+ 146             if N<=64 and Mi is not None:
+ 147                 x=[rng.randrange(p) for _ in range(N)];h=[rng.randrange(p) for _ in range(N)];Kz=poly_eval(K,z,p);kx=mv(Kz,x,p);f=mv(C,kx,p);fE=f[::2];fO=f[1::2];wf=mv(W,fO,p)
+ 148                 g=vv(fE,mv(G,wf,p),p,z);sigma=(sum(x)+z*sum(wf))%p;et=mv(Mi,g+[sigma],p);e=et[:-1];t=et[-1];o=mv(W,vv(fO,mv(R,e,p),p,z),p);u=[0]*m;u[::2]=e;u[1::2]=o
+ 149                 y=vv(kx,mv(Kz,mv(J,u,p),p),p,z);y[0]=(y[0]+t)%p
+ 150                 assert mv(add(I(N),Q,p,-z),y,p)==x
+ 151                 aa=scale(mm([h],mm(Kz,J,p),p),z,p)[0];aE=aa[::2];aO=aa[1::2];pm=vv(aE,mm(mm([aO],W,p),R,p)[0],p,z);c=(dot(h,kx,p)+dot(aO,wf,p))%p
+ 152                 assert (c+dot(pm,e,p)+h[0]*t)%p==dot(h,y,p)
+ 153                 out['marked_recoveries'].append({'N':N,'field':p,'z':z,'full_equations':N,'marker_checked':True})
+ 154         # Formal recurrence: arbitrary polynomial RHS and independently full recovered constant-input jet.
+ 155         if N<=32:
+ 156             rhs=[[rng.randrange(p) for _ in range(l+1)] for d in range(n+1)];sol=[];M0inv=inv(Ms[0],p)
+ 157             for d in range(n+1):
+ 158                 v=rhs[d][:]
+ 159                 for k in range(1,d+1):v=vv(v,mv(Ms[k],sol[d-k],p),p,-1)
+ 160                 sol.append(mv(M0inv,v,p))
+ 161             for d in range(n+1):
+ 162                 got=[0]*(l+1)
+ 163                 for k in range(d+1):got=vv(got,mv(Ms[k],sol[d-k],p),p)
+ 164                 assert got==rhs[d]
+ 165             x=[rng.randrange(p) for _ in range(N)];kx=[mv(A,x,p) for A in K]+[[0]*N];fs=[mv(C,a,p) for a in kx];rhs=[]
+ 166             for d in range(n+1):
+ 167                 gd=fs[d][::2][:];sd=sum(x)%p if d==0 else 0
+ 168                 if d>=1:
+ 169                     for a in range(d):
+ 170                         sd=(sd+sum(mv(Ws[a],fs[d-1-a][1::2],p)))%p
+ 171                         for b in range(d-a):
+ 172                             if b<len(Gc):gd=vv(gd,mv(Gc[b],mv(Ws[a],fs[d-1-a-b][1::2],p),p),p)
+ 173                 rhs.append(gd+[sd])
+ 174             sol=[]
+ 175             for d in range(n+1):
+ 176                 v=rhs[d][:]
+ 177                 for k in range(1,d+1):v=vv(v,mv(Ms[k],sol[d-k],p),p,-1)
+ 178                 sol.append(mv(M0inv,v,p))
+ 179             us=[]
+ 180             for d in range(n+1):
+ 181                 od=[0]*l
+ 182                 for a in range(d+1):
+ 183                     inner=fs[d-a][1::2][:]
+ 184                     if d-a>=1:inner=vv(inner,mv(R,sol[d-a-1][:-1],p),p)
+ 185                     od=vv(od,mv(Ws[a],inner,p),p)
+ 186                 u=[0]*m;u[::2]=sol[d][:-1];u[1::2]=od;us.append(u)
+ 187             qx=x[:]
+ 188             for d in range(n+1):
+ 189                 yd=kx[d][:]
+ 190                 for a in range(d):
+ 191                     if a<len(K):yd=vv(yd,mv(K[a],mv(J,us[d-1-a],p),p),p)
+ 192                 yd[0]=(yd[0]+sol[d][-1])%p;assert yd==qx;qx=mv(Q,qx,p)
+ 193             out['formal_recurrences'].append({'N':N,'field':p,'degree':n,'arbitrary_polynomial_source':True,'full_constant_input_recovery_coefficients':N*(n+1)})
+ 194     out['result']='PASS';Path(__file__).with_name('INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+ 195     print(json.dumps({k:len(v) for k,v in out.items() if isinstance(v,list)}|{'result':'PASS'}))
+ 196 if __name__=='__main__':main()

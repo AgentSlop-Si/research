@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+import json, math, pathlib, sys, unittest
+import numpy as np
+
+ROOT = pathlib.Path(__file__).resolve().parent
+if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
+if str(ROOT/'phase4_source') not in sys.path: sys.path.insert(0, str(ROOT/'phase4_source'))
+
+from polyphase_exact import (
+    batched_summaries, joint_from_batched_summaries, joint_green_frame_exact,
+    mixed_radix_collapsed, naive_complete_frame, work_ledger,
+)
+from finite_field_polyphase_certificate import run_certificate
+from composite_cycle_core import ChirpState, compress_blocks
+
+
+class V15Tests(unittest.TestCase):
+    def test_batched_summaries_match_individual(self):
+        rng=np.random.default_rng(1)
+        for q,m in [(55,5),(77,7),(187,11)]:
+            x=rng.normal(size=q)+1j*rng.normal(size=q); k=q//m; a=1; beta0=2
+            got=batched_summaries(x,m,a,beta0)
+            ref=np.array([compress_blocks(x,m,ChirpState(a,(beta0+r*k)%q)) for r in range(m)])
+            self.assertLess(np.max(np.abs(got-ref)),2e-12)
+
+    def test_joint_equals_reference_fft(self):
+        rng=np.random.default_rng(2)
+        for q,m in [(55,5),(60,5),(77,7),(91,7),(136,8),(187,11)]:
+            x=rng.normal(size=q)+1j*rng.normal(size=q)
+            got=joint_green_frame_exact(x,m,1,2)
+            ref=np.fft.fft(x)/math.sqrt(q)
+            self.assertLess(np.max(np.abs(got-ref)),3e-12)
+
+    def test_joint_from_summaries(self):
+        rng=np.random.default_rng(3);q=517;m=11;x=rng.normal(size=q)+1j*rng.normal(size=q)
+        d=batched_summaries(x,m,1,2)
+        got=joint_from_batched_summaries(d,q,m,1,2)
+        self.assertLess(np.max(np.abs(got-np.fft.fft(x)/math.sqrt(q))),5e-12)
+
+    def test_collapse_equals_joint(self):
+        rng=np.random.default_rng(4)
+        for q,m in [(55,5),(119,7),(136,8),(517,11)]:
+            x=rng.normal(size=q)+1j*rng.normal(size=q)
+            self.assertLess(np.max(np.abs(joint_green_frame_exact(x,m)-mixed_radix_collapsed(x,m))),5e-12)
+
+    def test_naive_frame_equals_joint(self):
+        rng=np.random.default_rng(5)
+        for q,m in [(55,5),(77,7)]:
+            x=rng.normal(size=q)+1j*rng.normal(size=q)
+            self.assertLess(np.max(np.abs(naive_complete_frame(x,m)-joint_green_frame_exact(x,m))),5e-12)
+
+    def test_work_ledger(self):
+        x=work_ledger(517,11)
+        self.assertEqual(x['naive_green_scans'],11)
+        self.assertEqual(x['joint_k_ffts'],11)
+        self.assertIn('Q*log Q',x['asymptotic_joint'])
+
+    def test_finite_field_certificate(self):
+        self.assertTrue(run_certificate()['all_passed'])
+
+    def test_phase4_logs_present(self):
+        p=ROOT/'phase4_source'/'verification_phase4.json'
+        data=json.loads(p.read_text())
+        self.assertIn('exact_covariance',data)
+        self.assertGreater(len(data['padding']),5)
+
+
+if __name__=='__main__': unittest.main(verbosity=2)

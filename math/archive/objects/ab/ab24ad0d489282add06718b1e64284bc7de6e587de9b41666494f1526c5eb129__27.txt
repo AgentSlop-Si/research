@@ -1,0 +1,203 @@
+   1	"""Independent checks; imports only independently authored evaluator and packages.
+   2	Uploaded JSON is read as data. No uploaded executable is run or imported.
+   3	"""
+   4	from pathlib import Path
+   5	import json
+   6	import math
+   7	import random
+   8	import hashlib
+   9	from fractions import Fraction
+  10	import numpy as np
+  11	from independent_mixer import Mixer, Forest, Arithmetic, validate_and_invert
+  12	
+  13	BASE = Path(__file__).resolve().parent
+  14	P = 998244353
+  15	
+  16	
+  17	def invert_mod(a):
+  18	    n = len(a)
+  19	    v = [[int(x) % P for x in row] + [int(i == j) for j in range(n)]
+  20	         for i, row in enumerate(a)]
+  21	    for j in range(n):
+  22	        pivot = next(i for i in range(j, n) if v[i][j])
+  23	        v[j], v[pivot] = v[pivot], v[j]
+  24	        q = pow(v[j][j], -1, P)
+  25	        v[j] = [x*q % P for x in v[j]]
+  26	        for i in range(n):
+  27	            if i != j:
+  28	                c = v[i][j]
+  29	                v[i] = [(x-c*y) % P for x,y in zip(v[i],v[j])]
+  30	    return [row[n:] for row in v]
+  31	
+  32	
+  33	def dense_forest(parents, alpha, inverse=False):
+  34	    n=len(parents); imag=pow(3,(P-1)//4,P)
+  35	    sign=-1 if inverse else 1
+  36	    q=[[int(i==j) for j in range(n)] for i in range(n)]
+  37	    for i,parent in enumerate(parents):
+  38	        if parent!=-1:
+  39	            q[i][parent]=q[parent][i]=(-sign*imag*alpha)%P
+  40	    r=invert_mod(q)
+  41	    return [[(2*r[i][j]-int(i==j))%P for j in range(n)] for i in range(n)]
+  42	
+  43	
+  44	def mv(a,x):
+  45	    return [sum(v*w for v,w in zip(row,x))%P for row in a]
+  46	
+  47	
+  48	def exact_checks():
+  49	    out=[]; rng=random.Random(1381551)
+  50	    for n in (2,4,6,8,16,32,64,128,256,1024):
+  51	        perm=list(range(n));rng.shuffle(perm);s=Mixer(perm,p=P)
+  52	        assert s.op.count==9*n+2*s.tree_size+6
+  53	        for _ in range(3):
+  54	            x=[rng.randrange(P) for _ in range(n)]
+  55	            assert s.apply(s.apply(x),True)==x
+  56	            assert s.apply(s.apply(x,True))==x
+  57	            assert s.involution(s.involution(x))==x
+  58	        before=s.op.count;s.apply(x);forward=s.op.count-before
+  59	        before=s.op.count;s.apply(x,True);reverse=s.op.count-before
+  60	        assert forward==41*n//2+8*s.tree_size-16
+  61	        assert reverse==45*n//2+8*s.tree_size-15
+  62	        if n<=16:
+  63	            ds=[]
+  64	            for f,a in ((s.path1,pow(32,-1,P)),(s.path2,pow(32,-1,P)),(s.tree,2)):
+  65	                for inv in (False,True):
+  66	                    d=dense_forest(f.parents,a,inv)
+  67	                    for j in range(f.n):
+  68	                        x=[int(i==j) for i in range(f.n)]
+  69	                        assert f.apply(x,inv)==mv(d,x)
+  70	            # Independently assemble the full block action from dense Cayleys.
+  71	            c1=dense_forest(s.path1.parents,pow(32,-1,P))
+  72	            c2=dense_forest(s.path2.parents,pow(32,-1,P))
+  73	            b=dense_forest(s.tree.parents,2)
+  74	            bi=dense_forest(s.tree.parents,2,True)
+  75	            ie=pow(3,(P-1)//4,P)*pow(512,-1,P)%P
+  76	            for j in range(n):
+  77	                x=[int(i==j) for i in range(n)];u=mv(c1,mv(c2,x))
+  78	                ru=mv(b,u[n//2:])+mv(bi,u[:n//2])
+  79	                q=[(a+ie*z)%P for a,z in zip(u,ru)]
+  80	                assert s.apply(x)==q
+  81	        out.append({'n':n,'fresh_vectors_each_direction':3,'setup_field_ops':9*n+2*s.tree_size+6,
+  82	                    'forward_field_ops':forward,'inverse_field_ops':reverse,'passed':True})
+  83	    for bad in ([0,0],[-1,0],[0,2],[True,0]):
+  84	        try:validate_and_invert(bad)
+  85	        except ValueError:pass
+  86	        else:raise AssertionError('bad permutation accepted')
+  87	    return out
+  88	
+  89	
+  90	def covariance_checks():
+  91	    out=[]
+  92	    for n in (8,16,32,64,128):
+  93	        order=list(range(n));random.Random(20261009+n).shuffle(order)
+  94	        s=Mixer(order,p=P);cols=[]
+  95	        for j in range(n):cols.append(s.apply([int(i==j) for i in range(n)]))
+  96	        w=pow(3,(P-1)//n,P);nonzero=0
+  97	        for i in range(n):
+  98	            for j in range(n):
+  99	                nonzero+=(cols[(j+1)%n][i]-pow(w,i,P)*cols[j][i])%P!=0
+ 100	                assert (pow(w,i*((j+1)%n),P)-pow(w,i,P)*pow(w,i*j,P))%P==0
+ 101	        assert nonzero==n*n
+ 102	        out.append({'n':n,'nonzero_stage_covariance_entries':nonzero,'fourier_defect_entries':0})
+ 103	    return out
+ 104	
+ 105	
+ 106	def exact_tree_formula():
+ 107	    out=[]
+ 108	    for depth in range(1,19):
+ 109	        d=[Fraction(1)]
+ 110	        for h in range(1,depth+1):d.append(1+8/d[-1])
+ 111	        t=[1/d[depth]]
+ 112	        for j in range(1,depth+1):t.append(2*t[-1]/d[depth-j])
+ 113	        assert t[0]+4*t[1]==1
+ 114	        assert t[-1]-2*t[-2]==0
+ 115	        for j in range(1,depth):assert t[j]-2*t[j-1]+4*t[j+1]==0
+ 116	        D=[1,1]
+ 117	        for j in range(depth):D.append(D[-1]+8*D[-2])
+ 118	        assert t[-1]==Fraction(2**depth,D[depth+1])
+ 119	        leaf_norm=2**depth * 2*t[-1]
+ 120	        assert leaf_norm==Fraction(2*4**depth,D[depth+1])
+ 121	        out.append({'depth':depth,'root_leaf_amplitude':str(t[-1]),'leaf_l1':str(leaf_norm)})
+ 122	    return out
+ 123	
+ 124	
+ 125	def graph_edges(order):
+ 126	    n=len(order);inverse=validate_and_invert(order)
+ 127	    return list(zip(range(n-1),range(1,n)))+list(zip(inverse[:-1],inverse[1:]))
+ 128	
+ 129	
+ 130	def exact_gap_certificates():
+ 131	    source=json.loads((BASE/'extracted/phase12/phase11_spectral_witnesses.json').read_text())
+ 132	    claimed={v['n']:v for v in json.loads((BASE/'extracted/phase12/phase11_spectral_certificates.json').read_text())}
+ 133	    out=[]
+ 134	    for key,witness in source.items():
+ 135	        n=int(key);a=[[4-n*int(i==j) for j in range(n)] for i in range(n)]
+ 136	        for i,j in graph_edges(witness['row_reordering_permutation']):
+ 137	            a[i][i]+=4*n;a[j][j]+=4*n;a[i][j]-=4*n;a[j][i]-=4*n
+ 138	        previous=1;minors=[]
+ 139	        for k in range(n):
+ 140	            pivot=a[k][k];assert pivot>0;minors.append(pivot)
+ 141	            for i in range(k+1,n):
+ 142	                for j in range(i,n):
+ 143	                    value,remainder=divmod(pivot*a[i][j]-a[i][k]*a[k][j],previous)
+ 144	                    assert remainder==0
+ 145	                    a[i][j]=a[j][i]=value
+ 146	            previous=pivot
+ 147	        digest=hashlib.sha256(';'.join(map(str,minors)).encode()).hexdigest()
+ 148	        assert digest==claimed[n]['pivot_sequence_sha256']
+ 149	        out.append({'n':n,'all_leading_minors_positive':True,'pivot_hash_matches':True,
+ 150	                    'pivot_sequence_sha256':digest})
+ 151	    return out
+ 152	
+ 153	
+ 154	def numerical_checks():
+ 155	    out=[];rng=random.Random(915)
+ 156	    for n in (16,32,64,128):
+ 157	        order=list(range(n));rng.shuffle(order);s=Mixer(order)
+ 158	        a=np.column_stack([s.apply([int(i==j) for i in range(n)]) for j in range(n)])
+ 159	        err=float(np.linalg.norm(a.conj().T@a-np.eye(n),2));assert err<1e-12
+ 160	        edges=graph_edges(order);worst=1
+ 161	        for _ in range(32):
+ 162	            I=set(rng.sample(range(n),n//2));J=set(range(n))-I
+ 163	            E=sum((i in I)!=(j in I) for i,j in edges)
+ 164	            k=(E+31)//32
+ 165	            sv=np.linalg.svd(a[np.ix_(list(I),list(J))],compute_uv=False)
+ 166	            assert sv[k-1]>=1/64-1e-12;worst=min(worst,float(sv[k-1]))
+ 167	        # Audit the exact geometric resolvent identity independently on tree.
+ 168	        m=n//2;adj=np.zeros((m,m))
+ 169	        for i,p in enumerate(s.tree.parents):
+ 170	            if p!=-1:adj[i,p]=adj[p,i]=1
+ 171	        E=np.eye(m)-(np.eye(m)+4*adj@adj)/37
+ 172	        assert np.linalg.norm(E,2)<=36/37+1e-12
+ 173	        H=2/37*(np.eye(m)+2j*adj)
+ 174	        exact=2*np.linalg.inv(np.eye(m)-2j*adj)-np.eye(m)
+ 175	        accum=-np.eye(m,dtype=complex);power=np.eye(m)
+ 176	        for k in range(605):
+ 177	            accum+=H@power;power=power@E
+ 178	        tail=float(np.linalg.norm(exact-accum,2))
+ 179	        bound=(14/37)*(36/37)**605/(1-36/37)
+ 180	        assert tail<=bound+1e-12
+ 181	        out.append({'n':n,'unitarity_spectral_error':err,'random_cuts':32,
+ 182	                    'minimum_required_cut_singular':worst,'tree_series_terms':605,
+ 183	                    'tree_series_tail':tail,'theorem_tail_bound':bound})
+ 184	    return out
+ 185	
+ 186	
+ 187	def main():
+ 188	    assert 4096*72**604 < 73**604
+ 189	    assert Fraction(29**2)*(1+Fraction(29,512)) < 1024
+ 190	    result={'uploaded_code_executed':False,'exact_executor':exact_checks(),
+ 191	            'exact_covariance':covariance_checks(),'exact_tree_formula':exact_tree_formula(),
+ 192	            'exact_gap_certificates':exact_gap_certificates(),'numerical':numerical_checks(),
+ 193	            'gate_constants':{'z':73/72,'weighted_stage_bound':29**2*(1+29/512),
+ 194	                              'tail_per_stage_604':1024*(72/73)**604,
+ 195	                              'log_support_base':math.log(6144)+604*math.log(20)}}
+ 196	    assert result['gate_constants']['tail_per_stage_604']<1/4
+ 197	    (BASE/'independent_results.json').write_text(json.dumps(result,indent=2))
+ 198	    print(json.dumps({'status':'passed','exact_lengths':len(result['exact_executor']),
+ 199	                      'exact_graph_certificates':len(result['exact_gap_certificates']),
+ 200	                      'numerical_lengths':len(result['numerical'])},indent=2))
+ 201	
+ 202	
+ 203	if __name__=='__main__':main()

@@ -1,0 +1,62 @@
+   1 import unittest
+   2 import random
+   3 from wide_scan import *
+   4 
+   5 class MulticutTests(unittest.TestCase):
+   6     def test_fourier_potential(self):
+   7         for n in (4,8,16,32):
+   8             self.assertEqual(cut_rank_potential(dft(n)),n*n//2)
+   9     def test_scan_potential(self):
+  10         for n in (4,8,16):
+  11             x=forward([3]*n,[2]*n)
+  12             y=backward([7]*n,[5]*n)
+  13             self.assertEqual(cut_rank_potential(x),n-1)
+  14             self.assertEqual(cut_rank_potential(y),n-1)
+  15     def test_permutation_footrule(self):
+  16         for n in (4,8,16,32):
+  17             for order in (bit_reverse_order(n),parity_order(n),gray_order(n),list(reversed(range(n)))):
+  18                 self.assertEqual(cut_rank_potential(permutation_matrix(order)),footrule(order))
+  19     def test_multichannel_cut_bounds(self):
+  20         for n in (4,8,16):
+  21             for rf,rb in ((0,1),(1,0),(1,2),(2,3)):
+  22                 m=multichannel(n,rf,rb,101)
+  23                 for cut in range(1,n):
+  24                     up,lo=offdiag_ranks(m,cut)
+  25                     self.assertLessEqual(up,rb)
+  26                     self.assertLessEqual(lo,rf)
+  27     def test_subadditive_product(self):
+  28         for n in (4,8,16):
+  29             a=multichannel(n,1,1,111)
+  30             b=multichannel(n,2,1,222)
+  31             c=matmul(a,b)
+  32             self.assertLessEqual(cut_rank_potential(c),cut_rank_potential(a)+cut_rank_potential(b))
+  33     def test_any_endpoint_reorder_balanced(self):
+  34         for n in (4,8,16):
+  35             rng=random.Random(n)
+  36             m=dft(n)
+  37             for _ in range(32):
+  38                 r=list(range(n));c=list(range(n))
+  39                 rng.shuffle(r);rng.shuffle(c)
+  40                 ur,lr=offdiag_ranks(permute(m,r,c),n//2)
+  41                 self.assertGreaterEqual(ur,n//4)
+  42                 self.assertGreaterEqual(lr,n//4)
+  43                 self.assertGreaterEqual(cut_rank_potential(permute(m,r,c)),(n*n-1)//3)
+  44     def test_exact_all_4900(self):
+  45         result=independent_balanced_bound_check()
+  46         self.assertEqual(result['pairs'],4900)
+  47         self.assertEqual(result['min_excess_over_bound'],0)
+  48 
+  49 if __name__=='__main__':unittest.main()
+  50 
+  51 class RoutingTests(unittest.TestCase):
+  52     def test_shuffled_cut_budget(self):
+  53         from routing_budget import cut_budget_experiment
+  54         result=cut_budget_experiment(16,12)
+  55         self.assertEqual(result['violations'],0)
+  56         self.assertEqual(result['randomized_factorizations_checked'],96)
+  57     def test_bitrev_cut_crossing(self):
+  58         for n in (8,16,32,64):
+  59             self.assertEqual(crossing_count(bit_reverse_order(n),n//2),n//4)
+  60     def test_parity_optimal_rank_lower_bound(self):
+  61         for n in (8,16,32,64):
+  62             self.assertEqual(offdiag_ranks(permute(dft(n),parity_order(n),parity_order(n)),n//2),(n//4,n//4))

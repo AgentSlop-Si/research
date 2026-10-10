@@ -1,0 +1,105 @@
+1: """Exact short-period baseline plus the bounded-word approximate residual.
+2: 
+3: DFT sign is negative. Inputs/output numerators are Gaussian integers.
+4: All input fits and residuals are formed afresh; only input-independent decoder
+5: tables may be shared, and their cold preparation must still be charged.
+6: """
+7: from math import gcd
+8: from pathlib import Path
+9: import sys
+10: sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'fft_wordram_integration'))
+11: from sampling import sample_atoms
+12: 
+13: 
+14: def rotate(pair,phase):
+15:     a,b=pair
+16:     return ((a,b),(-b,a),(-a,-b),(b,-a))[phase%4]
+17: 
+18: 
+19: def quarter_spectrum(sums,n):
+20:     q=len(sums)
+21:     if q not in (1,2,4) or n<1:
+22:         raise ValueError('invalid short period')
+23:     values={}
+24:     for t in range(q):
+25:         real=imag=0
+26:         for s,pair in enumerate(sums):
+27:             a,b=rotate(pair,(-4*t*s//q)%4)
+28:             real+=a;imag+=b
+29:         values[t*n]=(real,imag)
+30:     return values
+31: 
+32: 
+33: def fit_periodic(coordinates):
+34:     N=len(coordinates)
+35:     if N<1 or any(len(p)!=2 or any(type(v)is not int for v in p) for p in coordinates):
+36:         raise ValueError('nonempty Gaussian-integer input required')
+37:     q=gcd(N,4); n=N//q
+38:     sums=[[0,0] for _ in range(q)]; masses=[[0,0] for _ in range(q)]; input_bits=0
+39:     for j,pair in enumerate(coordinates):
+40:         s=j%q
+41:         for c,value in enumerate(pair):
+42:             input_bits=max(input_bits,abs(value).bit_length())
+43:             sums[s][c]+=value;masses[s][c]+=abs(value)
+44:     costs=[[0,0] for _ in range(q)]
+45:     for j,pair in enumerate(coordinates):
+46:         s=j%q
+47:         for c,value in enumerate(pair):
+48:             costs[s][c]+=abs(n*value-sums[s][c])
+49:     chosen=[[sums[s][c] if costs[s][c]<=n*masses[s][c] else 0 for c in range(2)] for s in range(q)]
+50:     residual=[tuple(n*pair[c]-chosen[j%q][c] for c in range(2)) for j,pair in enumerate(coordinates)]
+51:     mass=sum(abs(a)+abs(b) for a,b in residual)
+52:     input_mass=sum(sum(v) for v in masses)
+53:     assert mass<=n*input_mass
+54:     return {'N':N,'period':q,'scale':n,'chosen_sums':chosen,'input_component_bits':input_bits,
+55:             'input_mass':input_mass,'residual_numerator_mass':mass,
+56:             'residual':residual,'baseline_spectrum':quarter_spectrum(chosen,n),
+57:             'exact_corner_spectrum':quarter_spectrum(sums,n),
+58:             'counts':{'input_validation_component_visits':2*N,
+59:                       'fitting_component_visits':6*N,
+60:                       'residual_mass_component_visits':2*N,
+61:                       'short_DFT_terms':2*q*q}}
+62: 
+63: 
+64: def fuse(coordinates,decoder=None,*,seed=None,cap_failure=0.01):
+65:     """Explicit rational all-output approximation, or a flagged sampling failure.
+66: 
+67:     On a zero residual all coefficients are exact. Otherwise caller supplies
+68:     the finite decoder configuration; its sample error allocation must be
+69:     added to the returned deterministic decoder error bound.
+70:     """
+71:     fit=fit_periodic(coordinates)
+72:     N=fit['N']; scale=fit['scale']; mass=fit['residual_numerator_mass']
+73:     if not mass:
+74:         out=[(0,0)]*N
+75:         for k,pair in fit['baseline_spectrum'].items(): out[k]=pair
+76:         return {'integer_outputs':out,'denominator':1,'exact':True,'failed':False,
+77:                 'fit':fit,'decoder_counts':None,'sampler_counts':None,
+78:                 'output_component_writes':2*N+2*fit['period'],
+79:                 'required_word_bits':fit['input_component_bits']+2*N.bit_length()+4}
+80:     if decoder is None or decoder.N!=N:
+81:         raise ValueError('matching prepared decoder required for nonzero residual')
+82:     sampled=sample_atoms(fit['residual'],decoder.K,seed=seed,cap_failure=cap_failure)
+83:     if sampled['failed']:
+84:         return {'integer_outputs':[(0,0)]*N,'denominator':1,'exact':False,'failed':True,
+85:                 'fit':fit,'decoder_counts':None,'sampler_counts':sampled['counts'],
+86:                 'output_component_writes':2*N}
+87:     approx=decoder.decode(sampled['samples'])
+88:     denominator=scale*approx['denominator']
+89:     out=[]
+90:     for k,(a,b) in enumerate(approx['integer_outputs']):
+91:         u,v=fit['baseline_spectrum'].get(k,(0,0))
+92:         out.append((u*denominator+mass*a,v*denominator+mass*b))
+93:     # These q frequencies were already computed exactly in the input scan.
+94:     # Replacing their estimates cannot worsen the error guarantee.
+95:     for k,(u,v) in fit['exact_corner_spectrum'].items():
+96:         out[k]=(u*denominator,v*denominator)
+97:     # Conservative common machine width for exact fitting and rescaling.
+98:     # It is Theta(log N) under the stated O(log N)-bit input contract.
+99:     required=max(decoder.w,fit['input_component_bits']+2*N.bit_length()+approx['denominator'].bit_length()+4)
+100:     assert all(abs(z)<(1<<(required-1)) for pair in out for z in pair)
+101:     return {'integer_outputs':out,'denominator':denominator,'exact':False,'failed':False,
+102:             'fit':fit,'decoder_counts':approx['counts'],'sampler_counts':sampled['counts'],
+103:             'decoder_error_over_residual_mass':approx['error_bound'],
+104:             'required_word_bits':required,
+105:             'output_component_writes':2*N+2*fit['period'],'extra_output_integer_operations_upper':6*N+4*fit['period']+2}

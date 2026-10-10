@@ -1,0 +1,29 @@
+"""Explore middle-bit-mixing shuffles. Necessary cuts only, not FFT algorithms."""
+from pathlib import Path
+import sys
+r=Path('fft_three_stage_bitrev_gate_2026-10-10')
+sys.path[:0]=[str(r),str(r/'fft_scan_network_gate_2026-10-09')]
+from fast_mincut import ScanFlowOracle
+from central_partition import bitrev,partition
+
+def rotate1(i,n):
+ k=n.bit_length()-1
+ return ((i<<1)&(n-1)) | (i>>(k-1))
+
+def mix_middle(i,n):
+ k=n.bit_length()-1;m=k//2
+ return i^(((i>>(m-1))&1)<<m)
+
+for n in (64,128,256):
+ A,B,cap,_=partition(n);P=bitrev(n)
+ shuffles={
+   'all bitrev': [P,P,P],
+   'middle rotate(P)': [P,[rotate1(P[j],n) for j in range(n)],P],
+   'middle xor-mix(P)': [P,[mix_middle(P[j],n) for j in range(n)],P],
+   'mixed rotate and xor': [P,[rotate1(P[j],n) for j in range(n)],[mix_middle(P[j],n) for j in range(n)]],
+ }
+ print('N',n,'Fourier block full rank',n//2,flush=True)
+ for name,ss in shuffles.items():
+  flow=ScanFlowOracle(n,[1]*4,ss)
+  vals=[flow.bound(R,C) for R,C in ((A,B),(A,A),(B,A),(B,B))]
+  print(' ',name,'cut ranks [AB,AA,BA,BB]',vals,flush=True)

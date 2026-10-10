@@ -1,0 +1,44 @@
+"""Architecture-specific support no-go test for pure sparse-inverse Green layers.
+
+If F_N is dense and F_N=M_t B_t^{-1} M_{t-1} ... B_1^{-1} M_0
+with each B_i having at most s nonzeros per row and M_i monomial,
+then F_N^{-1} is a product of t row-s matrices and monomials;
+its row support cannot exceed s**t. Thus s**t >= N.
+This does *not* hold for sums of Green solves or a stage whose inverse
+is not sparse, so it does not exclude the prior project constructions.
+"""
+import math,random
+
+
+def support_lower_bound(N,s):
+    assert s>=2 and N>=2
+    t=0;k=1
+    while k<N:
+        k*=s;t+=1
+    return t
+
+
+def random_row_sparsity_audit(N,s,t,seed=2026):
+    rng=random.Random(seed)
+    # OR-AND Boolean structure records possible nonzeros of inverse
+    # products. Row permutation is applied between sparse factors.
+    rows=[{i} for i in range(N)]
+    for level in range(t):
+        perm=list(range(N));rng.shuffle(perm)
+        rows=[rows[perm[i]] for i in range(N)]
+        B_pattern=[]
+        for i in range(N):
+            choices={i}
+            while len(choices)<s:choices.add(rng.randrange(N))
+            B_pattern.append(choices)
+        rows=[set().union(*(rows[j] for j in B_pattern[i])) for i in range(N)]
+        assert max(map(len,rows))<=min(N,s**(level+1))
+    return max(map(len,rows))
+
+
+if __name__=='__main__':
+    import json
+    for N,s in ((64,3),(128,3),(1024,3),(4096,5)):
+        print(json.dumps(dict(N=N,maximum_inverse_row_sparsity=s,
+          required_stages=support_lower_bound(N,s),
+          random_4stage_support=random_row_sparsity_audit(N,s,4))))

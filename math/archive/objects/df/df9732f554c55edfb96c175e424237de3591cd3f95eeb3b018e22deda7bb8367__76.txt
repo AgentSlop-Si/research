@@ -1,0 +1,74 @@
+1: """Independent check, exact equality and observational costs. No hidden free macros."""
+2: from __future__ import annotations
+3: import json
+4: import math
+5: from pathlib import Path
+6: from random import Random
+7: from statistics import median
+8: from time import perf_counter
+9: 
+10: from global_bottleneck import P, packed_dft, ntt_reference, packing_possible, block_digits
+11: from tests.test_rank_barrier import fourier_matrix, rank_mod
+12: 
+13: ROOT=Path(__file__).resolve().parent
+14: 
+15: 
+16: def audit():
+17:     rng=Random(20261009)
+18:     records=[]
+19:     for n in (64,256,1024,4096,16384):
+20:         samples=[[rng.randrange(0,P) for _ in range(n)] for j in range(5)]
+21:         observations=[]
+22:         times_pack=[]
+23:         times_ntt=[]
+24:         for inp in samples:
+25:             t=perf_counter(); got,model=packed_dft(inp); times_pack.append((perf_counter()-t)*1000)
+26:             t=perf_counter(); expected=ntt_reference(inp);times_ntt.append((perf_counter()-t)*1000)
+27:             assert got==expected
+28:             observations.append(model)
+29:         rec={
+30:             'N':n,'correct_all':True,
+31:             'field_modulus':P,'constant_root_modulus':True,
+32:             'cell_bits':observations[0].cell_bits,
+33:             'each_packed_operand_bits':observations[0].operand_bits,
+34:             'naive_scalar_mult_calls':1,
+35:             'critical_note':'big integer multiplication NOT unit cost: M(N * cell_bits) bit work',
+36:             'packed_median_ms':round(median(times_pack),3),
+37:             'python_ntt_median_ms':round(median(times_ntt),3),
+38:             'relative_packed_speed':round(median(times_ntt)/median(times_pack),3),
+39:         }
+40:         records.append(rec)
+41:     # Rigorous exact grid-capacity cases: geometric lower bound on decoder L.
+42:     sample_bounds=[]
+43:     for n,w in [(64,6),(256,8),(1024,10),(4096,12)]:
+44:         exact_L_gt=(2**(n/(2*w))-2)/4
+45:         # Width/condition lower bound: L > max(0, (2^(N/(2w))-2)/(4M)), with M=1.
+46:         sample_bounds.append({'N':n,'w':w,'M':1,
+47:             'necessary_decoder_L_greater_than':round(exact_L_gt,4),
+48:             'min_bits_log2_L_approximately':round(math.log2(exact_L_gt),3),
+49:             'check_small_L_rejected':not packing_possible(n,w,1,1)})
+50:     # Known w=N/b encoder gets exponential L, sharp (up to constants).
+51:     block_cases=[]
+52:     for n,b in ((16,4),(64,8),(256,16),(1024,64)):
+53:         block_cases.append({'N':n,'width':n//b,'bits_per_register':b,
+54:                             'constructive_L_at_least':2**b})
+55:     result={'date':'2026-10-09','scope':'one fresh exact modular DFT per call; all N outputs; no cached inputs',
+56:             'backend':'Python one-bigint multiplication vs independent Python radix-2 NTT; no claimed universal performance superiority',
+57:             'packed_dft':records,
+58:             'nonlinear_compression_general_bound':'2**N <= (ceil(4*M*L/(1-2*epsilon))+1)**(2*w)',
+59:             'bottleneck_lower_bounds':sample_bounds,
+60:             'explicit_block_encoder':block_cases,
+61:             'jacobian_bottleneck':'for arbitrary complex domain smooth E:C^N->C^w, D:C^w->C^N, D(E(x))=F_N x implies w>=N',
+62:             'exact_fourier_matrix_rank_32':rank_mod(fourier_matrix(32)),
+63:             'warning':'Bit complexity and local conditioning prevent a false O(N) DFT conclusion.'}
+64:     (ROOT/'audit_results_run.json').write_text(json.dumps(result,indent=2)+'\n')
+65:     for rec in records:
+66:         print(f"N={rec['N']:>5}  integer operand bits={rec['each_packed_operand_bits']:>8}  "
+67:               f"one big multiply, correct={rec['correct_all']}  "
+68:               f"packed_ms={rec['packed_median_ms']:.3f}  python_ntt_ms={rec['python_ntt_median_ms']:.3f}")
+69:     print('Rank check for N=32:',result['exact_fourier_matrix_rank_32'])
+70:     for row in sample_bounds:
+71:         print(f"N={row['N']:>5} with width={row['w']:>2}: required L > {row['necessary_decoder_L_greater_than']:.3g}")
+72:     print('JSON:',ROOT/'audit_results_run.json')
+73: 
+74: if __name__=='__main__':audit()

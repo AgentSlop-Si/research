@@ -1,0 +1,38 @@
+   1	"""Create deterministic research ZIP and SHA-256 manifest, then verify extraction."""
+   2	from pathlib import Path
+   3	import hashlib,json,zipfile,tempfile,subprocess,sys
+   4	BASE=Path(__file__).resolve().parent
+   5	OUT=BASE.parent/'fft_boolean_orbit_recovery_research_2026-10-09.zip'
+   6	FILES=[
+   7	 'README.md','RESEARCH.md','NEXT_GATE.md','orbit_recovery.py',
+   8	 'cyclotomic_interpolation.py','independent_modular_certificate.py',
+   9	 'run_audit.py','audit_results.json','modular_certificate.json',
+  10	 'tests/test_orbit.py','package.py'
+  11	]
+  12	
+  13	def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+  14	manifest={f:sha(BASE/f) for f in FILES}
+  15	(BASE/'MANIFEST.json').write_text(json.dumps(manifest,indent=2)+'\n')
+  16	with zipfile.ZipFile(OUT,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=8) as z:
+  17	 for f in FILES+['MANIFEST.json']:
+  18	  z.write(BASE/f,arcname=f)
+  19	with zipfile.ZipFile(OUT) as z:
+  20	 assert z.testzip() is None
+  21	 with tempfile.TemporaryDirectory(prefix='fft_orbit_fresh_') as td:
+  22	  z.extractall(td)
+  23	  root=Path(td)
+  24	  checked=json.loads((root/'MANIFEST.json').read_text())
+  25	  assert checked==manifest
+  26	  assert all(sha(root/f)==h for f,h in checked.items())
+  27	  r=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'],cwd=td,capture_output=True,text=True)
+  28	  assert r.returncode==0,r.stdout+'\n'+r.stderr
+  29	  r2=subprocess.run([sys.executable,'run_audit.py'],cwd=td,capture_output=True,text=True)
+  30	  assert r2.returncode==0,r2.stdout+r2.stderr
+  31	  r3=subprocess.run([sys.executable,'independent_modular_certificate.py'],cwd=td,capture_output=True,text=True)
+  32	  assert r3.returncode==0,r3.stdout+r3.stderr
+  33	  print('Fresh extraction tests:',r.stderr.splitlines()[-1],flush=True)
+  34	  print('Fresh exact audits: PASS, PASS',flush=True)
+  35	  print('ZIP member checksums:',len(checked),'matched',flush=True)
+  36	print('Archive size:',OUT.stat().st_size,'bytes')
+  37	print('SHA256:',sha(OUT))
+  38	print('Path:',OUT)

@@ -1,0 +1,45 @@
+"""Search large coplanar collections of output columns in Jacobian conormal space.
+Single point zero minors are NOT identities; repeat with independent integer points.
+"""
+import sys,itertools,json,time
+from pathlib import Path
+import numpy as np
+prior=(Path(__file__).resolve().parent/'prior_checkpoint' if (Path(__file__).resolve().parent/'prior_checkpoint').exists() else Path(__file__).resolve().parents[1]/'fft_nonlinear_compatibility_2026-10-09')
+sys.path.insert(0,str(prior))
+import jacobian_gate as j
+P=[7,0,6,3,4,1,2,5]
+def normal(seed,prime=12289):
+    j.MOD=prime
+    _,jac,*_=j.basis(8,1,P,seed)
+    assert j.rank_mod(jac)==60
+    return np.array(j.basis_null(jac.T),dtype=np.int64)%prime
+
+def cross3(x,y,z,p):
+    norm=np.empty(4,dtype=np.int64)
+    for k in range(4):
+        ids=[q for q in range(4) if q!=k]
+        a,b,c=x[ids],y[ids],z[ids]
+        det=(int(a[0])*(int(b[1])*int(c[2])-int(b[2])*int(c[1]))-int(a[1])*(int(b[0])*int(c[2])-int(b[2])*int(c[0]))+int(a[2])*(int(b[0])*int(c[1])-int(b[1])*int(c[0])))%p
+        norm[k]=det if k%2 else (-det)%p
+    return norm
+
+def search(seed=1011,prime=12289):
+    N=normal(seed,prime); found={}; maxcount=0
+    for a,b,c in itertools.combinations(range(64),3):
+        q=cross3(N[:,a],N[:,b],N[:,c],prime)
+        if not q.any():continue
+        entries=((q@N)%prime==0)
+        count=int(entries.sum())
+        if count>=5:
+            index=tuple(np.flatnonzero(entries))
+            if index not in found:found[index]=(a,b,c)
+            maxcount=max(maxcount,count)
+    freq={}
+    for keys in found:
+        freq[int(len(keys))]=freq.get(int(len(keys)),0)+1
+    largest=sorted(found,key=lambda k:(-len(k),k))[:15]
+    return {'seed':seed,'prime':prime,'max_cohyperplane':maxcount,'counts_by_size':freq,'top_hyperplanes':[[int(y) for y in x] for x in largest]},found
+if __name__=='__main__':
+    t=time.time();a,A=search(1011);b,B=search(3033)
+    intersect=set(A)&set(B)
+    print(json.dumps({'first':a,'second':b,'joint_max':max(map(len,intersect),default=0),'common_coplane_sets':[[int(y) for y in x] for x in sorted(intersect,key=lambda x:-len(x))[:15]],'elapsed_s':time.time()-t},indent=2))

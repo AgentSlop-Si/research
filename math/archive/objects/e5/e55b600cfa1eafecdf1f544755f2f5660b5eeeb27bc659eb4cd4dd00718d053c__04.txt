@@ -1,0 +1,236 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh, standard-library exact checks. Does not import earlier research code."""
+   3 import json
+   4 from pathlib import Path
+   5 
+   6 P=65537
+   7 
+   8 def root(n,p=P):
+   9     # These are explicitly tested field fixtures, not a field/root construction algorithm.
+  10     for a in range(2,p):
+  11         w=pow(a,(p-1)//n,p)
+  12         if pow(w,n,p)==1 and (n==1 or pow(w,n//2,p)!=1): return w
+  13     raise AssertionError('root unavailable')
+  14 
+  15 def qstep(x,w,p=P):
+  16     N=len(x); out=[0]*N; phase=1
+  17     for s,a in enumerate(x):
+  18         out[2*s%N]=(out[2*s%N]+a)%p
+  19         out[(2*s+1)%N]=(out[(2*s+1)%N]+phase*a)%p
+  20         phase=phase*w%p
+  21     return out
+  22 
+  23 def gamma(k):
+  24     g=0
+  25     while k:
+  26         if k&1: g+=k//2
+  27         k//=2
+  28     return g
+  29 
+  30 def word_good(k,t,b):
+  31     return k.bit_length()==t and k%2==1 and ('0'*b not in format(k,'b'))
+  32 
+  33 def croute(v,t,b,w,N,p=P):
+  34     r=len(v); mask=(1<<t)-1; eta=pow(w,1<<b,p)
+  35     zeta=w*pow(eta,-1,p)%p
+  36     out=[0]*r
+  37     for a,x in enumerate(v):
+  38         k=a&mask
+  39         if word_good(k,t,b):
+  40             y=((1<<b)*(a-k)+k)%r
+  41             out[y]=(out[y]+pow(zeta,gamma(k),p)*x)%p
+  42     return out
+  43 
+  44 def compressed(v,N,b,w,H=None,p=P):
+  45     n=N.bit_length()-1; H=n if H is None else H
+  46     r=len(v); eta=pow(w,1<<b,p); out=[[0]*r for _ in range(H+1)]
+  47     cur=v[:]
+  48     for t in range(1,H-b+1):
+  49         cur=qstep(cur,eta,p)
+  50         out[b+t]=croute(cur,t,b,w,N,p)
+  51     return out
+  52 
+  53 def direct(v,N,b,w,H=None,p=P):
+  54     n=N.bit_length()-1; H=n if H is None else H
+  55     R=list(range(0,N,1<<b)); r=len(R); out=[[0]*r for _ in range(H+1)]
+  56     x=[0]*N
+  57     for j,s in enumerate(R): x[s]=v[j]
+  58     x=qstep(x,w,p)
+  59     for s in R: x[s]=0
+  60     for L in range(2,H+1):
+  61         x=qstep(x,w,p)
+  62         out[L]=[x[s] for s in R]
+  63         for s in R: x[s]=0
+  64     return out
+  65 
+  66 def add(a,b,p=P): return [(x+y)%p for x,y in zip(a,b)]
+  67 def tree(v,p=P):
+  68     y=[0]*len(v)
+  69     for j,x in enumerate(v): y[2*j%len(v)]=(y[2*j%len(v)]+x)%p
+  70     return y
+  71 
+  72 def polynomial_compressed(v,N,b,w,H,p=P):
+  73     r=len(v[0]); eta=pow(w,1<<b,p)
+  74     out=[v[j][:] for j in range(H+1)]
+  75     for j in range(H):
+  76         a=tree(v[j],p)
+  77         out[j+1]=[(x-y)%p for x,y in zip(out[j+1],a)]
+  78     cur=[row[:] for row in v]
+  79     visits=0
+  80     for t in range(1,H-b+1):
+  81         cur=[qstep(cur[j],eta,p) for j in range(H-b-t+1)]
+  82         for j,row in enumerate(cur):
+  83             a=croute(row,t,b,w,N,p)
+  84             out[j+b+t]=[(x-y)%p for x,y in zip(out[j+b+t],a)]
+  85             visits+=r
+  86     assert visits==r*max(H-b,0)*(max(H-b,0)+1)//2
+  87     return out,visits
+  88 
+  89 class Prepared:
+  90     """Literal table-driven retained evaluator; all routes and updates are charged."""
+  91     def __init__(self,N,b,w,p=P):
+  92         self.N,self.b,self.p=N,b,p;self.n=N.bit_length()-1;self.r=N>>b;self.d=self.n-b
+  93         r=self.r; eta=pow(w,1<<b,p);zeta=w*pow(eta,-1,p)%p
+  94         self.qphase=[1]*r; powers=[1]*r
+  95         for k in range(1,r):
+  96             self.qphase[k]=self.qphase[k-1]*eta%p
+  97             powers[k]=powers[k-1]*zeta%p
+  98         self.fix=[1]*r;trail=[0]*r;run=[0]*r;self.good=[False]*r
+  99         for k in range(1,r):
+ 100             j=k//2
+ 101             self.fix[k]=self.fix[j]*(powers[j] if k&1 else 1)%p
+ 102             trail[k]=0 if k&1 else trail[j]+1
+ 103             run[k]=max(run[j],trail[k]);self.good[k]=(k&1)==1 and run[k]<b
+ 104     def step(self,v):
+ 105         r=self.r;p=self.p;out=[0]*r
+ 106         for s,a in enumerate(v):
+ 107             out[2*s%r]=(out[2*s%r]+a)%p
+ 108             out[(2*s+1)%r]=(out[(2*s+1)%r]+self.qphase[s]*a)%p
+ 109         return out
+ 110     def route_into(self,v,t,out):
+ 111         r=self.r;b=self.b;p=self.p;mask=(1<<t)-1;lead=1<<(t-1)
+ 112         for a,x in enumerate(v):
+ 113             k=a&mask
+ 114             if k>=lead and self.good[k]:
+ 115                 y=((1<<b)*(a-k)+k)%r
+ 116                 out[y]=(out[y]+self.fix[k]*x)%p
+ 117     def solve(self,source,H=None):
+ 118         H=self.n if H is None else H
+ 119         assert H<=self.n
+ 120         r=self.r;p=self.p
+ 121         residual=[row[:] for row in source];out=[];visits=0
+ 122         for j in range(H+1):
+ 123             v=residual[j][:];out.append(v)
+ 124             if j<H:
+ 125                 for a,x in enumerate(v):
+ 126                     residual[j+1][2*a%r]=(residual[j+1][2*a%r]+x)%p
+ 127             cur=v
+ 128             for t in range(1,H-j-self.b+1):
+ 129                 cur=self.step(cur);self.route_into(cur,t,residual[j+self.b+t]);visits+=r
+ 130         d=max(H-self.b,0)
+ 131         assert visits==r*d*(d+1)//2
+ 132         return out,visits
+ 133 
+ 134 def global_source(x,N,b,w,H,p=P):
+ 135     R=list(range(0,N,1<<b));state=x[:]
+ 136     for s in R:state[s]=0
+ 137     out=[[x[s] for s in R]]
+ 138     for _ in range(H):
+ 139         state=qstep(state,w,p);out.append([state[s] for s in R])
+ 140         for s in R: state[s]=0
+ 141     return out
+ 142 
+ 143 def rank(a,p=P):
+ 144     a=[row[:] for row in a]
+ 145     if not a: return 0
+ 146     i=0
+ 147     for j in range(len(a[0])):
+ 148         z=next((k for k in range(i,len(a)) if a[k][j]%p),None)
+ 149         if z is None: continue
+ 150         a[i],a[z]=a[z],a[i]; q=pow(a[i][j],-1,p)
+ 151         a[i]=[x*q%p for x in a[i]]
+ 152         for k in range(i+1,len(a)):
+ 153             q=a[k][j]
+ 154             if q: a[k]=[(x-q*y)%p for x,y in zip(a[k],a[i])]
+ 155         i+=1
+ 156         if i==len(a): break
+ 157     return i
+ 158 
+ 159 def source_columns(N,b,w,H,p=P):
+ 160     R=list(range(0,N,1<<b)); E=[s for s in range(N) if s%(1<<b)]
+ 161     columns=[]
+ 162     for s in E:
+ 163         x=[0]*N; x[s]=1; col=[]
+ 164         for _ in range(H):
+ 165             x=qstep(x,w,p); col += [x[t] for t in R]
+ 166             for t in R: x[t]=0
+ 167         columns.append(col)
+ 168     return [list(row) for row in zip(*columns)]
+ 169 
+ 170 def main():
+ 171     result={'field':P,'basis_cases':[],'polynomial_cases':[],'support_cases':[], 'source_ranks':[], 'inverse_cases':[], 'recovery_cases':[]}
+ 172     for N in [2,4,8,16,32,64,128]:
+ 173         w=root(N); n=N.bit_length()-1
+ 174         for b in range(1,n+1):
+ 175             r=N>>b
+ 176             for j in range(r):
+ 177                 v=[0]*r;v[j]=1
+ 178                 assert compressed(v,N,b,w)==direct(v,N,b,w),(N,b,j)
+ 179             result['basis_cases'].append({'N':N,'b':b,'r':r,'basis_inputs':r})
+ 180             for t in range(1,n-b+1):
+ 181                 good=[k for k in range(1<<t) if word_good(k,t,b)]
+ 182                 support=set()
+ 183                 for a in range(r):
+ 184                     k=a% (1<<t)
+ 185                     if word_good(k,t,b): support.add(((1<<b)*(a-k)+k)%r)
+ 186                 expected=len(good)*max(r//(1<<(b+t)),1)
+ 187                 assert len(support)==expected
+ 188                 result['support_cases'].append({'N':N,'b':b,'t':t,'words':len(good),'slots':len(support)})
+ 189             v=[[((j+1)*(k+3)+j*j+7*k*k)%P for k in range(r)] for j in range(n+1)]
+ 190             got,visits=polynomial_compressed(v,N,b,w,n)
+ 191             want=[v[j][:] for j in range(n+1)]
+ 192             for j in range(n):
+ 193                 a=tree(v[j]);want[j+1]=[(x-y)%P for x,y in zip(want[j+1],a)]
+ 194             for j in range(n+1):
+ 195                 z=direct(v[j],N,b,w,n-j)
+ 196                 for k in range(len(z)):
+ 197                     want[j+k]=[(x-y)%P for x,y in zip(want[j+k],z[k])]
+ 198             assert got==want,(N,b,'polynomial')
+ 199             result['polynomial_cases'].append({'N':N,'b':b,'r':r,'routed_state_visits':visits})
+ 200             prep=Prepared(N,b,w)
+ 201             solved,solve_visits=prep.solve(v)
+ 202             applied,_=polynomial_compressed(solved,N,b,w,n)
+ 203             assert applied==v,(N,b,'inverse')
+ 204             # Verify a supplied arbitrary polynomial marker's top coefficient.
+ 205             marker=[[((j+4)*(k+1)+11*j)%P for k in range(r)] for j in range(n+1)]
+ 206             mark=sum(marker[j][k]*solved[n-j][k] for j in range(n+1) for k in range(r))%P
+ 207             result['inverse_cases'].append({'N':N,'b':b,'visits':solve_visits,'marked_top_coefficient':mark})
+ 208             x=[(s*s+9*s+5)%P for s in range(N)]
+ 209             rhs=global_source(x,N,b,w,n)
+ 210             got,_=prep.solve(rhs)
+ 211             cur=x[:];R=list(range(0,N,1<<b));full=[]
+ 212             for j in range(n+1):
+ 213                 full.append(cur[:]);assert got[j]==[cur[s] for s in R],(N,b,j,'global retained')
+ 214                 cur=qstep(cur,w)
+ 215             # Reconstruct eliminated coefficients from the original block equation.
+ 216             previous=[0]*N;recovered=[]
+ 217             for j in range(n+1):
+ 218                 rec=x[:] if j==0 else qstep(previous,w)
+ 219                 for k,s in enumerate(R):rec[s]=got[j][k]
+ 220                 assert rec==full[j],(N,b,j,'global recovery')
+ 221                 recovered.append(rec);previous=rec
+ 222             h=[(3*s*s+7*s+2)%P for s in range(N)]
+ 223             assert sum(h[s]*recovered[n][s] for s in range(N))%P==sum(h[s]*full[n][s] for s in range(N))%P
+ 224             result['recovery_cases'].append({'N':N,'b':b,'all_coefficients_checked':n+1})
+ 225             if N<=64:
+ 226                 A=source_columns(N,b,w,n)
+ 227                 result['source_ranks'].append({'N':N,'b':b,'rank':rank(A),'rows':n*r,'cols':N-r})
+ 228     # A concrete failure of extending the finite-horizon route unchanged.
+ 229     N=16;b=2;w=root(N);v=[1,2,3,4];H=5
+ 230     got=compressed(v,N,b,w,H);want=direct(v,N,b,w,H)
+ 231     assert got[:5]==want[:5] and got[5]!=want[5]
+ 232     result['beyond_horizon_failure']={'N':N,'b':b,'omega':w,'input':v,'degree':5,'naive_value':got[5],'exact_value':want[5]}
+ 233     result['summary']={'basis_parameters':len(result['basis_cases']), 'basis_inputs':sum(a['basis_inputs'] for a in result['basis_cases']), 'polynomial_parameters':len(result['polynomial_cases']), 'support_parameters':len(result['support_cases']), 'inverse_parameters':len(result['inverse_cases']), 'full_recovery_parameters':len(result['recovery_cases'])}
+ 234     path=Path(__file__).with_name('COMPRESSED_SCHUR_CONTROLS.json');path.write_text(json.dumps(result,indent=2)+'\n')
+ 235     print(json.dumps(result['summary'],sort_keys=True));print('ALL EXACT CHECKS PASSED')
+ 236 if __name__=='__main__': main()

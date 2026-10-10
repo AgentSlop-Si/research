@@ -1,0 +1,169 @@
+1: """Exact, dependency-free checks of one FFT phase-state architecture.
+2: 
+3: This is an algebraic audit, not a fast transform implementation or benchmark.
+4: Run: python verify_phase_states.py
+5: """
+6: from __future__ import annotations
+7: 
+8: import json
+9: from pathlib import Path
+10: 
+11: PRIMES = (65537, 998244353)
+12: 
+13: 
+14: def bit_reverse(value: int, width: int) -> int:
+15:     result = 0
+16:     for _ in range(width):
+17:         result = 2 * result + (value & 1)
+18:         value >>= 1
+19:     return result
+20: 
+21: 
+22: def root(n: int, prime: int) -> int:
+23:     assert n & (n - 1) == 0 and (prime - 1) % n == 0
+24:     value = pow(3, (prime - 1) // n, prime)
+25:     assert pow(value, n, prime) == 1
+26:     assert n == 1 or pow(value, n // 2, prime) != 1
+27:     return value
+28: 
+29: 
+30: def rank_mod(matrix: list[list[int]], prime: int) -> int:
+31:     a = [row[:] for row in matrix]
+32:     rows, columns = len(a), len(a[0])
+33:     pivot_row = 0
+34:     for col in range(columns):
+35:         pivot = next((r for r in range(pivot_row, rows) if a[r][col]), None)
+36:         if pivot is None:
+37:             continue
+38:         a[pivot], a[pivot_row] = a[pivot_row], a[pivot]
+39:         inv = pow(a[pivot_row][col], -1, prime)
+40:         a[pivot_row] = [(entry * inv) % prime for entry in a[pivot_row]]
+41:         for r in range(pivot_row + 1, rows):
+42:             scale = a[r][col]
+43:             if scale:
+44:                 a[r] = [(x - scale * y) % prime for x, y in zip(a[r], a[pivot_row])]
+45:         pivot_row += 1
+46:         if pivot_row == rows:
+47:             break
+48:     return pivot_row
+49: 
+50: 
+51: def determinant_mod(matrix: list[list[int]], prime: int) -> int:
+52:     a = [row[:] for row in matrix]
+53:     n = len(a)
+54:     assert all(len(row) == n for row in a)
+55:     determinant = 1
+56:     for col in range(n):
+57:         pivot = next((r for r in range(col, n) if a[r][col]), None)
+58:         if pivot is None:
+59:             return 0
+60:         if pivot != col:
+61:             a[col], a[pivot] = a[pivot], a[col]
+62:             determinant = -determinant
+63:         value = a[col][col]
+64:         determinant = determinant * value % prime
+65:         inv = pow(value, -1, prime)
+66:         for r in range(col + 1, n):
+67:             scale = a[r][col] * inv % prime
+68:             for j in range(col + 1, n):
+69:                 a[r][j] = (a[r][j] - scale * a[col][j]) % prime
+70:     return determinant % prime
+71: 
+72: 
+73: def direct_entry(j: int, b: int, length: int, w: int, prime: int) -> int:
+74:     return pow(w, j * bit_reverse(b, length), prime)
+75: 
+76: 
+77: def factored_entry(j_left: int, b_left: int, j_right: int, b_right: int,
+78:                    length: int, cut: int, prime: int) -> int:
+79:     q = length - cut
+80:     n = 1 << length
+81:     a = direct_entry(j_left, b_left, cut, root(1 << cut, prime), prime)
+82:     b = direct_entry(j_right, b_right, q, root(1 << q, prime), prime)
+83:     cross = pow(root(n, prime), j_left * bit_reverse(b_right, q), prime)
+84:     return a * b * cross % prime
+85: 
+86: 
+87: def unfolding(length: int, cut: int, prime: int, correction: bool = False):
+88:     """Rows (j_left,b_left), columns (j_right,b_right): retain BOTH indices."""
+89:     q = length - cut
+90:     n = 1 << length
+91:     w = root(n, prime)
+92:     rows = []
+93:     for j_left in range(1 << cut):
+94:         for b_left in range(1 << cut):
+95:             row = []
+96:             for j_right in range(1 << q):
+97:                 for b_right in range(1 << q):
+98:                     j = j_left + (j_right << cut)
+99:                     b = b_left + (b_right << cut)
+100:                     value = direct_entry(j, b, length, w, prime)
+101:                     assert value == factored_entry(j_left, b_left, j_right, b_right,
+102:                                                    length, cut, prime)
+103:                     if correction:
+104:                         walsh = -1 if (j & b).bit_count() % 2 else 1
+105:                         value = (value - walsh) % prime
+106:                     row.append(value)
+107:             rows.append(row)
+108:     return rows
+109: 
+110: 
+111: def run():
+112:     full_checks = []
+113:     cross_checks = []
+114:     for prime in PRIMES:
+115:         for length in range(2, 7):
+116:             for cut in range(1, length):
+117:                 predicted = 1 << min(cut, length - cut)
+118:                 full_rank = rank_mod(unfolding(length, cut, prime), prime)
+119:                 correction_rank = rank_mod(unfolding(length, cut, prime, True), prime)
+120:                 assert full_rank == predicted
+121:                 assert predicted - 1 <= correction_rank <= predicted + 1
+122:                 interior = min(cut, length - cut) >= 2
+123:                 if interior:
+124:                     assert correction_rank == predicted + 1
+125:                 full_checks.append(dict(prime=prime, n=1 << length, cut=cut,
+126:                                         fourier_rank=full_rank, correction_rank=correction_rank,
+127:                                         interior_cut=interior))
+128:         for length in range(2, 11):
+129:             n = 1 << length
+130:             w = root(n, prime)
+131:             for cut in range(1, length):
+132:                 a_size, c_size = 1 << cut, 1 << (length - cut)
+133:                 matrix = [[pow(w, a * c, prime) for c in range(c_size)]
+134:                           for a in range(a_size)]
+135:                 size = min(a_size, c_size)
+136:                 actual_rank = rank_mod(matrix, prime)
+137:                 assert actual_rank == size
+138:                 square = [row[:size] for row in matrix[:size]]
+139:                 determinant = determinant_mod(square, prime)
+140:                 vandermonde = 1
+141:                 nodes = [pow(w, c, prime) for c in range(size)]
+142:                 for hi in range(size):
+143:                     for lo in range(hi):
+144:                         vandermonde = vandermonde * (nodes[hi] - nodes[lo]) % prime
+145:                 assert determinant == vandermonde != 0
+146:                 # Exact prefix phase-state extension: phi_(a+u*2^cut)(c).
+147:                 for a in range(a_size):
+148:                     for u in (0, 1):
+149:                         for c in range(c_size):
+150:                             lhs = pow(w, (a + u * a_size) * c, prime)
+151:                             rhs = pow(w, a * c, prime) * pow(w, u * a_size * c, prime) % prime
+152:                             assert lhs == rhs
+153:                 cross_checks.append(dict(prime=prime, n=n, cut=cut, rank=actual_rank,
+154:                                          leading_minor_size=size,
+155:                                          determinant=determinant,
+156:                                          vandermonde_product=vandermonde))
+157:     result = dict(description="Exact phase-state architecture audit; no timing claim",
+158:                   full_unfolding_checks=full_checks,
+159:                   cross_matrix_checks=cross_checks,
+160:                   summary=dict(full_unfolding_cases=len(full_checks),
+161:                                cross_matrix_and_minor_cases=len(cross_checks),
+162:                                all_checks_passed=True))
+163:     output = Path(__file__).with_name("results.json")
+164:     output.write_text(json.dumps(result, indent=2) + "\n")
+165:     print(json.dumps(result["summary"], indent=2))
+166: 
+167: 
+168: if __name__ == "__main__":
+169:     run()

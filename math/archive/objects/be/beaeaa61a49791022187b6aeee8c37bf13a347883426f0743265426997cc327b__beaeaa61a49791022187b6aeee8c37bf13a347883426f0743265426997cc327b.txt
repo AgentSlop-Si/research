@@ -1,0 +1,55 @@
+"""Independent complex-matrix check on a polarized Green network, N=16.
+
+Uses direct dense matrix inversion, not the modular cyclic recurrence. This
+is a sanity check of the norm lower bound, not evidence of a faster FFT.
+"""
+from __future__ import annotations
+import json
+from pathlib import Path
+import numpy as np
+from transverse_green import graphs_polarized,transverse_error_bound
+
+
+def run():
+    n=16;s=4
+    g1,g2=graphs_polarized(2)
+    def build_layer(graphs):
+        eye=np.eye(n,dtype=complex)
+        mat=np.zeros((n,n),complex)
+        for g in graphs:
+            P=np.zeros((n,n),complex)
+            for i,j in enumerate(g.pi):
+                phase=np.exp(2j*np.pi*((i+5*g.copy+11*g.family)%n)/n)
+                P[i,j]=0.25*phase
+            mat+=np.linalg.inv(eye-P)
+        return mat/len(graphs)
+    X=build_layer(g1)
+    Y=build_layer(g2)
+    T=Y@X
+    ids=np.arange(n)
+    U=np.exp(-2j*np.pi*np.outer(ids,ids)/n)/np.sqrt(n)
+    # Allow the best global scalar rescaling, keeping the polarized grammar.
+    scale=np.vdot(T,U)/np.vdot(T,T)
+    T_opt=scale*T
+    err=U-T_opt
+    opnorm=float(np.linalg.norm(err,ord=2))
+    frobnorm=float(np.linalg.norm(err)/np.linalg.norm(U))
+    bound=transverse_error_bound(s)
+    assert opnorm>=bound-1e-10 and frobnorm>=bound-1e-10
+    transverse_ranks=[]
+    for x,yp in [(0,1),(1,2),(3,0)]:
+        B=T_opt[np.ix_([x*s+y for y in range(s)],
+                         [xp*s+yp for xp in range(s)])]
+        sig=np.linalg.svd(B,compute_uv=False)
+        assert sig[1]<1e-10
+        transverse_ranks.append({'x':x,'yprime':yp,
+            'singular_values':[float(z) for z in sig]})
+    result={'N':n,'s':s,'relative_Frobenius_error_after_optimal_scalar':frobnorm,
+            'operator_norm_error_after_optimal_scalar':opnorm,
+            'rigorous_lower_bound':bound,'best_scalar_real':float(scale.real),
+            'best_scalar_imag':float(scale.imag),'transverse_blocks':transverse_ranks}
+    path=Path(__file__).resolve().parent/'NUMERICAL_AUDIT.json'
+    path.write_text(json.dumps(result,indent=2))
+    return result
+
+if __name__=='__main__':print(json.dumps(run(),indent=2))

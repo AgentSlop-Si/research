@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+import json, random, math, time
+from phase6_exact import *
+
+def run():
+    import collections
+    count=0; support_tests=0; rejected=0; detail=[]
+    for q,m in [(64,8),(128,8),(256,8),(256,16),(512,8),(512,16),(1024,16)]:
+        k=q//m
+        for a in [1,3,5,7]:
+            if math.gcd(a,q)!=1:continue
+            for beta in [0,1,q//3]:
+                for R in [0,1,2,3]:
+                    if R>m:continue
+                    support=random.Random(q*100+m*13+R*7+a*11+beta).sample(range(m),R)
+                    x=synth_sparse(k,m,support,seed=q+R*31+a*71+beta,a=a,beta=beta)
+                    ctr=OpCounter()
+                    y,found,c=adaptive_green_sparse(x,m,R,a=a,beta=beta,counter=ctr)
+                    assert y is not None,(q,m,a,beta,R,'incorrect rejection')
+                    if set(found)!=set(support):
+                        print('support issue',q,m,a,beta,R,found,support)
+                    assert set(found)==set(support),(q,m,a,beta,R,found,support)
+                    expected=independent_full_dft(x)
+                    assert y==expected,(q,m,a,beta,R,[(i,v,expected[i]) for i,v in enumerate(y) if v!=expected[i]][:3])
+                    count+=1
+                    if a==1 and beta==0:
+                        detail.append({'q':q,'m':m,'r':R,'support':found,'mult':ctr.mult,'add':ctr.add,'small_ntt_calls':ctr.full_block_dfts,'k_butterflies':ctr.ntt_butterflies,'checked':ctr.input_checked})
+        rng=random.Random(q+m+444)
+        for R in [1,2,3]:
+            x=[rng.randrange(P) for _ in range(q)]
+            y,found,ct=adaptive_green_sparse(x,m,R)
+            assert y is None,(q,m,R,'should reject full random input')
+            rejected+=1
+    rank_tests=[]
+    for q,m in [(64,8),(128,8),(256,8),(256,16),(512,16)]:
+        k=q//m
+        for r in [1,2]:
+            x=synth_sparse(k,m,list(range(1,r+1)),seed=q*99+r)
+            rank=hankel_rank(x)
+            rank_tests.append({'q':q,'m':m,'r':r,'hankel_rank':rank,'hankel_height':q//2})
+    result={'exact_sparse_support_cases':count,'random_dense_rejections':rejected,'hankel_rank_tests':rank_tests,'per_instance_operations':detail}
+    print(json.dumps(result,indent=2))
+    open(__file__.replace('test_phase6.py','finite_field_verification.json'),'w').write(json.dumps(result,indent=2))
+if __name__=='__main__':run()

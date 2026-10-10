@@ -1,0 +1,148 @@
+   1 #!/usr/bin/env python3
+   2 """Independent N16 certificate audit: Python integers/Fractions only, no solver or NumPy."""
+   3 from fractions import Fraction
+   4 from math import isqrt,lcm
+   5 from pathlib import Path
+   6 import hashlib,json
+   7 BASE=Path(__file__).parent
+   8 N=16;Q=256;TERMS=8
+   9 
+  10 def addmat(a,b,sign=1):return [[x+sign*y for x,y in zip(row,other)] for row,other in zip(a,b)]
+  11 def multiply(a,b):
+  12     cols=list(zip(*b))
+  13     return [[sum(x*y for x,y in zip(row,col)) for col in cols] for row in a]
+  14 def cproduct(a,b):
+  15     ar,ai=a;br,bi=b
+  16     return addmat(multiply(ar,br),multiply(ai,bi),-1),addmat(multiply(ar,bi),multiply(ai,br))
+  17 def csum(*a):
+  18     out=([row[:] for row in a[0][0]],[row[:] for row in a[0][1]])
+  19     for b in a[1:]:out=addmat(out[0],b[0]),addmat(out[1],b[1])
+  20     return out
+  21 
+  22 def normnum(pair):return max(sum(abs(x)+abs(y) for x,y in zip(r,i)) for r,i in zip(*pair))
+  23 def shapecheck(a,shape):
+  24     if not shape:assert type(a) is int;return
+  25     assert type(a) is list and len(a)==shape[0]
+  26     for row in a:shapecheck(row,shape[1:])
+  27 def cycles(p):
+  28     seen=set();out=[]
+  29     for i in range(len(p)):
+  30         if i in seen:continue
+  31         c=[];j=i
+  32         while j not in seen:seen.add(j);c.append(j);j=p[j]
+  33         assert j==i;out.append(c)
+  34     return out
+  35 
+  36 def prescribed_orders():
+  37     out=[]
+  38     for axis in ('H','V'):
+  39         for c in (0,1):
+  40             for sign in (-1,1):
+  41                 p=[4*((x+sign*(2*y+c))%4)+y if axis=='H' else 4*x+(y+sign*(2*x+c))%4 for x in range(4) for y in range(4)]
+  42                 cc=cycles(p);tails=[min(cyc) for cyc in cc];sp=p[:]
+  43                 for j,t in enumerate(tails):sp[t]=p[tails[(j+1)%len(tails)]]
+  44                 assert sorted(sp)==list(range(N)) and len(cycles(sp))==1
+  45                 out.append(sp)
+  46     return out
+  47 
+  48 def fraction_record(q):return {'numerator':str(q.numerator),'denominator':str(q.denominator),'decimal_summary':float(q)}
+  49 def as_fraction(record):return Fraction(int(record['numerator']),int(record['denominator']))
+  50 
+  51 def verify():
+  52     raw=(BASE/'sources/DYADIC_AFFINE_CHART.json').read_bytes();chart=json.loads(raw)
+  53     assert chart['dyadic_exponent']==60
+  54     cr=chart['center_real'];ci=chart['center_imag'];vr=chart['directions_real'];vi=chart['directions_imag']
+  55     for c in (cr,ci):shapecheck(c,[3,N,TERMS])
+  56     for v in (vr,vi):shapecheck(v,[3,N,TERMS,Q])
+  57     scale=1<<60;orders=prescribed_orders();poles=[d**N-1 for d in range(2,10)];assert all(p>0 for p in poles)
+  58     common=lcm(*poles);den=scale*common;den3=den**3
+  59     gs=[]
+  60     for term,p in enumerate(orders):
+  61         d=term+2;g=[[0]*N for _ in range(N)]
+  62         for col in range(N):
+  63             row=col
+  64             for power in range(N):g[row][col]=d**(N-power)*(common//poles[term]);row=p[row]
+  65         invp=[0]*N
+  66         for j,i in enumerate(p):invp[i]=j
+  67         # Exact left-inverse identity for every entry; no cyclic direction assumed silently.
+  68         assert all(d*g[i][j]-g[invp[i]][j]==d*common*int(i==j) for i in range(N) for j in range(N))
+  69         gs.append(g)
+  70     bankr=[[int(i==j) for j in range(N)] for i in range(N)];banki=[[0]*N for _ in range(N)]
+  71     for start in (0,4):
+  72         for i in range(4):
+  73             for j in range(4):
+  74                 phase=(i*j)%4;bankr[start+i][start+j]=(1,0,-1,0)[phase];banki[start+i][start+j]=(0,1,0,-1)[phase]
+  75     bank=bankr,banki;assert normnum(bank)==4
+  76     layers=[];directions=[]
+  77     for l in range(3):
+  78         parts=[]
+  79         for center in (cr,ci):parts.append([[sum(center[l][i][j]*gs[j][i][k] for j in range(TERMS)) for k in range(N)] for i in range(N)])
+  80         layers.append(tuple(parts));delta=[]
+  81         for t in range(Q):
+  82             parts=[]
+  83             for directions_part in (vr,vi):parts.append([[sum(directions_part[l][i][j][t]*gs[j][i][k] for j in range(TERMS)) for k in range(N)] for i in range(N)])
+  84             delta.append(tuple(parts))
+  85         directions.append(delta)
+  86     h0,h1,h2=layers;bh0=cproduct(bank,h0);prefix=cproduct(h1,bh0);suffix=cproduct(cproduct(h2,h1),bank);product=cproduct(h2,prefix)
+  87     # Independently build each of the 256 derivative columns by the product rule.
+  88     row_sums=[0]*Q;jacobian_digest=hashlib.sha256()
+  89     for t in range(Q):
+  90         deriv=csum(cproduct(directions[2][t],prefix),cproduct(cproduct(h2,directions[1][t]),bh0),cproduct(suffix,directions[0][t]))
+  91         for i in range(N):
+  92             for j in range(N):
+  93                 q=N*i+j;r=deriv[0][i][j]-(den3 if q==t else 0);im=deriv[1][i][j]
+  94                 row_sums[q]+=abs(r)+abs(im);jacobian_digest.update((str(r)+','+str(im)+';').encode())
+  95     epsilon=Fraction(max(row_sums),den3)
+  96     # Algebraic primitive-root enclosure, verified by integer inequalities.
+  97     Z=1<<160;s0=isqrt(2*Z*Z);s1=s0+1;c=isqrt((2*Z+s0)*Z);d=isqrt((2*Z-s1)*Z)
+  98     assert s0*s0<=2*Z*Z<s1*s1
+  99     assert c*c<=(2*Z+s0)*Z<(c+1)*(c+1)
+ 100     assert d*d<=(2*Z-s1)*Z<(d+1)*(d+1)
+ 101     assert 0<2*s1<3*Z and c>0 and d>0 and c*c+d*d<4*Z*Z
+ 102     powers=[(1,0,1)]
+ 103     for e in range(1,16):
+ 104         a,b,v=powers[-1];powers.append((a*c-b*d,a*d+b*c,v*2*Z))
+ 105     residual_exact_approx=Fraction(0);worst_entry=None
+ 106     for i in range(N):
+ 107         for j in range(N):
+ 108             r,im,v=powers[(i*j)%16]
+ 109             err=Fraction(abs(product[0][i][j]*v-r*den3)+abs(product[1][i][j]*v-im*den3),den3*v)
+ 110             if err>residual_exact_approx:residual_exact_approx=err;worst_entry=[i,j]
+ 111     residual=residual_exact_approx+Fraction(120,Z)
+ 112     hs=[Fraction(normnum(h),den) for h in layers]
+ 113     ls=[]
+ 114     for l in range(3):
+ 115         ls.append(Fraction(max(sum(abs(directions[l][t][0][i][k])+abs(directions[l][t][1][i][k]) for t in range(Q) for k in range(N)) for i in range(N)),den))
+ 116     c2=8*(ls[2]*ls[1]*hs[0]+ls[2]*hs[1]*ls[0]+hs[2]*ls[1]*ls[0]);c3=12*ls[2]*ls[1]*ls[0]
+ 117     rho=Fraction(1,10**9);q=epsilon+c2*rho+c3*rho*rho;image=residual+q*rho
+ 118     margins=[];sensitivities=[]
+ 119     for l in range(3):
+ 120         for i in range(N):
+ 121             for j in range(TERMS):
+ 122                 base=Fraction(max(abs(cr[l][i][j]),abs(ci[l][i][j])),scale)
+ 123                 sensitivity=Fraction(sum(abs(vr[l][i][j][t])+abs(vi[l][i][j][t]) for t in range(Q)),scale)
+ 124                 margin=base-rho*sensitivity;assert margin>0;margins.append(margin);sensitivities.append(sensitivity)
+ 125     assert epsilon<1 and q<1 and image<rho and len(margins)==384
+ 126     calc={'polydisk_radius':rho,'residual_upper_bound':residual,'center_derivative_defect_bound':epsilon,
+ 127           'quadratic_derivative_constant':c2,'cubic_derivative_constant':c3,'contraction_factor_bound':q,
+ 128           'image_radius_upper_bound':image,'physical_nonzero_margin':min(margins),'max_physical_direction_row_norm':max(sensitivities)}
+ 129     source=json.loads((BASE/'sources/EXACT_CONTRACTION_CERTIFICATE.json').read_text())
+ 130     for name,value in calc.items():assert value==as_fraction(source[name]),name
+ 131     assert hs==list(map(as_fraction,source['layer_matrix_bounds'])) and ls==list(map(as_fraction,source['layer_direction_bounds']))
+ 132     assert poles==source['fixed_pole_denominators']
+ 133     result={'status':'ACCEPTED_EXACT_N16_LOCAL_EXISTENCE','chart_sha256':hashlib.sha256(raw).hexdigest(),
+ 134       'arithmetic':'Python arbitrary-precision integers and fractions only; no numerical libraries or solver',
+ 135       'source_bounds_match_exactly':True,'full_complex_entry_equations':256,'physical_endpoint_guards':384,
+ 136       'chart_complex_dimension':256,'physical_parameter_dimension':384,'chart_injective_by_derivative_defect':True,
+ 137       'orders':orders,'fixed_pole_denominators':poles,'common_Green_denominator':str(common),'layer_denominator':str(den),
+ 138       'root_enclosure':{'Z':str(Z),'s0':str(s0),'s1':str(s1),'real_numerator':str(c),'imag_numerator':str(d),'denominator':str(2*Z),'power_l1_error_bound':fraction_record(Fraction(120,Z))},
+ 139       'worst_residual_entry':worst_entry,'jacobian_defect_columns_digest':jacobian_digest.hexdigest(),
+ 140       'layer_matrix_bounds':list(map(fraction_record,hs)),'layer_direction_bounds':list(map(fraction_record,ls)),
+ 141       'bounds':{name:fraction_record(value) for name,value in calc.items()},
+ 142       'all_endpoint_margins':list(map(fraction_record,margins)),
+ 143       'scope':'Full N16 fixed-model Fourier coefficient existence in the supplied exact affine chart; no larger-size lift or speedup'}
+ 144     (BASE/'INDEPENDENT_CERTIFICATE.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 145     print('ACCEPTED: independent exact bounds match the constructor fractions in all reported quantities')
+ 146     print(json.dumps({k:float(v) for k,v in calc.items()},sort_keys=True))
+ 147 
+ 148 if __name__=='__main__':verify()

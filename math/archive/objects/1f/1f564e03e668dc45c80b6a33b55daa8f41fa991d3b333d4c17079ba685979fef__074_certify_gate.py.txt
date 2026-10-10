@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Exact, self-contained arithmetic certificate for the 11-by-11 F32 rank gate.
+
+No NumPy, floating point, external packages, external files, or uploaded code.
+The proof connecting this finite check to Fourier rank is in PROOF.md.
+"""
+from functools import lru_cache
+from itertools import product
+import json
+
+BRANCHES = [(0, 48, 60), (20, 32, 50), (36, 16, 42),
+            (48, 0, 36), (56, 0, 32), (60, 0, 30)]
+EXPECTED = [
+    [3377, 3361, 3361, 3377, 3361, 3361],
+    [3361, 3321, 3321, 3345, 3321, 3361],
+    [3361, 3321, 3297, 3345, 3313, 3361],
+    [3377, 3345, 3345, 3377, 3345, 3361],
+    [3361, 3321, 3313, 3345, 3265, 3321],
+    [3361, 3361, 3361, 3361, 3321, 3241],
+]
+
+
+def moment(x, y):
+    return sum(xi * yj * (1 if i + j >= 5 else -1 if i + j == 4 else 0)
+               for i, xi in enumerate(x) for j, yj in enumerate(y))
+
+
+def box_slice_vertices(a, lower, upper):
+    """Four coordinates, one fixed sum: every vertex has >=3 active bounds."""
+    lo, hi = (lower, 0, 0, 0), (upper, 36, 20, 10)
+    total, vertices = 110 - a, set()
+    for free in range(4):
+        other = [i for i in range(4) if i != free]
+        for bits in product((0, 1), repeat=3):
+            v = [0] * 4
+            for i, bit in zip(other, bits):
+                v[i] = (lo, hi)[bit][i]
+            v[free] = total - sum(v[i] for i in other)
+            if lo[free] <= v[free] <= hi[free]:
+                vertices.add((a, *v, 11))
+    return sorted(vertices)
+
+
+@lru_cache(None)
+def exact_profiles(n, k):
+    """Independent dyadic recursion over occupancy counts, not row sets."""
+    if n == 1:
+        return frozenset({(k,)}) if k in (0, 1) else frozenset()
+    out = set()
+    for even in range(max(0, k - n // 2), min(n // 2, k) + 1):
+        odd = k - even
+        for e in exact_profiles(n // 2, even):
+            for o in exact_profiles(n // 2, odd):
+                out.add((2 * even * odd,) + tuple(ei + oi for ei, oi in zip(e, o)))
+    return frozenset(out)
+
+
+def difference_profile(subset):
+    out = [0] * 6
+    for r in subset:
+        for s in subset:
+            d = (r - s) % 32
+            v = 5 if d == 0 else (d & -d).bit_length() - 1
+            out[v] += 1
+    return tuple(out)
+
+
+V = [box_slice_vertices(*b) for b in BRANCHES]
+T = [[max(moment(x, y) for x in X for y in Y) for Y in V] for X in V]
+assert T == EXPECTED
+assert sum(map(len, V)) == 63
+assert max(map(max, T)) == 3377
+assert 4 * 3377 < 121 ** 2
+
+P = sorted(exact_profiles(32, 11))
+assert len(P) == 617
+branch_by_first = {a: (lo, hi) for a, lo, hi in BRANCHES}
+for x in P:
+    lo, hi = branch_by_first[x[0]]
+    assert x[5] == 11 and sum(x) == 121
+    assert lo <= x[1] <= hi
+    assert 0 <= x[2] <= 36 and 0 <= x[3] <= 20 and 0 <= x[4] <= 10
+exact_max = max(moment(x, y) for x in P for y in P)
+assert exact_max == 3377
+witness = [0, 2, 4, 8, 10, 12, 16, 18, 20, 24, 28]
+wp = difference_profile(witness)
+assert wp == (0, 48, 32, 20, 10, 11)
+assert moment(wp, wp) == exact_max
+assert sorted({(r // 2) % 8 for r in witness}) == [0, 1, 2, 4, 5, 6]
+
+print(json.dumps({
+    'theorem': 'Every 11-by-11 complex F32 submatrix has rank at least 5; sharp.',
+    'vertex_counts': list(map(len, V)),
+    'vertex_total': sum(map(len, V)),
+    'table': T,
+    'exact_profile_count': len(P),
+    'max_galois_averaged_second_moment': exact_max,
+    'rank4_required_moment': '14641/4 = 3660.25',
+    'integer_contradiction': '4 * 3377 = 13508 < 14641 = 121**2',
+    'rank5_witness_rows_and_columns': witness,
+    'witness_difference_profile': wp,
+    'proof_method': 'Galois average + PSD trace inequality + 63 exact box-slice vertices',
+}, indent=2))

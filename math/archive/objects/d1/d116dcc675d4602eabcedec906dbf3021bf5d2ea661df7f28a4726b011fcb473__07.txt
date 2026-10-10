@@ -1,0 +1,70 @@
+   1 #!/usr/bin/env python3
+   2 """Independent integer max-flow controls, without networkx/scipy or source code imports."""
+   3 import json,random
+   4 from collections import deque
+   5 from pathlib import Path
+   6 BASE=Path(__file__).parent
+   7 
+   8 def mask_set(n,m):return {j for j in range(n) if (j&m).bit_count()%2==0}
+   9 
+  10 def network_bound(n,perms,cols,rows):
+  11     stages=len(perms)+1;inf=n+1;V=8*n*stages+2;src=V-2;sink=V-1;graph=[[] for _ in range(V)]
+  12     def node(s,kind,j,half):return 8*n*s+2*n*kind+2*j+half
+  13     def edge(u,v,cap):
+  14         graph[u].append([v,cap,len(graph[v])]);graph[v].append([u,0,len(graph[u])-1])
+  15     for s in range(stages):
+  16         for j in range(n):
+  17             edge(node(s,0,j,0),node(s,0,j,1),1);edge(node(s,1,j,0),node(s,1,j,1),1);edge(node(s,0,j,1),node(s,1,j,0),inf)
+  18         for j in range(1,n):
+  19             edge(node(s,2,j,0),node(s,2,j,1),1);edge(node(s,0,j-1,1),node(s,2,j,0),inf);edge(node(s,2,j,1),node(s,1,j,0),inf)
+  20             if j<n-1:edge(node(s,2,j,1),node(s,2,j+1,0),inf)
+  21         for j in range(n-1):
+  22             edge(node(s,3,j,0),node(s,3,j,1),1);edge(node(s,0,j+1,1),node(s,3,j,0),inf);edge(node(s,3,j,1),node(s,1,j,0),inf)
+  23             if j:edge(node(s,3,j,1),node(s,3,j-1,0),inf)
+  24     for s,pi in enumerate(perms):
+  25         for j,old in enumerate(pi):edge(node(s,1,old,1),node(s+1,0,j,0),inf)
+  26     for j in cols:edge(src,node(0,0,j,0),inf)
+  27     for i in rows:edge(node(stages-1,1,i,1),sink,inf)
+  28     flow=0
+  29     while True:
+  30         pred=[None]*V;pred[src]=(-1,-1);queue=deque([src])
+  31         while queue and pred[sink] is None:
+  32             u=queue.popleft()
+  33             for j,(v,cap,_) in enumerate(graph[u]):
+  34                 if cap and pred[v] is None:pred[v]=(u,j);queue.append(v)
+  35         if pred[sink] is None:return flow
+  36         v=sink;delta=inf
+  37         while v!=src:u,j=pred[v];delta=min(delta,graph[u][j][1]);v=u
+  38         v=sink
+  39         while v!=src:
+  40             u,j=pred[v];back=graph[u][j][2];graph[u][j][1]-=delta;graph[v][back][1]+=delta;v=u
+  41         flow+=delta
+  42 
+  43 def shuffles(k):
+  44     rng=random.Random(20261016+17*k);perms=[]
+  45     for s in range(3):
+  46         rows=[1<<j for j in range(k)]
+  47         for _ in range(2*k*k):
+  48             i,j=rng.sample(range(k),2)
+  49             if rng.randrange(4)==0:rows[i],rows[j]=rows[j],rows[i]
+  50             else:rows[i]^=rows[j]
+  51         perms.append([sum(((x&row).bit_count()%2)<<i for i,row in enumerate(rows)) for x in range(1<<k)])
+  52     return perms
+  53 
+  54 if __name__=='__main__':
+  55     source=json.loads((BASE/'sources/moving/EXACT_CERTIFICATES.json').read_text());tight=[];survive=[]
+  56     for case in source['cases']:
+  57         if case['n'] not in (128,256) or case['name'] not in ('rotations','twisted_bitrev','middle_xor'):continue
+  58         n=case['n'];cols=mask_set(n,case['initial_parity_mask']);a=cols
+  59         for pi in case['permutations']:a={j for j in range(n) if pi[j] in a}
+  60         rows=set(range(n))-a;value=network_bound(n,case['permutations'],cols,rows);assert value==case['bound']
+  61         tight.append({'N':n,'name':case['name'],'capacity':value})
+  62     for k in (6,7,8):
+  63         n=1<<k;ps=shuffles(k);rng=random.Random(k)
+  64         probes=[(list(range(n//2)),list(range(n//2,n))),(list(range(0,n,2)),list(range(1,n,2))),
+  65                 (mask_set(n,1<<(k//2)),set(range(n))-mask_set(n,1<<(k//2)))]
+  66         for _ in range(5):probes.append((rng.sample(range(n),n//2),rng.sample(range(n),n//2)))
+  67         values=[network_bound(n,ps,c,r) for c,r in probes];assert values==[n//2]*8
+  68         survive.append({'N':n,'probe_capacities':values})
+  69     result={'status':'PASS','tight_selected_cuts':tight,'survivor_controls':survive,'scope':'Structural network capacity only; coefficients not fit'}
+  70     (BASE/'FLOW_RESULTS.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n');print('PASS: six tight moving cuts and 24 full-capacity survivor probes')

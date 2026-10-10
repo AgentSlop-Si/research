@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Independent exact checker. Executes no uploaded or inherited source code.
+Field is Q[q,d]/(q^4+1, d^2-(2-4q^2)); q=exp(pi*i/4).
+"""
+from fractions import Fraction as F
+import json
+from pathlib import Path
+
+class E:
+    def __init__(self, a=0):
+        if isinstance(a,E): self.a=a.a
+        elif isinstance(a,(int,F)): self.a=(F(a),)+(F(0),)*7
+        else: self.a=tuple(map(F,a))
+    def __add__(self,b):
+        b=E(b); return E([x+y for x,y in zip(self.a,b.a)])
+    __radd__=__add__
+    def __neg__(self): return E([-x for x in self.a])
+    def __sub__(self,b):return self+-E(b)
+    def __rsub__(self,b):return E(b)+-self
+    def __mul__(self,b):
+        b=E(b); out=[F(0)]*8
+        for i,x in enumerate(self.a):
+            for j,y in enumerate(b.a):
+                if not x or not y:continue
+                qp=(i%4)+(j%4);dp=(i//4)+(j//4)
+                terms=[(qp,dp,x*y)] if dp<2 else [(qp,0,2*x*y),(qp+2,0,-4*x*y)]
+                for a,c,v in terms:out[a%4+4*c]+=v*(-1 if (a//4)%2 else 1)
+        return E(out)
+    __rmul__=__mul__
+    def __pow__(self,n):
+        if n<0:return self.inv()**(-n)
+        a=self;r=E(1)
+        while n:
+            if n&1:r=r*a
+            a=a*a;n//=2
+        return r
+    def inv(self):
+        cols=[self*E([int(i==j) for i in range(8)]) for j in range(8)]
+        mat=[[cols[j].a[i] for j in range(8)]+[F(i==0)] for i in range(8)]
+        for j in range(8):
+            k=next(k for k in range(j,8) if mat[k][j])
+            mat[j],mat[k]=mat[k],mat[j];p=mat[j][j];mat[j]=[v/p for v in mat[j]]
+            for k in range(8):
+                if k!=j:
+                    p=mat[k][j];mat[k]=[a-p*b for a,b in zip(mat[k],mat[j])]
+        r=E([mat[j][-1] for j in range(8)]); assert self*r==E(1);return r
+    def __truediv__(self,b):return self*E(b).inv()
+    def __eq__(self,b):return self.a==E(b).a
+    def dump(self):return [str(x) for x in self.a]
+
+def matmul(a,b):return [[sum((x*y for x,y in zip(row,col)),E()) for col in zip(*b)] for row in a]
+def sub(a,b):return [[x-y for x,y in zip(u,v)]for u,v in zip(a,b)]
+def zero(a):return all(x==0 for row in a for x in row)
+def diag(a):return [[v if i==j else E() for j in range(len(a))]for i,v in enumerate(a)]
+def scale(c,a):return [[c*x for x in r]for r in a]
+
+q=E([0,1,0,0,0,0,0,0]); d=E([0,0,0,0,1,0,0,0]);i=q*q;rt=q-q**3;t=q**-1
+alpha=(-rt+d)/2;beta=(-rt-d)/2;u=2-2*i;v=2*rt
+a=(v+u*alpha)/(alpha-beta);b=(-v-u*beta)/(alpha-beta)
+n=4
+G=lambda x:[[x**((r-c)%n)/(1-x**n) for c in range(n)]for r in range(n)]
+C=[[a*x+b*y for x,y in zip(rx,ry)]for rx,ry in zip(G(alpha),G(beta))]
+D=diag([q**(j*j) for j in range(n)])
+W=matmul(matmul(D,C),D)
+expected=[[i**(r*c)for c in range(n)]for r in range(n)]
+Z=[[E(int(r==(c+1)%n))for c in range(n)]for r in range(n)]
+Zi=[[E(int(r==(c-1)%n))for c in range(n)]for r in range(n)]
+Omega=diag([i**j for j in range(n)])
+assert alpha!=beta and alpha!=0 and beta!=0 and a!=0 and b!=0
+assert 1-alpha**4!=0 and 1-beta**4!=0
+assert zero(sub(W,expected))
+assert zero(sub(matmul(W,Z),matmul(Omega,W)))
+assert zero(sub(matmul(W,Omega),matmul(Zi,W)))
+assert W[0][0]==1
+assert zero(sub(C,[[q**(-((r-c)%n)**2)for c in range(n)]for r in range(n)]))
+# Projective Fourier certificate: all anchored entry cross ratios.
+assert all(W[r][c]*W[0][0]/(W[r][0]*W[0][c])==i**(r*c)for r in range(n)for c in range(n))
+# Independent rational expression Q(Z)C=P(Z), without radical parameters.
+Q=[[E(int(r==c))+rt*Z[r][c]+i*matmul(Z,Z)[r][c]for c in range(n)]for r in range(n)]
+P=[[u*E(int(r==c))+v*Z[r][c]for c in range(n)]for r in range(n)]
+assert zero(sub(matmul(Q,C),P))
+result={'status':'all exact checks passed','field_basis':['1','q','q^2','q^3','d','q*d','q^2*d','q^3*d'],
+'field_relations':['q^4=-1','d^2=2-4q^2'],'root_convention':'q=exp(pi*i/4); omega=q^2=i; conjugate for negative-exponent Fourier',
+'full_matrix_entries_checked':16,'weyl_equations_checked':2,'projective_entry_cross_ratios_checked':16,
+'guards':{'alpha_minus_beta_nonzero':True,'alpha_beta_nonzero':True,'residues_nonzero':True,'cycle_denominators_nonzero':True},
+'coefficients':{k:x.dump()for k,x in [('alpha',alpha),('beta',beta),('a',a),('b',b)]},
+'normalization':'unnormalized W4; divide an outside diagonal by 2 for normalized F4',
+'scope':'weighted two-resolvent sum with external diagonal gauges; not unweighted unit-diagonal denominator model; no asymptotic speedup'}
+Path(__file__).with_name('F4_CHECK_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+print(json.dumps(result,indent=2))
+
+# Exact three-mixer continuation. All three mixers are entrywise nonzero.
+Di=diag([q**(-j*j) for j in range(n)])
+U=matmul(matmul(D,Z),Di)
+V=matmul(matmul(Di,Z),D)
+I4=diag([E(1)]*n)
+def plus(x,y):return [[a+b for a,b in zip(rx,ry)]for rx,ry in zip(x,y)]
+def polynomial(poly,mat):
+    out=[[E()for _ in range(n)]for _ in range(n)];p=I4
+    for coeff in poly:
+        out=plus(out,scale(E(coeff),p));p=matmul(p,mat)
+    return out
+A=polynomial([F(-19,240),F(-41,240),F(-91,240),F(-209,240)],U)
+Couter=polynomial([F(317,609),F(-730,609),F(2,609),F(5,609)],V)
+Q0=[1,-5,6];P0=[2,-5]
+Q1=[1,F(5,874),F(3,437)];P1=[F(455,874),F(-1045,874)]
+assert zero(sub(matmul(polynomial(Q0,U),A),polynomial(P0,U)))
+assert zero(sub(matmul(polynomial(Q1,V),Couter),polynomial(P1,V)))
+assert zero(sub(matmul(U,W),matmul(W,V)))
+triple=matmul(matmul(matmul(matmul(A,D),C),D),Couter)
+assert zero(sub(triple,expected))
+assert zero(sub(matmul(triple,Z),matmul(Omega,triple)))
+assert zero(sub(matmul(triple,Omega),matmul(Zi,triple)))
+assert triple[0][0]==1
+noncommute={}
+for label,X,Y in [('A_B',A,C),('B_C',C,Couter),('A_C',A,Couter)]:
+    defect=sub(matmul(X,Y),matmul(Y,X));assert not zero(defect)
+    noncommute[label]=sum(x!=0 for row in defect for x in row)
+assert all(x!=0 for M in [A,C,Couter]for row in M for x in row)
+# Independently verify two resolvent A (the U kernel is a D conjugate).
+AfromG=matmul(matmul(D,plus(G(E(2)),G(E(3)))),Di)
+assert zero(sub(A,AfromG))
+# C's denominator factors with discriminant -20951/874^2; its poles are
+# (-5 +/- sqrt(-20951))/1748. The partial fraction formula is an exact
+# universal identity; the rational congruence above does not require radicals.
+res={
+'status':'all exact checks passed','matrix_identity':'W4=A D B D C',
+'A':'D [G_2(Z)+G_3(Z)] D^-1',
+'B':'a G_alpha(Z)+b G_beta(Z), as above',
+'C':'D^-1 s(Z) D, s=(317-730z+2z^2+5z^3)/609 mod(z^4-1)',
+'C_rational_numerator':['455/874','-1045/874'],
+'C_rational_denominator':['1','5/874','3/437'],
+'C_denominator_discriminant':'-20951/763876',
+'C_poles':'(-5 +/- sqrt(-20951))/1748',
+'entrywise_nonzero_mixers':3,'commutator_nonzero_entry_counts':noncommute,
+'weyl_equations_checked':2,'normalization_entry_checked':True,
+'scope':'explicit noncommuting dense three-mixer exceptional point at N=4; affine cycle order with nontrivial diagonal gauges; no uniform sub-N-log-N evaluator',
+'growth_obstruction':'If both outside Fourier-conjugate factors are proper [1/2] rational functions of the same order-N cyclic operator with all four poles nonzero, reciprocal closure is impossible for N>=5.'}
+Path(__file__).with_name('THREE_MIXER_CHECK_RESULTS.json').write_text(json.dumps(res,indent=2)+'\n')
+print(json.dumps(res,indent=2))

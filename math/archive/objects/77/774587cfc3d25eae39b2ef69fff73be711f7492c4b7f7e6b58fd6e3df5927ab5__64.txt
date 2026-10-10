@@ -1,0 +1,171 @@
+1: """Independent finite-field review: no source input generator or audit helper.
+2: 
+3: Exhaustive smallest-input rejection/acceptance checks, noncommuting order,
+4: closure singularity, zero parameters, supplied-pool accounting, and fallback.
+5: """
+6: from collections import Counter
+7: from itertools import product
+8: from pathlib import Path
+9: import hashlib
+10: import json
+11: from composed_cycle import try_composed_fourier, composed_fft_or_fallback, DEPENDENCY
+12: 
+13: 
+14: class Probe:
+15:     def __init__(self,p):
+16:         self.p,self.zero,self.one = p,0,1
+17:         self.calls=Counter()
+18:     def add(self,a,b):
+19:         self.calls['add']+=1
+20:         return (a+b)%self.p
+21:     def sub(self,a,b):
+22:         self.calls['sub']+=1
+23:         return (a-b)%self.p
+24:     def mul(self,a,b):
+25:         self.calls['mul']+=1
+26:         return a*b%self.p
+27:     def inv(self,a):
+28:         self.calls['inverse']+=1
+29:         return pow(a,-1,self.p)
+30: 
+31: 
+32: def direct(x,q,p):
+33:     n=len(x)
+34:     return [sum(value*pow(q,j*k,p) for j,value in enumerate(x))%p for k in range(n)]
+35: 
+36: 
+37: def apply_filter(x,q,descriptor,pool,p):
+38:     a,b,h,index=descriptor;n=len(x)
+39:     return [(x[j]-pool[index]*pow(q,b*j%n,p)*x[(a*j+h)%n])%p for j in range(n)]
+40: 
+41: 
+42: def matrix_of_filter(n,q,descriptor,pool,p):
+43:     columns=[apply_filter([int(i==j) for i in range(n)],q,descriptor,pool,p) for j in range(n)]
+44:     return [list(row) for row in zip(*columns)]
+45: 
+46: 
+47: def mm(a,b,p):
+48:     return [[sum(x*y for x,y in zip(row,col))%p for col in zip(*b)] for row in a]
+49: 
+50: 
+51: def inverse(a,p):
+52:     n=len(a)
+53:     a=[row[:]+[int(i==j) for j in range(n)] for i,row in enumerate(a)]
+54:     for j in range(n):
+55:         pivot=next((i for i in range(j,n) if a[i][j]),None)
+56:         if pivot is None:raise ValueError('singular')
+57:         a[j],a[pivot]=a[pivot],a[j]
+58:         factor=pow(a[j][j],-1,p)
+59:         a[j]=[x*factor%p for x in a[j]]
+60:         for i in range(n):
+61:             if i!=j:
+62:                 factor=a[i][j]
+63:                 a[i]=[(x-factor*y)%p for x,y in zip(a[i],a[j])]
+64:     return [row[n:] for row in a]
+65: 
+66: 
+67: def generate(n,q,filters,pool,residual,p):
+68:     matrix=[[int(i==j) for j in range(n)] for i in range(n)]
+69:     for descriptor in filters:
+70:         matrix=mm(matrix_of_filter(n,q,descriptor,pool,p),matrix,p)
+71:     return [sum(a*b for a,b in zip(row,residual))%p for row in inverse(matrix,p)]
+72: 
+73: 
+74: def checked(x,q,filters,pool,budget,p,fallback=False):
+75:     probe=Probe(p)
+76:     fn=composed_fft_or_fallback if fallback else try_composed_fourier
+77:     y,meta=fn(probe,x,q,filters,pool,budget)
+78:     assert meta['field_operations']==dict(probe.calls)
+79:     assert sum((Counter(s) for s in meta['stages'].values()),Counter())==probe.calls
+80:     if y is not None:
+81:         assert y==direct(x,q,p)
+82:         if meta['ordinary_fft_calls']==0:
+83:             n=len(x);d=len(filters);r=len(pool);s=meta['actual_defects']
+84:             bill=(1+r+6*d+2*s)*n+r*((n.bit_length()-1)+2)+d
+85:             assert sum(probe.calls.values())==bill==meta['expected_total']
+86:     return y,meta
+87: 
+88: 
+89: def exhaustive():
+90:     p,n,q=5,4,2
+91:     filters=[(5,1,1,0),(9,3,1,0)];pool=[2]
+92:     result={'cases':0,'accepted':0,'declined':0}
+93:     for values in product(range(p),repeat=n):
+94:         residual=list(values)
+95:         for descriptor in filters:
+96:             residual=apply_filter(residual,q,descriptor,pool,p)
+97:         support=sum(bool(v) for v in residual)
+98:         for budget in (0,1):
+99:             y,meta=checked(list(values),q,filters,pool,budget,p)
+100:             assert (y is not None)==(support<=budget)
+101:             result['cases']+=1
+102:             result['accepted' if y is not None else 'declined']+=1
+103:     assert result['accepted']==18
+104:     return result
+105: 
+106: 
+107: def special_cases():
+108:     p,n,q=17,8,9
+109:     cases=[([(5,1,1,0),(9,3,5,0)],[2]),
+110:            ([(5,1,1,0),(9,3,5,1)],[2,2]),
+111:            ([(5,1,1,0),(9,3,5,1)],[0,2]),
+112:            ([(-3,-1,-3,0),(9,3,5,1),(13,-3,-1,0)],[2,4])]
+113:     records=[]
+114:     for filters,pool in cases:
+115:         residual=[1]+[0]*(n-1)
+116:         x=generate(n,q,filters,pool,residual,p)
+117:         y,meta=checked(x,q,filters,pool,1,p)
+118:         assert y is not None
+119:         wrong=list(x)
+120:         for descriptor in reversed(filters):
+121:             wrong=apply_filter(wrong,q,descriptor,pool,p)
+122:         records.append({'filters':filters,'pool':pool,'operations':sum(meta['field_operations'].values()),
+123:                         'swapped_residual_support':sum(bool(v) for v in wrong),
+124:                         'ordered_residual_support':meta['actual_defects'],
+125:                         'noncommuting_on_input':wrong!=residual})
+126:     assert records[0]['noncommuting_on_input']
+127:     assert records[0]['operations']==16*n+3+4
+128:     return records
+129: 
+130: 
+131: def fallback_cases():
+132:     p,n,q=17,8,9;filters=[(5,1,1,0),(9,3,5,0)]
+133:     x=[i*i%p for i in range(n)]
+134:     for pool,reason in [([3],'singular_filter'),([2],'composed_defect_budget_exceeded')]:
+135:         y,meta=checked(x,q,filters,pool,0,p)
+136:         assert y is None and meta['reason']==reason
+137:         y,meta=checked(x,q,filters,pool,0,p,True)
+138:         assert y is not None and meta['ordinary_fft_calls']==1
+139:     return 2
+140: 
+141: 
+142: def validation_cases():
+143:     fn=try_composed_fourier
+144:     p,n,q=17,8,9;valid=[(5,1,1,0)]
+145:     cases=[(iter(()),[2],1),(valid,iter(()),1),
+146:            ([(5,1,1,1)],[2],1),(valid,[2,3],1),
+147:            ([(5,1,0,0)],[2],1),(valid,[2],-1)]
+148:     for filters,pool,budget in cases:
+149:         try:fn(Probe(p),[1]*n,q,filters,pool,budget)
+150:         except ValueError:pass
+151:         else:raise AssertionError('invalid parameters accepted')
+152:     try:fn(Probe(p),[1]*n,1,valid,[2],1)
+153:     except ValueError:pass
+154:     else:raise AssertionError('nonprimitive root accepted')
+155:     return len(cases)+1
+156: 
+157: 
+158: def main():
+159:     folder=Path(__file__).parent
+160:     result={'status':'PASS','exhaustive_F5_N4':exhaustive(),
+161:             'special_cases':special_cases(),'fallback_cases':fallback_cases(),
+162:             'invalid_cases':validation_cases(),
+163:             'source_sha256':{name:hashlib.sha256((folder/name).read_bytes()).hexdigest()
+164:                              for name in ('README.md','composed_cycle.py','run_audit.py','review_edge_checks.py')},
+165:             'dependency_sha256':{name:hashlib.sha256((DEPENDENCY/name).read_bytes()).hexdigest()
+166:                                  for name in ('affine_cycle.py','exact_fields.py')}}
+167:     (folder/'review_edge_results.json').write_text(json.dumps(result,indent=2)+'\n')
+168:     print(json.dumps(result,indent=2))
+169: 
+170: 
+171: if __name__=='__main__':main()

@@ -1,0 +1,49 @@
+"""Full-output, fresh-input comparison of normal FFT vs dense gauge camouflage.
+
+Counts are instrumented field additions/multiplications on the online path;
+benchmark excludes plan construction and input generation for both arms.
+This compares the same exact outputs and is a NEGATIVE control.
+"""
+from __future__ import annotations
+from time import perf_counter_ns
+from statistics import median
+from pathlib import Path
+import json,random
+from gauge_fft import GaugeFFT,P
+
+
+def run(sizes=(256,1024,4096,8192),repetitions=5,per_batch=5):
+    results=[]
+    for n in sizes:
+        plan=GaugeFFT(n)
+        rng=random.Random(20261009+n)
+        trials=[[rng.randrange(P) for _ in range(n)] for _ in range(per_batch)]
+        # correctness first; all inputs distinct and unrelated
+        for x in trials:
+            assert plan.apply(x,dressed=False)[0]==plan.apply(x,dressed=True)[0]
+        timings={True:[],False:[]}
+        for r in range(repetitions):
+            for dressed in ([False,True] if r%2 else [True,False]):
+                start=perf_counter_ns()
+                for vec in trials:plan.apply(vec,dressed=dressed)
+                elapsed=(perf_counter_ns()-start)/1e6/per_batch
+                timings[dressed].append(elapsed)
+        base=plan.apply(trials[0],False)[1]
+        dress=plan.apply(trials[0],True)[1]
+        results.append({'n':n,'fresh_vectors_per_round':per_batch,'repetitions':repetitions,
+                        'plain_median_ms':median(timings[False]),'dense_gauge_median_ms':median(timings[True]),
+                        'slowdown':median(timings[True])/median(timings[False]),
+                        'plain_counts':base,'gauge_counts':dress,
+                        'prepared_plan_counts':plan.prepare_counts,
+                        'measurement_scope':'steady-state Python, exact full modular FFT; shared prepared twiddles and gauge; fresh inputs, one process, no threads'})
+    out=Path(__file__).with_name('benchmark_results.json')
+    out.write_text(json.dumps(results,indent=2)+'\n')
+    for d in results:
+        print(f"N={d['n']:5d} plain={d['plain_median_ms']:.3f} ms "
+              f"dense={d['dense_gauge_median_ms']:.3f} ms "
+              f"slowdown={d['slowdown']:.2f}x "
+              f"arithmetic_ratio="
+              f"{(d['gauge_counts']['add']+d['gauge_counts']['mul'])/(d['plain_counts']['add']+d['plain_counts']['mul']):.2f}x")
+    return results
+
+if __name__=='__main__':run()

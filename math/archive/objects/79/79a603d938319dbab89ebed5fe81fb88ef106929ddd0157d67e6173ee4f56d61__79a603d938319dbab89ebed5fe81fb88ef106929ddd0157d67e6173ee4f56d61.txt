@@ -1,0 +1,88 @@
+"""Independent checks for the new gate, polynomials, resultant and dimension bound."""
+import json,random,sys,unittest
+from pathlib import Path
+import sympy as sp
+import _bootstrap
+from inverse_quartic import poly_eval
+from dual_support import primitive_root
+from universal_gate import positive_controls,audit_GF17,gate,det
+from polynomial_resultant import run_checks,evaluate_minor,lift_poly
+from exact_polynomial_gate import build
+from exact_resultant import coeff_x,sylvester_resultant
+from slice_certificate import run as slice_run
+ROOT=Path(__file__).parent
+
+class NewGateTests(unittest.TestCase):
+ @classmethod
+ def setUpClass(cls):
+  cls.obj=build()
+  cls.RDB=sylvester_resultant(cls.obj['W'],cls.obj['DB'])
+  cls.RDH=sylvester_resultant(cls.obj['W'],cls.obj['DH'])
+ def test_positive_all_zero_upper_cases(self):
+  results=positive_controls(25)
+  for a in results:
+   self.assertEqual(a['success'],25)
+   for i in range(5):self.assertEqual(a['zero_mode_'+str(i)],5)
+ def test_GF17_exhaustive_counts(self):
+  o=audit_GF17()
+  self.assertEqual(o['stats']['prior_Q_tail_survivors'],4596)
+  self.assertEqual(o['stats']['NEW_GATE_REJECTED'],3266)
+  self.assertEqual(o['stats']['new_gate_admitted'],1330)
+  self.assertEqual(o['certificate'][0]['minor_mod_p'],3)
+ def test_polynomial_clearing(self):
+  data=run_checks(30)
+  self.assertEqual(len(data),3)
+ def test_polynomial_degree_and_entries(self):
+  self.assertEqual((len(self.obj['DB']),max(map(len,self.obj['DB']))),(9,2))
+  self.assertEqual((len(self.obj['DH']),max(map(len,self.obj['DH']))),(105,6))
+  self.assertEqual((len(self.obj['Dhat']),max(map(len,self.obj['Dhat']))),(250,8))
+  saved=json.loads((ROOT/'exact_polynomial_gate.json').read_text())
+  for key in ('W','Delta','T','V','DB','DH','Dhat'):
+   self.assertEqual(saved[key]['term_count'],len(self.obj[key]))
+  rng=random.Random(2026)
+  for p in (17,12289,65537):
+   z=primitive_root(p,8)
+   for k in range(12):
+    h=[rng.randrange(p) for _ in range(4)]
+    got,rank,_=evaluate_minor(p,z,h)
+    self.assertEqual(poly_eval(self.obj['Dhat'],h,p,z),got)
+ def test_resultant_metadata(self):
+  self.assertEqual((len(self.RDB),max(map(len,self.RDB))),(37,5))
+  self.assertEqual((len(self.RDH),max(map(len,self.RDH))),(476,15))
+  self.assertEqual(poly_eval(self.RDB,[1,0,0],17,9),16)
+  self.assertEqual(poly_eval(self.RDH,[1,0,0],17,9),11)
+ def test_symbolic_resultants_independent_sympy(self):
+  x=sp.Symbol('x');rng=random.Random(2026100921)
+  for p in (17,12289,65537):
+   z=primitive_root(p,8)
+   checked=0
+   for k in range(30):
+    h=[rng.randrange(p) for _ in range(3)]
+    def sp_poly(A):
+     deg=max([sum(j==3 for j in mon) for mon in A]or[0])
+     cc=[]
+     for n in range(deg+1):
+      part=coeff_x(A,n)
+      cc.append(poly_eval(part,h,p,z))
+     return sp.Poly.from_list(list(reversed(cc)),x,modulus=p)
+    w=sp_poly(self.obj['W']); db=sp_poly(self.obj['DB']);dh=sp_poly(self.obj['DH'])
+    if w.degree()!=2 or db.degree()!=1 or dh.degree()!=3:continue
+    resdb=int(w.resultant(db))%p
+    resdh=int(w.resultant(dh))%p
+    self.assertEqual(resdb,poly_eval(self.RDB,h,p,z))
+    self.assertEqual(resdh,poly_eval(self.RDH,h,p,z))
+    checked+=1
+   self.assertGreaterEqual(checked,10)
+ def test_all_roots_slice_res_nonzero(self):
+  d=slice_run()
+  self.assertEqual([a['polynomial_gate_minor'] for a in d['roots']],[3,2])
+  self.assertEqual(d['W_reduction_coefficients_const_to_x2'],[10,14,16])
+ def test_exceptional_W_identically_zero_base_small(self):
+  # The leading coefficient W2(h0,h1,h2) is a genuine linear polynomial;
+  # W1 is not divisible by W2. Thus {W≡0} has base dimension <=1.
+  W=self.obj['W']
+  w2=coeff_x(W,2);w1=coeff_x(W,1)
+  self.assertEqual(max(map(len,w2)),1)
+  self.assertEqual(poly_eval(w2,[1,0,10],17,9),0)
+  self.assertEqual(poly_eval(w1,[1,0,10],17,9),2)
+if __name__=='__main__':unittest.main(verbosity=2)

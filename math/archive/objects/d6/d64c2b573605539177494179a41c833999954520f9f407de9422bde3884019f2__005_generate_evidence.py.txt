@@ -1,0 +1,22 @@
+"""Generate machine-readable evidence from exact deterministic calculations."""
+from pathlib import Path
+import json,hashlib
+from central_partition import partition,modular_fft_minor
+HERE=Path(__file__).resolve().parent
+out={'date':'2026-10-10','theorem':'N/2 <= d_N * sum(r_i), under partition-preserving-or-swapping shuffles',
+     'field_primes':[12289,65537], 'thresholds':[], 'finite_cut_certificates':[]}
+for n in (16,32,64,128,256,512,1024,2048):
+ A,B,d,case=partition(n)
+ item={'n':n,'partition_case':case[0],'crossings_d':d,'fourier_block_rank':n//2,
+       'min_total_channel_order':(n//2+d-1)//d,'four_rank_one_stages_excluded':(n//2>4*d)}
+ if n<=256:item['fourier_AB_det_residues']={str(p):modular_fft_minor(n,p) for p in (12289,65537)}
+ out['thresholds'].append(item)
+for path in sorted(HERE.glob('EXACT_NETWORK_CERTIFICATE_N*_*.json')):
+ cert=json.loads(path.read_text());out['finite_cut_certificates'].append({
+   'file':path.name,'n':cert['n'],'permutation':cert['permutation'],
+   'Fourier_rank':cert['fourier_rank'],'network_cut':cert['upper_rank'],
+   'edges':len(cert['cut_edges'])})
+parent=HERE/'prior_checkpoint_full.zip'
+out['previous_checkpoint_sha256']=hashlib.sha256(parent.read_bytes()).hexdigest()
+(HERE/'EVIDENCE.json').write_text(json.dumps(out,indent=2)+'\n')
+print(json.dumps({'thresholds':len(out['thresholds']),'exact_certificates':len(out['finite_cut_certificates']),'prior_archive_sha256':out['previous_checkpoint_sha256']},indent=2))

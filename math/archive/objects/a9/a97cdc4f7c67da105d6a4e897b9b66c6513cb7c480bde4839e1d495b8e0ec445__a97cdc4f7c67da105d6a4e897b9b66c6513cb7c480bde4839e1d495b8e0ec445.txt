@@ -1,0 +1,105 @@
+import sys
+import unittest
+import random
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from phase15_executor import (P,root,fft_radix2,orbits,precompute_residual,
+    orbit_finish,sparse_residual_oracle,direct_dft,folded_galois_fft)
+from haar_coherence import (fold_frequency_bank,unfold_frequency_bank,inverse_residual)
+
+PAIRS=((16,8),(32,8),(64,8),(128,16),(256,16),(256,32),(512,32),(1024,32),(1024,64))
+
+class ExactResidualTests(unittest.TestCase):
+    def test_direct_sparse_residual_random(self):
+        rng=random.Random(15773)
+        for n,B in PAIRS:
+            x=[rng.randrange(P) for _ in range(n)]
+            y,_,_=precompute_residual(x,B)
+            self.assertEqual(y,sparse_residual_oracle(x,B),(n,B))
+
+    def test_basis_zeros_ones_alternating(self):
+        for n,B in PAIRS[:7]:
+            inputs = [[0]*n, [1]*n, [j%2 for j in range(n)],
+                      [pow(17,j,P) for j in range(n)]]
+            for pos in (0,1,n//2,n-1):
+                x=[0]*n;x[pos]=1;inputs.append(x)
+            for x in inputs:
+                y,s=folded_galois_fft(x,B)
+                self.assertEqual(y,direct_dft(x),(n,B,'DFT'))
+                self.assertEqual(s.full_butterflies,n*(n.bit_length()-1)//2)
+
+    def test_dyadic_stage_counts(self):
+        rng=random.Random(155)
+        for n,B in PAIRS:
+            x=[rng.randrange(P) for _ in range(n)]
+            _,groups,s=precompute_residual(x,B)
+            h=(n//B).bit_length()-1
+            self.assertEqual(s.base_fft_butterflies,n*(B.bit_length()-1)//2)
+            self.assertEqual(s.folding_butterflies,(n-B)//2)
+            self.assertEqual(s.residual_nonzeros,n*(B+(B//2)*h))
+            self.assertEqual(len(groups),B+(B//2)*h)
+            self.assertEqual(sum(len(g) for g in groups),n)
+            orbit_finish(precompute_residual(x,B)[0],groups,n,B,s)
+            self.assertEqual(s.orbit_fft_butterflies, B//2+n*(h-1)//2)
+            self.assertEqual(s.full_butterflies,n*(n.bit_length()-1)//2)
+
+    def test_recover_full_DFT_independent(self):
+        rng=random.Random(156)
+        for n,B in PAIRS:
+            x=[rng.randrange(P) for _ in range(n)]
+            got,_=folded_galois_fft(x,B)
+            self.assertEqual(got, fft_radix2(x)[0],(n,B))
+
+class ReversibleHaarTests(unittest.TestCase):
+    def test_inverse_bank_random(self):
+        rng=random.Random(1633)
+        for n,B in PAIRS+((2048,64),(4096,64)):
+            L=n//B
+            u=[[rng.randrange(P) for _ in range(B)] for a in range(L)]
+            residual,groups,c1=fold_frequency_bank(u,B)
+            back,c2=unfold_frequency_bank(residual,B,groups)
+            self.assertEqual(back,u,(n,B))
+            self.assertEqual(c1,c2)
+            self.assertEqual(c1,(n-B)//2)
+
+    def test_residual_inverse_random(self):
+        rng=random.Random(1511)
+        for n,B in PAIRS+((2048,64),):
+            x=[rng.randrange(P) for _ in range(n)]
+            y,_,_=precompute_residual(x,B)
+            self.assertEqual(inverse_residual(y,B),x,(n,B))
+
+    def test_impulses_inverse(self):
+        for n,B in PAIRS[:6]:
+            for pos in (0,1,n//2,n-1):
+                inp=[0]*n;inp[pos]=1
+                residual,_,_=precompute_residual(inp,B)
+                self.assertEqual(inverse_residual(residual,B),inp)
+
+if __name__=='__main__':unittest.main()
+
+class SpectralAndSupportGates(unittest.TestCase):
+    def test_scaled_unitarity_small(self):
+        import numpy as np
+        from unitarity_probe import make_R
+        for n,B in ((16,8),(32,8),(64,8)):
+            R,ds=make_R(n,B)
+            expected=np.diag((n//B)/ds)
+            self.assertLess(float(np.max(np.abs(R@R.conj().T-expected))),1e-10)
+            self.assertEqual(int(np.sum(np.abs(R)>1e-8)),n+(n//2)*((n//B).bit_length()-1))
+
+    def test_symbolic_large_cost_identities(self):
+        from complexity_budget import costs
+        for n,B in ((16,8),(64,8),(128,16),(256,16),(512,32),(1024,32),
+                    (2048,64),(4096,64),(65536,256),(1<<20,1024),(1<<30,1<<15)):
+            d=costs(n,B)
+            self.assertEqual(d['total_butterflies'],n*(n.bit_length()-1)//2)
+            self.assertEqual(d['residual_naive_A_nnz'],B*d['R_nnz'])
+
+    def test_green_sparse_inverse_architecture_bound(self):
+        from sparse_green_gate import support_lower_bound,random_row_sparsity_audit
+        self.assertEqual(support_lower_bound(64,3),4)
+        self.assertEqual(support_lower_bound(1024,3),7)
+        self.assertEqual(support_lower_bound(4096,5),6)
+        for n,s,t in ((32,3,3),(64,3,4),(128,3,4),(1024,3,4)):
+            self.assertLessEqual(random_row_sparsity_audit(n,s,t), min(n,s**t))

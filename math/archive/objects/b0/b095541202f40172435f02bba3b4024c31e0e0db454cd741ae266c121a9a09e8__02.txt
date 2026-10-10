@@ -1,0 +1,61 @@
+0001 #!/usr/bin/env python3
+0002 """Exact rational-frame certificate excluding signed high-x prefixes at N64."""
+0003 from pathlib import Path
+0004 import sys,json
+0005 HERE=Path(__file__).resolve().parent
+0006 sys.path.insert(0,str(HERE.parent/'seed_compatibility_gate'))
+0007 from check_n16_outer_gate import PRIME as P,LABELS,green,pivots,determinant,is_prime
+0008 from check_lift_defects import cover_and_splice
+0009 from check_hierarchical_lift import lift
+0010 def main():
+0011     assert is_prime(P)
+0012     gs=[];routes=[];guards=[]
+0013     for j,label in enumerate(LABELS):
+0014         small,ps,_=cover_and_splice(4,4,label);_,pl,_=lift(small,ps,4,4,label)
+0015         assert all(pl[(i+32)%64]==(pl[i]+32)%64 for i in range(64))
+0016         for i in range(64):
+0017             v=i
+0018             for _ in range(32):v=pl[v]
+0019             assert v==(i+32)%64
+0020         d=j+2;assert d%P and (pow(d,64,P)-1)%P
+0021         g=green(pl,d);tau=pow(d,-1,P);inv=[0]*64
+0022         for i,v in enumerate(pl):inv[v]=i
+0023         assert all((g[i][k]-tau*g[inv[i]][k])%P==int(i==k) for i in range(64) for k in range(64))
+0024         gs.append(g);routes.append(pl);guards.append({'d':d,'d64_minus_1_mod_p':(pow(d,64,P)-1)%P})
+0025     records=[];row0=[]
+0026     for sign in (1,-1):
+0027         for i in range(32):
+0028             t=[[(g[i][k]+sign*g[i][k+32])%P for k in range(32)] for g in gs]
+0029             columns=pivots(t);assert len(columns)==8
+0030             minor=[[row[k] for k in columns] for row in t];det=determinant(minor);assert det
+0031             rec={'row':i,'sector_sign':sign,'columns':columns,'determinant_mod_p':det}
+0032             records.append(rec)
+0033             if i==0:rec=dict(rec);rec['minor_mod_p']=minor;row0.append(rec)
+0034     assert [r['determinant_mod_p'] for r in row0]==[140062647,726260818]
+0035     direct_sum=[]
+0036     for sign,selected,expected in [(1,[7,3,13,27],871168069),(-1,[12,4,26,8],682055007)]:
+0037         # These rows have parity opposite the projected sector, so the target
+0038         # Fourier rows vanish on that sector. Four 8-dimensional row frames
+0039         # form a direct sum in the 32-dimensional sector.
+0040         assert all((-1)**i==-sign for i in selected)
+0041         stacked=[[(g[i][k]+sign*g[i][k+32])%P for k in range(32)] for i in selected for g in gs]
+0042         det=determinant(stacked);assert det==expected and det
+0043         direct_sum.append({'sector_sign':sign,'rows':selected,'determinant_mod_p':det,
+0044                            'stacked_minor_mod_p':stacked})
+0045     # Positive control: an ordinary coordinate row has both X characters;
+0046     # the obstruction specifically concerns pure-character target rows.
+0047     positive=[int(k==0) for k in range(64)]
+0048     assert any(positive[k]+positive[k+32] for k in range(32))
+0049     assert any(positive[k]-positive[k+32] for k in range(32))
+0050     result={'status':'PASS_EXACT_CHARACTERISTIC_ZERO_OBSTRUCTION','prime':P,
+0051             'prime_trial_division_verified':True,'fixed_rational_inverse_guards':guards,
+0052             'nested_cycle_successors':routes,'projected_frame_minor_records':records,
+0053             'minimal_row_zero_certificate':row0,
+0054             'four_row_direct_sum_certificates':direct_sum,
+0055             'scope':'Any prefix C with CX=+XC or CX=-XC is excluded for F64=O C when O is one fixed eight-Green row-masked layer. No algebraic-seed specialization is used.',
+0056             'implication':'Both signed-symmetry one-inner branches are empty, including the plus-symmetric mean-preserving 128-variable branch.',
+0057             'full_one_inner_mixing_family':'Open'}
+0058     (HERE/'SECTOR_FRAME_CERTIFICATE.json').write_text(json.dumps(result,indent=2)+'\n')
+0059     print(json.dumps({'status':'PASS','projected_frame_minors':64,'row0_determinants':[r['determinant_mod_p'] for r in row0],
+0060                       'direct_sum_determinants':[r['determinant_mod_p'] for r in direct_sum]}))
+0061 if __name__=='__main__':main()

@@ -1,0 +1,90 @@
+"""Exact modular rank-profile minimax search over internal permutations.
+
+Find a low 'cut-rank gate' score, NEVER a certificate of FFT factorization.
+For fixed endpoint orders, precompute all Fourier prefix/prefix and
+prefix/suffix ranks. Optimize P to minimize the strongest TWO-stage necessary
+rank bound. When score is low, the rank test is weak, not the existence problem.
+"""
+from pathlib import Path
+import time,json,random
+import numpy as np
+from two_stage_ct import P,root,TwoStage
+from cut_rank_gate import rank_np,bitrev
+
+
+def rank_profile(I,O):
+    n=len(I)
+    powers=np.array([pow(root(n),j,P) for j in range(n)],dtype=np.int64)
+    # R_00 and R_01; R_11/R_10 redundant by Fourier unitarity.
+    pp=np.zeros((n+1,n+1),dtype=np.int32)
+    ps=np.zeros((n+1,n+1),dtype=np.int32)
+    for k in range(1,n):
+        rows=O[:k]
+        for m in range(1,n):
+            pp[k,m]=rank_np(rows,I[:m],powers)
+            ps[k,m]=rank_np(rows,I[m:],powers)
+    return pp,ps
+
+
+def score(Perm,pp,ps):
+    n=len(Perm)
+    matrix=np.zeros((n,n),dtype=np.int32)
+    matrix[np.arange(n),np.asarray(Perm)]=1
+    a=np.zeros((n+1,n+1),dtype=np.int32)
+    a[1:,1:]=matrix.cumsum(axis=0).cumsum(axis=1)
+    k=np.arange(n+1,dtype=np.int32)[:,None]
+    gaps0=pp[1:n,1:n]-a[1:n,1:n]
+    gaps1=ps[1:n,1:n]-k[1:n,:]+a[1:n,1:n]
+    mx=max(int(gaps0.max()),int(gaps1.max()))
+    secondary=int(np.maximum(gaps0,0).sum()+np.maximum(gaps1,0).sum())
+    return mx,secondary
+
+
+def minimize(pp,ps,seed=0,iterations=10000,initial=None):
+    rng=random.Random(seed)
+    n=pp.shape[0]-1
+    best=None
+    for rest in range(5):
+        q=list(range(n)) if rest==0 else list(range(n))
+        if initial is not None and rest==0:q=list(initial)
+        else:rng.shuffle(q)
+        cur=score(q,pp,ps)
+        for _ in range(iterations//5):
+            i,j=rng.sample(range(n),2)
+            q[i],q[j]=q[j],q[i]
+            tmp=score(q,pp,ps)
+            if tmp<=cur or (tmp[0]<=cur[0]+1 and rng.random()<.004):cur=tmp
+            else:q[i],q[j]=q[j],q[i]
+            if best is None or cur<best[0]:best=(cur,list(q))
+    return {'best_score':best[0][0],'secondary':best[0][1],'shuffle':best[1]}
+
+
+def run_one(n,I,O,tag,initial=None,iters=10000):
+    t=time.time()
+    pp,ps=rank_profile(I,O)
+    t1=time.time()-t
+    unopt=score(initial or list(range(n)),pp,ps)
+    opt=minimize(pp,ps,seed=20261009+n,iterations=iters,initial=initial)
+    result={'n':n,'endpoints':tag,'rank_profile_time_s':round(t1,3),'initial_score':unopt[0],
+       'optimized_score':opt['best_score'],'optimized_shuffle':opt['shuffle'],
+       'iterations':iters}
+    print('SEARCH',n,tag,'unopt=',unopt[0],'best=',opt['best_score'],
+          'prep_seconds=',round(t1,2),flush=True)
+    return result
+
+
+def main():
+    out=[]
+    for n in (16,32,64):
+        b=bitrev(n)
+        out.append(run_one(n,b,b,'bitrev_both',iters=15000))
+        if n<=32:
+            a=n//2
+            parity=list(range(0,n,2))+list(range(1,n,2))
+            out.append(run_one(n,parity,parity,'parity_both',iters=12000))
+            ct=TwoStage(a,n//a)
+            out.append(run_one(n,ct.input_order,ct.output_order,'ct_both',initial=ct.shuffle,iters=12000))
+    with open(str(Path(__file__).resolve().parent/'rank_profiles_results.json'),'w') as f:json.dump(out,f,indent=2)
+    return out
+
+if __name__=='__main__':main()

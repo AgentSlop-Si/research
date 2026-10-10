@@ -1,0 +1,67 @@
+   1 """Exact Fourier-submatrix ranks for unions of complete dyadic cosets.
+   2 
+   3 N=Q*L with Q=2**a and L=N/Q. Let B subset {0,...,Q-1} and
+   4 S = union_{b in B} {b+Q*j : 0<=j<L}.
+   5 For rows K any frequency set, let T_q = {s : q+L*s in K}.
+   6 Then
+   7  rank(F_N[K,S]) = sum_{q=0}^{L-1} rank(F_Q[T_q,B]).
+   8 
+   9 This is a field-independent exact identity when a primitive Nth root exists
+  10 and the characteristic does not divide N. The modular routines below are
+  11 only independently checkable positive controls.
+  12 """
+  13 import numpy as np
+  14 
+  15 
+  16 def prim_root(n,p):
+  17     assert (p-1)%n==0
+  18     for g in range(2,p):
+  19         z=pow(g,(p-1)//n,p)
+  20         if pow(z,n,p)==1 and (n==1 or pow(z,n//2,p)!=1):return z
+  21     raise ValueError((n,p))
+  22 
+  23 
+  24 def rank_mod(X,p):
+  25     A=np.asarray(X,dtype=np.int64).copy()%p
+  26     if not A.size:return 0
+  27     r=0;nr,nc=A.shape
+  28     for j in range(nc):
+  29         if r==nr:break
+  30         inds=np.flatnonzero(A[r:,j])
+  31         if inds.size==0:continue
+  32         k=r+int(inds[0]);A[[k,r]]=A[[r,k]]
+  33         A[r,j:] = (A[r,j:]*pow(int(A[r,j]),-1,p))%p
+  34         if r+1<nr:
+  35             f=A[r+1:,j].copy()
+  36             A[r+1:,j:] = (A[r+1:,j:]-f[:,None]*A[r,j:])%p
+  37         r+=1
+  38     return r
+  39 
+  40 
+  41 def fourier_submatrix(n,rows,cols,p):
+  42     z=prim_root(n,p)
+  43     return np.array([[pow(z,i*j,p) for j in cols] for i in rows],dtype=np.int64)
+  44 
+  45 
+  46 def dyadic_union_columns(n,q,bases):
+  47     assert n%q==0 and q&(q-1)==0
+  48     L=n//q
+  49     return sorted(b+q*j for b in bases for j in range(L))
+  50 
+  51 
+  52 def rank_coset_formula(n,q,bases,rows,p):
+  53     assert n%q==0 and q&(q-1)==0
+  54     L=n//q
+  55     tot=0
+  56     for residue in range(L):
+  57         small_rows=[(k-residue)//L for k in rows if k%L==residue]
+  58         if small_rows and bases:
+  59             tot+=rank_mod(fourier_submatrix(q,small_rows,bases,p),p)
+  60     return tot
+  61 
+  62 
+  63 def single_consecutive_coset_formula(n,q,b,rows,length):
+  64     # Columns b+q*j, j=0,...,length-1, length<=n//q.
+  65     L=n//q
+  66     assert length<=L and b in range(q)
+  67     return min(length,len({r%L for r in rows}))

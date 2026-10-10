@@ -1,0 +1,175 @@
+   1 """Independent, self-contained audit of uploaded numerical proof objects.
+   2 
+   3 This program was written for the audit. It does not import or execute uploaded
+   4 source. Only the JSON certificate is consumed as data.
+   5 """
+   6 from pathlib import Path
+   7 from itertools import combinations
+   8 from collections import deque
+   9 import json
+  10 import random
+  11 import hashlib
+  12 import time
+  13 
+  14 ROOT = Path(__file__).resolve().parent
+  15 SOURCE = ROOT / 'superconcentrator_N8_certificate.json'
+  16 C = json.loads(SOURCE.read_text())
+  17 N, P, PRIME = C['n'], C['fixed_middle_shuffle'], C['field_prime']
+  18 
+  19 class Flow:
+  20     def __init__(self, size, edges):
+  21         self.adj = [[] for _ in range(size)]
+  22         for a,b,c in edges:
+  23             x = [b,c,len(self.adj[b])]
+  24             y = [a,0,len(self.adj[a])]
+  25             self.adj[a].append(x); self.adj[b].append(y)
+  26 
+  27     def value(self, source, target):
+  28         total = 0
+  29         while True:
+  30             level = [-1]*len(self.adj); level[source] = 0
+  31             q = deque([source])
+  32             while q:
+  33                 a = q.popleft()
+  34                 for b,c,_ in self.adj[a]:
+  35                     if c and level[b] < 0:
+  36                         level[b] = level[a]+1; q.append(b)
+  37             if level[target] < 0: return total
+  38             ptr = [0]*len(self.adj)
+  39             def push(a, amount):
+  40                 if a == target: return amount
+  41                 while ptr[a] < len(self.adj[a]):
+  42                     e = self.adj[a][ptr[a]]
+  43                     b,c,reverse = e
+  44                     if c and level[b] == level[a]+1:
+  45                         got = push(b,min(amount,c))
+  46                         if got:
+  47                             e[1] -= got; self.adj[b][reverse][1] += got
+  48                             return got
+  49                     ptr[a] += 1
+  50                 return 0
+  51             while True:
+  52                 got = push(source, N+1)
+  53                 if not got: break
+  54                 total += got
+  55 
+  56 def network(n,r,p):
+  57     ids = {}
+  58     def port(*key):
+  59         if key not in ids: ids[key] = len(ids)
+  60         return ids[key]
+  61     edges=[]; big=n+1
+  62     def edge(a,b,c=big): edges.append((a,b,c))
+  63     for stage in (0,1):
+  64         for j in range(n):
+  65             xi,xo,yi,yo = [port(stage,kind,j,side) for kind,side in [('x',0),('x',1),('y',0),('y',1)]]
+  66             edge(xi,xo,1); edge(yi,yo,1); edge(xo,yi)
+  67         # A forward state exists between j-1 and j, and contributes only to
+  68         # outputs j and later. A backward state is the reverse counterpart.
+  69         for direction in (1,-1):
+  70             order = list(range(n)) if direction == 1 else list(range(n-1,-1,-1))
+  71             last = None
+  72             for previous,current in zip(order,order[1:]):
+  73                 a,b = port(stage,'s'+str(direction),current,0),port(stage,'s'+str(direction),current,1)
+  74                 edge(a,b,r); edge(port(stage,'x',previous,1),a)
+  75                 edge(b,port(stage,'y',current,0))
+  76                 if last is not None: edge(last,a)
+  77                 last=b
+  78     for j,k in enumerate(p): edge(port(0,'y',k,1),port(1,'x',j,0))
+  79     source,target = port('source'),port('target')
+  80     return edges,ids,source,target
+  81 
+  82 def all_cuts():
+  83     edges,ids,src,sink = network(N,1,P)
+  84     counts={}
+  85     for k in range(1,N+1):
+  86         subsets=list(combinations(range(N),k)); count=0
+  87         for rows in subsets:
+  88             ends=[(ids[1,'y',j,1],sink,N+1) for j in rows]
+  89             for cols in subsets:
+  90                 starts=[(src,ids[0,'x',j,0],N+1) for j in cols]
+  91                 value=Flow(len(ids),edges+ends+starts).value(src,sink)
+  92                 assert value==k,(rows,cols,value)
+  93                 count+=1
+  94         counts[str(k)]=count
+  95     assert counts==C['flow_counts_by_size']
+  96     return counts
+  97 
+  98 def matmul(a,b):
+  99     return [[sum(x*y for x,y in zip(row,col))%PRIME for col in zip(*b)] for row in a]
+ 100 
+ 101 def stage_values(params):
+ 102     low,lv,up,uv,diag=params
+ 103     return [[diag[i] if i==j else (low[i]*lv[j] if i>j else up[i]*uv[j])%PRIME for j in range(N)] for i in range(N)]
+ 104 
+ 105 def perturbations(params):
+ 106     low,lv,up,uv,diag=params
+ 107     # Match the declared parameter ordering, but construct derivatives directly
+ 108     # from the elementary monomials defining each triangular matrix entry.
+ 109     for kind in range(5):
+ 110         for k in range(N):
+ 111             a=[[0]*N for _ in range(N)]
+ 112             if kind==0: a[k][k]=1
+ 113             elif kind==1:
+ 114                 for j in range(k): a[k][j]=lv[j]
+ 115             elif kind==2:
+ 116                 for i in range(k+1,N): a[i][k]=low[i]
+ 117             elif kind==3:
+ 118                 for j in range(k+1,N): a[k][j]=uv[j]
+ 119             elif kind==4:
+ 120                 for i in range(k): a[i][k]=up[i]
+ 121             yield a
+ 122 
+ 123 def gauss(matrix, determinant=False):
+ 124     a=[row[:] for row in matrix]; nr=len(a); nc=len(a[0]); rank=0; det=1
+ 125     for col in range(nc):
+ 126         pivot=next((i for i in range(rank,nr) if a[i][col]%PRIME),None)
+ 127         if pivot is None: continue
+ 128         if pivot!=rank: a[pivot],a[rank]=a[rank],a[pivot]; det=-det
+ 129         v=a[rank][col]%PRIME; det=det*v%PRIME; vi=pow(v,-1,PRIME)
+ 130         a[rank]=[x*vi%PRIME for x in a[rank]]
+ 131         for i in range(rank+1,nr):
+ 132             v=a[i][col]%PRIME
+ 133             if v: a[i]=[(x-v*y)%PRIME for x,y in zip(a[i],a[rank])]
+ 134         rank+=1
+ 135         if rank==nr: break
+ 136     if determinant: return det%PRIME if rank==nr else 0
+ 137     return rank
+ 138 
+ 139 def jacobian_check():
+ 140     rng=random.Random(C['generator_parameter_seed'])
+ 141     one=[[rng.randrange(1,PRIME) for _ in range(N)] for _ in range(5)]
+ 142     two=[[rng.randrange(1,PRIME) for _ in range(N)] for _ in range(5)]
+ 143     a,b=stage_values(one),stage_values(two)
+ 144     pa=[a[j] for j in P]
+ 145     columns=[]
+ 146     for da in perturbations(one): columns.append(sum(matmul(b,[da[j] for j in P]),[]))
+ 147     for db in perturbations(two): columns.append(sum(matmul(db,pa),[]))
+ 148     j=[list(row) for row in zip(*columns)]
+ 149     selected=[[j[r][c] for c in C['jacobian_minor_columns']] for r in C['jacobian_minor_rows']]
+ 150     rank,det=gauss(j),gauss(selected,determinant=True)
+ 151     assert rank==60
+ 152     assert det==C['jacobian_minor_determinant_mod_prime']==4779
+ 153     # Verify every coordinate derivative with exact one-unit polynomial
+ 154     # differences. The map is affine in each individual parameter.
+ 155     m=sum(matmul(b,pa),[])
+ 156     for idx,col in enumerate(columns):
+ 157         pars=[v[:] for v in (one if idx<5*N else two)]
+ 158         local=idx%(5*N); kind,k=divmod(local,N)
+ 159         position=[4,0,1,2,3][kind]; pars[position][k]+=1
+ 160         aa=stage_values(pars) if idx<5*N else a
+ 161         bb=b if idx<5*N else stage_values(pars)
+ 162         value=sum(matmul(bb,[aa[t] for t in P]),[])
+ 163         assert [(v-w)%PRIME for v,w in zip(value,m)]==col
+ 164     return {'shape':[N*N,10*N],'rank':rank,'saved_minor_determinant':det,'field_prime':PRIME,'exact_coordinate_derivatives_checked':len(columns)}
+ 165 
+ 166 if __name__=='__main__':
+ 167     start=time.monotonic()
+ 168     result={'input_certificate_sha256':hashlib.sha256(SOURCE.read_bytes()).hexdigest(),'uploaded_code_executed':False}
+ 169     result['jacobian']=jacobian_check()
+ 170     print('Jacobian certificate verified:',result['jacobian'],flush=True)
+ 171     result['flow_counts_by_size']=all_cuts()
+ 172     result['nonempty_equal_size_cuts']=sum(result['flow_counts_by_size'].values())
+ 173     result['seconds']=round(time.monotonic()-start,3)
+ 174     (ROOT/'independent_nonlinear_results.json').write_text(json.dumps(result,indent=2)+'\n')
+ 175     print(json.dumps(result,indent=2))

@@ -1,0 +1,60 @@
+   1 """Packed square-tile transpose: semantic checks, not a wall-clock RAM claim.
+   2 An admissible RAM instantiation must satisfy q*G*G <= word_bits.
+   3 """
+   4 import random,json
+   5 
+   6 def masks(G,q):
+   7     assert G>=1 and G&(G-1)==0
+   8     result=[]
+   9     for j in range(G.bit_length()-1):
+  10         s=1<<j; d=q*s*(G-1); mask=0
+  11         for row in range(G):
+  12             for col in range(G):
+  13                 if not(row&s) and col&s:
+  14                     mask |= ((1<<q)-1) << (q*(row*G+col))
+  15         result.append((d,mask))
+  16     return result
+  17 
+  18 def trans(x,ms):
+  19     for d,m in ms:
+  20         t=((x>>d)^x)&m
+  21         x^=t^(t<<d)
+  22     return x
+  23 
+  24 def pack(a,q):
+  25     return sum(v<<(q*i) for i,v in enumerate(a))
+  26 
+  27 def unpack(x,count,q):
+  28     mask=(1<<q)-1
+  29     return [(x>>(q*i))&mask for i in range(count)]
+  30 
+  31 rng=random.Random(20261009);tests=0;records=[]
+  32 for G in [1,2,4,8,16,32]:
+  33     for q in [1,2,3,4,8]:
+  34         ms=masks(G,q)
+  35         for t in range(30):
+  36             a=[rng.randrange(1<<q) for _ in range(G*G)]
+  37             expected=[a[row*G+col] for col in range(G) for row in range(G)]
+  38             assert unpack(trans(pack(a,q),ms),G*G,q)==expected
+  39             assert trans(trans(pack(a,q),ms),ms)==pack(a,q)
+  40             tests+=1
+  41         records.append({'G':G,'symbol_bits':q,'required_word_bits':q*G*G,'delta_swap_rounds':len(ms)})
+  42 # First-table rows -> square tiles -> lane keys for an independently chosen map.
+  43 # The map models second-table evaluation; correctness does not assume it is a mean.
+  44 blocks=0
+  45 for G in [1,2,4,8,16]:
+  46     q=3;ms=masks(G,q); B=8*G
+  47     rows=[[rng.randrange(1<<q) for _ in range(B)] for _ in range(G)]
+  48     packed=[pack(row,q) for row in rows]
+  49     actual=[]
+  50     for start in range(0,B,G):
+  51         tile=0
+  52         for row in range(G):
+  53             piece=(packed[row]>>(q*start))&((1<<(q*G))-1)
+  54             tile|=piece<<(q*G*row)
+  55         by_lane=trans(tile,ms)
+  56         actual += unpack(by_lane,G,q*G)
+  57     expected=[pack([rows[row][col] for row in range(G)],q) for col in range(B)]
+  58     assert actual==expected
+  59     blocks+=1
+  60 print(json.dumps({'status':'passed','random_square_tile_tests':tests,'whole_output_block_tests':blocks,'records':records,'scope':'Python arbitrary-size integers verify identities only. Unit word-operation bounds apply only when all packed objects fit the specified RAM word.'},indent=2))

@@ -1,0 +1,130 @@
+0001 """Independent tiny numerical checks of stated mathematical formulas.
+0002 No imports, execution, or dynamic loading of any submitted source code.
+0003 These checks supplement the proof; they do not certify floating-point accuracy.
+0004 """
+0005 import json, math
+0006 import numpy as np
+0007 
+0008 
+0009 def prime(q):
+0010     return q >= 2 and all(q % d for d in range(2, math.isqrt(q)+1))
+0011 
+0012 
+0013 def plan(n, alpha=1/3):
+0014     m = math.ceil(math.log2(4*n))
+0015     while not prime(m):
+0016         m += 1
+0017     k = (4*n + m-1)//m
+0018     while any(k % p == 0 for p in range(2,m) if prime(p)):
+0019         k += 1
+0020     return dict(n=n,m=m,k=k,q=m*k,r=m*k-4*n,
+0021                 H=math.ceil(n**alpha),L=max(12,math.ceil(2*alpha/math.pi*math.log(n))))
+0022 
+0023 
+0024 def segmented_check(n):
+0025     p=plan(n); q,r,H,L = [p[x] for x in ['q','r','H','L']]
+0026     rng=np.random.default_rng(n)
+0027     z=rng.normal(size=q)+1j*rng.normal(size=q)
+0028     d=np.arange(-L,L+1)
+0029     info=[]; direct=[]
+0030     for k in range(n):
+0031         f,rem=divmod(k*r,n); b=rem*H//n; theta=(b+0.5)/H
+0032         w=np.exp(-math.pi*(d-theta)**2/L)
+0033         direct.append(w @ z[(4*k+f+d)%q])
+0034         info.append((f,b))
+0035     # Build maximal constant-(integer offset, phase bucket) runs independently.
+0036     cuts=[0]+[k for k in range(1,n) if info[k]!=info[k-1]]+[n]
+0037     B=2*L; F=1
+0038     while F < 4*(B-1)+4*L+1:
+0039         F*=2
+0040     fast=np.zeros(n,dtype=complex)
+0041     chunks=0
+0042     for start,stop in zip(cuts[:-1],cuts[1:]):
+0043         f,b=info[start]; theta=(b+0.5)/H
+0044         taps=np.exp(-math.pi*(d-theta)**2/L)
+0045         spectrum=np.fft.fft(taps[::-1],n=F)
+0046         for k in range(start,stop,B):
+0047             count=min(B,stop-k); chunks+=1
+0048             raw=z[(4*k+f-L+np.arange(4*(B-1)+2*L+1))%q]
+0049             conv=np.fft.ifft(np.fft.fft(raw,n=F)*spectrum)
+0050             fast[k:k+count]=conv[2*L+4*np.arange(count)]
+0051     segments=len(cuts)-1
+0052     assert segments <= (r+1)*H
+0053     assert chunks <= n/B+segments+1e-10
+0054     err=float(np.max(abs(fast-direct)))
+0055     assert err < 2e-13*max(1,float(np.max(np.abs(direct))))
+0056     return {**p,'segments':segments,'segment_bound':(r+1)*H,'chunks':chunks,
+0057             'fft_size':F,'max_FIR_discrepancy':err}
+0058 
+0059 
+0060 def gaussian_row_check(n):
+0061     p=plan(n); q,m,H,L=[p[x] for x in ['q','m','H','L']]
+0062     c=(n-1)//2; support=(np.arange(n)-c)%q
+0063     t=(np.arange(q)+q//2)%q-q//2
+0064     # q is odd here. This is the representative in [-1/2,1/2).
+0065     t=t/q; tau=max(abs((np.arange(n)-c)/q)); taup=tau+m/q
+0066     sig=math.sqrt(L); amp=math.exp(math.pi*L*tau*tau)
+0067     e=math.exp(-math.pi*L*(1-2*taup)); A=2*e/(1-e)
+0068     T=2*math.exp(-math.pi*L)/(1-math.exp(-2*math.pi))
+0069     bound=math.sqrt(q/n)*m*amp*(A+T/sig)
+0070     phase_bound=math.pi*tau/H
+0071     touched=set(int(i//m) for i in support)
+0072     ext=np.array([i for i in range(q) if i//m in touched])
+0073     g=np.exp(math.pi*L*t[support]**2)/sig
+0074     allj=np.arange(q); local=allj % m; block=allj//m
+0075     states=[(a,b) for a,b in [(1,0),(2,7),(m+2,q//2)] if math.gcd(a,q)==1]
+0076     d=np.arange(-L,L+1)
+0077     maxratio=0.; maxphase=0.; pointwise=0.
+0078     for k in sorted(set([0,1,n//3,n//2,n-1])):
+0079         target=k*q/n; j=4*k+(k*p['r'])//n
+0080         rem=(k*p['r'])%n; bucket=rem*H//n; theta=(bucket+.5)/H
+0081         xi=j+theta
+0082         W=np.exp(-math.pi*(d-theta)**2/L) @ np.exp(-2j*math.pi*(j+d)[:,None]*t[None,:])
+0083         ideal=sig*np.exp(-math.pi*L*t*t)*np.exp(-2j*math.pi*xi*t)
+0084         epsilon=W-ideal
+0085         pointwise=max(pointwise,float(max(abs(epsilon[ext]))/(sig*A+T)))
+0086         # Exact input-row norm for target frequency rounding; center phase has modulus 1.
+0087         dc=(np.exp(-2j*math.pi*xi*t[support])-np.exp(-2j*math.pi*target*t[support]))/math.sqrt(n)
+0088         maxphase=max(maxphase,float(np.linalg.norm(dc))/phase_bound)
+0089         for a,b in states:
+0090             # Chirp phase derived directly from the mathematical block definition.
+0091             S=np.exp(2j*math.pi*(a*local*(local-1)/2+(a*m*block+b)*local)/q
+0092                      +1j*math.pi*local/q)
+0093             coeff=[]
+0094             for jidx,gj in zip(support,g):
+0095                 inds=np.arange((jidx//m)*m,(jidx//m+1)*m)
+0096                 coeff.append(gj*S[jidx]*(np.conj(S[inds])@epsilon[inds])/math.sqrt(n))
+0097             rownorm=float(np.linalg.norm(coeff)); maxratio=max(maxratio,rownorm/bound)
+0098     assert maxratio < 1.001
+0099     assert maxphase < 1.001
+0100     # W-direct minus ideal has floating cancellation near 1e-13. Bound remains larger at these sizes.
+0101     assert pointwise < 1.001
+0102     return {**p,'gaussian_bound':bound,'max_remainder_operator_to_bound':maxratio,
+0103             'max_phase_operator_to_bound':maxphase,'max_LC4_pointwise_to_bound':pointwise,
+0104             'frequencies':5,'states':len(states)}
+0105 
+0106 
+0107 def alias_check():
+0108     # Direct full finite-window frequency sums versus independent Poisson dual sums.
+0109     records=[]
+0110     for sig2 in [1.0,2.5,5.0,12.0]:
+0111         sig=math.sqrt(sig2)
+0112         for theta in [.01,.5,.99]:
+0113             ts=np.array([-.24,-.125,0,.125,.24])
+0114             ell=np.arange(-80,81)
+0115             primal=np.exp(-math.pi*(ell-theta)**2/sig2) @ np.exp(-2j*math.pi*ell[:,None]*ts[None,:])
+0116             dual=np.zeros(len(ts),dtype=complex)
+0117             for k in range(-20,21):
+0118                 dual+=sig*np.exp(-math.pi*sig2*(ts+k)**2)*np.exp(-2j*math.pi*theta*(ts+k))
+0119             mismatch=float(max(abs(primal-dual)))
+0120             assert mismatch<2e-14
+0121             records.append(mismatch)
+0122     return {'cases':len(records),'max_Poisson_discrepancy':max(records)}
+0123 
+0124 
+0125 if __name__=='__main__':
+0126     answer={'method':'Independently authored formulas; submitted modules never imported or executed.',
+0127             'segmented_convolution':[segmented_check(n) for n in [67,127,257,509,1009]],
+0128             'gaussian_rows':[gaussian_row_check(n) for n in [67,127,257,509]],
+0129             'poisson':alias_check()}
+0130     print(json.dumps(answer,indent=2))

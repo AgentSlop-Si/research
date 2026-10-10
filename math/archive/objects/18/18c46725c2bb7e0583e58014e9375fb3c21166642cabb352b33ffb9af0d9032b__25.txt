@@ -1,0 +1,52 @@
+0001 import copy
+0002 from fractions import Fraction as Q
+0003 import unittest
+0004 import experiment as e
+0005 from verify_results import replay
+0006 
+0007 
+0008 class ExactExperimentTests(unittest.TestCase):
+0009     def test_smallest_exact_and_exhaustive(self):
+0010         r,a=e.run_case(4,2,0,True)
+0011         self.assertEqual(r['baseline_add_sub'],16)
+0012         self.assertEqual(r['pair_partition_enumeration']['assignments_examined'],6561)
+0013         self.assertEqual(r['pair_partition_enumeration']['minimum_pairs'],8)
+0014         self.assertEqual(r['dirty_lift']['complete_word_shears'],160)
+0015         self.assertEqual(r['dirty_lift']['scratch_roles'],24)
+0016 
+0017     def test_twiddle_negative_exponent(self):
+0018         self.assertEqual(e.monomial_refs([(0,1),(1,1)],-1),[(1,1),(0,-1)])
+0019 
+0020     def test_forbidden_cancellation_rejected(self):
+0021         d=e.DAG(2)
+0022         with self.assertRaises(AssertionError):
+0023             d.add((0,1),(0,-1))
+0024 
+0025     def test_truncation_is_not_linear(self):
+0026         c=e.rounding_counterexample()
+0027         self.assertNotEqual(c['staged_rounded_outputs_in_grid_units'],
+0028                             c['fused_once_rounded_outputs_in_grid_units'])
+0029 
+0030     def test_missing_cleanup_is_detected(self):
+0031         r,a=e.run_case(4,2)
+0032         dim=r['dirty_lift']['full_state_dimension']
+0033         correct=replay(a['baseline_word'],dim)
+0034         bad=replay(a['baseline_word'][:-1],dim)
+0035         self.assertNotEqual(bad,correct)
+0036 
+0037     def test_wrong_injection_sign_is_detected(self):
+0038         r,a=e.run_case(4,2)
+0039         dim=r['dirty_lift']['full_state_dimension']
+0040         word=copy.deepcopy(a['baseline_word'])
+0041         index=next(i for i,g in enumerate(word) if g[3] in ('1/4','-1/4'))
+0042         word[index][3]=str(-Q(word[index][3]))
+0043         self.assertNotEqual(replay(word,dim),replay(a['baseline_word'],dim))
+0044 
+0045     def test_signed_repeated_output_invalidates_lower_bound(self):
+0046         row={0:Q(1),1:Q(1),2:Q(1),3:Q(1)}
+0047         cert,_=e.lower_bound_certificate([row,row])
+0048         self.assertIsNone(cert['cancellation_free_addition_lower_bound'])
+0049 
+0050 
+0051 if __name__=='__main__':
+0052     unittest.main()

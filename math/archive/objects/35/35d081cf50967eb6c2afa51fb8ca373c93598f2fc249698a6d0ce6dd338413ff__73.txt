@@ -1,0 +1,165 @@
+1: """End-to-end fresh dense input checks for the approximate construction.
+2: 
+3: NumPy FFT is used only as an independent reference / timing comparator.
+4: Tables are eagerly, fully built per N; no lazy row cache is used. A plan is
+5: reused for test efficiency, but each reported cold-call cost includes all
+6: table setup. These small examples exercise correctness, not asymptotic tuning.
+7: """
+8: import hashlib
+9: import json
+10: from math import cos, sin, pi
+11: from pathlib import Path
+12: from random import Random
+13: import sys
+14: from time import perf_counter
+15: import numpy as np
+16: 
+17: HERE = Path(__file__).resolve().parent
+18: sys.path.insert(0, str(HERE.parent/'fft_wordram_decoder_research'))
+19: from guarded_decoder import GuardedDecoder
+20: from sampling import sample_atoms, sample_count, sample_count_integer, exact_atom_probabilities
+21: 
+22: 
+23: def workload(name, n):
+24:     r = Random(712+n)
+25:     if name == 'flat':
+26:         return [(97, -31)]*n
+27:     if name == 'gaussian':
+28:         return [(round(r.gauss(0,100)), round(r.gauss(0,100))) for _ in range(n)]
+29:     if name == 'random_phase':
+30:         angles = [2*pi*r.random() for _ in range(n)]
+31:         return [(round(100*cos(a)), round(100*sin(a))) for a in angles]
+32:     if name == 'power_law':
+33:         return [(round(10000/(j+1)**0.8)*r.choice((-1,1)),
+34:                  round(5000/(j+1)**0.7)*r.choice((-1,1))) for j in range(n)]
+35:     if name == 'spike_noise':
+36:         x = [(r.randrange(-10,11), r.randrange(-10,11)) for _ in range(n)]
+37:         x[n//3] = (1000*n, -700*n)
+38:         return x
+39:     if name == 'dense_tone':
+40:         return [(round(1000*cos(2*pi*7*j/n)), round(1000*sin(2*pi*7*j/n))) for j in range(n)]
+41:     if name == 'tone_mixture':
+42:         v = [(700*cos(2*pi*3*j/n)+400*cos(2*pi*11*j/n),
+43:               700*sin(2*pi*3*j/n)-400*sin(2*pi*11*j/n)) for j in range(n)]
+44:         return [(round(a)+r.randrange(-20,21), round(b)+r.randrange(-20,21)) for a,b in v]
+45:     if name == 'cancelling_comb':
+46:         return [((100 if j%2 else -100)+(150 if j%7==0 else 0),
+47:                  71 if j%3 else -142) for j in range(n)]
+48:     raise ValueError(name)
+49: 
+50: 
+51: def check_sampler():
+52:     from fractions import Fraction
+53:     x = [(3,-5),(-7,11),(0,0)]
+54:     dist = exact_atom_probabilities(x)
+55:     expected = [0j]*len(x)
+56:     for j, phase, prob in dist:
+57:         expected[j] += complex((1j)**phase)*float(prob)*26
+58:     assert expected == [complex(*v) for v in x]
+59:     assert sum(p for j,phase,p in dist) == Fraction(1)
+60:     single = sample_atoms([(0,0),(-1,0)],100,seed=71)
+61:     assert single['samples'] == [(1,2)]*100
+62:     assert not single['failed']
+63:     zero = sample_atoms([(0,0)]*3,100)
+64:     assert zero['mass'] == 0 and not zero['samples'] and not zero['failed']
+65:     invalid = 0
+66:     for bad in [[(1.2,0)],[(1,)],[(1,True)]]:
+67:         try:
+68:             sample_atoms(bad,10)
+69:         except ValueError:
+70:             invalid += 1
+71:     assert invalid == 3
+72:     for n in (4,31,1000,65537):
+73:         delta = Fraction(1,n*n)
+74:         count = sample_count_integer(n,Fraction(1,4),delta,7)
+75:         assert count >= sample_count(n,0.25,float(delta),7)
+76:         assert count % 7 == 0
+77:     return {'exact_unbiased_small_distribution': True,
+78:             'single_atom_and_zero': True, 'invalid_inputs_rejected': invalid,
+79:             'integer_parameter_selection_cases':4}
+80: 
+81: 
+82: def main():
+83:     epsilon, a, delta = 0.5, 0.25, 0.02
+84:     names = ['flat','gaussian','random_phase','power_law','spike_noise',
+85:              'dense_tone','tone_mixture','cancelling_comb']
+86:     records, setup = [], []
+87:     for n in (64,257,1024):
+88:         k = sample_count(n,a,delta/2)
+89:         before = perf_counter()
+90:         decoder = GuardedDecoder(n,k,block_size=4,phase_grid=64,slope_grid=256,
+91:                                  group_size=1,lane_step_bits=5,trig_bits=24,
+92:                                  table_mode='eager')
+93:         setup_time = perf_counter()-before
+94:         assert a+decoder.decoder_bound < epsilon
+95:         setup.append({'N':n,'sample_count':k,'setup_seconds':setup_time,
+96:                       'complete_rows':decoder.table_entries,
+97:                       'charged_setup_operations':sum(decoder.cold_counts.values())})
+98:         for idx,name in enumerate(names):
+99:             x = workload(name,n)
+100:             before = perf_counter()
+101:             sampled = sample_atoms(x,k,seed=9101+idx+n,cap_failure=delta/2)
+102:             assert not sampled['failed']
+103:             sampling_seconds = perf_counter()-before
+104:             mass = sampled['mass']
+105:             before = perf_counter()
+106:             answer = decoder.decode(sampled['samples'])
+107:             decode_seconds = perf_counter()-before
+108:             v = np.array([complex(*p) for p in x])
+109:             before = perf_counter()
+110:             reference = np.fft.fft(v)
+111:             fft_seconds = perf_counter()-before
+112:             # Materialize an independent exact-integer atom histogram, then
+113:             # apply the reference FFT to check every surrogate coefficient.
+114:             hist = np.zeros(n,dtype=complex)
+115:             for j,phase in sampled['samples']:
+116:                 hist[j] += (1j)**phase
+117:             sample_ref = np.fft.fft(hist)/k
+118:             normalized_answer = np.array(answer['values'])
+119:             sample_err = float(max(abs(sample_ref-reference/mass)))
+120:             decode_err = float(max(abs(normalized_answer-sample_ref)))
+121:             total_err = float(max(abs(normalized_answer-reference/mass)))
+122:             assert decode_err <= answer['error_bound']+1e-12
+123:             assert total_err <= epsilon
+124:             assert len(answer['integer_outputs']) == n
+125:             assert answer['counts']['online']['output_write'] == 2*n
+126:             assert answer['counts']['max_operand_bits'] <= answer['parameters']['word_bits']
+127:             # All numerators and common denominator are explicit; multiplication
+128:             # by mass produces actual unnormalized rational output coordinates.
+129:             rational_numerators = [(u*mass,v*mass) for u,v in answer['integer_outputs']]
+130:             assert len(rational_numerators) == n
+131:             numerator_bits = max(abs(z).bit_length() for pair in rational_numerators for z in pair)
+132:             assert numerator_bits+1 <= answer['parameters']['word_bits']
+133:             records.append({'N':n,'workload':name,'sample_count':k,'mass':mass,
+134:                             'sampling_error_over_mass':sample_err,
+135:                             'decoder_error_over_mass':decode_err,
+136:                             'total_error_over_mass':total_err,
+137:                             'allowed_total_error_over_mass':epsilon,
+138:                             'decoder_error_bound':answer['error_bound'],
+139:                             'largest_true_coefficient_over_mass':float(max(abs(reference))/mass),
+140:                             'sampling_seconds':sampling_seconds,
+141:                             'decode_seconds':decode_seconds,
+142:                             'cold_setup_plus_sampling_and_decode_seconds':setup_time+sampling_seconds+decode_seconds,
+143:                             'reference_numpy_fft_seconds':fft_seconds,
+144:                             'online_counted_decoder_operations':sum(answer['counts']['online'].values()),
+145:                             'cold_counted_decoder_operations':sum(decoder.cold_counts.values())+sum(answer['counts']['online'].values()),
+146:                             'output_scaling_integer_multiplications':2*n,
+147:                             'max_scaled_output_numerator_bits':numerator_bits,
+148:                             'sampler_counts':sampled['counts'],
+149:                             'parameters':answer['parameters'],
+150:                             'all_outputs_checked':True})
+151:     result = {'status':'PASS','scope':'finite-word randomized global-additive approximation; not exact FFT',
+152:               'epsilon':epsilon,'sampling_error_allocation':a,'failure_bound':delta,
+153:               'sampler_checks':check_sampler(),'fresh_cases':len(records),
+154:               'checked_coefficients':sum(r['N'] for r in records),
+155:               'max_observed_total_error_over_mass':max(r['total_error_over_mass'] for r in records),
+156:               'timing_note':'Table built once per N for audit efficiency; every cold-call cost/timing adds entire setup. Python implementation is not faster than NumPy FFT. B=4,g=1 finite demonstrations do not use the asymptotic parameter schedule.',
+157:               'setup':setup,'records':records,
+158:               'source_sha256':{str(p.relative_to(HERE.parent)):hashlib.sha256(p.read_bytes()).hexdigest()
+159:                   for p in [HERE/'sampling.py',HERE/'run_audit.py',HERE.parent/'fft_wordram_decoder_research/guarded_decoder.py']}}
+160:     (HERE/'results.json').write_text(json.dumps(result,indent=2)+'\n')
+161:     print(json.dumps({k:result[k] for k in ['status','fresh_cases','checked_coefficients','max_observed_total_error_over_mass']}))
+162: 
+163: 
+164: if __name__ == '__main__':
+165:     main()

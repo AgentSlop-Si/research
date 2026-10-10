@@ -1,0 +1,38 @@
+"""Exact transposed Vandermonde solve in O(r^2) field operations.
+
+Given distinct z_l and moments y_j=sum_l c_l z_l^j, j=0..r-1,
+recover all c_l. Uses polynomial P(z)=prod_l(z-z_l), and
+c_l= <P(z)/(z-z_l),y> / P'(z_l).
+"""
+from typing import Sequence, Optional
+
+
+def solve_moments(nodes:Sequence[int], moments:Sequence[int], p:int)->Optional[list[int]]:
+    r=len(nodes)
+    if len(moments)<r:raise ValueError('At least r initial moments required')
+    if not r:return []
+    if any(nodes[i]%p==nodes[j]%p for i in range(r) for j in range(i+1,r)):
+        return None
+    P=[1]
+    for z in nodes:
+        z%=p
+        nxt=[0]*(len(P)+1)
+        for i,c in enumerate(P):
+            nxt[i]=(nxt[i]-z*c)%p
+            nxt[i+1]=(nxt[i+1]+c)%p
+        P=nxt
+    deriv=[(j+1)*P[j+1]%p for j in range(r)]
+    coeff=[]
+    for z in nodes:
+        z%=p
+        q=[0]*r
+        q[r-1]=1
+        for j in range(r-2,-1,-1):
+            q[j]=(P[j+1]+z*q[j+1])%p
+        assert (P[0]+z*q[0])%p==0
+        numerator=sum(q[i]*moments[i] for i in range(r))%p
+        denom=0
+        for c in reversed(deriv):denom=(denom*z+c)%p
+        if denom==0:return None
+        coeff.append(numerator*pow(denom,-1,p)%p)
+    return coeff

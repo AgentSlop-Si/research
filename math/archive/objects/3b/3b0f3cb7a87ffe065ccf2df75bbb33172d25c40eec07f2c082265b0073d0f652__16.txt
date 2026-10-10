@@ -1,0 +1,41 @@
+1: """Independent ordinary iterative radix-2 exact NTT (positive exponent)."""
+2: from __future__ import annotations
+3: P=998244353;G=3
+4: 
+5: def radix2_ntt(xs, p=P, g=G):
+6:     n=len(xs)
+7:     if n<2 or (n&(n-1)) or (p-1)%n:raise ValueError('invalid length')
+8:     w=pow(g,(p-1)//n,p)
+9:     if pow(w,n//2,p)==1:raise ValueError('nonprimitive')
+10:     y=[int(z)%p for z in xs]
+11:     j=0; index_steps=0; swaps=0
+12:     for i in range(1,n):
+13:         bit=n//2
+14:         while j&bit:
+15:             j^=bit;bit>>=1;index_steps+=1
+16:         j^=bit;index_steps+=1
+17:         if i<j:
+18:             y[i],y[j]=y[j],y[i];swaps+=1
+19:     gates={'length':n,'macro_stages':n.bit_length()-1,'additions':0,
+20:            'data_twiddle_mult':0,'twiddle_update_mult':0,
+21:            'permutation_index_steps':index_steps,'permutation_moves':2*swaps,
+22:            'root_power_calls':1,'modular_power_mult_upper':2*((p-1)//n).bit_length()}
+23:     size=2
+24:     while size<=n:
+25:         root=pow(w,n//size,p)
+26:         gates['root_power_calls']+=1
+27:         gates['modular_power_mult_upper']+=2*(n//size).bit_length()
+28:         half=size//2
+29:         for start in range(0,n,size):
+30:             tw=1
+31:             for off in range(half):
+32:                 u=y[start+off]
+33:                 v=y[start+off+half]*tw%p
+34:                 y[start+off]=(u+v)%p
+35:                 y[start+off+half]=(u-v)%p
+36:                 tw=tw*root%p
+37:                 gates['additions']+=2
+38:                 gates['data_twiddle_mult']+=1
+39:                 gates['twiddle_update_mult']+=1
+40:         size*=2
+41:     return y,gates

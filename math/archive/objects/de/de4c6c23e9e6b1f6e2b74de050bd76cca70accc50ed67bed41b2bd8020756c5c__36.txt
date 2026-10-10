@@ -1,0 +1,132 @@
+1: """New finite-boundary identities, exact arithmetic, complete basis verification."""
+2: import json
+3: from pathlib import Path
+4: from time import perf_counter
+5: 
+6: from fixed_kernel import prepare
+7: from operators import (prepare_sparse, apply_c_charged, horner_c, build_operators,
+8:     identity, lower_kernel, matrix_add, matrix_sub, matrix_scale)
+9: from prior_exact_arithmetic import PrimeField, CyclotomicField, mm, mv, fourier
+10: 
+11: 
+12: def power(field, matrix, exponent):
+13:     out = identity(field, len(matrix))
+14:     while exponent:
+15:         if exponent & 1:
+16:             out = mm(field, out, matrix)
+17:         exponent >>= 1
+18:         if exponent:
+19:             matrix = mm(field, matrix, matrix)
+20:     return out
+21: 
+22: 
+23: def polynomial(field, matrix, coefficients):
+24:     ident=identity(field,len(matrix))
+25:     out=matrix_scale(field,coefficients[-1],ident)
+26:     for coefficient in reversed(coefficients[:-1]):
+27:         out=matrix_add(field,mm(field,matrix,out),matrix_scale(field,coefficient,ident))
+28:     return out
+29: 
+30: 
+31: def one_case(field, n, label):
+32:     q = field.root(n)
+33:     plan, sparse = prepare(field, n, q), prepare_sparse(field, n, q)
+34:     ops = build_operators(field, sparse, plan.kernel)
+35:     a, b, u, w, c = [ops[k] for k in ('A','B','U','W','C')]
+36:     ha, hb = ops['H_A'], ops['H_B']
+37:     ha_inverse = lower_kernel(field, plan.middle)
+38:     ident = identity(field, n)
+39:     zero = matrix_scale(field, field.zero, ident)
+40:     q_inverse = field.power(q, n-1)
+41:     # Weighted opposite shift and exact q-Weyl relation.
+42:     actual = matrix_sub(field, mm(field,b,a), matrix_scale(field,q_inverse,mm(field,a,b)))
+43:     assert actual == matrix_scale(field,field.sub(q,field.one),ident)
+44:     # Exact conjugation retains the lower-left corner.
+45:     assert mm(field,mm(field,ha,b),ha_inverse) == c
+46:     # Check the alternate boundary formula B H(A)=H(q^-1 A)(B-I)-corner.
+47:     modulated = [field.mul(value, field.power(q_inverse,j)) for j,value in enumerate(plan.kernel)]
+48:     expected = matrix_sub(field,mm(field,lower_kernel(field,modulated),matrix_sub(field,b,ident)),ops['corner'])
+49:     assert mm(field,b,ha) == expected
+50:     # Cyclic q-commuting pair including the corner.
+51:     assert mm(field,u,w) == matrix_scale(field,q,mm(field,w,u))
+52:     assert power(field,u,n) == ident
+53:     assert power(field,w,n) == matrix_scale(field,field.neg(field.one),ident)
+54:     assert power(field,c,n) == zero
+55:     # Actual Fourier-middle conjugation M A M^-1 = B.
+56:     middle = [[plan.middle[i] if i+j == n-1 else field.zero for j in range(n)] for i in range(n)]
+57:     middle_inverse = [[field.inv(plan.middle[j]) if i+j == n-1 else field.zero for j in range(n)] for i in range(n)]
+58:     assert mm(field,mm(field,middle,a),middle_inverse) == b
+59:     h_c_reference = mm(field,mm(field,ha,hb),ha_inverse)
+60:     short_coefficients=[field.integer(v) for v in (2,-3,5,1)]
+61:     short_reference=mm(field,mm(field,ha,polynomial(field,b,short_coefficients)),ha_inverse)
+62:     h_c_columns = []
+63:     for j in range(n):
+64:         basis = [field.one if i == j else field.zero for i in range(n)]
+65:         small, small_cost = apply_c_charged(field,sparse,basis)
+66:         assert small == mv(field,c,basis)
+67:         assert small_cost['field_operations'] == {'mul':2*n,'add':n}
+68:         result, cost = horner_c(field,sparse,plan.kernel,basis)
+69:         assert result == mv(field,h_c_reference,basis)
+70:         assert cost['field_operations'] == {'mul':3*n*n-2*n,'add':2*n*n-2*n}
+71:         short_result,short_cost=horner_c(field,sparse,short_coefficients,basis)
+72:         assert short_result==mv(field,short_reference,basis)
+73:         assert short_cost['field_operations']=={'mul':10*n,'add':6*n}
+74:         h_c_columns.append(result)
+75:     h_c = [[h_c_columns[j][i] for j in range(n)] for i in range(n)]
+76:     assert mm(field,ha,hb) == mm(field,h_c,ha)
+77:     # Order matters: F=P H(C) H(A) D P, not P H(C) D R H(A) R P.
+78:     core=mm(field,h_c,ha)
+79:     chirp=[field.mul(plan.middle[j],plan.factorial[j]) for j in range(n)]
+80:     rewritten_fourier=[[field.mul(plan.factorial[i],field.mul(core[i][j],chirp[j]))
+81:                        for j in range(n)] for i in range(n)]
+82:     assert rewritten_fourier==fourier(field,n)
+83:     assert sparse.preparation == {'mul':n+n.bit_length()-1,'sub':n-1,'constant_inverse':1,'neg':1}
+84:     # Deliberately drop the boundary: the changed matrix cannot be nilpotent.
+85:     no_corner = matrix_add(field,b,u)
+86:     assert power(field,no_corner,n) == ident
+87:     assert no_corner != c
+88:     return {'field':label, 'n':n, 'basis_vectors':n,
+89:         'exact_q_weyl_relation':True, 'conjugation_with_corner':True,
+90:         'middle_conjugation':True, 'full_fourier_rewrite':True,
+91:         'cyclic_pair':True, 'nilpotent_C':True,
+92:         'omitted_corner_Nth_power':'identity, not zero',
+93:         'sparse_preparation':sparse.preparation,'one_sparse_C':small_cost,
+94:         'degree_three_macro':short_cost,'full_H_C_horner':cost}
+95: 
+96: 
+97: def false_exponential_product():
+98:     field=CyclotomicField(2)
+99:     q=field.root(2)
+100:     plan=prepare(field,2,q)
+101:     ops=build_operators(field,prepare_sparse(field,2,q),plan.kernel)
+102:     exact=polynomial(field,ops['C'],plan.kernel)
+103:     false=mm(field,polynomial(field,ops['W'],plan.kernel),polynomial(field,ops['U'],plan.kernel))
+104:     difference=matrix_sub(field,false,exact)
+105:     witness=mv(field,difference,[field.one,field.zero])
+106:     assert witness==[field.zero,field.inv(field.integer(8))]
+107:     return {'n':2,'q':field.encode(q),
+108:         'false_claim':'H_q(U+W)=H_q(W)H_q(U)',
+109:         'difference_on_e0':[field.encode(value) for value in witness],
+110:         'reason':'Product retains the degree-two WU/4 term although H_2 has degree one.'}
+111: 
+112: 
+113: def main():
+114:     start, rows = perf_counter(), []
+115:     for p in (65537,998244353):
+116:         field=PrimeField(p)
+117:         for n in (2,4,8,16,32):
+118:             rows.append(one_case(field,n,f'F_{p}'))
+119:     for n in (2,4,8):
+120:         rows.append(one_case(CyclotomicField(n),n,f'Q(zeta_{n})'))
+121:     report={'status':'PASS','cases':len(rows),'basis_vectors':sum(r['basis_vectors'] for r in rows),
+122:         'elapsed_seconds':perf_counter()-start,
+123:         'scope':'Exact noncommuting graph rewrite with finite boundary; no arbitrary FFT speedup.',
+124:         'finite_exponential_negative_control':false_exponential_product(),
+125:         'cases_detail':rows}
+126:     path=Path(__file__).parent/'results'/'boundary_audit.json'
+127:     path.write_text(json.dumps(report,indent=2)+'\n')
+128:     print(json.dumps({k:v for k,v in report.items() if k!='cases_detail'},indent=2))
+129: 
+130: 
+131: if __name__=='__main__':
+132:     main()

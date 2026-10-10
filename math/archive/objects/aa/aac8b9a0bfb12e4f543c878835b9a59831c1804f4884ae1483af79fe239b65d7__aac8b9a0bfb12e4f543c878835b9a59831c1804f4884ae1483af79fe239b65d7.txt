@@ -1,0 +1,76 @@
+"""Exact characteristic-zero slice exclusion by a finite-field resultant witness.
+
+For h0=1,h1=h2=0,h6=x and nonzero tail pivot/t chart, E3=E4=0
+solve t, beta. W(x) (the necessary lower cubic) is quadratic. The
+new 9x9 minor of the polynomial 11x9 universal upper gate does not
+vanish at EITHER reduced root mod 17. Consequently W and that minor
+have nonzero resultant over Z[zeta8], hence no complex solutions on
+this whole regular slice. This proof does NOT exclude general h.
+"""
+import sys,json
+from pathlib import Path
+ROOT=Path(__file__).parent
+sys.path.insert(0,str(ROOT))
+import _bootstrap
+from adjacent_tail import equations
+from inverse_quartic import poly_eval
+from dual_support import primitive_root
+from triple_gate import build_UL,modrank
+from universal_gate import gate,det
+
+def run():
+ p=17;z=primitive_root(p,8);xi=pow(z,-1,p)
+ eq,W,E3,E4,Q=equations()
+ # all W terms have x-degree<=2; coefficient extraction over Z[z]/z^4+1 -> GF17
+ vals=[poly_eval(W,[0,1,0,0,x,0],p,z) for x in (0,1,2)]
+ c0=vals[0]
+ c2=(vals[2]-2*vals[1]+vals[0])*pow(2,-1,p)%p
+ c1=(vals[1]-vals[0]-c2)%p
+ poly=[c0,c1,c2]
+ assert poly==[10,14,16]
+ roots=[x for x in range(p) if sum(poly[j]*pow(x,j,p) for j in range(3))%p==0]
+ assert roots==[2,12]
+ Qf=[[pow(z,i*j,p) for j in range(8)] for i in range(8)]
+ cert=[]
+ sel=[0,1,2,5,6,7,8,9,10]
+ for x in roots:
+  h=[1,0,0,x];vec=[0]+h+[0]
+  a,b,c=[poly_eval(E,vec,p,z) for E in E3]
+  d,e,f=[poly_eval(E,vec,p,z) for E in E4]
+  delta=(a*e-b*d)%p
+  T=(-c*e+b*f)%p
+  V=(-a*f+c*d)%p
+  assert delta and T
+  t=T*pow(delta,-1,p)%p
+  beta=V*pow(delta,-1,p)%p
+  assert poly_eval(eq[0],[t]+h+[beta],p,z)==0
+  assert poly_eval(eq[1],[t]+h+[beta],p,z)==0
+  assert poly_eval(eq[2],[t]+h+[beta],p,z)==0
+  U,L=build_UL(p,z,h,t,beta)
+  # Convert L to a polynomial representative Lhat=M*L,
+  # M=(z-1)*T, clearing all t, beta, delta denominators.
+  M=(z-1)*T%p
+  H=[1,0,0]
+  r1=(1+xi+xi*xi)%p;r2=(xi+xi*xi+pow(xi,3,p))%p;r3=pow(xi,3,p)
+  for k in range(3):H.append((r1*H[k+2]-r2*H[k+1]+r3*H[k])%p)
+  H=H+[x]
+  Lhat=[0]
+  for k in range(1,7):
+   Lhat.append(((z-1)*(delta+V*(H[k]-1))+(T-delta)*(pow(xi,k,p)-1))%p)
+  Lhat.append(M)
+  assert Lhat==[l*M%p for l in L]
+  K=gate(p,Qf,U,Lhat)
+  det9=det([K[i] for i in sel],p)
+  assert det9!=0 and modrank(K,p)==9
+  cert.append(dict(x=x,h=h,E3=0,E4=0,Q=0,W=0,tail_pivot_delta=delta,t_numerator_T=T,
+    beta_numerator_V=V,t=t,beta=beta,denominator_M=M,polynomial_gate_minor=det9,
+    selected_rows=sel,gate_rank=9))
+ result=dict(coefficient_ring='Z[z]/(z^4+1)',prime=p,primitive_8th_root=z,
+    slice='h0=1,h1=0,h2=0,h6=x, delta!=0, T!=0',
+    W_reduction_coefficients_const_to_x2=poly,W_reduction_factorization='16*(x-2)*(x-12) mod 17',
+    roots=cert,complex_number_conclusion='No regular complex factorization on this fixed 1-parameter slice: W and the denominator-cleared 9x9 gate minor have nonzero resultant, certified by reduction modulo (17,z-9). All excluded exceptional branches remain open.',
+    generality='Excludes only regular nonzero-tail-pivot/t subvariety with h=(1,0,0,x), not arbitrary h or the full separated-generator model.')
+ print(json.dumps(result,indent=2),flush=True)
+ (ROOT/'slice_complex_exclusion_certificate.json').write_text(json.dumps(result,indent=2)+'\n')
+ return result
+if __name__=='__main__':run()

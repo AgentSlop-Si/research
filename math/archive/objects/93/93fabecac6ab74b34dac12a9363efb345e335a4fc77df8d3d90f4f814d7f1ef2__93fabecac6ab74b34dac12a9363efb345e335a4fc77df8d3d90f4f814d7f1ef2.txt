@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Read-only source-archive provenance check; never executes archive members.
+Reproduces complete recursive inventory and validates every SHA256SUMS entry.
+"""
+from pathlib import Path,PurePosixPath
+import json,zipfile,io,hashlib,re
+BASE=Path(__file__).resolve().parent
+SOURCE=BASE/'source/fft_spectral_determinant_gate_2026-10-09(1).zip'
+known=set(json.loads((BASE/'PRIOR_HASH_REFERENCE.json').read_text())['hashes'])
+rows=[];checks=[]
+
+def walk(data,chain,output):
+ with zipfile.ZipFile(io.BytesIO(data)) as z:
+  members={}
+  for x in z.infolist():
+   if x.is_dir():continue
+   rel=PurePosixPath(x.filename)
+   assert not rel.is_absolute() and '..' not in rel.parts
+   assert ((x.external_attr>>16)&0o170000)!=0o120000
+   b=z.read(x);members[x.filename]=b
+   h=hashlib.sha256(b).hexdigest()
+   rows.append({'archive':chain,'member':x.filename,'size':len(b),'sha256':h,'new_to_combined_prior':h not in known})
+   p=output/rel
+   assert p.is_file() and p.read_bytes()==b,(str(p),'extracted bytes differ')
+   if b[:4]==b'PK\x03\x04':walk(b,chain+'!'+x.filename,output/(x.filename+'.unpacked'))
+  for name,b in members.items():
+   if not name.endswith('SHA256SUMS.txt'):continue
+   for line in b.decode().splitlines():
+    if not line.strip():continue
+    m=re.fullmatch(r'([0-9a-f]{64})\s+\*?(.+)',line)
+    assert m,('invalid manifest entry',name,line)
+    target=str(PurePosixPath(name).parent/PurePosixPath(m[2]))
+    assert target in members and hashlib.sha256(members[target]).hexdigest()==m[1],(name,target)
+    checks.append({'archive':chain,'manifest':name,'member':m[2],'pass':True})
+
+walk(SOURCE.read_bytes(),SOURCE.name,BASE/'extracted')
+prior=json.loads((BASE/'SOURCE_MEMBER_INVENTORY.json').read_text())
+a={(r['archive'],r['member'],r['sha256'],r['size'],r['new_to_combined_prior']) for r in rows}
+b={(r['archive'],r['member'],r['sha256'],r['size'],r['new_to_combined_prior']) for r in prior}
+assert a==b
+unique={r['sha256'] for r in rows};new={r['sha256'] for r in rows if r['new_to_combined_prior']}
+res={'source_archive_sha256':hashlib.sha256(SOURCE.read_bytes()).hexdigest(),'recursive_member_occurrences':len(rows),'unique_contents':len(unique),'byte_new_contents_vs_declared_prior':len(new),'embedded_hash_entries':len(checks),'all_manifest_hashes_pass':True,'inventory_and_extracted_bytes_match':True,'uploaded_code_executed':False}
+(BASE/'PROVENANCE_VERIFICATION.json').write_text(json.dumps(res,indent=2)+'\n');print(json.dumps(res,indent=2))

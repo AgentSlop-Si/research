@@ -1,0 +1,152 @@
+1: from pathlib import Path
+2: import itertools
+3: import json
+4: import math
+5: import random
+6: from correction_graph import run, as_integer, fresh_weight
+7: 
+8: 
+9: def compact(result):
+10:     keys=['total_arithmetic','preparation_arithmetic','discovery_arithmetic',
+11:           'product_arithmetic','schedule','counts']
+12:     return {key:result[key] for key in keys}
+13: 
+14: 
+15: def datasets(n,q=8):
+16:     base=16
+17:     b=[1+(j%14) for j in range(n)]
+18:     a=[2+(j%11) for j in range(n)]
+19:     related=[]
+20:     for i in range(q):
+21:         x=list(a)
+22:         for j in range(3):
+23:             x[j] += (i>>j)&1
+24:         related.append(x)
+25:     rng=random.Random(1800+n)
+26:     dense=[[rng.randrange(1,base) for _ in range(n)] for _ in range(q)]
+27:     return base,b,{'related':related,'dense':dense}
+28: 
+29: 
+30: def verify_products(result,queries,b,base):
+31:     target_b=as_integer(b,base)
+32:     for i,x in enumerate(queries):
+33:         assert as_integer(result['outputs'][i],base) == as_integer(x,base)*target_b
+34:         assert len(result['outputs'][i]) == 2*len(b)
+35:         assert all(0<=v<base for v in result['outputs'][i])
+36:         direct=[0]*(2*len(b)-1)
+37:         for j,u in enumerate(x):
+38:             for k,v in enumerate(b):
+39:                 direct[j+k] += u*v
+40:         assert result['coefficients'][i] == direct
+41: 
+42: 
+43: def brute_tree_optimum(queries,b,base):
+44:     # Exhaustively enumerate all trees on a super-root plus four query nodes
+45:     # via Prüfer sequences. This independently checks planner optimality.
+46:     cold=run(queries,b,base,graph=True)
+47:     n=len(b); q=len(queries); nodes=q+1
+48:     w={}
+49:     for i in range(q):
+50:         w[i,q]=fresh_weight(n,cold['context'].m)
+51:         for j in range(i+1,q):
+52:             s=sum(a!=z for a,z in zip(queries[i],queries[j]))
+53:             w[i,j]=2*n*s+2*n-1 if s else 0
+54:     best=None; trees=0
+55:     for sequence in itertools.product(range(nodes),repeat=nodes-2):
+56:         degree=[1]*nodes
+57:         for x in sequence: degree[x]+=1
+58:         edges=[]
+59:         for x in sequence:
+60:             leaf=next(i for i in range(nodes) if degree[i]==1)
+61:             edges.append(tuple(sorted((leaf,x))))
+62:             degree[leaf]-=1; degree[x]-=1
+63:         last=[i for i in range(nodes) if degree[i]==1]
+64:         edges.append(tuple(last))
+65:         cost=sum(w[e] for e in edges)
+66:         best=cost if best is None else min(best,cost)
+67:         trees+=1
+68:     assert best==cold['product_arithmetic']
+69:     return trees
+70: 
+71: 
+72: def coverage_check():
+73:     q,d,k=3,4,1
+74:     anchors=[(a,)*d for a in range(q)]
+75:     inputs=list(itertools.product(range(q),repeat=d))
+76:     covered=[x for x in inputs if any(sum(a!=b for a,b in zip(x,c))<=k for c in anchors)]
+77:     volume=sum(math.comb(d,j)*(q-1)**j for j in range(k+1))
+78:     assert len(covered)==len(anchors)*volume==27
+79:     witness=next(x for x in inputs if x not in covered)
+80:     return {'alphabet':q,'dimension':d,'radius':k,'anchors':len(anchors),
+81:             'ball_volume':volume,'covered':len(covered),'total':len(inputs),
+82:             'minimum_anchors_from_volume_bound':math.ceil(q**d/volume),
+83:             'uncovered_witness':witness}
+84: 
+85: 
+86: def main():
+87:     cases=[]; checked=0
+88:     for n in [32,64,128]:
+89:         base,b,families=datasets(n)
+90:         for family,queries in families.items():
+91:             cold_baseline=run(queries,b,base,graph=False)
+92:             cold_graph=run(queries,b,base,graph=True)
+93:             warm_state=(cold_baseline['context'],0,list(queries[0]),
+94:                         list(cold_baseline['coefficients'][0]))
+95:             warm_baseline=run(queries,b,base,graph=False,warm_index=0,warm_state=warm_state)
+96:             warm_graph=run(queries,b,base,graph=True,warm_index=0,warm_state=warm_state)
+97:             seed_cost=cold_baseline['preparation_arithmetic']+fresh_weight(n,cold_baseline['context'].m)
+98:             assert cold_graph['total_arithmetic']==warm_graph['total_arithmetic']+seed_cost
+99:             for result in [cold_baseline,cold_graph,warm_baseline,warm_graph]:
+100:                 verify_products(result,queries,b,base)
+101:                 assert result['counts']['full_output_digit_writes']==2*n*len(queries)
+102:                 checked+=len(queries)
+103:             if family=='related':
+104:                 assert cold_graph['counts']['fresh_products']==1
+105:                 assert cold_graph['counts']['correction_products']==7
+106:                 assert cold_graph['total_arithmetic']<cold_baseline['total_arithmetic']
+107:                 assert warm_graph['counts'].get('fresh_products',0)==0
+108:             else:
+109:                 assert cold_graph['counts']['fresh_products']==8
+110:                 assert cold_graph['total_arithmetic']>cold_baseline['total_arithmetic']
+111:             cases.append({'n':n,'queries':len(queries),'base':base,'family':family,
+112:                 'previously_paid_warm_seed_arithmetic':seed_cost,
+113:                 'minimum_pairwise_patch_support':min(cold_graph['correction_supports']),
+114:                 'cold_baseline':compact(cold_baseline),'cold_graph':compact(cold_graph),
+115:                 'warm_baseline':compact(warm_baseline),'warm_graph':compact(warm_graph)})
+116:     base,b,families=datasets(32)
+117:     trees=brute_tree_optimum(families['related'][:4],b,base)
+118:     duplicate=run([families['related'][0]]*3,b,base,graph=True)
+119:     verify_products(duplicate,[families['related'][0]]*3,b,base)
+120:     assert duplicate['counts']['fresh_products']==1
+121:     assert duplicate['counts']['correction_products']==2
+122:     checked+=3
+123:     # The cache key includes A, B, base and length, preventing stale-plan reuse.
+124:     original=run(families['related'],b,base,graph=False)
+125:     stale=(original['context'],0,[0]*32,original['coefficients'][0])
+126:     try:
+127:         run(families['related'],b,base,warm_index=0,warm_state=stale)
+128:         raise AssertionError('stale cache key accepted')
+129:     except ValueError:
+130:         pass
+131:     invalid_controls=0
+132:     for extra in [{'base':1},{'base':16.0},{'warm_index':-1},
+133:                   {'warm_index':8},{'warm_index':True}]:
+134:         try:
+135:             run(families['related'],b,**extra)
+136:             raise AssertionError('invalid arguments accepted')
+137:         except ValueError:
+138:             invalid_controls+=1
+139:     result={'status':'PASS','exact_integer_products_checked':checked,
+140:             'exhaustive_spanning_trees':trees,'stale_cache_rejected':True,
+141:             'invalid_argument_controls':invalid_controls,
+142:             'coverage_check':coverage_check(),'cases':cases,
+143:             'scope':'Exact finite-size integer products and a declared scalar-operation model; no arbitrary-input multiplication or FFT breakthrough.'}
+144:     Path(__file__).with_name('audit.json').write_text(json.dumps(result,indent=2)+'\n')
+145:     print(json.dumps({'status':'PASS','exact_integer_products_checked':checked,
+146:                      'exhaustive_spanning_trees':trees,'coverage_check':result['coverage_check']}))
+147:     for row in cases:
+148:         print(row['n'],row['family'],[(k,row[k]['total_arithmetic']) for k in
+149:               ['cold_baseline','cold_graph','warm_baseline','warm_graph']])
+150: 
+151: 
+152: if __name__=='__main__': main()

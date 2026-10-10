@@ -1,0 +1,61 @@
+# New macro/word-RAM checkpoint: approximate branch audit
+
+9 October 2026. Source: `fft_macro_wordram_checkpoint_20261009/` from the third extracted upload. No uploaded Python was executed or imported. This review read the new prose, Python, saved JSON, and manifests. The independently written checker here reads uploaded JSON only.
+
+## Verdict and genuine advance
+
+The approximate mathematical result is consistent with the fully charged coarse-accuracy O(N) theorem already established in the prior synthesis. The guarded-packing idea is not newly discovered by this checkpoint relative to that synthesis. The significant new contribution is executable-component design and stronger finite testing:
+
+- Complete eager enumeration of all descriptor keys, rather than computing phasors on lookup/cache miss.
+- Rows stored prepacked. Decoding adds those words and unpacks each final lane exactly once. It no longer repacks every group lookup.
+- Integer Machin/Taylor phasor preparation with a sound certified error argument, rather than relying on a sine/cosine oracle in the theorem.
+- Exact integer-mass signed-atom sampling, a bounded rejection cap, unbiased conditioning on success, and a conservative exact-rational sample-count alternative.
+- Fresh integer-input integration with explicit output numerator pairs and the input-mass scaling charged in the argument.
+- Clear admission that the tested B=4,g=1 regime does not implement the growing asymptotic schedule, that Python loses badly to NumPy, and that the error criterion is coarse and global.
+
+Therefore the earlier finding “the supplied prototype only lazily builds/re-packs table rows” no longer describes this new eager decoder. It still accurately describes the previous v3 prototype. The stronger claim “a complete production implementation/benchmark of the proved asymptotic whole-input evaluator now exists” is still unsupported.
+
+## Mathematical check
+
+The model is a randomized word RAM with sufficiently large constant-factor Theta(log N) words. One-word integer multiplication must have its full result fit; division, shifts, Boolean operations, indexing, and independent random words are stated primitives. Input components are integers bounded by N^C or share a bounded-word denominator. Epsilon and the polynomial failure exponent are fixed.
+
+1. A component's absolute mass and one of four sign phases form an unbiased signed atom. A uniform ticket in [0,L) chooses its exact probability. Capped rejection has success probability independent of which accepted ticket is returned, hence preserves conditional uniformity. The cap-failure events factor over independent samples. A union bound accounts for the cap and Monte Carlo failures.
+2. The complex Hoeffding bound 4N exp(-K a²/4) follows by applying scalar Hoeffding to real/imaginary thresholds a/sqrt(2). Rounding K upward to a group multiple with genuinely new samples is valid.
+3. Nearest start/slope quantization contributes at most pi/Q0 + pi(B−1)/Q1. Folding four sign phases into Q0 works because Q0 is divisible by four.
+4. Grid error sigma and group rounding add at most sigma + 1/(sqrt(2)H). Projection into the square [−1,1]² cannot increase distance to the true mean. The displayed conservative parameter constants give total deterministic decoder error less than epsilon/4.
+5. For G groups, r=ceil(log2(2HG+1)) gives fields containing every partial and final nonnegative sum. Packing floor(w/r) fields per word prevents both inter-lane carries and physical word overflow.
+6. With B=Theta(log N), descriptor width p=O(log log N), g=Theta(log N/log log N), G=O(log log N), and at most N^gamma eager keys, complete construction costs N^gamma polylog(N)=o(N). Descriptor formation and output writes cost O(N); packed accumulation costs o(N). The stated fixed finite small-N fallback is legitimate asymptotically.
+7. The Machin/pi and rounded Taylor proof is sound. Fixed requested accuracy makes degree and precision constants. Rational output numerators and a shared denominator avoid pretending irrational Fourier values are exact word values. Unit-normalized output needs its stated scale convention or separately rounded normalization.
+
+These arguments establish the same coarse approximate result as the prior synthesis. They do not establish an exact arbitrary-complex transform, coefficient-relative accuracy, conventional FFT stability, accuracy tending to zero with N at the same cost, or a practical crossover.
+
+## Implementation and result distinctions
+
+`GuardedDecoder` really creates a directly indexed eager list of all D^g keys and stores tuples of packed words. The separate lazy mode is explicitly excluded from cold-preprocessing evidence. Online counts are obtained by subtracting a per-call snapshot, so reusing a plan does not inflate later online counts. Tests add the full setup count/time to each purported cold call.
+
+The integrated saved experiment has 24 cases and 10,760 coefficients at N=64,257,1024. Its maximum normalized total error is 0.11517025715651794, below the requested 0.5. Each eager table contains 16,384 rows. The stored sample counts are 650,739,828. All these saved figures and their source bindings are internally consistent. They are uploaded results inspected statically, not rerun claims by this auditor.
+
+The audit's g=2 multiword tests are useful mechanics checks but some have error allowances much larger than any unit-mean signal: the nine-word B=80 case permits 16.4777, and another B=64 case permits 50.2662. They must not be cited as evidence of useful Fourier accuracy. Meaningful-accuracy cases exist separately. The integrated g=1 experiment has a useful decoder bound near 0.108, but constant B,g produce O(N log N) descriptor work at that sampling schedule, not the asymptotic O(N) evaluator.
+
+The prototype's word widths are model-sized simulated words, mostly 232–272 bits in the accessible tests; the nine-word mechanics case uses 112 bits. This is now honestly declared and unlike the old v3's overflowing 64-bit key setting. These are not a hardware-64-bit performance demonstration. WordAudit verifies explicitly instrumented values, not every interpreter operation; omitted index/control work is accounted asymptotically by the proof. Sampling counts and output-scaling counts are separate from decoder-operation totals. Timing is the named setup+sampling+decode time, not an exhaustive profiler of all reference/check/scaling overhead.
+
+The sampler accepts arbitrary Python integers and does not itself enforce the theorem’s N^C magnitude bound or instrument mass/ticket arithmetic for word width. The decoder’s default width depends on N and trig precision, not the input exponent C; an integrated general driver must choose its word width for C and validate or document that contract. These are implementation/model obligations rather than flaws in the theorem.
+
+The mathematical finite base fallback and arbitrary-N wrapper remain specified in prose rather than supplied as one complete end-to-end driver. The planner returns None in the base region. Eager table construction defaults to a 1,000,000-row safety cap. At epsilon=0.5 and gamma=1/2, the first nonzero theoretical g occurs at log2 N=40, with 1,048,576 rows, already above that default cap; g=2 first occurs at log2 N=84 with 4,398,046,511,104 rows. Thus even the first theoretical plan needs an explicit cap override, while its input size is already enormous. The package makes no contrary practical claim.
+
+No substantive mathematical error was found in the new approximate theorem. The descriptions should retain these implementation/test/model distinctions. No novelty certificate is supplied; the literature notes explicitly disclaim one.
+
+## Independent checks actually executed
+
+`check_checkpoint.py` is independently authored and imports no uploaded code.
+
+- All 74 manifest file hashes match.
+- All nine validation-output hashes match and saved status fields are PASS.
+- All 17 declared source-result hash bindings match.
+- All 24 integrated saved records satisfy their arithmetic/parameter summary checks.
+- 384 exact rational capped-ticket certificates confirm uniformity on success and the stated cap failure bound, for masses 1–64 and caps 1–6.
+- 60 exact rational sample-budget configurations satisfy the conservative bit-length inequality and group divisibility.
+- 320 grid phasors at 8,16,24,40,64 requested accuracy bits are independently certified with rational enclosing intervals for pi, exact rational Taylor polynomials, a rational remainder bound, and direct rounding-error computation. These certificates do not rely on binary64 sine/cosine.
+- Four completely enumerated independent reference tables contain 4,096,16,384,256,256 rows. Seven sample lists per table produce 980 explicit complex outputs. Every decoded integer component agrees exactly with a scalar quantized-lane sum; all packed accumulations fit strict 64-bit words, including a ten-word row and final partial blocks. Direct binary64 phasor checks satisfy each deterministic error bound. The deliberately coarse multiword configuration is only a packing mechanics check.
+
+These independently implemented specification checks supplement static source review. They are not a rerun of uploaded code, a proof that every uploaded execution path is bug-free, or a full-runtime benchmark. Results are in `independent_checks.json`.

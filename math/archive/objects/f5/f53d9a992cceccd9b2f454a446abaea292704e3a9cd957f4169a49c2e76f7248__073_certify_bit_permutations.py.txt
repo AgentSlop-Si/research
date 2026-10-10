@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Independent exact screen of all 120 unsigned coordinate-bit permutations.
+
+Only the standard library. No imports of prior or uploaded research code.
+The mathematical Fourier rank-five theorem is in PROOF.md.
+"""
+from itertools import permutations
+import json
+
+N = 32
+EXPECTED_SURVIVORS = [
+    (3, 4, 2, 1, 0), (4, 2, 3, 1, 0), (4, 3, 1, 2, 0),
+    (4, 3, 2, 0, 1), (4, 3, 2, 1, 0),
+]
+results = []
+for sigma in permutations(range(5)):
+    p = [sum(((j >> sigma[t]) & 1) << t for t in range(5)) for j in range(N)]
+    assert sorted(p) == list(range(N))
+    # Direct counts, independently recomputed for every pair of cuts.
+    discrepancy_witness = max(
+        (abs(N * (q := sum(p[j] < k for j in range(l))) - k * l), k, l, q)
+        for k in range(N + 1) for l in range(N + 1)
+    )
+    d, k, l, q = discrepancy_witness
+    result = {'sigma': sigma, 'max_discrepancy_numerator_over_32': d,
+              'discrepancy_witness_k_l_q': [k, l, q]}
+    if d > 2 * N:
+        result['excluded_by'] = 'area-rank discrepancy > 2'
+    else:
+        q = sum(p[j] < 11 for j in range(21))
+        qtr = sum(p[j] < 11 for j in range(21, N))
+        assert q == 9 and qtr == 2
+        assert qtr + 2 == 4 < 5
+        result.update(excluded_by='11-by-11 rank-five gate',
+                      gate_cut_k_l=[11, 21], gate_prefix_count=q,
+                      gate_top_right_permutation_count=qtr,
+                      gate_product_rank_upper=4, gate_fourier_rank_lower=5)
+    results.append(result)
+
+survivors = [tuple(r['sigma']) for r in results
+             if r['excluded_by'] == '11-by-11 rank-five gate']
+assert survivors == EXPECTED_SURVIVORS
+assert len(results) == 120
+assert len(results) - len(survivors) == 115
+print(json.dumps({'N': N, 'permutations_checked': 120,
+                  'excluded_by_old_discrepancy_bound': 115,
+                  'excluded_by_new_rank_five_gate': 5,
+                  'remaining_in_this_family': 0,
+                  'permutation_convention': 'p(j)=sum_t bit_sigma(t)(j)*2**t',
+                  'results': results}, indent=2))

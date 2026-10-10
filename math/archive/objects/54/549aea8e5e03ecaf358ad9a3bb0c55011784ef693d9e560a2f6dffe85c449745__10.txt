@@ -1,0 +1,68 @@
+1: """Small reproducible numerical and reclamation diagnostics, not a sweep."""
+2: import json
+3: from pathlib import Path
+4: import statistics
+5: import time
+6: import numpy as np
+7: from coalesced_projected import CoalescedProjectedFourier, modular_phase
+8: from vendor.projected_fourier import ProjectedFourierState
+9: 
+10: 
+11: def main():
+12:     result = {}
+13:     p = np.ones((2, 1), complex)
+14:     c = [1e16, -1e16]
+15:     old = ProjectedFourierState(1, [0], p, c)
+16:     new = CoalescedProjectedFourier(1, [0], p, c)
+17:     old.add_coefficient(0, 1)
+18:     new.add_coefficient(0, 1)
+19:     result["sub_ulp_no_op"] = dict(represented_state_fft=0., original=float(old.query()[0].real), coalesced=float(new.query()[0].real))
+20:     new = CoalescedProjectedFourier(1, [0], np.ones((1, 1)), [1e16])
+21:     new.add_coefficient(0, -1e16)
+22:     new.add_coefficient(0, 1)
+23:     result["snapshot_subtraction_cancellation"] = dict(represented_state_fft=1., coalesced=float(new.query()[0].real), explicit_rebase=float(new.rebase()[0].real))
+24:     n = 1 << 20
+25:     bins = np.array([n-1, n-2, n//2])
+26:     dense = np.zeros(n, complex)
+27:     dense[-1] = 1
+28:     expected = np.fft.fft(dense)[bins]
+29:     unreduced = np.exp((-2j*np.pi*(n-1)/n)*bins.astype(float))
+30:     reduced = modular_phase(n, bins, n-1)
+31:     result["high_index_phase"] = dict(n=n, j=n-1, bins=bins.tolist(),
+32:         original_max_abs_error=float(np.max(np.abs(unreduced-expected))),
+33:         reduced_max_abs_error=float(np.max(np.abs(reduced-expected))))
+34:     rng = np.random.default_rng(9911)
+35:     basis = rng.normal(size=(4, 64)) + 1j*rng.normal(size=(4, 64))
+36:     bins = np.array([0, 1, 2, 11, 31, 32, 61, 63])
+37:     state = CoalescedProjectedFourier(64, bins, np.fft.fft(basis)[:, bins])
+38:     max_error = 0.
+39:     for t in range(20000):
+40:         state.add_coefficient(t % 4, complex(*rng.normal(size=2)))
+41:         answer = state.query()
+42:         expected = np.fft.fft(state.coefficients @ basis)[bins]
+43:         max_error = max(max_error, float(np.max(np.abs(answer-expected))))
+44:     result["long_incremental_drift"] = dict(queries=20000, max_abs_error=max_error,
+45:         final_abs_error=float(np.max(np.abs(answer-expected))),
+46:         rebased_abs_error=float(np.max(np.abs(state.rebase()-expected))))
+47:     # Isolate the u-dependent rebuild/clear tail. Fabricated pending snapshots
+48:     # describe u previously-nonzero points, all now zero: r=k=0 and q=1.
+49:     # Construction and dict population are excluded ONLY in this diagnostic,
+50:     # explicitly unlike the full-stream end-to-end benchmark.
+51:     rows = []
+52:     for u in (64, 1024, 8192):
+53:         samples = []
+54:         for _ in range(51):
+55:             state = CoalescedProjectedFourier(8192, [0], np.empty((0, 1)))
+56:             state.pending = {("p", j): complex(j+1, -0.25) for j in range(u)}
+57:             begin = time.perf_counter_ns()
+58:             state.query()
+59:             samples.append(time.perf_counter_ns()-begin)
+60:         rows.append(dict(u=u, q=1, r=0, k=0, median_query_ns=statistics.median(samples), raw_ns=samples))
+61:     result["reclamation_diagnostic"] = rows
+62:     Path("results/diagnostics.json").write_text(json.dumps(result, indent=2)+"\n")
+63:     print(json.dumps({k: v for k, v in result.items() if k != "reclamation_diagnostic"}, indent=2))
+64:     print("Rebuild/clear median microseconds:", [(r["u"], r["median_query_ns"]/1000) for r in rows])
+65: 
+66: 
+67: if __name__ == "__main__":
+68:     main()

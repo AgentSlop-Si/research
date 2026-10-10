@@ -1,0 +1,36 @@
+"""Run each legacy module set in an isolated process to avoid import collisions."""
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+ROOT=Path(__file__).resolve().parent
+env=dict(os.environ,OPENBLAS_NUM_THREADS='1',OMP_NUM_THREADS='1')
+tasks=[('phase8',ROOT,['-m','unittest','discover','-s','tests','-v'],[ROOT,ROOT/'baseline_phase7']),
+       ('phase7_legacy',ROOT/'baseline_phase7',['-m','unittest','discover','-s','tests','-v'],[]),
+       ('query_v2_legacy',ROOT/'baseline_query_v2',['-m','unittest','discover','-s','tests','-v'],[]),
+       ('query_v3_legacy',ROOT/'baseline_query_v3',['-m','unittest','discover','-s','tests','-v'],[]),
+       ('query_v3_repaired',ROOT,['-m','unittest','discover','-s','baseline_query_v3/tests','-v'],[ROOT,ROOT/'baseline_query_v3']),
+       ('sum_product_v8_legacy',ROOT/'baseline_sum_product_v8',['-m','unittest','discover','-s','tests','-v'],[]),
+       ('sum_product_v8_exact',ROOT/'baseline_sum_product_v8',['exact_modular_audit.py'],[]),
+       ('phase6_graph_legacy',ROOT/'baseline_phase6_graph',['run_all_checks.py'],[]),
+       ('phase7_exact_identities',ROOT/'baseline_phase7',['exact_modular_audit.py'],[])]
+results=[];logs=[]
+for name,cwd,args,paths in tasks:
+    current=dict(env,PYTHONPATH=os.pathsep.join(map(str,paths)))
+    proc=subprocess.run([sys.executable,*args],cwd=cwd,env=current,text=True,capture_output=True)
+    output=proc.stdout+proc.stderr
+    logs.append(name+'\n'+output)
+    counts=re.findall(r'Ran (\d+) tests?',output)
+    count=sum(map(int,counts))
+    if name == 'phase6_graph_legacy' and proc.returncode == 0:
+        count=json.loads((cwd/'results/verification.json').read_text())['total_tests']
+    results.append({'suite':name,'passed':proc.returncode==0,'unittest_count':count})
+    print(results[-1],flush=True)
+    if proc.returncode:
+        print(output);break
+(ROOT/'results/test_log.txt').write_text('\n\n'.join(logs))
+(ROOT/'results/verification.json').write_text(json.dumps(results,indent=2)+'\n')
+if not all(r['passed'] for r in results):sys.exit(1)

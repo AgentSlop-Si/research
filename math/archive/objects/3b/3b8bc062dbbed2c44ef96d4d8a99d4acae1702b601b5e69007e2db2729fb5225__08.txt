@@ -1,0 +1,271 @@
+0001 """Independently authored audit checker; never imports or executes supplied files.
+0002 Only standard library, exact arithmetic, deterministic fixtures.
+0003 """
+0004 from itertools import product, combinations
+0005 from math import gcd, isqrt, comb
+0006 from random import Random
+0007 from collections import Counter
+0008 from pathlib import Path
+0009 import json, hashlib, time
+0010 
+0011 COUNTS=Counter()
+0012 RNG=Random(195417)
+0013 
+0014 def prime(p):
+0015     return p>=2 and all(p%d for d in range(2,isqrt(p)+1))
+0016 
+0017 def field(n):
+0018     p=n+1
+0019     while not prime(p): p+=n
+0020     for w in range(1,p):
+0021         if pow(w,n,p)==1 and all(pow(w,d,p)!=1 for d in range(1,n) if n%d==0): return p,w
+0022     raise AssertionError(n)
+0023 
+0024 def dft(x,p,w):
+0025     n=len(x)
+0026     return [sum(x[j]*pow(w,(-j*k)%n,p) for j in range(n))%p for k in range(n)]
+0027 
+0028 def rank(matrix,p):
+0029     a=[list(row) for row in matrix]
+0030     h=0
+0031     for j in range(len(a[0]) if a else 0):
+0032         candidates=[i for i in range(h,len(a)) if a[i][j]%p]
+0033         if not candidates: continue
+0034         z=candidates[0]; a[h],a[z]=a[z],a[h]
+0035         f=pow(a[h][j],-1,p); a[h]=[v*f%p for v in a[h]]
+0036         for i in range(h+1,len(a)):
+0037             f=a[i][j]; a[i]=[(v-f*u)%p for v,u in zip(a[i],a[h])]
+0038         h+=1
+0039         if h==len(a): break
+0040     return h
+0041 
+0042 def recurrence(seq,p,limit):
+0043     # Textbook dynamically allocated BM, independently implemented.
+0044     connection=[1]; previous=[1]; length=0; gap=1; last=1
+0045     for index,value in enumerate(seq):
+0046         delta=(value+sum(connection[j]*seq[index-j] for j in range(1,length+1)))%p
+0047         if not delta:
+0048             gap+=1; continue
+0049         new_length=index+1-length if 2*length<=index else length
+0050         if new_length>limit:return None
+0051         old=connection[:]
+0052         scale=delta*pow(last,-1,p)%p
+0053         connection += [0]*max(0,gap+len(previous)-len(connection))
+0054         for j,v in enumerate(previous):connection[j+gap]=(connection[j+gap]-scale*v)%p
+0055         if 2*length<=index:
+0056             length=new_length; previous=old; last=delta; gap=1
+0057         else:gap+=1
+0058     return connection[:length+1]
+0059 
+0060 def linear_solve(matrix,rhs,p):
+0061     a=[list(row)+[v] for row,v in zip(matrix,rhs)]; n=len(rhs)
+0062     for j in range(n):
+0063         pivot=next((i for i in range(j,n) if a[i][j]%p),None)
+0064         if pivot is None:return None
+0065         a[j],a[pivot]=a[pivot],a[j]
+0066         inv=pow(a[j][j],-1,p);a[j]=[v*inv%p for v in a[j]]
+0067         for i in range(n):
+0068             if i!=j:
+0069                 scale=a[i][j];a[i]=[(v-scale*u)%p for v,u in zip(a[i],a[j])]
+0070     return [row[-1] for row in a]
+0071 
+0072 def decode(seq,p,w,r):
+0073     m=len(seq)
+0074     if m<3*r:
+0075         z=dft(seq,p,w); inv=pow(m,-1,p)
+0076         return [(h,v*inv%p) for h,v in enumerate(z) if v] if sum(bool(v) for v in z)<=r else None
+0077     c=recurrence(seq,p,r)
+0078     if c is None:return None
+0079     s=len(c)-1
+0080     if not s:return [] if all(v%p==0 for v in seq) else None
+0081     nodes=[]
+0082     for h in range(m):
+0083         z=pow(w,h,p)
+0084         if sum(c[j]*pow(z,s-j,p) for j in range(s+1))%p==0:nodes.append((h,z))
+0085     if len(nodes)!=s:return None
+0086     weights=linear_solve([[pow(z,j,p) for _,z in nodes] for j in range(s)],seq[:s],p)
+0087     if weights is None or 0 in weights:return None
+0088     if any((seq[j]-sum(v*pow(z,j,p) for v,(_,z) in zip(weights,nodes)))%p for j in range(m)):return None
+0089     return [(h,v) for (h,_),v in zip(nodes,weights)]
+0090 
+0091 def fibers(x,p,w,q,r):
+0092     n=len(x);m=n//q
+0093     rows=[decode(x[t::q],p,pow(w,q,p),r) for t in range(q)]
+0094     if any(row is None for row in rows):return None
+0095     out=[0]*n
+0096     for t,row in enumerate(rows):
+0097         for h,c in row:
+0098             for k in range(h,n,m):out[k]=(out[k]+m*c*pow(w,(-t*k)%n,p))%p
+0099     return out,rows
+0100 
+0101 def make_fibers(n,p,w,q,modes):
+0102     m=n//q
+0103     return [sum(c*pow(w,q*h*(j//q),p) for h,c in modes[j%q])%p for j in range(n)]
+0104 
+0105 def eliminant(x,center,r,p):
+0106     # Generic subset dynamic-programming determinant over polynomials.
+0107     # Build same mathematical Hankel, no source implementation reused.
+0108     n=r+1;states={0:{0:1}}
+0109     for i in range(n):
+0110         nxt={}
+0111         for mask,poly in states.items():
+0112             for j in range(n):
+0113                 if mask>>j&1:continue
+0114                 sign=-1 if sum(mask>>k&1 for k in range(j+1,n))%2 else 1
+0115                 e=(i+j)*(i+j-1)//2;v=x[center-r+i+j]*sign
+0116                 dest=nxt.setdefault(mask|(1<<j),{})
+0117                 for deg,a in poly.items():dest[deg+e]=(dest.get(deg+e,0)+a*v)%p
+0118         states=nxt
+0119     shift=(r+1)*r*(r-1)//2; poly=states[(1<<n)-1]
+0120     assert all(v==0 for d,v in poly.items() if d<shift)
+0121     out=[poly.get(shift+j,0)%p for j in range(comb(r+2,3)+1)]
+0122     assert out[0]==((-1)**(r*(r+1)//2)*pow(x[center],r+1,p))%p
+0123     return out
+0124 
+0125 def chirp_decode(x,p,w,r):
+0126     n=len(x)
+0127     if not any(x):return 0,[]
+0128     c=next((j for j in range(r,n-r) if x[j]),None)
+0129     if c is None:return None
+0130     pol=eliminant(x,c,r,p);candidates=[]
+0131     for a in range(n//gcd(n,2)):
+0132         t=pow(w,(-2*a)%n,p)
+0133         if sum(v*pow(t,j,p) for j,v in enumerate(pol))%p==0:candidates.append(a)
+0134     assert len(candidates)<=comb(r+2,3)
+0135     for a in candidates:
+0136         modes=decode([x[j]*pow(w,(-a*j*j)%n,p)%p for j in range(n)],p,w,r)
+0137         if modes is not None:return a,modes
+0138     return None
+0139 
+0140 def gauss_row(n,p,w,a):
+0141     d=gcd(n,a);m=n//d
+0142     if m==1:return [n%p if c%n==0 else 0 for c in range(n)]
+0143     aa=a//d;eta=pow(w,d,p)
+0144     b=0 if m%2 else (m//2)%2
+0145     base=sum(pow(eta,(aa*j*j+b*j)%m,p) for j in range(m))%p
+0146     out=[]
+0147     for c in range(n):
+0148         if c%d:out.append(0);continue
+0149         cc=c//d
+0150         if m%2:
+0151             shift=cc*pow(2*aa,-1,m)%m
+0152         else:
+0153             if (cc-b)%2:out.append(0);continue
+0154             shift=0 if m==2 else ((cc-b)//2)*pow(aa,-1,m//2)%(m//2)
+0155         out.append(d*base*pow(eta,(-aa*shift*shift-b*shift)%m,p)%p)
+0156     return out
+0157 
+0158 def run():
+0159     start=time.time()
+0160     # Exact spectral membership oracle independent of recurrence.
+0161     for m,p,w,r in [(3,7,2,1),(4,5,2,1),(6,7,3,2)]:
+0162         for tup in product(range(p),repeat=m):
+0163             spec=dft(tup,p,w);want=sum(bool(v) for v in spec)<=r
+0164             modes=decode(tup,p,w,r)
+0165             assert (modes is not None)==want,(m,p,r,tup)
+0166             if modes is not None:
+0167                 assert [sum(c*pow(w,h*j,p) for h,c in modes)%p for j in range(m)]==list(tup)
+0168             COUNTS['exhaustive_row_membership_vectors']+=1
+0169             COUNTS['exhaustive_row_membership_accepts']+=want
+0170     # Every factorization at a diverse range of lengths, endpoint sizes included.
+0171     for n in [1,2,3,4,6,8,9,12,15,16,18,20,24,25,27,32,36,45,49,60,64,72,81,125]:
+0172         p,w=field(n)
+0173         for q in range(1,isqrt(n)+1):
+0174             if n%q:continue
+0175             m=n//q
+0176             for r in sorted(set([1,min(2,m),min(3,m)])):
+0177                 for trial in range(3):
+0178                     modes=[]
+0179                     for _ in range(q):
+0180                         k=RNG.randrange(min(r,m)+1)
+0181                         modes.append([(h,RNG.randrange(1,p)) for h in RNG.sample(range(m),k)])
+0182                     x=make_fibers(n,p,w,q,modes);res=fibers(x,p,w,q,r)
+0183                     assert res is not None and res[0]==dft(x,p,w)
+0184                     COUNTS['raw_fiber_cases']+=1;COUNTS['direct_dft_bins']+=n
+0185     # CRT factorization identities with arbitrary factor vectors, not chirps.
+0186     for a,b in [(2,3),(3,4),(3,5),(4,5),(5,6),(5,7),(7,9),(8,9),(9,10),(11,13)]:
+0187         n=a*b;p,w=field(n);ea=b*pow(b,-1,a);eb=a*pow(a,-1,b)
+0188         for r in range(1,4):
+0189             f=[[RNG.randrange(p) for _ in range(a)] for _ in range(r)]
+0190             g=[[RNG.randrange(p) for _ in range(b)] for _ in range(r)]
+0191             mat=[[sum(f[l][u]*g[l][v] for l in range(r))%p for v in range(b)] for u in range(a)]
+0192             assert rank(mat,p)<=r
+0193             x=[0]*n
+0194             for u,v in product(range(a),range(b)):x[(u*ea+v*eb)%n]=mat[u][v]
+0195             ff=[dft(row,p,pow(w,b,p)) for row in f];gg=[dft(row,p,pow(w,a,p)) for row in g]
+0196             out=[0]*n
+0197             for s,t in product(range(a),range(b)):out[(s*b+t*a)%n]=sum(ff[l][s]*gg[l][t] for l in range(r))%p
+0198             assert out==dft(x,p,w)
+0199             transformed=[[out[(s*b+t*a)%n] for t in range(b)] for s in range(a)]
+0200             assert rank(mat,p)==rank(transformed,p)
+0201             COUNTS['tensor_identity_and_rank_cases']+=1;COUNTS['direct_dft_bins']+=n
+0202     # Full-rank sparse fibers and growing r, with varying field/root.
+0203     for q in range(2,11):
+0204         n=q*q;p,w=field(n)
+0205         x=make_fibers(n,p,w,q,[[(t,t+1)] for t in range(q)])
+0206         assert rank([x[t::q] for t in range(q)],p)==q
+0207         assert fibers(x,p,w,q,1)[0]==dft(x,p,w)
+0208         COUNTS['maximal_rank_fiber_cases']+=1;COUNTS['direct_dft_bins']+=n
+0209     # Entire common-chirp phase quotient, including endpoints and nonunit phases.
+0210     for n in range(3,31):
+0211         p,w=field(n)
+0212         for r in range(1,min(3,n//3)+1):
+0213             for a in range(n):
+0214                 modes=[(h,RNG.randrange(1,p)) for h in RNG.sample(range(n),r)]
+0215                 x=[sum(c*pow(w,(a*j*j+h*j)%n,p) for h,c in modes)%p for j in range(n)]
+0216                 res=chirp_decode(x,p,w,r)
+0217                 assert res is not None,(n,r,a)
+0218                 aa,mm=res;row=gauss_row(n,p,w,aa)
+0219                 out=[sum(c*row[(h-k)%n] for h,c in mm)%p for k in range(n)]
+0220                 assert out==dft(x,p,w)
+0221                 COUNTS['common_chirp_phase_coverage_cases']+=1;COUNTS['direct_dft_bins']+=n
+0222     for n in range(1,41):
+0223         p,w=field(n)
+0224         for a in range(n):
+0225             expected=[sum(pow(w,(a*j*j+c*j)%n,p) for j in range(n))%p for c in range(n)]
+0226             assert gauss_row(n,p,w,a)==expected
+0227             COUNTS['all_length_gauss_rows']+=1;COUNTS['all_length_gauss_entries']+=n
+0228     # New degree-independent square-multiplier bound: N=d*s*s, Q=s, support <=d.
+0229     for d in range(1,9):
+0230         for s in [2,3,4,5]:
+0231             n=d*s*s;p,w=field(n)
+0232             for degree in [2,3,4,7,13]:
+0233                 coefficients=[RNG.randrange(n) for _ in range(degree+1)]
+0234                 x=[pow(w,sum(c*pow(j,k,n) for k,c in enumerate(coefficients))%n,p) for j in range(n)]
+0235                 row_supports=[sum(bool(z) for z in dft(x[t::s],p,pow(w,s,p))) for t in range(s)]
+0236                 assert max(row_supports)<=d
+0237                 res=fibers(x,p,w,s,d)
+0238                 assert res is not None and res[0]==dft(x,p,w)
+0239                 COUNTS['square_multiplier_polynomial_cases']+=1;COUNTS['direct_dft_bins']+=n
+0240     # Concrete default-divisor coverage gap at N=12.
+0241     n,p,w,q,r=12,13,2,2,1
+0242     x=make_fibers(n,p,w,q,[[(0,1)],[(1,2)]])
+0243     assert x==[1,2,1,8,1,6,1,11,1,5,1,7]
+0244     assert fibers(x,p,w,2,1)[0]==dft(x,p,w)
+0245     assert fibers(x,p,w,3,1) is None
+0246     ea,eb=4,9
+0247     matrix=[[x[(u*ea+v*eb)%n] for v in range(4)] for u in range(3)]
+0248     assert rank(matrix,p)==2
+0249     assert chirp_decode(x,p,w,1) is None
+0250     assert all(x) # maximal support coset is the whole group.
+0251     gap={'N':n,'p':p,'omega':w,'r':1,'raw_input':x,'accepted_Q':2,'default_Q':3,'default_CRT_rank':2,'common_chirp_rank_1':False,'support_step':1}
+0252     # Extension coefficient recovery formula checked against independent linear solve.
+0253     for p in [17,37,101,257]:
+0254         for s in range(1,min(12,p)):
+0255             z=RNG.sample(range(p),s);c=[RNG.randrange(p) for _ in range(s)]
+0256             y=[sum(v*pow(node,j,p) for node,v in zip(z,c))%p for j in range(s)]
+0257             recovered=[]
+0258             for i,node in enumerate(z):
+0259                 poly=[1];denom=1
+0260                 for k,other in enumerate(z):
+0261                     if k==i:continue
+0262                     new=[0]*(len(poly)+1)
+0263                     for j,v in enumerate(poly):new[j]=(new[j]-other*v)%p;new[j+1]=(new[j+1]+v)%p
+0264                     poly=new;denom=denom*(node-other)%p
+0265                 recovered.append(sum(poly[j]*y[j] for j in range(s))*pow(denom,-1,p)%p)
+0266             assert recovered==c
+0267             COUNTS['independent_vandermonde_cases']+=1
+0268     report={'status':'PASS','seed':195417,'method':'independently authored standard-library code; no supplied source imported or executed','counts':dict(COUNTS),'default_divisor_counterexample':gap,'seconds_diagnostic_only':round(time.time()-start,3)}
+0269     Path(__file__).with_name('independent_results.json').write_text(json.dumps(report,indent=2)+'\n')
+0270     print(json.dumps(report,indent=2))
+0271 if __name__=='__main__':run()

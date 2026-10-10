@@ -1,0 +1,25 @@
+"""Exact char-zero lift of transverse quadratic term via a 61x61 minor."""
+import json,sys
+from pathlib import Path
+import numpy as np
+OLD=(Path(__file__).resolve().parent/'prior_checkpoint' if (Path(__file__).resolve().parent/'prior_checkpoint').exists() else Path(__file__).resolve().parents[1]/'fft_nonlinear_compatibility_2026-10-09')
+sys.path.insert(0,str(OLD))
+import jacobian_gate as j
+from superconcentrator_gate import pivots,determinant_mod
+P=[7,0,6,3,4,1,2,5];p=12289
+
+def compute():
+    j.MOD=p
+    _,J,*_=j.basis(8,1,P,1011)
+    E=np.zeros((8,8),dtype=np.int64);E[0,7]=1
+    H=np.column_stack((J,E.flatten()))
+    assert j.rank_mod(J)==60 and j.rank_mod(H)==61
+    rows,cols=pivots(H)
+    assert len(rows)==len(cols)==61 and cols[-1]==80
+    det=determinant_mod(H[np.ix_(rows,cols)],p)
+    assert det!=0
+    return {'prime':p,'seed':1011,'rank_chart_jacobian':60,'rank_augmented_with_E':61,
+        'minor_size':61,'minor_columns':cols,'minor_rows':rows,'minor_determinant_mod_prime':det,
+        'quadratic_term_position':[0,7],
+        'logical_result':'Nonzero integer 61x61 minor proves E is transverse over Q and C to the Jacobian column space at the displayed integer parameter point.'}
+if __name__=='__main__':print(json.dumps(compute(),indent=2))

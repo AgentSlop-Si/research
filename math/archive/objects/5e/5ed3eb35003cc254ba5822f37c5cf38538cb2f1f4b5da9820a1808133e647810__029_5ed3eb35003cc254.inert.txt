@@ -1,0 +1,100 @@
+CROSS-BLOCK EXACT EXPONENTIAL-SUM AUDIT
+9 October 2026
+
+Problem: f_m = sum_{s=1}^k a_s z_s^m, 0 <= m < N, where the z_s are arbitrary distinct Nth roots of unity and k = Theta(log N). All N outputs must be produced exactly. This note counts field additions and multiplications, including scalar multiplications, in an algebraic-RAM model; output writes cost O(N). It does not assert a bit-complexity bound for arbitrary exact complex/algebraic input representations.
+
+BOTTOM LINE
+
+The elementary batch/diagonalization/repeated-squaring routes below do not, by themselves, establish an improvement over O(N log k). The strongest precise conclusion is a set of sufficient performance criteria for an improvement, not a lower bound against all algorithms. In particular, an O(N) multiplication-count theorem for thin matrix products must not be reported as O(N) total arithmetic work without auditing its additions and encoding/decoding transformations.
+
+1. BABY-STEP/GIANT-STEP RESHAPE
+
+Choose B and L = ceil(N/B), with harmless padding so BL = O(N). Form
+  U[r,s] = z_s^r,              0 <= r < B,
+  W[s,b] = a_s (z_s^B)^b,      0 <= b < L.
+Then
+  (UW)[r,b] = f_{r+bB}.
+The entire output is one B-by-k times k-by-L product. Consecutive power tables cost O(k(B+L)+k log B) field operations; the log term can be absorbed in this bound. Thus the standard explicitly materialized route has cost
+  T(B) = O(N + k(B+L)) + MM(B,k,L),
+where MM must denote TOTAL arithmetic operations, not bilinear rank.
+
+B approximately sqrt(N) makes table formation O(k sqrt(N)) = o(N), so writing down the two factors is not an inherent barrier. The nontrivial requirement is
+  MM(B,k,L) = o(N log k).
+For this explicit-table route, its other necessary overhead conditions are
+  k/B = o(log k),  k/L = o(log k),
+plus whatever fresh-support setup is used. These are easy for balanced B,L. This is a sufficient reduction, not a claim that an implicit algorithm must materialize both tables.
+
+Ordinary square-matrix blocking:
+If both outer dimensions are at least k, a k-by-k square algorithm with an actual fixed exponent w>2 yields
+  MM(B,k,L) = O(BL k^(w-2)) = O(N k^(w-2)).
+This is worse than N log k asymptotically. If, for example, B<k<=L, B-by-B tiles instead give O(N k B^(w-3)); with 2<w<3 this improves as B grows to k, so unbalancing the outer dimension below k does not repair this ordinary-blocking estimate. This is an audit of this bound, not a lower bound for rectangular multiplication.
+
+Explicit near-output-size rectangular bound:
+Williams states and supplies an implementation account of the Coppersmith routine: t-by-t^0.1 times t^0.1-by-t takes O(t^2 log^2 t) arithmetic operations. Taking t=Theta(k^10), padding, and tiling the two outer dimensions gives
+  O((N/t^2) t^2 log^2 t) = O(N log^2 k),
+with negligible edge padding when B,L approximately sqrt(N). This does not beat O(N log k). Using a larger tile only increases this particular logarithmic-overhead bound.
+
+Modern exponent-only rectangular statements of the form
+  MM(t,t^alpha,t) <= C_epsilon t^(2+epsilon)
+produce O(C_epsilon N k^(epsilon/alpha)) under polynomial-size tiling. Every fixed positive epsilon gives a power of k, eventually larger than log k. Neither t^(2+o(1)) nor N^(1+o(1)) specifies whether its excess factor is below log k. Choosing epsilon as a function of k requires a uniform quantitative bound on C_epsilon, construction cost, and padding. These may not be silently discarded.
+
+Sources for these distinctions:
+- Ryan Williams, Non-uniform ACC Circuit Lower Bounds, Lemma 4.3 and implementation discussion: https://www.cs.cmu.edu/~ryanw/acc-lbs.pdf . It explicitly distinguishes the old log-squared-overhead result from later exponent-only bounds.
+- Don Coppersmith, Rapid Multiplication of Rectangular Matrices (1982): https://epubs.siam.org/doi/10.1137/0211037 . Its headline quantity is essential multiplications.
+- Don Coppersmith, Rectangular Matrix Multiplication Revisited (1997): https://research.ibm.com/publications/rectangular-matrix-multiplication-revisited . Its theorem is for every fixed epsilon>0.
+- Josh Alman and Hantao Yu, Improving the Leading Constant of Matrix Multiplication (SODA 2025), especially Sections 1, 2.1, 2.4 and 6: https://arxiv.org/html/2410.20538v1 . This gives precise examples of why dimension-dependent rank-to-total-operation conversion overhead matters. Its improved subpolynomial overhead is not automatically a sublogarithmic overhead.
+
+2. BROCKETT-DOBKIN: PRECISE VERIFIED BOUNDARY
+
+The primary 1976 abstract states n^2+o(n^2) MULTIPLICATIONS for n-by-p times p-by-n when p <= log_2 n, using multiplication/division by 2. This is genuinely relevant: set n approximately sqrt(N). If k is a larger constant multiple of log N, split the inner dimension into O(1) groups satisfying the condition and sum their products. Thus an O(N) essential-product count is consistent with this reshape.
+
+But the abstract does not bound total additions/linear preprocessing/linear decoding by O(N), or even by o(N log k). I did not obtain an accessible full original construction sufficient to audit that cost. Therefore the result here remains:
+  VERIFIED: O(N) multiplication count is available through this classical thin-MM route.
+  NOT VERIFIED: O(N), or o(N log k), total arithmetic work through that route.
+It is incorrect to turn the first statement into the second merely because rank is near the output dimension. Nor does this unresolved cost prove that no such total-operation algorithm exists.
+
+The 1978 erratum is directly readable and only corrects signs in two formulas on page 625. It does not withdraw the headline complexity claim.
+- Original primary abstract: https://epubs.siam.org/doi/10.1137/0205041
+- Erratum: https://epubs.siam.org/doi/10.1137/0207021
+- Direct one-page erratum PDF: https://epubs.siam.org/doi/epdf/10.1137/0207021
+
+For fixed support, some linear forms on the U side could be precomputed. This is a reason to inspect the actual construction, not permission to omit the cost of the W-side forms or the output decoding. W is itself generated from only k amplitudes, so a structure-aware algorithm might differ from generic thin-MM costs.
+
+3. PRECOMPUTING A FIXED BLOCK CIRCUIT
+
+For given support, let C_z(B,k) be the total operation count of a linear circuit mapping a k-vector x to
+  (sum_s x_s z_s^r)_{0<=r<B}.
+Let P_z(B,k) be the cost of constructing the circuit/constants from fresh support. The bth input is x_s(b)=a_s(z_s^B)^b. It can be advanced in O(k) operations per block. Consequently
+  T = P_z(B,k) + O((N/B)(C_z(B,k)+k) + N).
+An actual improvement follows if
+  P_z(B,k)=o(N log k),
+  C_z(B,k)=o(B log k),
+  k=o(B log k).
+In particular, B=Theta(k), C_z=O(k), and polynomial-in-k setup would give O(N). Merely precomputing Bk coefficients gives a dense matvec of Bk operations, hence O(Nk), not O(N). Precomputing the FFT of a fixed convolution kernel removes one transform/constant factor; the variable transform and inverse transform generally remain O(k log k) per length-k block.
+
+Fresh support matters. Any polynomial-in-k setup is negligible compared with N here, but exponential-in-k setup needs its exponent/constant checked against N=exp(Theta(k)); it cannot automatically be called negligible. A universal table indexed by all k-subsets of N roots has binomial(N,k) possibilities and is not a small fresh-support preprocessing step. Reusing the same support across many independent calls is a different amortization regime from producing all outputs for one fresh support.
+
+4. DIAGONALIZATION AND REPEATED SQUARING
+
+The order-k recurrence has characteristic polynomial q(x)=product_s(x-z_s). Its companion matrix is diagonalizable because the roots are distinct. But the amplitudes a_s already ARE eigenbasis coordinates. Diagonalization cheaply advances k eigen-coordinates while leaving the task of emitting many linear combinations.
+
+For a length-B block the output map is exactly U times diag(z_s^(bB))a. Hence the cost returns to Section 3. In the recurrence basis, a dense k-by-k block transition costs O(k^2); over N/k blocks that is O(Nk). Structured/convolutional transitions can give O(k log k) per block, reproducing O(N log k). Precomputing transition powers reduces the cost of jumping to isolated indices or block boundaries; it does not itself emit all intermediate outputs.
+
+Likewise, x^m modulo q can be found by binary powering in O(M(k) log m) operations and contracted with an initial-moment functional, where M(k) is polynomial multiplication cost. This is excellent for an isolated index. Doing it at every index is wasteful; precomputing all residues still leaves either O(Nk) explicit data, or a blocked evaluation problem. In a quotient-algebra baby/giant construction, precompute x^r mod q and (x^B)^b mod q; the final pairings again make a rectangular product. Since the roots are already supplied, the diagonal power-table construction in Section 1 is even cheaper than generic modular polynomial multiplication for forming the giant steps.
+
+A modular-composition or power-projection result is useful only if its exact total-operation bound, after preprocessing, gives the necessary amortized per-output saving. For example, if a prepared routine emits k requested moments at cost C_fixed(k), then repeating it over N/k batches gives (N/k)C_fixed(k); a gain requires C_fixed(k)=o(k log k). A bare k^(1+o(1)) bound does not establish this. These statements are cost criteria, not a survey claim that no more sophisticated composition algorithm can help.
+
+Generating-function even/odd splitting has a related issue. At a fixed level, all residue subsequences share a denominator product_s(1-z_s^(2^j)t); support-dependent denominators can be shared. Numerators/states still vary between subsequences. Independent O(M(k)) state transforms on Theta(N/k) relevant blocks yield O((N/k)M(k))=O(N log k) for FFT multiplication. To beat it by batching, one must explicitly exploit the relation between those numerator/state inputs, or meet a genuine faster batched-transform bound. Shared denominators alone do not remove their variable arithmetic.
+
+5. REAL IMPROVEMENTS WITH EXTRA STRUCTURE
+
+These are valid sufficient examples but do not cover arbitrary support:
+- If all support lies in a multiplicative coset of a subgroup of size d=O(k), write z_s=z_0 eta^(j_s), eta^d=1. One d-point FFT produces a period g, and f_m=z_0^m g[m mod d]. This costs O(d log d+N), hence O(N) here.
+- If the degree-k annihilator q has only t nonleading nonzero coefficients, generate k seed values in O(k^2) and use the sparse recurrence in O(Nt). This beats N log k when t=o(log k), and is O(N) for constant t. Arbitrary support need not yield a sparse q. The always-available degree-N recurrence f_(m+N)=f_m is useless for generating the first N values from few seeds.
+- Collisions among z_s^B can lower the effective giant-step rank. Arbitrary distinct Nth roots can also have no such collisions for a chosen balanced B, so no uniform gain follows from periodicity alone.
+
+6. WHAT NOT TO CONCLUDE
+
+Low matrix rank of the reshaped output is a representation fact, not a runtime bound for writing/reconstructing it. Conversely, failure of the generic square-tiled, explicit Coppersmith, or independent-block estimates to beat N log k is not evidence of an unconditional Omega(N log k) lower bound for this k-input problem. All-output writing gives Omega(N) in the stated RAM model; there remains room between that and N log k.
+
+Independent arbitrary FFT blocks have a different input dimension from the highly dependent orbit of block inputs here. A lower bound or speedup for generic independent batches cannot be transferred without checking that distinction. Any claimed advance should specify: exact arithmetic model; fresh-support setup; total additions and scalar multiplications; materialization/output costs; parameter-dependent constants; and whether it exploits relations among the blocks rather than treating them as independent right-hand sides.

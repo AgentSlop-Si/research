@@ -1,0 +1,71 @@
+   1 import json,time
+   2 import numpy as np
+   3 try:
+   4     from scipy.fft import fft
+   5 except ImportError:
+   6     from numpy.fft import fft
+   7 from lazy_spectrum import LazySpectrum, PreparedBinView
+   8 
+   9 rng=np.random.default_rng(202610091)
+  10 rows=[]
+  11 
+  12 def once(fn):
+  13     t0=time.perf_counter_ns(); out=fn(); return (time.perf_counter_ns()-t0)/1e6,out
+  14 
+  15 for n in [16384,65536,262144]:
+  16     updates=500
+  17     q=64
+  18     support_k=32
+  19     x0=rng.standard_normal(n)+1j*rng.standard_normal(n)
+  20     support=rng.choice(n,size=support_k,replace=False)
+  21     bins=np.sort(rng.choice(n,size=q,replace=False))
+  22     update_slots=rng.integers(0,support_k,size=updates)
+  23     deltas=rng.normal(scale=.05,size=updates)+1j*rng.normal(scale=.05,size=updates)
+  24 
+  25     def fresh():
+  26         x=x0.copy(); _=fft(x); out=None
+  27         for slot,d in zip(update_slots,deltas):
+  28             x[support[slot]]+=d
+  29             out=fft(x)[bins]
+  30         return out
+  31 
+  32     def eager_full_phase_bank():
+  33         x=x0.copy(); cached=fft(x)
+  34         phases=np.exp((-2j*np.pi/n)*np.multiply.outer(support.astype(float),np.arange(n,dtype=float)))
+  35         out=None
+  36         for slot,d in zip(update_slots,deltas):
+  37             x[support[slot]]+=d
+  38             cached += d*phases[slot]
+  39             out=cached[bins]
+  40         return out, phases.nbytes
+  41 
+  42     def lazy():
+  43         x=x0.copy(); state=LazySpectrum.from_spectrum(fft(x)); out=None
+  44         for slot,d in zip(update_slots,deltas):
+  45             j=int(support[slot]);x[j]+=d;state.add_edit(j,d);out=state.bins(bins)
+  46         return out
+  47 
+  48     def prepared():
+  49         x=x0.copy(); base=fft(x); view=PreparedBinView(base,support.tolist(),bins.tolist()); out=None
+  50         for slot,d in zip(update_slots,deltas):
+  51             j=int(support[slot]);x[j]+=d;view.add_edit(j,d);out=view.values()
+  52         return out,view.phase_bytes,view.full_phase_cache_equivalent_bytes
+  53 
+  54     tf,of=once(fresh)
+  55     te,oe=once(eager_full_phase_bank)
+  56     tl,ol=once(lazy)
+  57     tp,op=once(prepared)
+  58     x=x0.copy()
+  59     for slot,d in zip(update_slots,deltas):x[support[slot]]+=d
+  60     truth=fft(x)[bins]
+  61     assert np.allclose(of,truth,rtol=1e-9,atol=1e-7)
+  62     assert np.allclose(oe[0],truth,rtol=1e-9,atol=1e-7)
+  63     assert np.allclose(ol,truth,rtol=1e-9,atol=1e-7)
+  64     assert np.allclose(op[0],truth,rtol=1e-9,atol=1e-7)
+  65     row=dict(n=n,updates=updates,support_k=support_k,bins=q,
+  66              fresh_ms=tf,eager_full_phase_bank_ms=te,lazy_dynamic_ms=tl,prepared_bin_view_ms=tp,
+  67              prepared_vs_fresh=tf/tp,prepared_vs_eager=te/tp,prepared_vs_lazy=tl/tp,
+  68              selective_phase_bytes=op[1],full_phase_bank_bytes=op[2],memory_reduction=op[2]/max(1,op[1]))
+  69     rows.append(row);print(row)
+  70 
+  71 with open('benchmark_prepared_bins_results.json','w') as f: json.dump(rows,f,indent=2)

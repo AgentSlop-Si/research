@@ -1,0 +1,134 @@
+   1 import json,time,statistics
+   2 import numpy as np
+   3 
+   4 from multi_view import SharedProjectedFourierStore,union_frequency_sets
+   5 from view_optimizer import AdaptiveSpectralOrganizer
+   6 
+   7 
+   8 def med_ms(fn,reps=5):
+   9     vals=[]; last=None
+  10     for _ in range(reps):
+  11         t=time.perf_counter_ns(); last=fn(); vals.append((time.perf_counter_ns()-t)/1e6)
+  12     return statistics.median(vals),last
+  13 
+  14 
+  15 def make_views(rng,n,C=8,q=32,clusters=1):
+  16     view_bins={}
+  17     per=C//clusters
+  18     used=set()
+  19     for g in range(clusters):
+  20         common=[]
+  21         while len(common)<3*q//4:
+  22             x=int(rng.integers(n))
+  23             if x not in used: common.append(x);used.add(x)
+  24         for j in range(per):
+  25             unique=[]
+  26             while len(unique)<q-len(common):
+  27                 x=int(rng.integers(n))
+  28                 if x not in used: unique.append(x);used.add(x)
+  29             view_bins[f'v{g*per+j}']=np.asarray(common+unique,dtype=np.intp)
+  30     return view_bins
+  31 
+  32 
+  33 def setup(seed=9201,n=262144,r=256,C=8,q=32,clusters=1,updates=4096):
+  34     rng=np.random.default_rng(seed)
+  35     vb=make_views(rng,n,C,q,clusters)
+  36     union,_,_=union_frequency_sets(vb,n)
+  37     # Precomputed projected Fourier basis. Random coefficients are sufficient
+  38     # for this planner benchmark; registration is benchmarked separately.
+  39     proj=(rng.standard_normal((r,len(union)))+1j*rng.standard_normal((r,len(union)))).astype(np.complex128)
+  40     c0=(rng.standard_normal(r)+1j*rng.standard_normal(r)).astype(np.complex128)
+  41     positions=np.sort(rng.choice(n,32,replace=False)).astype(np.intp)
+  42     ops=[]
+  43     for _ in range(updates):
+  44         if rng.random()<.9:
+  45             ops.append(('c',int(rng.integers(r)),complex(rng.standard_normal()*.005,rng.standard_normal()*.005)))
+  46         else:
+  47             ops.append(('p',int(rng.choice(positions)),complex(rng.standard_normal()*.005,rng.standard_normal()*.005)))
+  48     return vb,union,proj,c0,positions,ops
+  49 
+  50 
+  51 def apply(st,op):
+  52     kind,key,d=op
+  53     if kind=='c':st.add_coefficient(key,d)
+  54     else:st.add_point(key,d)
+  55 
+  56 
+  57 def due_names(t,scenario,C):
+  58     if scenario=='sync':
+  59         return [f'v{i}' for i in range(C)] if t%64==0 else []
+  60     if scenario=='async':
+  61         intervals=[1,2,4,8,16,32,64,128][:C]
+  62         return [f'v{i}' for i,h in enumerate(intervals) if t%h==0]
+  63     if scenario=='two_clusters':
+  64         half=C//2
+  65         if t%64==0:return [f'v{i}' for i in range(half)]
+  66         if t%64==32:return [f'v{i}' for i in range(half,C)]
+  67         return []
+  68     if scenario=='shift':
+  69         # first half synchronized, second half heterogeneous
+  70         if t<=2048:return [f'v{i}' for i in range(C)] if t%64==0 else []
+  71         intervals=[1,2,4,8,16,32,64,128][:C]
+  72         return [f'v{i}' for i,h in enumerate(intervals) if (t-2048)%h==0]
+  73     raise ValueError(scenario)
+  74 
+  75 
+  76 def run_one(scenario,mode,*,seed=9201,n=262144,r=256,C=8,q=32,updates=4096):
+  77     clusters=2 if scenario=='two_clusters' else 1
+  78     vb,union,proj,c0,positions,ops=setup(seed,n,r,C,q,clusters,updates)
+  79     st=SharedProjectedFourierStore(n,union,proj,vb,c0,prepared_positions=positions,event_capacity=1024,promote_after=None)
+  80     org=None
+  81     if mode=='adaptive':
+  82         org=AdaptiveSpectralOrganizer(st,sync_window=1,history_queries=20,min_history=4,
+  83             replan_every=24,merge_threshold=1.07,min_sync=.45,immediate_guard=1.08)
+  84     checksum=0.0
+  85     snapshots=[]
+  86     for t,op in enumerate(ops,1):
+  87         if org is None: apply(st,op)
+  88         else: apply(org,op)
+  89         due=due_names(t,scenario,C)
+  90         if due:
+  91             if mode=='sequential':
+  92                 for name in due:checksum+=float(st.query(name)[0].real)
+  93             elif mode=='oracle_batch':
+  94                 out=st.query_many(due)
+  95                 for name in due:checksum+=float(out[name][0].real)
+  96             else:
+  97                 # Deliberately issue sequential calls. The organizer must infer
+  98                 # the grouping from recent behavior; no batch hint is supplied.
+  99                 for name in due:checksum+=float(org.query(name)[0].real)
+ 100         if t%256==0:
+ 101             st.compact()
+ 102             if org is not None and t in (1024,2048,3072,4096):
+ 103                 snapshots.append((t,org.partition))
+ 104     extra={}
+ 105     if org is not None:
+ 106         extra={'partition':org.partition,'partition_snapshots':snapshots,
+ 107                'replans':org.stats.replans,'group_queries':org.stats.group_queries,
+ 108                'solo_queries':org.stats.solo_queries,'group_cache_hits':org.stats.group_cache_hits,
+ 109                'group_replays':org.stats.group_replays,'group_rebuilds':org.stats.group_rebuilds,
+ 110                'guarded_solo':org.stats.guarded_solo,'storage_bytes':org.storage_bytes}
+ 111     else: extra={'storage_bytes':st.storage_bytes}
+ 112     return checksum,extra
+ 113 
+ 114 
+ 115 def bench_scenario(scenario,reps=5):
+ 116     rows={}
+ 117     for mode in ('sequential','oracle_batch','adaptive'):
+ 118         ms,last=med_ms(lambda:run_one(scenario,mode),reps)
+ 119         checksum,extra=last
+ 120         rows[mode]={'ms':ms,'checksum':checksum,**extra}
+ 121     ref=rows['sequential']['checksum']
+ 122     for mode in rows: rows[mode]['checksum_abs_diff']=abs(rows[mode]['checksum']-ref)
+ 123     rows['adaptive']['speedup_vs_sequential']=rows['sequential']['ms']/rows['adaptive']['ms']
+ 124     rows['adaptive']['slowdown_vs_oracle']=rows['adaptive']['ms']/rows['oracle_batch']['ms']
+ 125     rows['oracle_batch']['speedup_vs_sequential']=rows['sequential']['ms']/rows['oracle_batch']['ms']
+ 126     return rows
+ 127 
+ 128 if __name__=='__main__':
+ 129     out={}
+ 130     for sc in ('sync','two_clusters','async','shift'):
+ 131         print('RUN',sc,flush=True)
+ 132         out[sc]=bench_scenario(sc,5)
+ 133         print(json.dumps(out[sc],indent=2),flush=True)
+ 134     open('benchmark_view_optimizer_results.json','w').write(json.dumps(out,indent=2))

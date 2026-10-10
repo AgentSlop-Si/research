@@ -1,0 +1,296 @@
+===== SOURCE 67 fft_orbit_correction_research/cycle_flow/audit.py SHA256 a82be959c5926d7f147be5d52339dca7da25bc3450c4c93dc5431293695b5bed =====
+   1 import json
+   2 from pathlib import Path
+   3 import random
+   4 from cycle_flow import compile_flow, apply_compiled, apply_explicit
+   5 from prior_exact_arithmetic import PrimeField, CyclotomicField
+   6 
+   7 
+   8 def run():
+   9     rng=random.Random(80721)
+  10     cases=[]; bases=0; choices=0
+  11     fields=[(PrimeField(65537),'F65537',(2,4,8,16)),
+  12             (PrimeField(998244353),'F998244353',(2,4,8,16))]
+  13     fields += [(CyclotomicField(n),f'Q(zeta{n})',(n,)) for n in (2,4,8)]
+  14     for field,label,lengths in fields:
+  15         for n in lengths:
+  16             q=field.root(n)
+  17             for logb in range(1,n.bit_length()):
+  18                 b=1<<logb
+  19                 standard=list(range(0,n,n//b))
+  20                 patterns=[('complete',standard),
+  21                           ('one_forward',[(standard[0]+1)%n]+standard[1:]),
+  22                           ('one_backward',[(standard[0]-1)%n]+standard[1:]),
+  23                           ('random',[rng.randrange(n) for _ in range(b)])]
+  24                 for name,exps in patterns:
+  25                     plan=compile_flow(n,exps)
+  26                     brute=min(sum(abs(f-shift) for f in plan.raw_flow)
+  27                               for shift in range(min(plan.raw_flow)-1,max(plan.raw_flow)+2))
+  28                     assert plan.distance==brute
+  29                     choices+=1
+  30                     for j in range(n):
+  31                         x=[field.one if k==j else field.zero for k in range(n)]
+  32                         got,counts=apply_compiled(field,q,plan,x)
+  33                         want,_=apply_explicit(field,n,q,exps,x)
+  34                         assert got==want,(label,n,b,name,j)
+  35                         assert counts['correction']['field_operations'].get('mul',0)==(n-1)*plan.distance
+  36                         bases+=1
+  37                     cases.append({'field':label,'n':n,'b':b,'pattern':name,
+  38                                   'phase_exponents':exps,'cycle_distance':plan.distance,
+  39                                   'flow':list(plan.flow),'basis_vectors':n})
+  40     # Large instance follows the proved single-defect identity directly.
+  41     n=4096; field=PrimeField(998244353); q=field.root(n)
+  42     exps=list(range(n)); exps[0]=1
+  43     plan=compile_flow(n,exps)
+  44     x=[field.integer(rng.randrange(field.p)) for _ in range(n)]
+  45     got,counts=apply_compiled(field,q,plan,x)
+  46     expected=[x[0]]+[field.sub(x[j],x[j-1]) for j in range(1,n)]
+  47     assert got==expected and plan.distance==1
+  48     report={'status':'PASS','operator_cases':len(cases),'complete_basis_vectors':bases,
+  49             'median_optimality_cases':choices,'cases':cases,
+  50             'large_single_defect':{'n':n,'b':n,'distance':1,'counts':counts,
+  51              'verification':'Compared with proved first-difference formula, not N explicit full convolutions.'},
+  52             'scope':'Exact restricted-operator compiler; arbitrary inputs; no general FFT bound.'}
+  53     Path(__file__).with_name('results.json').write_text(json.dumps(report,indent=2)+'\n')
+  54     print(json.dumps({k:v for k,v in report.items() if k not in ('cases','large_single_defect')}))
+  55 
+  56 
+  57 if __name__=='__main__':run()
+===== END SOURCE 67; 3033 bytes; 57 lines =====
+===== SOURCE 68 fft_orbit_correction_research/cycle_flow/cycle_flow.py SHA256 c78b642a2b05f2421ad0f910e524c3f02ee327fe2f97cc125a33d8525338084f =====
+   1 """Compile q-kernel phase histograms into a norm and minimum cycle-flow correction.
+   2 
+   3 Only sequential same-root, same-length triangular convolution nodes are accepted.
+   4 The operator class is restricted; every input vector is allowed.
+   5 """
+   6 from dataclasses import dataclass
+   7 from collections import Counter
+   8 from fixed_kernel import Counted, prepare, lower_convolution
+   9 from linear_filters import apply_factor_powers, counted_power
+  10 from orbit_rewrite import collapsed_orbit
+  11 
+  12 
+  13 @dataclass(frozen=True)
+  14 class FlowPlan:
+  15     n: int
+  16     b: int
+  17     exponents: tuple
+  18     raw_flow: tuple
+  19     median: int
+  20     flow: tuple
+  21     distance: int
+  22     word_preparation_bound: str = 'O(N+b), deterministic counting median; b<=N'
+  23 
+  24 
+  25 def compile_flow(n, exponents):
+  26     exponents=tuple(exponents)
+  27     b=len(exponents)
+  28     if n<2 or n&(n-1) or b<2 or b&(b-1) or b>n or n%b:
+  29         raise ValueError('N,b powers of two, 2<=b<=N')
+  30     if any(type(e) is not int or not 0<=e<n for e in exponents):
+  31         raise ValueError('symbolic phase exponents must be integers in [0,N)')
+  32     delta=[0]*n
+  33     for e in exponents: delta[e]+=1
+  34     for e in range(0,n,n//b): delta[e]-=1
+  35     prefix=0; raw=[]
+  36     for d in delta:
+  37         prefix-=d
+  38         raw.append(prefix)
+  39     assert prefix==0
+  40     # Raw flows lie in [-b,b]. Counting selects a median in linear word work.
+  41     counts=[0]*(2*b+1)
+  42     for f in raw: counts[f+b]+=1
+  43     cumulative=0
+  44     for i,c in enumerate(counts):
+  45         cumulative+=c
+  46         if cumulative>n//2:
+  47             median=i-b
+  48             break
+  49     flow=tuple(f-median for f in raw)
+  50     assert all(flow[(e-1)%n]-flow[e]==delta[e] for e in range(n))
+  51     return FlowPlan(n,b,exponents,tuple(raw),median,flow,sum(abs(f) for f in flow))
+  52 
+  53 
+  54 def apply_compiled(field, q, plan, x):
+  55     if len(x)!=plan.n: raise ValueError('wrong input length')
+  56     base,base_counts=collapsed_orbit(field,plan.n,q,plan.b,x)
+  57     corrections={e:f for e,f in enumerate(plan.flow) if f}
+  58     result,correction_counts=apply_factor_powers(field,base,corrections,q)
+  59     assert correction_counts['filter_passes']==plan.distance
+  60     return result, {'base':base_counts,'correction':correction_counts,
+  61                     'cycle_distance':plan.distance,'compiler_word_work':plan.word_preparation_bound}
+  62 
+  63 
+  64 def apply_explicit(field,n,q,exponents,x):
+  65     """Independent direct full operator word; no norm or cycle-flow identity."""
+  66     plan=prepare(field,n,q)
+  67     c=Counted(field); traffic=Counter(); value=list(x)
+  68     for e in exponents:
+  69         phase=counted_power(c,q,e)
+  70         power=field.one; kernel=[]
+  71         for j in range(n):
+  72             kernel.append(c.mul(plan.kernel[j],power))
+  73             if j+1<n: power=c.mul(power,phase)
+  74         value=lower_convolution(c,kernel,value,traffic)
+  75     return value, {'kernel_preparation':plan.preparation,'field_operations':dict(c.count),
+  76                    'logical_array_traffic':dict(traffic)}
+===== END SOURCE 68; 2876 bytes; 76 lines =====
+===== SOURCE 69 fft_orbit_correction_research/cycle_flow/linear_filters.py SHA256 bdc387115919139d072ca1da1045343fc2352ef1aa4418319b36e4ab091628cf =====
+   1 """Charged exact first-order factors for the q-orbit correction compiler."""
+   2 from collections import Counter
+   3 from fixed_kernel import Counted
+   4 
+   5 
+   6 def counted_power(counter, base, exponent):
+   7     """Nonnegative binary powering with every field multiplication charged."""
+   8     if exponent < 0:
+   9         raise ValueError('nonnegative exponent required')
+  10     out = counter.one
+  11     while exponent:
+  12         if exponent & 1:
+  13             out = counter.mul(out, base)
+  14         exponent >>= 1
+  15         if exponent:
+  16             base = counter.mul(base, base)
+  17     return out
+  18 
+  19 
+  20 def apply_factor_powers(field, x, factor_powers, q):
+  21     """Apply product_e (I-q^e S)^f[e], modulo the length-N nilpotent shift.
+  22 
+  23 q must have order N=len(x). Positive powers use y_i=x_i-c*x_(i-1).
+  24 Negative powers use y_i=x_i+c*y_(i-1); no data-dependent division occurs.
+  25 The dictionary is expected to contain a compiled signed flow. This routine
+  26     counts all coefficient generation, copies, reads, writes, and field operations.
+  27     A single deterministic power table uses N-1 multiplications. Every positive
+  28     factor updates in descending order; negative factors update ascending, so
+  29     only the output copy and O(N) coefficient table are materialized.
+  30 It does not hide the cost of compiling the input operator graph into that flow.
+  31 """
+  32     n = len(x)
+  33     if n < 1:
+  34         raise ValueError('nonempty vector required')
+  35     canonical = Counter()
+  36     for exponent, multiplicity in factor_powers.items():
+  37         if not isinstance(exponent, int) or not isinstance(multiplicity, int):
+  38             raise ValueError('integer exponents and multiplicities required')
+  39         canonical[exponent % n] += multiplicity
+  40     root_counter, operation_counter = Counted(field), Counted(field)
+  41     traffic = Counter({'initial_copy_reads': n, 'initial_copy_writes': n})
+  42     value = list(x)
+  43     powers = [field.one]
+  44     for _ in range(1, n):
+  45         powers.append(root_counter.mul(powers[-1], q))
+  46     traffic['coefficient_generation_reads'] = n-1
+  47     traffic['coefficient_table_writes'] = n
+  48     applied = distinct = 0
+  49     for exponent, multiplicity in canonical.items():
+  50         if not multiplicity:
+  51             continue
+  52         distinct += 1
+  53         coefficient = powers[exponent]
+  54         for _ in range(abs(multiplicity)):
+  55             indices = range(n-1, 0, -1) if multiplicity > 0 else range(1, n)
+  56             for j in indices:
+  57                 term = operation_counter.mul(coefficient, value[j-1])
+  58                 value[j] = (operation_counter.sub(value[j], term) if multiplicity > 0
+  59                             else operation_counter.add(value[j], term))
+  60             applied += 1
+  61             traffic['filter_vector_reads'] += 2*(n-1)
+  62             traffic['filter_vector_writes'] += n-1
+  63     traffic['coefficient_lookups'] = distinct
+  64     return value, {'coefficient_preparation': dict(root_counter.count),
+  65         'field_operations': dict(operation_counter.count), 'array_traffic': dict(traffic),
+  66         'filter_passes': applied, 'distinct_coefficients': distinct,
+  67         'canonicalization_entries_read': len(factor_powers)}
+===== END SOURCE 69; 3072 bytes; 67 lines =====
+===== SOURCE 70 fft_orbit_correction_research/cycle_flow/orbit_rewrite.py SHA256 79d7429b6aa0e2665a59cd82d43464de584cd04a615c17a21348b64bd7378f61 =====
+   1 """Exact conditional compiler rule for a complete orbit of Toeplitz kernels.
+   2 
+   3 This is an operator-pattern rewrite, valid for every input. It is not a general
+   4 DFT evaluator and does not collapse applications to separate input vectors.
+   5 """
+   6 from collections import Counter
+   7 
+   8 from fixed_kernel import Counted, lower_convolution, prepare
+   9 from linear_filters import counted_power
+  10 
+  11 
+  12 def _validate(n, b, x):
+  13     if n < 2 or n & (n-1) or b < 2 or b & (b-1) or n % b:
+  14         raise ValueError('N and b must be powers of two, with 2 <= b <= N')
+  15     if len(x) != n:
+  16         raise ValueError('input length differs from N')
+  17 
+  18 
+  19 def full_orbit_reference(field, n, q, b, x):
+  20     """Directly apply b sequential full-size coefficient-modulated kernels.
+  21 
+  22 The orbit root is q^(N/b); all phases and coefficient tables are built here.
+  23 This slow audit path is not a claimed fast algorithm.
+  24 """
+  25     _validate(n, b, x)
+  26     plan = prepare(field, n, q)
+  27     c, traffic = Counted(field), Counter()
+  28     xi = counted_power(c, q, n//b)
+  29     v, phase = list(x), field.one
+  30     for _ in range(b):
+  31         scalar, kernel = field.one, []
+  32         for j in range(n):
+  33             kernel.append(c.mul(plan.kernel[j], scalar))
+  34             if j+1 < n:
+  35                 scalar = c.mul(scalar, phase)
+  36         v = lower_convolution(c, kernel, v, traffic)
+  37         phase = c.mul(phase, xi)
+  38     return v, {'field_operations': dict(c.count), 'array_traffic': dict(traffic),
+  39                'base_kernel_preparation': plan.preparation}
+  40 
+  41 
+  42 def collapsed_orbit(field, n, q, b, x):
+  43     """Apply the recognized orbit as b shorter residue-chain convolutions.
+  44 
+  45 No full-size kernel is prepared. q^b is formed with log2(b) squarings. The
+  46 constructor assumes the graph pattern is already verified; a pattern matcher
+  47 must inspect its b nodes and symbolic phase labels in O(b) work.
+  48 """
+  49     _validate(n, b, x)
+  50     m = n//b
+  51     root_counter = Counted(field)
+  52     small_q = q
+  53     for _ in range(b.bit_length()-1):
+  54         small_q = root_counter.mul(small_q, small_q)
+  55     if m == 1:
+  56         return list(x), {'root_preparation': dict(root_counter.count),
+  57             'kernel_preparation': {}, 'field_operations': {},
+  58             'array_traffic': {'output_copy_reads': n, 'output_copy_writes': n},
+  59             'chain_count': b, 'chain_length': m}
+  60     plan = prepare(field, m, small_q)
+  61     c, traffic = Counted(field), Counter()
+  62     out = [field.zero] * n
+  63     for residue in range(b):
+  64         chain = [x[residue+b*j] for j in range(m)]
+  65         result = lower_convolution(c, plan.kernel, chain, traffic)
+  66         for j, value in enumerate(result):
+  67             out[residue+b*j] = value
+  68     traffic['gather_reads'] += n
+  69     traffic['gather_writes'] += n
+  70     traffic['scatter_reads'] += n
+  71     traffic['scatter_writes'] += n
+  72     return out, {'root_preparation': dict(root_counter.count),
+  73         'kernel_preparation': plan.preparation, 'field_operations': dict(c.count),
+  74         'array_traffic': dict(traffic), 'chain_count': b, 'chain_length': m}
+  75 
+  76 
+  77 def false_fourier_collapse(field, plan, x):
+  78     """Deliberately wrong negative control: pretend diag(d)R equals J.
+  79 
+  80 F=S T diag(d) R T R S, but the legal norm rewrite needs T J T.
+  81 This routine replaces that actual middle operator with J to exhibit failure.
+  82 """
+  83     n = plan.n
+  84     v = [field.mul(a, z) for a, z in zip(plan.factorial, x)]
+  85     v.reverse()
+  86     v = collapsed_orbit(field, n, plan.q, 2, v)[0]
+  87     v = [field.neg(z) if j % 2 else z for j, z in enumerate(v)]
+  88     return [field.mul(a, z) for a, z in zip(plan.factorial, v)]
+===== END SOURCE 70; 3499 bytes; 88 lines =====

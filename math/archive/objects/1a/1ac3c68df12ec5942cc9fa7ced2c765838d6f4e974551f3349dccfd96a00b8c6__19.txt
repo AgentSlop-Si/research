@@ -1,0 +1,36 @@
+0001 """Vectorized numerical backend for the sparse-surrogate experiment.
+0002 
+0003 Same radix identity as hybrid_sparse.sparse_dft, but vectorizes the O(N)
+0004 phase construction to avoid Python loops over sampled support.
+0005 """
+0006 from __future__ import annotations
+0007 import math
+0008 import numpy as np
+0009 try:
+0010     from scipy import fft as sp_fft
+0011 except Exception:
+0012     sp_fft=None
+0013 
+0014 
+0015 def sparse_dft_vectorized(n:int, sparse:dict[int,complex]) -> tuple[np.ndarray,int]:
+0016     if n<1 or n&(n-1): raise ValueError('n must be power of two')
+0017     if not sparse: return np.zeros(n,dtype=np.complex128),1
+0018     js=np.fromiter(sparse.keys(),dtype=np.int64,count=len(sparse))
+0019     vals=np.fromiter(sparse.values(),dtype=np.complex128,count=len(sparse))
+0020     k=len(js); b=1<<(max(1,k)-1).bit_length(); m=n//b
+0021     r=(js % b).astype(np.intp); t=(js//b).astype(np.float64)
+0022     q=np.arange(m,dtype=np.float64)
+0023     # phase[s,q] = exp(-2pi i * t_s*q/m), at most k*m <= N terms.
+0024     phase=np.exp((-2j*np.pi/m)*np.outer(t,q))
+0025     contrib=vals[:,None]*phase
+0026     intermediate=np.zeros((b,m),dtype=np.complex128)
+0027     # Scatter-add sampled rows by residue r, fully in compiled NumPy.
+0028     np.add.at(intermediate,r,contrib)
+0029     active=np.unique(r)
+0030     if active.size:
+0031         tw=np.exp((-2j*np.pi/n)*np.outer(active.astype(float),q))
+0032         intermediate[active,:]*=tw
+0033     a=intermediate.T # (m,b)
+0034     if sp_fft is not None: freq=sp_fft.fft(a,axis=1)
+0035     else: freq=np.fft.fft(a,axis=1)
+0036     return np.asarray(freq.T.reshape(n),dtype=np.complex128),b

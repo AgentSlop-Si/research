@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Fresh independent determinant control for the derived kernel formula."""
+import importlib.util,json,math
+from pathlib import Path
+p=Path(__file__).with_name('check_joint_orbit.py');s=importlib.util.spec_from_file_location('own_checker',p);a=importlib.util.module_from_spec(s);s.loader.exec_module(a)
+def determinant(A,p):
+ A=[r[:] for r in A];d=1
+ for i in range(len(A)):
+  j=next((j for j in range(i,len(A)) if A[j][i]),None)
+  if j is None:return 0
+  if j!=i:A[i],A[j]=A[j],A[i];d=-d
+  z=A[i][i];d=d*z%p;zi=pow(z,-1,p)
+  for j in range(i+1,len(A)):
+   ratio=A[j][i]*zi%p
+   for k in range(i,len(A)):A[j][k]=(A[j][k]-ratio*A[i][k])%p
+ return d%p
+out={'determinants':0,'q_difference_coefficient_checks':0,'sizes':[]}
+for m in [2,3,4,5,6,8,9,12,16,24,32]:
+ p,o,L,w=a.field_for(m);eta=pow(o,m,p);out['sizes'].append(m)
+ for h in range(m):
+  q=o*pow(eta,-h,p)%p;F=1;seq=[]
+  for r in range(m):
+   if r:F=F*(1-pow(q,r,p))%p
+   seq.append(pow(q,r*(r-1)//2,p)*pow(F,-1,p)%p)
+  for r in range(1,m):
+   assert (1-pow(q,r,p))*seq[r]%p==pow(q,r-1,p)*seq[r-1]%p
+   out['q_difference_coefficient_checks']+=1
+  for ell in range(m):
+   for n in range(1,(m-ell+1)//2+1):
+    if ell+2*n-2>=m:continue
+    H=[[seq[ell+i+j] for j in range(n)] for i in range(n)]
+    rhs=pow(q,sum(j*(j-1)//2 for j in range(n)),p)
+    xs=[pow(q,ell+i,p) for i in range(n)]
+    for i in range(n):
+     rhs=rhs*seq[ell+i]%p
+     for k in range(1,n):rhs=rhs*pow(1-pow(q,ell+i+k,p),-1,p)%p
+     for j in range(i+1,n):rhs=rhs*(xs[j]-xs[i])%p
+    lhs=determinant(H,p)
+    assert lhs==rhs and lhs
+    out['determinants']+=1
+Path(__file__).with_name('HANKEL_GATE_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))

@@ -1,0 +1,67 @@
+0001 """Independent checks for the audit-derived rational mixer and scalar branches."""
+0002 from fractions import Fraction as Q
+0003 from math import factorial,comb
+0004 import random,json,pathlib
+0005 B=pathlib.Path(__file__).resolve().parent
+0006 
+0007 def rank(a):
+0008  a=[[Q(x) for x in r] for r in a];n=len(a);k=0
+0009  for j in range(len(a[0])):
+0010   i=next((i for i in range(k,n) if a[i][j]),None)
+0011   if i is None:continue
+0012   a[k],a[i]=a[i],a[k];c=a[k][j];a[k]=[x/c for x in a[k]]
+0013   for i in range(k+1,n):
+0014    c=a[i][j];a[i]=[x-c*y for x,y in zip(a[i],a[k])]
+0015   k+=1
+0016   if k==n:break
+0017  return k
+0018 
+0019 def green(s,a):
+0020  n=len(s);G=[[Q(0)]*n for _ in range(n)]
+0021  for j in range(n):
+0022   i=j
+0023   for d in range(n):G[i][j]=a**d/(1-a**n);i=s[i]
+0024  return G
+0025 
+0026 def mv(H,x,p):return [sum(a*b for a,b in zip(row,x))%p for row in H]
+0027 def hom(n,a,b,d,p):return [[(a if i>j else b if i<j else d)%p for j in range(n)] for i in range(n)]
+0028 def inter(n,a,b,d,p):
+0029  f=b%p!=0;s=b if f else a;o=a if f else b;K=[[0]*n for _ in range(n)]
+0030  for i in range(n):K[i][(i+1)%n if f else (i-1)%n]=s if (i<n-1 if f else i>0) else o
+0031  BB=[[(K[i][j]-s*int(i==j))%p for j in range(n)] for i in range(n)]
+0032  AA=[[((d-s)*K[i][j]+s*(o-d)*int(i==j))%p for j in range(n)] for i in range(n)]
+0033  return AA,BB,f
+0034 
+0035 out={'rational_mixer':[]};rng=random.Random(270)
+0036 from itertools import combinations
+0037 for n in [4,6,8,10]:
+0038  order=list(range(n));rng.shuffle(order);w=[0]*n
+0039  for i in range(n):w[order[i]]=order[(i+1)%n]
+0040  z=[(j+1)%n for j in range(n)];G=green(z,Q(1,4));H=green(w,Q(1,5));m=n//2;lam=factorial(m)*(2*20**n)**m+2
+0041  S=[[a+lam*b for a,b in zip(r,s)] for r,s in zip(G,H)];mini=n
+0042  for I in combinations(range(n),m):
+0043   J=[j for j in range(n) if j not in I];rr=rank([[S[i][j] for j in J] for i in I]);mini=min(mini,rr)
+0044   assert rr>=max(sum(z[j] in I for j in J),sum(w[j] in I for j in J))
+0045  out['rational_mixer'].append({'n':n,'lambda_bits':lam.bit_length(),'all_balanced_cuts':comb(n,m),'minimum_exact_rational_rank':mini})
+0046 
+0047 cnt=0
+0048 for p,g in [(12289,11),(65537,3)]:
+0049  for n in [16,32,64]:
+0050   omega=pow(g,(p-1)//n,p)
+0051   for t in range(40):
+0052    a,b,d=[rng.randrange(1,p) for _ in range(3)]
+0053    if t%3==0:a=0
+0054    if t%3==1:b=0
+0055    A,Bb,f=inter(n,a,b,d,p);H=hom(n,*[rng.randrange(p) for _ in range(3)],p)
+0056    # Scalar first: choose the column that becomes frequency one after right permutation.
+0057    lhs=mv(Bb,[pow(omega,i,p) for i in range(n)],p);j=rng.randrange(n);v=[r[j] for r in H];rng.shuffle(v);rhs=mv(A,v,p)
+0058    idx=range(n-1) if f else range(1,n)
+0059    assert len({lhs[i] for i in idx})==n-1 and len({rhs[i] for i in idx})<=9
+0060    # Scalar last: row permutation leaves number of distinct values unchanged.
+0061    j=1 if f else 0;x=[r[j] for r in Bb]
+0062    lhs=[sum(x[k]*pow(omega,i*k,p) for k in range(n))%p for i in range(n)]
+0063    v=[r[j] for r in A];rng.shuffle(v);rhs=mv(H,v,p)
+0064    assert len(set(lhs))==n and len(set(rhs))<=5
+0065    cnt+=2
+0066 out['scalar_endpoint_witness_checks']=cnt
+0067 (B/'FUSION_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))

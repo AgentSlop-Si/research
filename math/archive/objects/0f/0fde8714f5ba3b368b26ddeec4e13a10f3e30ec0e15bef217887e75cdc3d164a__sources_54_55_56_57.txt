@@ -1,0 +1,390 @@
+===== SOURCE 54 fft_new_material_fusion_checkpoint_20261009/fft_shrinking_certified_fusion_research/run_audit.py SHA256 1027c43f88ca80a1d443556ce4c4743ace30a42fcad5a6842570a9a3a79d1366 =====
+   1 """Audit the symbolic growing schedule and finite complete-table wide blocks."""
+   2 import cmath
+   3 from decimal import Decimal, localcontext
+   4 from fractions import Fraction
+   5 import hashlib
+   6 import json
+   7 import math
+   8 from pathlib import Path
+   9 import random
+  10 import sys
+  11 
+  12 HERE = Path(__file__).resolve().parent
+  13 sys.path.insert(0, str(HERE.parent / "fft_wordram_decoder_research"))
+  14 sys.path.insert(0, str(HERE.parent / "fft_control_variate_fusion_research"))
+  15 from guarded_decoder import GuardedDecoder, _phasors, _trig_parameters, WordAudit
+  16 from control_variate import fuse
+  17 from parameter_schedule import plan
+  18 
+  19 
+  20 def as_fraction(value):
+  21     return Fraction(value["numerator"], value["denominator"])
+  22 
+  23 
+  24 def main():
+  25     schedules = []
+  26     for mode in ("linear", "subfft"):
+  27         for c in (0, 1, 3):
+  28             for L in (8, 32, 64, 128, 256, 1024, 4096, 65536, 1 << 20, 1 << 24):
+  29                 row = plan(L, failure_power=c, mode=mode)
+  30                 if row["status"] == "valid_growing_schedule":
+  31                     assert row["key_bits"] <= L // 2
+  32                     assert as_fraction(row["total_error_upper"]) <= as_fraction(row["target_error_factor"]) / 2
+  33                     if L >= 256:
+  34                         assert row["cold_work_below_N_certified"]
+  35                         assert row["cold_memory_below_N_certified"]
+  36                     # Widths in this finite audit stay within these conservative
+  37                     # uniform constants; the proof gives the general bounds.
+  38                     ell = row["log2_log2_N_ceiling"]
+  39                     assert row["descriptor_bits"] <= 12 * ell + 30
+  40                     assert row["trig_working_precision"] <= 8 * ell + 64
+  41                     assert row["trig_degree"] <= 8 * ell + 64
+  42                 schedules.append(row)
+  43     for L in (128, 256, 1024, 65536, 1 << 20):
+  44         for tau in (Fraction(1), Fraction(L, 2), Fraction(L, max(1, L.bit_length() - 1) ** 2), Fraction(L)):
+  45             if tau < 1:
+  46                 continue
+  47             row = plan(L, mode="frontier", tau=tau)
+  48             if row["status"] == "valid_growing_schedule":
+  49                 assert as_fraction(row["packed_adds_over_N_tau_upper"]) < 100_000
+  50                 assert as_fraction(row["total_error_upper"]) <= as_fraction(row["target_error_factor"]) / 2
+  51             schedules.append(row)
+  52 
+  53     rng = random.Random(550124)
+  54     records = []
+  55     configurations = [
+  56         # Wide B > log2 N, complete g=2 table, multiple packed words. Coarse
+  57         # grids keep literal table enumeration finite; these are functional
+  58         # tests, not points in the eventual asymptotic N**gamma regime.
+  59         dict(N=129, sample_count=256, block_size=16, phase_grid=4,
+  60              slope_grid=64, group_size=2, lane_step_bits=4,
+  61              trig_bits=8, word_bits=112),
+  62         # More accurate wide-block complete table, still finite enough to run.
+  63         dict(N=257, sample_count=1024, block_size=32, phase_grid=32,
+  64              slope_grid=1024, group_size=1, lane_step_bits=5,
+  65              trig_bits=24),
+  66     ]
+  67     decoder_output_checks = 0
+  68     fusion_checks = 0
+  69     for config in configurations:
+  70         decoder = GuardedDecoder(table_mode="eager", **config)
+  71         assert isinstance(decoder.table, list)
+  72         assert len(decoder.table) == decoder.table_entries
+  73         assert decoder.words_per_row >= 2
+  74         N, K = decoder.N, decoder.K
+  75         for family in ("coherent", "random", "opposite_pairs"):
+  76             if family == "coherent":
+  77                 samples = [(N - 1, 3)] * K
+  78             elif family == "opposite_pairs":
+  79                 samples = [(i // 2 % N, 2 * (i % 2)) for i in range(K)]
+  80             else:
+  81                 samples = [(rng.randrange(N), rng.randrange(4)) for _ in range(K)]
+  82             result = decoder.decode(samples)
+  83             reference = [sum((1j) ** phase * cmath.exp(-2j * math.pi * j * m / N)
+  84                              for j, phase in samples) / K for m in range(N)]
+  85             error = max(abs(a - b) for a, b in zip(reference, result["values"]))
+  86             assert error <= result["error_bound"] + 1e-10
+  87             assert result["counts"]["max_operand_bits"] <= decoder.w
+  88             if family == "opposite_pairs":
+  89                 assert all(a == 0 and b == 0 for a, b in result["integer_outputs"])
+  90             records.append({"kind": "complete_table_decoder", "family": family,
+  91                             "parameters": result["parameters"], "max_error": error,
+  92                             "error_bound": result["error_bound"],
+  93                             "cold_operations_counted": sum(decoder.cold_counts.values()),
+  94                             "online_operations_counted": sum(result["counts"]["online"].values())})
+  95             decoder_output_checks += N
+  96         # A real fresh-input fusion call reuses the already constructed table
+  97         # here, but its complete cold ledger is included again in the record.
+  98         coordinates = [(1000 + rng.randrange(-3, 4), -500 + rng.randrange(-2, 3)) for _ in range(N)]
+  99         answer = fuse(coordinates, decoder, seed=98231, cap_failure=Fraction(1, 100))
+ 100         assert not answer["failed"]
+ 101         actual = [complex(a / answer["denominator"], b / answer["denominator"])
+ 102                   for a, b in answer["integer_outputs"]]
+ 103         exact = [sum(complex(*pair) * cmath.exp(-2j * math.pi * j * m / N)
+ 104                      for j, pair in enumerate(coordinates)) for m in range(N)]
+ 105         residual_mass = answer["fit"]["residual_numerator_mass"] / answer["fit"]["scale"]
+ 106         sample_budget = math.sqrt(4 * math.log(4 * N / 0.01) / K)
+ 107         allowance = (sample_budget + decoder.decoder_bound) * residual_mass
+ 108         error = max(abs(a - b) for a, b in zip(actual, exact))
+ 109         assert error <= allowance + 1e-6
+ 110         for m, pair in answer["fit"]["exact_corner_spectrum"].items():
+ 111             assert answer["integer_outputs"][m] == tuple(v * answer["denominator"] for v in pair)
+ 112         records.append({"kind": "complete_table_fusion", "N": N, "K": K,
+ 113                         "max_error": error, "probabilistic_allowance": allowance,
+ 114                         "residual_mass": residual_mass, "input_mass": answer["fit"]["input_mass"],
+ 115                         "cold_operations_counted": sum(decoder.cold_counts.values()),
+ 116                         "required_word_bits": answer["required_word_bits"],
+ 117                         "exact_corner_outputs": answer["fit"]["period"]})
+ 118         fusion_checks += N
+ 119 
+ 120     trig = []
+ 121     for bits in (8, 16, 24, 40, 64):
+ 122         d, P = _trig_parameters(bits)
+ 123         W = WordAudit(4 * P + 128)
+ 124         values, scale, info = _phasors(64, bits, W)
+ 125         # Separate high-precision Decimal sine/cosine series are an oracle
+ 126         # only. The production phasors use bounded integer Machin/Taylor.
+ 127         with localcontext() as context:
+ 128             context.prec = 100
+ 129             decimal_pi = Decimal("3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679")
+ 130             error = Decimal(0)
+ 131             for m, (a, b) in enumerate(values):
+ 132                 angle = 2 * decimal_pi * m / 64
+ 133                 square = angle * angle
+ 134                 real, imaginary = Decimal(1), angle
+ 135                 real_term, imaginary_term = real, imaginary
+ 136                 for n in range(1, 150):
+ 137                     real_term *= -square / ((2 * n - 1) * (2 * n))
+ 138                     imaginary_term *= -square / ((2 * n) * (2 * n + 1))
+ 139                     real += real_term
+ 140                     imaginary += imaginary_term
+ 141                 distance = ((Decimal(a) / scale - real) ** 2 + (Decimal(b) / scale - imaginary) ** 2).sqrt()
+ 142                 error = max(error, distance)
+ 143             assert error <= Decimal(2) ** (-bits)
+ 144             trig.append({"target_bits": bits, "working_bits": P, "degree": d,
+ 145                          "maximum_error": str(error), "certified_bound": str(Decimal(2) ** (-bits)),
+ 146                          "largest_operand_bits": W.max_bits, "word_bits": W.width})
+ 147 
+ 148     dependencies = [HERE / "parameter_schedule.py", HERE / "run_audit.py",
+ 149                     HERE.parent / "fft_wordram_decoder_research" / "guarded_decoder.py",
+ 150                     HERE.parent / "fft_control_variate_fusion_research" / "control_variate.py"]
+ 151     result = {"status": "PASS", "schedule_cases": len(schedules),
+ 152               "complete_table_configurations": len(configurations),
+ 153               "decoder_output_comparisons": decoder_output_checks,
+ 154               "fusion_output_comparisons": fusion_checks,
+ 155               "certified_trig_configurations": len(trig), "schedules": schedules,
+ 156               "finite_records": records, "trig": trig,
+ 157               "source_sha256": {str(p.relative_to(HERE.parent)): hashlib.sha256(p.read_bytes()).hexdigest() for p in dependencies},
+ 158               "scope": "Symbolic schedule does not allocate N or its table. Finite complete-table tests verify implementation, not practical asymptotic crossover."}
+ 159     (HERE / "results.json").write_text(json.dumps(result, indent=2) + "\n")
+ 160     print(json.dumps({k: result[k] for k in ("status", "schedule_cases", "complete_table_configurations", "decoder_output_comparisons", "fusion_output_comparisons", "certified_trig_configurations")}))
+ 161 
+ 162 
+ 163 if __name__ == "__main__":
+ 164     main()
+===== END SOURCE 54; 9217 bytes; 164 lines =====
+===== SOURCE 55 fft_new_material_fusion_checkpoint_20261009/fft_shrinking_certified_fusion_research/verify_schedule_edges.py SHA256 122c766860877de942d9e31632a4a6d7e39a8faa57f965f5f4eaa47b4c525360 =====
+   1 """Independent finite endpoint checks for ceil(log2 N) schedule flags."""
+   2 import hashlib
+   3 import json
+   4 from pathlib import Path
+   5 
+   6 from parameter_schedule import plan
+   7 
+   8 
+   9 def main():
+  10     checks = 0
+  11     transitions = []
+  12     for mode in ("linear", "subfft"):
+  13         last = None
+  14         for L in range(2, 161):
+  15             row = plan(L, mode=mode)
+  16             # These are <=161-bit integers, not input arrays. The main planner
+  17             # never constructs N, including its cases with L>10 million.
+  18             smallest_N = (1 << (L - 1)) + 1
+  19             largest_N = 1 << L
+  20             if row["group_size"]:
+  21                 assert (1 << (2 * row["key_bits"])) <= smallest_N
+  22                 if row["status"] == "valid_growing_schedule":
+  23                     assert row["block_size"] <= smallest_N <= largest_N
+  24                     checks += 1
+  25                 if row["cold_work_below_N_certified"]:
+  26                     assert (1 << row["cold_construction_log2_work_upper"]) <= smallest_N
+  27                     checks += 1
+  28                 if row["cold_memory_below_N_certified"]:
+  29                     assert (1 << row["cold_memory_log2_words_upper"]) <= smallest_N
+  30                     checks += 1
+  31             else:
+  32                 assert row["status"] == "finite_base_regime_g_zero"
+  33                 checks += 1
+  34             state = (row["status"], row.get("cold_work_below_N_certified"),
+  35                      row.get("cold_memory_below_N_certified"))
+  36             if state != last:
+  37                 transitions.append({"mode": mode, "L": L, "status": row["status"],
+  38                                     "group_size": row["group_size"],
+  39                                     "cold_work_below_N": row.get("cold_work_below_N_certified"),
+  40                                     "cold_memory_below_N": row.get("cold_memory_below_N_certified")})
+  41                 last = state
+  42     report = {"status": "PASS", "planner_inputs": 318,
+  43               "endpoint_and_flag_checks": checks, "transitions": transitions,
+  44               "source_sha256": hashlib.sha256(Path("parameter_schedule.py").read_bytes()).hexdigest(),
+  45               "scope": "Cheap independent checks supplement the already completed eager decoder audit; no wide decoder rerun required."}
+  46     Path("schedule_edge_results.json").write_text(json.dumps(report, indent=2) + "\n")
+  47     print(json.dumps({k: report[k] for k in ("status", "planner_inputs", "endpoint_and_flag_checks")}))
+  48 
+  49 
+  50 if __name__ == "__main__":
+  51     main()
+===== END SOURCE 55; 2449 bytes; 51 lines =====
+===== SOURCE 56 fft_new_material_fusion_checkpoint_20261009/fft_shrinking_fusion_review/verify_review.py SHA256 61d4277c361a5f2276edc7f606df497ce64d3298b46de090369e00d8215371b7 =====
+   1 """Independent accounting audit; imported upload is never modified."""
+   2 from __future__ import annotations
+   3 
+   4 from fractions import Fraction
+   5 import hashlib
+   6 import importlib.util
+   7 import json
+   8 import math
+   9 from pathlib import Path
+  10 import sys
+  11 
+  12 
+  13 ROOT = Path(__file__).resolve().parent.parent
+  14 SOURCE = ROOT / "fft_new_fusion_materials_20261009" / "shrinking" / "prototype.py"
+  15 
+  16 
+  17 def instrument_original():
+  18     spec = importlib.util.spec_from_file_location("shrinking_v4_review_target", SOURCE)
+  19     module = importlib.util.module_from_spec(spec)
+  20     sys.modules[spec.name] = module
+  21     spec.loader.exec_module(module)
+  22     original = module.pack_nonnegative_lanes
+  23     rows = []
+  24     for n, b, k, g in ((256, 32, 32, 2), (257, 32, 32, 2), (4096, 128, 128, 2)):
+  25         counter = {"calls": 0, "scalar_lane_visits": 0}
+  26 
+  27         def counted(values, field_bits, lanes_per_word):
+  28             counter["calls"] += 1
+  29             counter["scalar_lane_visits"] += len(values)
+  30             return original(values, field_bits, lanes_per_word)
+  31 
+  32         module.pack_nonnegative_lanes = counted
+  33         parameters = module.choose_params(n, k, B=b, g_override=g)
+  34         # A single repeatedly hit cached row isolates repacking from table generation.
+  35         samples = [(0, 0)] * parameters.k
+  36         output, counts = module.packed_decode(n, 1.0, samples, parameters)
+  37         blocks = (n+b-1)//b
+  38         assert counts["table_entries"] == 1
+  39         assert counter["calls"] == 2*blocks*parameters.G
+  40         assert counter["scalar_lane_visits"] == 2*blocks*parameters.G*b
+  41         assert counter["scalar_lane_visits"] >= 2*n*parameters.G
+  42         assert max(abs(z - 1/math.sqrt(n)) for z in output) < 1e-12
+  43         rows.append({"N": n, "B": b, "K": parameters.k, "g": g,
+  44                      "G": parameters.G, "cached_rows": counts["table_entries"],
+  45                      "lookup_count": counts["lookup_count"],
+  46                      "reported_packed_word_adds": counts["packed_word_adds"],
+  47                      "actual_scalar_packing_lane_visits": counter["scalar_lane_visits"],
+  48                      "packing_calls": counter["calls"],
+  49                      "minimum_2NG": 2*n*parameters.G})
+  50     module.pack_nonnegative_lanes = original
+  51     return rows
+  52 
+  53 
+  54 def power_two_at_least(value):
+  55     return 1 << (math.ceil(value)-1).bit_length()
+  56 
+  57 
+  58 def check_tradeoffs():
+  59     rows = []
+  60     for L in (128, 512, 2048, 8192):
+  61         ell = math.log2(L)
+  62         for mode in ("linear", "uploaded_subfft", "slower_h_subfft"):
+  63             if mode == "linear":
+  64                 tau = 1.0
+  65             elif mode == "uploaded_subfft":
+  66                 tau = L/ell
+  67             else:
+  68                 tau = L/math.log2(ell)
+  69             k0 = math.ceil(16*tau*L*L/(ell*ell))
+  70             B = k0
+  71             eta = math.sqrt(L/k0)
+  72             Q0 = power_two_at_least(64/eta)
+  73             Q1 = power_two_at_least(B*Q0)
+  74             p = (Q0.bit_length()-1)+(Q1.bit_length()-1)
+  75             g = L//(2*p)
+  76             if not g:
+  77                 rows.append({"L": L, "mode": mode, "base_case": True})
+  78                 continue
+  79             K = g*((k0+g-1)//g)
+  80             G = K//g
+  81             H = power_two_at_least(32/eta)
+  82             q = (2*H*G).bit_length()
+  83             w = 8*L
+  84             lanes = w//q
+  85             W = (B+lanes-1)//lanes
+  86             N = 1 << L
+  87             R = (N+B-1)//B
+  88             assert p*g <= L//2
+  89             assert q <= w
+  90             assert W*w <= w+2*B*q
+  91             raw = R*K+2*R*G*W
+  92             upper = (Fraction(N,B)+1)*(K+2*G*(1+Fraction(2*B*q,w)))
+  93             assert raw <= upper
+  94             assert R*B >= N and R*B < N+B
+  95             rows.append({"L": L, "mode": mode, "K": K, "B": B,
+  96                          "p": p, "g": g, "G": G, "q": q, "W": W,
+  97                          "descriptor_work_over_N": float(Fraction(R*K,N)),
+  98                          "packed_adds_over_N": float(Fraction(2*R*G*W,N)),
+  99                          "modeled_work_over_N_tau": float(Fraction(raw,N))/tau,
+ 100                          "sampling_scale": eta,
+ 101                          "target_error_scale": ell/math.sqrt(tau*L),
+ 102                          "key_bits_fraction_of_L": p*g/L})
+ 103     return rows
+ 104 
+ 105 
+ 106 def exact_norm_checks():
+ 107     checks = 0
+ 108     ratios = []
+ 109     for n in (8, 32, 128):
+ 110         residual = [(1 if i % 2 else -1, 0) if i < n//4 else (0,0)
+ 111                     for i in range(n)]
+ 112         template = [(7, -3)]*n
+ 113         x = [(a+c,b+d) for (a,b),(c,d) in zip(template,residual)]
+ 114         Lx = sum(abs(a)+abs(b) for a,b in x)
+ 115         Lr = sum(abs(a)+abs(b) for a,b in residual)
+ 116         x2 = sum(a*a+b*b for a,b in x)
+ 117         r2 = sum(a*a+b*b for a,b in residual)
+ 118         assert Lr <= Lx
+ 119         assert Lx*Lx <= 2*n*x2
+ 120         assert Lr*Lr <= 2*n*r2
+ 121         ratios.append({"N": n, "Lx": Lx, "Lres": Lr,
+ 122                        "certified_mass_improvement": str(Fraction(Lr,Lx))})
+ 123         checks += 3
+ 124     return {"integer_inequality_checks": checks, "control_variate_examples": ratios}
+ 125 
+ 126 
+ 127 def main():
+ 128     report = {"status": "PASS",
+ 129               "uploaded_source_sha256": hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
+ 130               "uploaded_research_sha256": hashlib.sha256(SOURCE.with_name("RESEARCH.md").read_bytes()).hexdigest(),
+ 131               "review_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+ 132               "repacking_instrumentation": instrument_original(),
+ 133               "exact_ceiling_tradeoff_checks": check_tradeoffs(),
+ 134               "norm_and_control_variate_checks": exact_norm_checks(),
+ 135               "scope": "The prototype's hidden repacking cost is demonstrated; corrected-theorem cost is analytic, not a timing benchmark."}
+ 136     Path(__file__).with_name("results.json").write_text(json.dumps(report, indent=2)+"\n")
+ 137     print(json.dumps({"status": "PASS", "repacking_cases": len(report["repacking_instrumentation"]),
+ 138                       "tradeoff_cases": len(report["exact_ceiling_tradeoff_checks"]),
+ 139                       "norm_checks": report["norm_and_control_variate_checks"]["integer_inequality_checks"]}))
+ 140 
+ 141 
+ 142 if __name__ == "__main__":
+ 143     main()
+===== END SOURCE 56; 6028 bytes; 143 lines =====
+===== SOURCE 57 fft_new_material_fusion_checkpoint_20261009/run_all.py SHA256 174b2d9beb4d742843a6fe3c30ccb0a063849c4d1b1017074962645075ccef16 =====
+   1 """Reproduce only the new audits in this fusion checkpoint."""
+   2 from pathlib import Path
+   3 import subprocess
+   4 import sys
+   5 
+   6 ROOT = Path(__file__).resolve().parent
+   7 SCRIPTS = [
+   8     ("fft_shrinking_certified_fusion_research", "run_audit.py"),
+   9     ("fft_shrinking_certified_fusion_research", "verify_schedule_edges.py"),
+  10     ("fft_shrinking_fusion_review", "verify_review.py"),
+  11     ("fft_green_fusion_research", "run_audit.py"),
+  12     ("fft_green_conditioned_bridge_research", "run_audit.py"),
+  13     ("fft_green_conditioned_bridge_research", "approximation_sanity.py"),
+  14     ("fft_green_independent_review", "verify_review.py"),
+  15 ]
+  16 
+  17 def main():
+  18     for folder, script in SCRIPTS:
+  19         print(f"Running {folder}/{script}", flush=True)
+  20         subprocess.run([sys.executable, script], cwd=ROOT / folder, check=True)
+  21     print("All new audits passed.")
+  22 
+  23 if __name__ == "__main__":
+  24     main()
+===== END SOURCE 57; 875 bytes; 24 lines =====

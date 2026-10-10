@@ -1,0 +1,41 @@
+1: """Independent matrix-entry verification of every tangent FFT circuit.
+2: 
+3: Deliberately does NOT call direct_dft, eval_dual or the reference FFT builder.
+4: It validates the complete matrix represented by the extracted linear DAG.
+5: """
+6: from jet_linearize import P,ROOT,build_nonlinear_fft,build_fft,linearize
+7: import json
+8: from pathlib import Path
+9: 
+10: 
+11: def check():
+12:     results=[]
+13:     num_columns=0
+14:     num_entries=0
+15:     for n in (2,4,8,16,32,64):
+16:         omega=pow(ROOT,(P-1)//n,P)
+17:         for mode in ('standard','square','rational','baseline'):
+18:             if mode=='standard':
+19:                 dag,_,out,_=build_fft(n)
+20:             else:
+21:                 dag,_,out=build_nonlinear_fft(n,mode)
+22:             L, idx=linearize(dag,out,[0]*n)
+23:             for j in range(n):
+24:                 basis=[0]*n
+25:                 basis[j]=1
+26:                 got=L.evaluate(basis,idx)
+27:                 want=[pow(omega,j*k,P) for k in range(n)]
+28:                 if got!=want:
+29:                     raise AssertionError(f'mode={mode} n={n} col={j} got={got} want={want}')
+30:                 num_columns+=1
+31:                 num_entries+=n
+32:             results.append({'n':n,'mode':mode,'independently_verified_matrix_columns':n,
+33:                             'matrix_entries':n*n,'linear_gates':L.cost()})
+34:     status={'p':P,'modes':4,'size_count':6,'full_matrix_columns_verified':num_columns,
+35:             'full_matrix_entries_verified':num_entries,'results':results}
+36:     Path(__file__).with_name('matrix_certificate.json').write_text(json.dumps(status,indent=2)+'\n')
+37:     print('Independent full matrix certificate PASSED')
+38:     print(f'{num_columns} full matrix columns, {num_entries} matrix entries, 24 extracted circuits')
+39:     return status
+40: 
+41: if __name__=='__main__':check()

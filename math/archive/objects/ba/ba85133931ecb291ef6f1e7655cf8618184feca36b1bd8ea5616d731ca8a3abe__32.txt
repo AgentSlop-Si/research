@@ -1,0 +1,57 @@
+0001 #!/usr/bin/env python3
+0002 """Independent scalar-network cut certificate using Edmonds-Karp."""
+0003 import json,collections,pathlib
+0004 ROOT=pathlib.Path(__file__).resolve().parent
+0005 
+0006 def reverse(j,n):return int(format(j,f'0{n.bit_length()-1}b')[::-1],2)
+0007 def check(n,depth,w):
+0008  arcs=[];nodes=set()
+0009  def add(a,b,c):nodes.update([a,b]);arcs.append((a,b,c))
+0010  def key(s,kind,i,port):return(s,kind,i,port)
+0011  for s in range(depth):
+0012   for kind,indices in [('x',range(n)),('y',range(n)),('l',range(1,n)),('u',range(n-1))]:
+0013    for i in indices:add(key(s,kind,i,0),key(s,kind,i,1),1)
+0014   def wire(a,b):add(a+(1,),b+(0,),n+1)
+0015   for i in range(n):wire((s,'x',i),(s,'y',i))
+0016   for i in range(1,n):
+0017    wire((s,'x',i-1),(s,'l',i));wire((s,'l',i),(s,'y',i))
+0018    if i<n-1:wire((s,'l',i),(s,'l',i+1))
+0019   for i in range(n-1):
+0020    wire((s,'x',i+1),(s,'u',i));wire((s,'u',i),(s,'y',i))
+0021    if i>0:wire((s,'u',i),(s,'u',i-1))
+0022   if s+1<depth:
+0023    for i in range(n):wire((s,'y',i),(s+1,'x',reverse(i,n)))
+0024  source=(-1,'source',0,0);sink=(depth,'sink',0,0)
+0025  for i in range(n-w,n):add(source,key(0,'x',i,0),1)
+0026  for i in range(w):add(key(depth-1,'y',i,1),sink,1)
+0027  adj={x:set() for x in nodes};cap={}
+0028  for a,b,c in arcs:adj[a].add(b);adj[b].add(a);cap[a,b]=cap.get((a,b),0)+c;cap.setdefault((b,a),0)
+0029  residual=cap.copy();flow=0
+0030  while True:
+0031   pred={source:None};q=collections.deque([source])
+0032   while q and sink not in pred:
+0033    a=q.popleft()
+0034    for b in sorted(adj[a]):
+0035     if b not in pred and residual[a,b]:pred[b]=a;q.append(b)
+0036   if sink not in pred:break
+0037   d=n+1;b=sink
+0038   while b!=source:a=pred[b];d=min(d,residual[a,b]);b=a
+0039   b=sink
+0040   while b!=source:a=pred[b];residual[a,b]-=d;residual[b,a]+=d;b=a
+0041   flow+=d
+0042  reachable=set(pred);cut=[(a,b,c) for a,b,c in arcs if a in reachable and b not in reachable]
+0043  assert sum(c for a,b,c in cut)==flow
+0044  # Independently validate the cut disconnects the original directed graph.
+0045  removed={(a,b) for a,b,c in cut};seen={source};q=collections.deque([source])
+0046  forward=collections.defaultdict(list)
+0047  for a,b,c in arcs:
+0048   if (a,b) not in removed:forward[a].append(b)
+0049  while q:
+0050   for b in forward[q.popleft()]:
+0051    if b not in seen:seen.add(b);q.append(b)
+0052  assert sink not in seen
+0053  return {'N':n,'stages':depth,'I':[0,w],'J':[n-w,n],'capacity':flow,'deficit':w-flow,'cut':cut,'cut_disconnection_verified':True}
+0054 
+0055 out={'method':'Independently rebuilt scalar scan graph; Edmonds-Karp and explicit cut-disconnection check','cases':[check(n,d,w) for n,d,w in [(64,3,21),(128,3,42),(128,3,43),(128,4,42),(128,4,43),(128,4,64)]]}
+0056 (ROOT/'INDEPENDENT_NETWORK_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+0057 print(json.dumps([{k:v for k,v in x.items() if k!='cut'} for x in out['cases']],indent=2))

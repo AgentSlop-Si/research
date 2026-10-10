@@ -1,0 +1,52 @@
+"""One reference FFT -> many distinct full spectra with one known edit each."""
+import json
+import time
+from statistics import median
+from pathlib import Path
+import numpy as np
+from scipy import fft
+from lazy_fft import LazyRealFFT
+
+def measure(fn, repeats=3):
+    runs=[];checksum=0.
+    for _ in range(repeats):
+        start=time.perf_counter_ns()
+        checksum=fn()
+        runs.append((time.perf_counter_ns()-start)/1e6)
+    return median(runs),checksum
+
+rows=[]
+for n in [4096,16384,65536,262144]:
+    M=64
+    rng=np.random.default_rng(100+n)
+    base=rng.normal(size=n)
+    positions=rng.choice(n,size=M,replace=False)
+    deltas=rng.normal(size=M)
+    fft.rfft(base)
+    def separate():
+        checksum=0.
+        for p,d in zip(positions,deltas):
+            x=base.copy()
+            x[p]+=d
+            spectrum=fft.rfft(x)
+            checksum+=spectrum[7].real
+        return checksum
+    def shared():
+        reference=LazyRealFFT(base)
+        checksum=0.
+        for p,d in zip(positions,deltas):
+            version=reference.fork()
+            version.edit(int(p),float(d))
+            spectrum=version.materialize_direct()
+            checksum+=spectrum[7].real
+        return checksum
+    old,old_check=measure(separate)
+    new,new_check=measure(shared)
+    assert abs(old_check-new_check)<1e-7*max(1,abs(old_check)),(old_check,new_check)
+    row=dict(n=n,distinct_variants=M,edits_per_variant=1,
+             independent_rfft_ms=round(old,4),shared_reference_ms=round(new,4),
+             speedup=round(old/new,2),
+             checksum_abs_difference=float(abs(old_check-new_check)))
+    rows.append(row)
+    print(json.dumps(row))
+Path('fft_phase4/branches_benchmark_results.json').write_text(json.dumps(rows,indent=2))

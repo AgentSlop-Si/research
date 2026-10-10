@@ -1,0 +1,310 @@
+   1 #!/usr/bin/env python3
+   2 """Independent data-only audit. Never imports or executes submitted Python.
+   3 Sparse polynomial arithmetic uses integer coefficients and a distinguished z
+   4 exponent; all z powers are reduced by z^4=-1 at every operation.
+   5 """
+   6 import argparse, collections, hashlib, itertools, json, math, random
+   7 from fractions import Fraction
+   8 from pathlib import Path
+   9 
+  10 class Poly:
+  11     def __init__(self, terms=None): self.d={k:int(v) for k,v in (terms or {}).items() if v}
+  12     @staticmethod
+  13     def c(n): return Poly({(0,()):n})
+  14     @staticmethod
+  15     def x(i): return Poly({(0,(i,)):1})
+  16     @staticmethod
+  17     def z(e):
+  18         e%=8
+  19         return Poly({(e%4,()):1 if e<4 else -1})
+  20     def __add__(self,o):
+  21         if isinstance(o,int): o=Poly.c(o)
+  22         d=self.d.copy()
+  23         for k,v in o.d.items(): d[k]=d.get(k,0)+v
+  24         return Poly(d)
+  25     __radd__=__add__
+  26     def __neg__(self): return Poly({k:-v for k,v in self.d.items()})
+  27     def __sub__(self,o): return self+(-o if isinstance(o,Poly) else -int(o))
+  28     def __rsub__(self,o): return -self+o
+  29     def __mul__(self,o):
+  30         if isinstance(o,int): o=Poly.c(o)
+  31         d=collections.defaultdict(int)
+  32         for (a,m),v in self.d.items():
+  33             for (b,n),w in o.d.items():
+  34                 e=a+b
+  35                 d[(e%4,tuple(sorted(m+n)))]+=v*w*(1 if e<4 else -1)
+  36         return Poly(d)
+  37     __rmul__=__mul__
+  38     def __eq__(self,o): return isinstance(o,Poly) and self.d==o.d
+  39     def evaluate(self,x,p,w):
+  40         return sum(c*pow(w,e,p)*math.prod(x[i] for i in m) for (e,m),c in self.d.items())%p
+  41     def grouped(self):
+  42         d=collections.defaultdict(lambda:[0]*4)
+  43         for (e,m),v in self.d.items(): d[m][e]=v
+  44         return dict(d)
+  45 
+  46 P=[7,0,6,3,4,1,2,5]
+  47 O=Poly.c(1); Z=Poly.c(0)
+  48 def det(A):
+  49     """Subset expansion, independently usable over Fraction or Poly."""
+  50     n=len(A); dp={0:1}
+  51     for row in range(n):
+  52         nq={}
+  53         for mask,val in dp.items():
+  54             for col in range(n):
+  55                 if mask>>col&1: continue
+  56                 sign=-1 if (mask>>(col+1)).bit_count()%2 else 1
+  57                 nm=mask|(1<<col)
+  58                 term=val*A[row][col]*sign
+  59                 nq[nm]=nq.get(nm,0)+term
+  60         dp=nq
+  61     return dp[(1<<n)-1]
+  62 
+  63 def stage(L,V,U,W,D):
+  64     return [[D[i] if i==j else L[i]*V[j] if i>j else U[i]*W[j] for j in range(len(D))] for i in range(len(D))]
+  65 
+  66 def image(C):
+  67     return [[sum(Poly.z(i*k)*C[k][P[j]] for k in range(8)) for j in range(8)] for i in range(8)]
+  68 
+  69 def minors(B):
+  70     out={}
+  71     for i in range(2,7):
+  72         for j in range(1,i): out[f'lower_{i}_{j}']=B[i][j]*B[7][0]-B[i][0]*B[7][j]
+  73     for i in range(1,6):
+  74         for j in range(i+1,7): out[f'upper_{i}_{j}']=B[i][j]*B[0][7]-B[i][7]*B[0][j]
+  75     return out
+  76 
+  77 def read_export(path):
+  78     obj=json.loads(path.read_text()); out={}
+  79     for eq in obj['equations']:
+  80         d={}; previous=None
+  81         for m,c in eq['terms']:
+  82             m=tuple(m)
+  83             assert list(m)==sorted(m) and all(isinstance(v,int) for v in m)
+  84             assert previous is None or previous<m, 'duplicate or unsorted monomial'
+  85             previous=m
+  86             assert len(c)==4 and any(c) and all(isinstance(v,int) for v in c)
+  87             for e,v in enumerate(c):
+  88                 if v: d[(e,m)]=v
+  89         assert eq['name'] not in out
+  90         out[eq['name']]=Poly(d)
+  91     return obj,out
+  92 
+  93 def compare(expected,path,nvar):
+  94     obj,actual=read_export(path)
+  95     assert set(actual)==set(expected)
+  96     assert all(actual[k]==v for k,v in expected.items()),path
+  97     grouped=[q.grouped() for q in actual.values()]
+  98     assert all(0<=i<nvar for q in grouped for m in q for i in m)
+  99     return dict(equations=len(actual),variables=nvar,maximum_degree=max(len(m) for q in grouped for m in q),terms=sum(map(len,grouped)),distinct_monomials=len({m for q in grouped for m in q}),all_coefficients_match=True,sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+ 100 
+ 101 def inverse_mod(A,p):
+ 102     n=len(A);a=[[int(v)%p for v in r]+[int(i==j) for j in range(n)] for i,r in enumerate(A)]
+ 103     for c in range(n):
+ 104         row=next((i for i in range(c,n) if a[i][c]),None)
+ 105         if row is None: return None
+ 106         a[c],a[row]=a[row],a[c];q=pow(a[c][c],-1,p);a[c]=[v*q%p for v in a[c]]
+ 107         for i in range(n):
+ 108             if i!=c:
+ 109                 q=a[i][c];a[i]=[(u-q*v)%p for u,v in zip(a[i],a[c])]
+ 110     return [r[n:] for r in a]
+ 111 
+ 112 def matmul(A,B,p=None):
+ 113     C=[[sum(x*y for x,y in zip(r,c)) for c in zip(*B)] for r in A]
+ 114     return C if p is None else [[v%p for v in r] for r in C]
+ 115 
+ 116 def numeric_minors(B,p):
+ 117     return [(B[i][j]*B[7][0]-B[i][0]*B[7][j])%p for i in range(2,7) for j in range(1,i)]+[(B[i][j]*B[0][7]-B[i][7]*B[0][j])%p for i in range(1,6) for j in range(i+1,7)]
+ 118 
+ 119 def main(src,out):
+ 120     report={'method':'All arithmetic and checks independently authored; uploaded Python read as data only.'}
+ 121     x=[Poly.x(i) for i in range(26)]
+ 122     L=[Z]+x[:6]+[O];V=x[6:13]+[Z];U=[O]+x[13:19]+[Z];W=[Z]+x[19:26]
+ 123     C=stage(L,V,U,W,[O]*8);B=image(C);E=minors(B)
+ 124     report['quartic']=compare(E,src/'quartic_cyclotomic_equations.json',26)
+ 125     # Independent cofactor expansion, without assuming nonzero row generators.
+ 126     lower_cof=-det([[C[i][j] for j in range(7)] for i in range(1,8)])
+ 127     upper_cof=-det([[C[i][j] for j in range(1,8)] for i in range(7)])
+ 128     lower_formula=-V[0];upper_formula=-W[7]
+ 129     for k in range(1,7):
+ 130         lower_formula=lower_formula*(O-L[k]*V[k]); upper_formula=upper_formula*(O-U[k]*W[k])
+ 131     assert lower_cof==lower_formula and upper_cof==upper_formula
+ 132     out.mkdir(parents=True,exist_ok=True)
+ 133     def encoded(poly):
+ 134         return [[list(m),c] for m,c in sorted(poly.grouped().items())]
+ 135     (out/'corner_cofactor_certificate.json').write_text(json.dumps({'ring':'Z[z]/(z^4+1)','variable_order':'L1..L6,V0..V6,U1..U6,W1..W7','lower_adjugate_70':encoded(lower_cof),'upper_adjugate_07':encoded(upper_cof),'verified_by_independent_subset_determinant':True},indent=2)+'\n')
+ 136     report['new_corner_cofactor_identity']={'n8_formal_all_coefficients_match':True,'lower_cofactor_monomials':len(lower_cof.grouped()),'upper_cofactor_monomials':len(upper_cof.grouped()),'maximum_degree':max(len(m) for m in lower_cof.grouped()),'formula':'adj(C)[n-1,0] = -L[n-1]*V[0]*product(d[k]-L[k]*V[k], k=1..n-2); upper is the transpose version.'}
+ 137     y=[Poly.x(i) for i in range(21)];t=y[0];vv=[t]+y[1:7]+[Z];h=y[7:14];eta=[Z]+y[14:20]+[O];beta=y[20];lam=Poly.z(1)-1;D=t*lam
+ 138     numer=t-1+beta*(h[0]-1)
+ 139     T={k:lam*(1-beta*h[0]+beta*h[k])+numer*(Poly.z(-k)-1) for k in range(1,7)}
+ 140     Q=[]
+ 141     for i in range(8):
+ 142         row=[]
+ 143         for j in range(8):
+ 144             if i==j: a=D
+ 145             elif i>j: a=(D if i==7 else T[i])*vv[j]
+ 146             else: a=D*h[i]*eta[j]
+ 147             row.append(a)
+ 148         Q.append(row)
+ 149     R=image(Q);all_red=minors(R);zero=[k for k,v in all_red.items() if not v.d]
+ 150     assert set(zero)=={f'lower_{i}_1' for i in range(2,7)}
+ 151     report['sextic']=compare({k:v for k,v in all_red.items() if v.d},src/'reduced_sextic_equations.json',21)
+ 152     report['sextic']['five_removed_equations_identically_zero']=True
+ 153     primitive={};removed_t_powers={}
+ 154     for name,poly in all_red.items():
+ 155         if not poly.d: continue
+ 156         power=min(m.count(0) for _,m in poly.d);removed_t_powers[name]=power
+ 157         pp=Poly({(e,m[power:]):c for (e,m),c in poly.d.items()})
+ 158         back=pp
+ 159         for _ in range(power):back=back*t
+ 160         assert back==poly
+ 161         primitive[name]=pp
+ 162     primitive_obj={'ring':'Z[z]/(z^4+1)','variables':['t']+[f'V{i}' for i in range(1,7)]+[f'h{i}' for i in range(7)]+[f'eta{i}' for i in range(1,7)]+['beta'],'condition':'Equivalent to supplied reduced system only on t != 0; all determinant and corner saturation is still required.','removed_t_powers':removed_t_powers,'equations':[{'name':name,'terms':encoded(poly)} for name,poly in primitive.items()]}
+ 163     (out/'reduced_patch_primitive_equations.json').write_text(json.dumps(primitive_obj,indent=2)+'\n')
+ 164     profile=collections.Counter(max(len(m) for _,m in poly.d) for poly in primitive.values())
+ 165     assert dict(profile)=={3:4,4:6,5:1,6:14}
+ 166     report['new_patch_primitive_system']={'equations':25,'variables':21,'degree_profile':dict(sorted(profile.items())),'removed_t_powers':removed_t_powers,'terms':sum(len(poly.grouped()) for poly in primitive.values()),'distinct_monomials':len({m for poly in primitive.values() for m in poly.grouped()}),'exact_multiplication_recovers_original':True}
+ 167     # Stronger direct support identities: B_i1=beta B_i0 for all i=2..7.
+ 168     assert all(not (R[i][1]-beta*R[i][0]).d for i in range(2,8))
+ 169     report['sextic']['six_frequency_vanishings_formally_zero']=True
+ 170     lower_gaps=[D-T[k]*vv[k] for k in range(1,7)]
+ 171     upper_gaps=[1-h[k]*eta[k] for k in range(1,7)]
+ 172     (out/'explicit_sextic_saturation_certificate.json').write_text(json.dumps({'ring':'Q[z]/(z^4+1)','variable_order':['t']+[f'V{k}' for k in range(1,7)]+[f'h{k}' for k in range(7)]+[f'eta{k}' for k in range(1,7)]+['beta'],'saturation_product':'t*h0*det(Ctilde)*Btilde70*Btilde07*product(lower_gaps)*product(upper_gaps)','lower_gaps':[encoded(a) for a in lower_gaps],'upper_gaps':[encoded(a) for a in upper_gaps],'Btilde70':encoded(R[7][0]),'Btilde07':encoded(R[0][7]),'Ctilde_determinant_matrix':[[encoded(a) for a in row] for row in Q],'meaning':'Nonzero product is exactly the stipulated regular patch, with inverse corners enforced by proved cofactor products. Determinant is supplied as a matrix expression rather than expanded.'},indent=2)+'\n')
+ 173     def degree(poly): return max((len(m) for _,m in poly.d),default=-1)
+ 174     def scale_specialize(poly,values):
+ 175         dd=collections.defaultdict(int)
+ 176         for (e,m),v in poly.d.items(): dd[(e,(0,)*len(m))]+=v*math.prod(values[i] for i in m)
+ 177         return Poly(dd)
+ 178     detC_degree=degree(det([[scale_specialize(a,list(range(2,28))) for a in row] for row in C]))
+ 179     detQ_degree=degree(det([[scale_specialize(a,list(range(2,23))) for a in row] for row in Q]))
+ 180     assert detC_degree==14 and detQ_degree==22
+ 181     report['saturation_degrees']={'detC_exact':14,'detCtilde_exact':22,'quartic_saturation_product_exact':44,'quartic_Rabinowitsch_added_equation_exact':45,'sextic_saturation_product_exact':59,'sextic_Rabinowitsch_added_equation_exact':60,'reduced_lower_gap_degrees':[degree(a) for a in lower_gaps],'reduced_upper_gap_degrees':[degree(a) for a in upper_gaps],'proof_of_determinant_degree':'Row/column degree bounds 14 and22, with exact nonzero highest-degree coefficient after integer scaling specialization.'}
+ 182     # Chart-free full system, direct flat coordinate interpretation.
+ 183     q=[Poly.x(i) for i in range(184)];complete={}
+ 184     def ix(tag,i,j): return q[(0 if tag=='A' else 64)+8*i+j]
+ 185     for tag,start in [('A',128),('B',156)]:
+ 186         ll=[Z]+q[start:start+7];v=q[start+7:start+14]+[Z];u=q[start+14:start+21]+[Z];ww=[Z]+q[start+21:start+28]
+ 187         for i in range(8):
+ 188             for j in range(8):
+ 189                 if i!=j: complete[f'{tag}_offdiag_{i}_{j}']=ix(tag,i,j)-(ll[i]*v[j] if i>j else u[i]*ww[j])
+ 190     for i in range(8):
+ 191         for j in range(8): complete[f'fft_entry_{i}_{j}']=sum(ix('B',i,k)*ix('A',P[k],j) for k in range(8))-Poly.z(i*j)
+ 192     report['quadratic']=compare(complete,src/'complete_quadratic_equations.json',184)
+ 193     # Exhaustive finite field n3 zero/nonzero family, with arbitrary diagonal.
+ 194     # GF(3) 9 live parameters, generators factor normalized? Instead all 4 lower
+ 195     # and 4 upper plus 3 diagonal would be 177147. GF(2) all 11 = 2048 is exhaustive.
+ 196     n3_total=0;n3_invertible=0;n3_corner=0
+ 197     for vals in itertools.product(range(2),repeat=11):
+ 198         ds=list(vals[:3]);ll=[0]+list(vals[3:5]);v=list(vals[5:7])+[0];u=list(vals[7:9])+[0];ww=[0]+list(vals[9:11])
+ 199         S=stage(ll,v,u,ww,ds);SI=inverse_mod(S,2);n3_total+=1
+ 200         if SI is None:continue
+ 201         n3_invertible+=1
+ 202         for p1,p2 in [((2,0),-ll[2]*v[0]*(ds[1]-ll[1]*v[1])),((0,2),-u[0]*ww[2]*(ds[1]-u[1]*ww[1]))]:
+ 203             assert SI[p1[0]][p1[1]]==p2%2
+ 204         n3_corner+=1
+ 205     report['new_corner_cofactor_identity']['exhaustive_GF2_n3_assignments']=n3_total
+ 206     report['new_corner_cofactor_identity']['exhaustive_GF2_n3_invertible']=n3_invertible
+ 207     # All sizes 2..12 and zero-heavy parameters, with direct determinant minors.
+ 208     rng=random.Random(901927);tested=0
+ 209     for n in range(2,13):
+ 210         for _ in range(30):
+ 211             ds=[rng.randrange(-2,3) for _ in range(n)];ll=[0]+[rng.randrange(-2,3) for _ in range(n-1)];v=[rng.randrange(-2,3) for _ in range(n-1)]+[0];u=[rng.randrange(-2,3) for _ in range(n-1)]+[0];ww=[0]+[rng.randrange(-2,3) for _ in range(n-1)]
+ 212             S=stage(ll,v,u,ww,ds)
+ 213             lo=(-1)**(n-1)*det([[S[i][j] for j in range(n-1)] for i in range(1,n)])
+ 214             hi=(-1)**(n-1)*det([[S[i][j] for j in range(1,n)] for i in range(n-1)])
+ 215             assert lo==-ll[-1]*v[0]*math.prod(ds[k]-ll[k]*v[k] for k in range(1,n-1))
+ 216             assert hi==-u[0]*ww[-1]*math.prod(ds[k]-u[k]*ww[k] for k in range(1,n-1))
+ 217             tested+=1
+ 218     report['new_corner_cofactor_identity']['integer_zero_heavy_tests_n2_to_n12']=tested
+ 219     # Fresh modular embeddings (all 4 primitive roots in each field).
+ 220     runs=[];saturation_checks=0;regular_reduced_samples=0
+ 221     for p in [17,97,257]:
+ 222         roots=[w for w in range(1,p) if pow(w,4,p)==p-1]
+ 223         assert len(roots)==4
+ 224         for w in roots:
+ 225             F=[[pow(w,i*j,p) for j in range(8)] for i in range(8)]
+ 226             checks=0
+ 227             for _ in range(12):
+ 228                 vals=[rng.randrange(p) for _ in range(26)]
+ 229                 cm=[[a.evaluate(vals,p,w) for a in row] for row in C];bm=matmul(F,[[cm[k][P[j]] for j in range(8)] for k in range(8)],p)
+ 230                 assert [a.evaluate(vals,p,w) for a in E.values()]==numeric_minors(bm,p)
+ 231                 ys=[rng.randrange(p) for _ in range(21)];ys[0]=rng.randrange(1,p);ys[7]=rng.randrange(1,p)
+ 232                 qq=[[a.evaluate(ys,p,w) for a in row] for row in Q];dd=ys[0]*(w-1)%p;cc=[[v*pow(dd,-1,p)%p for v in row] for row in qq]
+ 233                 bb=matmul(F,[[cc[k][P[j]] for j in range(8)] for k in range(8)],p)
+ 234                 assert all((bb[i][1]-ys[20]*bb[i][0])%p==0 for i in range(2,8))
+ 235                 assert [a.evaluate(ys,p,w) for a in all_red.values()]==[v*dd*dd%p for v in numeric_minors(bb,p)]
+ 236                 ai=inverse_mod(cc,p)
+ 237                 factors=[a.evaluate(ys,p,w) for a in lower_gaps+upper_gaps]
+ 238                 patch_by_factors=bool(det(qq)%p and bb[7][0] and bb[0][7] and all(factors))
+ 239                 patch_by_inverse=bool(ai is not None and bb[7][0] and bb[0][7] and ai[7][0] and ai[0][7])
+ 240                 assert patch_by_factors==patch_by_inverse
+ 241                 saturation_checks+=1;regular_reduced_samples+=patch_by_factors
+ 242                 # Coordinate round trip from reduced to quartic, including zero interior generators.
+ 243                 zs=[cc[k][0]*pow(ys[0],-1,p)%p for k in range(1,7)]+[ys[0]]+ys[1:7]+[ys[7+k]*pow(ys[7],-1,p)%p for k in range(1,7)]+[ys[7]*e%p for e in ys[14:20]]+[ys[7]]
+ 244                 assert cc==[[a.evaluate(zs,p,w) for a in row] for row in C]
+ 245                 # If regular lower output corner holds, beta is uniquely recovered.
+ 246                 if bb[7][0]: assert bb[7][1]*pow(bb[7][0],-1,p)%p==ys[20]
+ 247                 checks+=1
+ 248             runs.append({'p':p,'z':w,'zero_inclusive_quartic_and_sextic_samples':checks})
+ 249     report['independent_modular_checks']=runs
+ 250     report['explicit_saturation']={'reduced_factor_test_matches_inverse_corner_test':saturation_checks,'regular_among_tested':regular_reduced_samples}
+ 251     # Complete lift positive controls with independently chosen sparse generators.
+ 252     controls=0
+ 253     for p,w in [(17,2),(97,33)]:
+ 254         assert pow(w,4,p)==p-1
+ 255         for sparsity in [0,1,2,3]:
+ 256             for _ in range(12):
+ 257                 vals=[0]*184; mats=[]
+ 258                 for offset,gstart in [(0,128),(64,156)]:
+ 259                     for i in range(8): vals[offset+8*i+i]=rng.randrange(1,p)
+ 260                     for i in range(28): vals[gstart+i]=0 if sparsity==0 or rng.randrange(4)<sparsity else rng.randrange(p)
+ 261                     for i in range(8):
+ 262                         for j in range(8):
+ 263                             if i>j:vals[offset+8*i+j]=vals[gstart+i-1]*vals[gstart+7+j]%p
+ 264                             if i<j:vals[offset+8*i+j]=vals[gstart+14+i]*vals[gstart+21+j-1]%p
+ 265                     mats.append([vals[offset+i*8:offset+(i+1)*8] for i in range(8)])
+ 266                 A,BB=mats;prod=matmul(BB,[A[k] for k in P],p)
+ 267                 for name,eq in complete.items():
+ 268                     v=eq.evaluate(vals,p,w)
+ 269                     if name.startswith('fft_'):
+ 270                         i,j=map(int,name.split('_')[-2:]);assert v==(prod[i][j]-pow(w,i*j,p))%p
+ 271                     else: assert v==0
+ 272                 controls+=1
+ 273     report['quadratic']['synthetic_sparse_and_zero_anchor_controls']=controls
+ 274     # The old forward-diagonal patch and the inverse-diagonal patch differ.
+ 275     af=[[Fraction(7,6)*int(i==j)-Fraction(1,6) for j in range(8)] for i in range(8)]
+ 276     cf=[[Fraction(6,7)*int(i==j)-Fraction(6,7) for j in range(8)] for i in range(8)]
+ 277     assert matmul(af,cf)==[[int(i==j) for j in range(8)] for i in range(8)]
+ 278     assert all(af[i][i]==1 and cf[i][i]==0 for i in range(8))
+ 279     report['forward_vs_inverse_diagonal_patch']={'exact_rational_check':True,'A':'(7/6)*I-(1/6)*J','C_inverse_of_A':'(6/7)*I-(6/7)*J','A_diagonal':1,'C_diagonal':0,'all_four_corner_anchors_nonzero':True,'scope':'This stage-level example distinguishes chart domains; it is not an F8 factorization.'}
+ 280     # Exact exceptional examples and singular Fourier roots.
+ 281     c3=[[Fraction(v) for v in row] for row in [[2,1,1],[1,1,1],[1,1,3]]]
+ 282     a3=[[Fraction(v) for v in row] for row in [[1,-1,0],[-1,Fraction(5,2),Fraction(-1,2)],[0,Fraction(-1,2),Fraction(1,2)]]]
+ 283     assert matmul(c3,a3)==[[Fraction(int(i==j)) for j in range(3)] for i in range(3)]
+ 284     assert det(c3)==2 and a3[2][0]==0 and a3[1][0]*a3[2][1]!=0
+ 285     # Exact symbolic Fourier row sums, no finite-field inference needed.
+ 286     ones=[1]*26
+ 287     assert all(a.evaluate(ones,17,2)==0 for a in E.values())
+ 288     assert all(sum(Poly.z(i*k) for k in range(8))==(Poly.c(8) if i==0 else Z) for i in range(8))
+ 289     # The all-ones C false positive persists for EVERY beta in the reduced system.
+ 290     # Substitute all variables except beta by 1, retaining beta formally.
+ 291     def substitute_ones_except(poly,keep):
+ 292         dd=collections.defaultdict(int)
+ 293         for (e,m),v in poly.d.items():dd[(e,tuple(i for i in m if i==keep))]+=v
+ 294         return Poly(dd)
+ 295     assert all(not substitute_ones_except(eq,20).d for eq in all_red.values())
+ 296     assert all(substitute_ones_except(Q[i][j],20)==lam for i in range(8) for j in range(8))
+ 297     report['reduced_singular_beta_line']={'formal_identity':True,'assignment':'t=V1=...=V6=h0=...=h6=eta1=...=eta6=1; beta arbitrary','C':'all-ones rank-one matrix','all_25_sextics':'zero identically in beta'}
+ 298     report['exceptional_examples']={'inverse_boundary_exact_rational_identity':True,'all_ones_false_positive_exact_cyclotomic_identity':True}
+ 299     # Check every hash listed by uploader, as provenance only.
+ 300     manifest=[]
+ 301     for line in (src/'SHA256SUMS.txt').read_text().splitlines():
+ 302         if not line.strip():continue
+ 303         digest,name=line.split(maxsplit=1);name=name.lstrip('*');path=src/name
+ 304         manifest.append({'file':name,'match':path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest()==digest})
+ 305     report['manifest']={'entries':len(manifest),'all_match':all(x['match'] for x in manifest),'mismatches':[x for x in manifest if not x['match']]}
+ 306     out.mkdir(parents=True,exist_ok=True);(out/'independent_inverse_results.json').write_text(json.dumps(report,indent=2)+'\n')
+ 307     print(json.dumps(report,indent=2))
+ 308 
+ 309 if __name__=='__main__':
+ 310     ap=argparse.ArgumentParser();ap.add_argument('--source-dir',type=Path,default=Path(__file__).resolve().parent.parent/'source_material'/'fft_inverse_quartic_gate_2026-10-09');ap.add_argument('--output-dir',type=Path,default=Path(__file__).resolve().parent);a=ap.parse_args();main(a.source_dir,a.output_dir)

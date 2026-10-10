@@ -1,0 +1,152 @@
+"""Exact reference replay of exported circuits and a small CRT digit product.
+
+The direct DFT below is O(n^2): this is a verification bridge, not a fast NTT
+backend, a kappa certificate, or an implementation of the linked repository.
+Only integer real scale constants are supported by this finite-field replay.
+"""
+from math import isqrt
+import numpy as np
+from projected_circuit import ProjectedCircuit, integer
+
+
+def prime(p):
+    return p >= 2 and all(p % d for d in range(2, isqrt(p)+1))
+
+
+def primitive_root(p, n):
+    if not prime(p) or (p-1) % n:
+        raise ValueError('need a prime with n dividing p-1')
+    if n == 1:
+        return 1
+    factors, remaining, d = [], n, 2
+    while d*d <= remaining:
+        if remaining % d == 0:
+            factors.append(d)
+            while remaining % d == 0:
+                remaining //= d
+        d += 1
+    if remaining > 1:
+        factors.append(remaining)
+    for a in range(2, p):
+        w = pow(a, (p-1)//n, p)
+        if all(pow(w, n//d, p) != 1 for d in factors):
+            return w
+    raise ValueError('root not found')
+
+
+def dft(values, bins, w, p):
+    return [sum(integer(x)*pow(w, t*int(k), p) for t, x in enumerate(values)) % p
+            for k in bins]
+
+
+def replay(schedule, bases, p, w=None):
+    if schedule['schema'] != 'projected-circuit-v1':
+        raise ValueError('unsupported schedule schema')
+    n, ks = schedule['n'], schedule['bins']
+    expected = primitive_root(p, n)
+    w = expected if w is None else integer(w) % p
+    # Certify supplied root's exact order, including composite n.
+    if pow(w, n, p) != 1 or any(pow(w, d, p) == 1 for d in range(1, n) if n % d == 0):
+        raise ValueError('root has wrong order')
+    vals = {}
+    for row in schedule['nodes']:
+        uid, op, data = row['id'], row['op'], row['data']
+        if uid in vals:
+            raise ValueError('duplicate node id')
+        args = [vals[c] for c in row['children']]
+        if op == 'basis':
+            a = bases[data]
+            if len(a) != n:
+                raise ValueError('wrong basis length')
+            out = dft(a, ks, w, p)
+        elif op == 'impulse':
+            out = [pow(w, data*k, p) for k in ks]
+        elif op == 'add':
+            out = [(a+b) % p for a, b in zip(*args)]
+        elif op == 'mul':
+            out = [(a*b) % p for a, b in zip(*args)]
+        elif op == 'scale':
+            re, im = data
+            if im != 0 or not float(re).is_integer() or abs(re) > 2**53:
+                raise ValueError('modular replay requires exactly represented integer real scales')
+            out = [(int(re)*a) % p for a in args[0]]
+        elif op == 'shift':
+            out = [(a*pow(w, data*k, p)) % p for a, k in zip(args[0], ks)]
+        else:
+            raise ValueError('unsupported operation')
+        vals[uid] = out
+    return [vals[r] for r in schedule['roots']]
+
+
+def inverse(spectrum, w, p):
+    n = len(spectrum)
+    invn = pow(n, -1, p)
+    return [(x*invn) % p for x in dft(spectrum, range(n), pow(w, -1, p), p)]
+
+
+def circular(a, b, modulus=None):
+    n = len(a)
+    out = [sum(a[j]*b[(t-j) % n] for j in range(n)) for t in range(n)]
+    return out if modulus is None else [v % modulus for v in out]
+
+
+def integer_product(a, b, digit_bits=4):
+    """Exact signed integer product via zero-padding, direct modular DFT, CRT.
+
+    No float transform or rounding is used. All primes, roots, modulus bounds,
+    convolution coefficients, and normalized output digits are returned.
+    Suitable for small verification cases only.
+    """
+    a, b, digit_bits = integer(a), integer(b), integer(digit_bits)
+    if not 1 <= digit_bits <= 8:
+        raise ValueError('reference implementation supports 1..8 bits per digit')
+    radix = 1 << digit_bits
+    def digits(x):
+        out = []
+        while x:
+            out.append(x % radix)
+            x //= radix
+        return out or [0]
+    aa, bb = digits(abs(a)), digits(abs(b))
+    size = len(aa)+len(bb)-1
+    n = 1 << (size-1).bit_length()
+    bound = min(len(aa), len(bb))*(radix-1)**2
+    aa += [0]*(n-len(aa))
+    bb += [0]*(n-len(bb))
+    graph = ProjectedCircuit(n, range(n))
+    left = graph.register_projection(np.zeros(n))
+    right = graph.register_projection(np.zeros(n))
+    schedule = graph.export([graph.convolve(left, right)])
+    coefficients, modulus, primes, roots = [0]*n, 1, [], []
+    k = 1
+    while modulus <= bound:
+        p = k*n+1
+        k += 1
+        if not prime(p):
+            continue
+        w = primitive_root(p, n)
+        spec = replay(schedule, {0: aa, 1: bb}, p, w)[0]
+        residues = inverse(spec, w, p)
+        invm = pow(modulus, -1, p)
+        coefficients = [x+modulus*((y-x)*invm % p)
+                        for x, y in zip(coefficients, residues)]
+        modulus *= p
+        primes.append(p)
+        roots.append(w)
+    if any(c > bound for c in coefficients) or any(coefficients[size:]):
+        raise AssertionError('coefficient bound or zero-padding check failed')
+    carry, out_digits = 0, []
+    for coefficient in coefficients:
+        carry += coefficient
+        out_digits.append(carry % radix)
+        carry //= radix
+    while carry:
+        out_digits.append(carry % radix)
+        carry //= radix
+    value = sum(d << (digit_bits*i) for i, d in enumerate(out_digits))
+    if (a < 0) != (b < 0):
+        value = -value
+    return value, {'n': n, 'digit_bits': digit_bits, 'coefficient_bound': bound,
+                   'crt_modulus': modulus, 'primes': primes, 'roots': roots,
+                   'coefficients': coefficients, 'output_digits': out_digits,
+                   'scope': 'exact reference, quadratic DFT, no speed claim'}

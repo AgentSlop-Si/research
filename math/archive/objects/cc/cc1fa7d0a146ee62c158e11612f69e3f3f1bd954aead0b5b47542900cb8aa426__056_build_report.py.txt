@@ -1,0 +1,80 @@
+from docx import Document
+from docx.shared import Inches,Pt,RGBColor
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.enum.text import WD_BREAK
+from docx.enum.table import WD_TABLE_ALIGNMENT,WD_CELL_VERTICAL_ALIGNMENT
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+D=Document();s=D.sections[0];s.top_margin=s.bottom_margin=Inches(.65);s.left_margin=s.right_margin=Inches(.75)
+styles=D.styles
+for name in ['Normal','Title','Subtitle','Heading 1','Heading 2']:
+ styles[name].font.name='Calibri';styles[name].font.color.rgb=RGBColor(0,0,0)
+styles['Normal'].font.size=Pt(11);styles['Normal'].paragraph_format.space_after=Pt(7)
+styles['Normal'].paragraph_format.line_spacing=1.05
+styles['Title'].font.size=Pt(25);styles['Heading 1'].font.size=Pt(15);styles['Heading 2'].font.size=Pt(12)
+styles['Title'].paragraph_format.space_after=Pt(7)
+
+def p(t,style=None):return D.add_paragraph(t,style)
+def h(t):D.add_heading(t,1)
+def page():D.add_page_break()
+def link(text,url):
+ pp=D.add_paragraph();rr=OxmlElement('w:hyperlink');rr.set(qn('r:id'),pp.part.relate_to(url,RT.HYPERLINK,is_external=True));r=OxmlElement('w:r');pr=OxmlElement('w:rPr');c=OxmlElement('w:color');c.set(qn('w:val'),'245A81');pr.append(c);r.append(pr);t=OxmlElement('w:t');t.text=text;r.append(t);rr.append(r);pp._p.append(rr)
+p('Cancellation aware transform search','Title');p('Finite experiment 8 October 2026','Subtitle')
+p('No cheaper circuit was found. The expanded search still matches the 16-addition staged baseline for the same eight-coordinate synthetic transform. Its best genuinely cancelling circuit costs 17 operations. The broader 15-operation solver attempt timed out, so this is not an optimality proof.')
+h('What was tested')
+p('The target is two consecutive normalized polynomial butterfly rounds on four records in Q[y]/(y² + 1), expanded into eight independent scalar inputs. Every compared circuit computes the same unnormalized matrix M, then applies the common output factor 1/4. An independent verifier reconstructs M from the polynomial rounds and checks every circuit exactly.')
+p('The target is connected across all eight coordinates. It cannot be turned into two independent four-point Walsh–Hadamard blocks merely by signed row and column permutations.')
+h('Charged result')
+t=D.add_table(rows=1, cols=4);t.alignment=WD_TABLE_ALIGNMENT.CENTER
+for c,x in zip(t.rows[0].cells,['Circuit','Additions','Other scaling','Total']):c.text=x
+for data in [('Staged baseline','16','8 output quarter-scalings','24'),('Best generated','16','8 output quarter-scalings','24'),('Best with cancellation','16','1 doubling and 8 quarter-scalings','25')]:
+ for c,x in zip(t.add_row().cells,data):c.text=x
+widths=[2.0,.8,2.55,.65]
+for ri,row in enumerate(t.rows):
+ for ci,cell in enumerate(row.cells):
+  cell.width=Inches(widths[ci]);cell.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER
+  pr=cell._tc.get_or_add_tcPr();bd=OxmlElement('w:tcBorders')
+  for edge in ['top','left','bottom','right','insideH','insideV']:
+   z=OxmlElement('w:'+edge);z.set(qn('w:val'),'single');z.set(qn('w:sz'),'4');z.set(qn('w:color'),'D9D9D9');bd.append(z)
+  pr.append(bd)
+  if ri==0:
+   sh=OxmlElement('w:shd');sh.set(qn('w:fill'),'E8EDF1');pr.append(sh)
+  for pp in cell.paragraphs:
+   pp.paragraph_format.space_before=Pt(5);pp.paragraph_format.space_after=Pt(5)
+   for r in pp.runs:r.font.size=Pt(10);r.bold=ri==0
+p('Each signed addition/subtraction, doubling or exact dyadic scaling costs one operation. Shared values are read on every use. Baseline traffic is 40 scalar reads and 24 writes including output scaling; the cancelling candidate has 41 reads and 25 writes. Instruction fetches and physical routing are additional.')
+p('Unary signs and permutations are operand metadata in this arithmetic model. The result does not claim minimum register use, faster wall-clock execution, free memory movement or free cleanup.')
+page();h('Search coverage and its limits')
+D.add_heading('Shared subexpression search',2)
+p('All 3,280 nonzero ternary anchors, modulo sign, were considered. Fixed output-mode policies and one-output bypass variants produced 37,144 circuits. A deterministic greedy procedure shared signed pairs, including anchor prefixes and correction terms, merged exact equal linear forms, and removed dead gates.')
+p('Best cost: 16 additions. Best genuinely cancelling cost: 16 additions plus one doubling. Its emitted circuit contains an opposite-sign overlap that is independently checked. Every anchor was considered, but output-mode choices and pair-factorization orders were not exhaustively searched. This is a heuristic no-gain result, not a general lower bound.')
+D.add_heading('Exhaustive narrow template',2)
+p('A separate exact search allows one signed ternary anchor, direct or ±anchor output representations, and shared doubled inputs. Each correction is summed afresh; proper subexpressions cannot be shared. At least one coordinate must genuinely cancel.')
+p('It minimizes over all 3,280 anchors and all 3⁸ output-mode assignments per anchor, using dynamic programming. The minimum is 24 operations: 23 additions and one doubling. An independent, differently structured enumerator reproduces the entire cost histogram.')
+p('This template excludes the baseline’s useful sharing. Its minimum therefore rules out only this template. It does not prove the 16-addition baseline optimal.')
+D.add_heading('Bounded general solver attempt',2)
+p('The solver allows signed binary sums, doubling and exact halving, with intermediate coefficients on the half-integer grid in [−2, 2] and a 15-operation budget. A five-bit encoding is exact within those bounds; the permitted arithmetic cannot wrap. Common output normalization remains outside this budget.')
+p('The initial 120-second attempt timed out. After fixing a model-request handling error, a 30-second rerun also returned unknown due to timeout. A pinned 16-operation baseline returns SAT as a positive encoding check. There is no UNSAT certificate and no shorter SAT witness.')
+h('Known cancellation is a control')
+p('The reproduced H4 common-sum identity uses seven additions and three doublings: ten total, versus eight ordinary additions. The literal published Alman–Rao H8 Algorithm 5 uses 22 additions, seven input doublings and one halving on ordinary inputs: 30 total, versus 24. The paper also describes a 29-operation unscaled variant. [1]')
+p('Its 23-operation H8 kernel assumes seven inputs already arrive doubled. The published recursive scaling mechanism amortizes those costs. Treating the scaled kernel as a standalone 23-operation transform would silently omit work. No new algorithm or novelty is claimed here.')
+page();h('Independent checks passed')
+p('Ten emitted circuits were replayed with exact rational coefficient vectors. The verifier imports neither search implementation and reconstructs the synthetic target independently. Output signs, order and normalization, gate counts, operand reads, fanout and intermediate coefficient growth were checked.')
+p('The three narrow-template cost histograms were recomputed independently. Nine deliberate sign, output and forward-reference corruptions were rejected. An independent count also confirms the heuristic’s 37,144 synthetic and 299 H4 constructions.')
+p('For the best genuinely cancelling synthetic circuit, the maximum intermediate coefficient magnitude is 2, the maximum row absolute-sum is 4, and no intermediate fractional coefficients are needed. Thus inputs bounded by B yield generated values bounded by 4B before final normalization. This is a local exact bound, not a complete recursive numerical analysis.')
+h('What this does not establish')
+p('These circuits are ordinary out-of-place arithmetic DAGs. They do not supply dirty-scratch restoration, all-role endpoint identities, rational projector/frame assignments, a recursive child-rank histogram, or fixed-tape routing. The source weighted recurrence test is therefore not defined for them. The previous verified baseline dirty lift is unchanged.')
+p('Exact matrix equality also does not preserve a program that truncates at every original round boundary. The previous rounding counterexample still applies. Dyadic operations in this experiment are exact; no new finite-precision or full-transform error proof is supplied.')
+p('The bounded research pass is complete. It gives a reproducible negative search outcome and calibrated controls, with general cancellation-aware optimality left open.')
+h('Reproduction and sources')
+p('The accompanying source bundle contains the full technical note, search programs, solver inputs and logs, ten circuit certificates, independent verifier, audit report and file hashes. Enumeration and verification require Python 3.11+ and its standard library. Optional solver checks use libz3.so.4. No package installation was needed.')
+p('Run anchor_search.py, heuristic_search.py, controls.py and audit_verify.py from the bundle directory. Optional checks are smt_search.py --gates 15 --timeout-ms 30000 and verify_smt_control.py. The README states every search restriction and the exact cost model.')
+link('[1] Alman and Rao 2023  Sections 2.2 and 6  Published cancellation and scaling mechanisms','https://arxiv.org/html/2211.06459v2#S2.SS2')
+link('[2] Pinned OpenAI synthetic transform specification  Target and normalization','https://github.com/openai/math/blob/adc7f1241b42e322a6451854ab7e4b4c146bf78a/preprints/Integer-multiplication-below-n-log-n-September-23-2026/build/sections/06-transforms.tex')
+link('[3] Pinned CrocSwap weighted recurrence certificate  Downstream obligations','https://github.com/CrocSwap/integer-mult-bounds/blob/56b66d58297deca1d7dd130247d720e960f77a37/research/pair-assembly/verify.py')
+D.core_properties.title='Cancellation aware transform search';D.core_properties.subject='Bounded exact and heuristic research pass';D.core_properties.author='dot'
+for b in D.styles.element.xpath('.//w:pBdr'):
+ b.getparent().remove(b)
+for b in D.element.xpath('.//w:pBdr'):
+ b.getparent().remove(b)
+D.save('cancellation_aware_transform_research.docx')

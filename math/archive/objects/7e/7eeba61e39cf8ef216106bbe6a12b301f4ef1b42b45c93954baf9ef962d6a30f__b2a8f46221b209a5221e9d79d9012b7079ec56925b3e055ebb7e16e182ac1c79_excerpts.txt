@@ -1,0 +1,134 @@
+1: """Hero #0 Phase 13: weight-independent graph-cut capacity certificates.
+2: 
+3: Exact modular arithmetic and O(total permutation edges) combinatorial gate.
+4: This is an obstruction for a restricted Green-resolvent circuit grammar,
+5: NOT a general FFT lower bound. Only standard Python is required.
+6: """
+7: from __future__ import annotations
+8: import random
+9: from dataclasses import dataclass
+10: 
+11: @dataclass
+12: class GreenGraph:
+13:     pi: list[int]
+14:     weights: list[int]
+15:     def __post_init__(self):
+16:         n=len(self.pi)
+17:         if len(self.weights)!=n or set(self.pi)!=set(range(n)):
+18:             raise ValueError('malformed weighted permutation')
+19: 
+20: 
+21: def cycles(pi):
+22:     seen=set()
+23:     result=[]
+24:     for seed in range(len(pi)):
+25:         if seed in seen: continue
+26:         cyc=[]
+27:         j=seed
+28:         while j not in seen:
+29:             seen.add(j)
+30:             cyc.append(j)
+31:             j=pi[j]
+32:         if j!=seed:
+33:             raise AssertionError('permutation expected')
+34:         result.append(cyc)
+35:     return result
+36: 
+37: 
+38: def graph_from_shift(n, step, q=65537, weight=3):
+39:     # If weight^cycle_length == 1 (mod q), resolvent is singular;
+40:     # change only that cycle's first weight, keeping the graph support.
+41:     pi=[(i+step)%n for i in range(n)]
+42:     w=[weight%q]*n
+43:     for cyc in cycles(pi):
+44:         prod=1
+45:         for i in cyc: prod=prod*w[i]%q
+46:         if prod==1:
+47:             w[cyc[0]]=0
+48:     return GreenGraph(pi,w)
+49: 
+50: 
+51: def random_green(n,rng,q=65537,zero_prob=0.1):
+52:     pi=list(range(n))
+53:     rng.shuffle(pi)
+54:     w=[0 if rng.random()<zero_prob else rng.randrange(2,q) for _ in range(n)]
+55:     for cyc in cycles(pi):
+56:         prod=1
+57:         for i in cyc:prod=prod*w[i]%q
+58:         if prod==1:
+59:             w[cyc[0]]=0
+60:     return GreenGraph(pi,w)
+61: 
+62: 
+63: def exact_green(g: GreenGraph,q=65537):
+64:     """Returns (I-P)^-1 with P[i,pi[i]]=weights[i], exactly modulo q."""
+65:     n=len(g.pi)
+66:     a=[[0]*n for _ in range(n)]
+67:     for cyc in cycles(g.pi):
+68:         prod=1
+69:         for i in cyc:prod=prod*g.weights[i]%q
+70:         if prod==1:raise ValueError('singular cycle')
+71:         inv=pow((1-prod)%q,-1,q)
+72:         for i in cyc:
+73:             k=i
+74:             path=1
+75:             while True:
+76:                 a[i][k]=(path*inv)%q
+77:                 path=(path*g.weights[k])%q
+78:                 k=g.pi[k]
+79:                 if k==i:break
+80:     return a
+81: 
+82: 
+83: def mat_add(a,b,q):
+84:     return [[(x+y)%q for x,y in zip(r,s)] for r,s in zip(a,b)]
+85: 
+86: 
+87: def mat_mul(a,b,q):
+88:     n=len(a)
+89:     c=[[0]*n for _ in range(n)]
+90:     for i in range(n):
+91:         ci=c[i]
+92:         for k in range(n):
+93:             aik=a[i][k]
+94:             if aik:
+95:                 bk=b[k]
+96:                 for j in range(n):ci[j]=(ci[j]+aik*bk[j])%q
+97:     return c
+98: 
+99: 
+100: def rank_mod(a,q=65537):
+101:     if not a:return 0
+102:     b=[list(row) for row in a]
+103:     n=len(b);cols=len(b[0]);r=0
+104:     for col in range(cols):
+105:         piv=next((i for i in range(r,n) if b[i][col]%q),None)
+106:         if piv is None:continue
+107:         b[r],b[piv]=b[piv],b[r]
+108:         inv=pow(b[r][col],-1,q)
+109:         row=b[r]
+110:         for j in range(col,cols):row[j]=row[j]*inv%q
+111:         for i in range(r+1,n):
+112:             mult=b[i][col]
+113:             if mult:
+114:                 cur=b[i]
+115:                 for j in range(col,cols):cur[j]=(cur[j]-mult*row[j])%q
+116:         r+=1
+117:         if r==n:break
+118:     return r
+119: 
+120: 
+121: def primitive_root_of_power_of_two(n,q=65537):
+122:     assert n>1 and n&(n-1)==0 and (q-1)%n==0
+123:     # 3 is a primitive generator for GF(65537)^*.
+124:     w=pow(3,(q-1)//n,q)
+125:     assert pow(w,n,q)==1 and pow(w,n//2,q)!=1
+126:     return w
+127: 
+128: 
+129: def fourier_mod(n,q=65537):
+130:     w=primitive_root_of_power_of_two(n,q)
+131:     return [[pow(w,i*j,q) for j in range(n)] for i in range(n)]
+132: 
+133: 
+134: def cut_profile(g:GreenGraph):

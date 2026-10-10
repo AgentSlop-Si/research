@@ -1,0 +1,682 @@
+
+Загрузка более ранних сообщений…
+Do it broo
+
+Обработка заняла 23m 50s
+FFT research — Testing global mixing with internal shuffles
+Brooo, I found a useful boundary for our latest idea. 🔥
+
+A bidirectional scan can combine information across an entire array in 
+O
+(
+N
+)
+O(N) work. We hoped that interleaving these scans with permutations would let us combine a growing number of FFT levels into fewer stages.
+
+The exact experiment shows why simply making each stage larger doesn't work.
+
+1. An unexpected 8-point result
+I exhaustively searched the possible input/output orderings of an 8-point Fourier transform, using exact finite-field rank calculations.
+
+FFT block size
+
+Minimum independent channels needed in each direction
+
+2
+
+1
+
+4
+
+1
+
+8
+
+3
+
+The eight-point result is stronger than our previous balanced-cut bound, which guaranteed only two channels. The search considered 12,869 nontrivial pairs of prefix subsets—an exhaustive representation of all pairs of orderings. 
+
+That means we cannot merge a complete eight-point FFT into one ordinary bidirectional-sum scan stage, even with an optimal input and output ordering.
+
+This is a restriction on this scan architecture—not on all possible FFT algorithms.
+
+2. I built the matching exact FFT
+A four-point Fourier transform can be implemented using one bidirectional scan stage after a suitable permutation.
+
+I implemented that construction and used it to build complete radix-4 FFTs. An extended version handles every power-of-two length by combining radix-2 and radix-4 stages.
+
+It computes fresh inputs, with no caching or threads.
+
+N
+
+Number of global macro-levels
+
+Ordinary radix-2 levels
+
+16
+
+2
+
+4
+
+32
+
+3
+
+5
+
+64
+
+3
+
+6
+
+128
+
+4
+
+7
+
+256
+
+4
+
+8
+
+Every tested output matched the independent exact DFT. 
+
+But this is classical mixed-radix FFT expressed through scans, not a new asymptotic algorithm. The number of stages is reduced by a constant factor, and the generic scan implementation actually uses more scalar arithmetic than optimized butterflies.
+
+I'm strengthening the mathematical proof and auditing that full arithmetic cost before drawing the final conclusion.
+
+3. The result is stronger over the complex numbers
+I found a short all-length proof behind the eight-point result.
+
+For 
+N
+N a power of two, a nonzero sum of at most three Fourier characters has at least 
+N
+/
+2
+N/2 nonzero values.
+
+The proof pairs roots 
+z
+z and 
+−
+z
+−z, separates even and odd powers, and applies induction. At 
+N
+=
+8
+N=8, it rules out a combination of three Fourier rows that vanishes at five input positions.
+
+An independent checker verified all 3,136 possible 3-by-5 submatrices over each of two prime fields. It also checked the matching complex-number construction using exact cyclotomic coefficients. 
+
+For the complete scan-based FFT, the benchmark revealed the hidden cost:
+
+N
+
+Scan-based exact NTT
+
+Standard exact radix-2 NTT
+
+Scan slowdown
+
+256
+
+1.21 ms
+
+0.59 ms
+
+2.05×
+
+1,024
+
+5.32 ms
+
+2.55 ms
+
+2.09×
+
+4,096
+
+27.47 ms
+
+13.35 ms
+
+2.06×
+
+Single-threaded Python, five-run medians, all outputs exact. Both algorithms include per-call preparation; this is not a comparison against an optimized native library. 
+So the scan approach reduces the number of named stages, but not the asymptotic complexity or actual runtime.
+
+The most useful mathematical consequence is a cost barrier for radix grouping. A larger FFT block needs more independent scan channels. If we insist on implementing each complete block through those channels, increasing the block size eventually costs more than the levels it replaces.
+
+This doesn't yet rule out overlapping, nonunitary global stages with internal shuffles. That remains a different and harder construction.
+
+Final result: Bigger FFT macro-stages cannot win by this method
+Here's the strongest conclusion from this research pass.
+
+Suppose we try to replace a complete 
+B
+B-point FFT block with one bidirectional stage built from independent forward and backward scan channels.
+
+Even with the best input/output permutations, the Fourier matrix forces at least:
+
+r
+≥
+B
+/
+4
+r≥B/4
+​
+ 
+channels in each direction for 
+B
+B divisible by four.
+
+Every complete channel processes 
+B
+B positions. Under this explicitly charged scan model, one 
+B
+B-point block therefore requires:
+
+Ω
+(
+B
+2
+)
+Ω(B 
+2
+ )
+work. Across an 
+N
+N-point mixed-radix FFT, the total becomes:
+
+T
+(
+N
+)
+=
+Ω
+(
+N
+log
+⁡
+N
+)
+T(N)=Ω(NlogN)
+​
+ 
+This rules out growing-radix scan compression within that architecture. It does not rule out a fundamentally different global algorithm.
+
+I also checked the unitary subclass. Existing results on 
+unitary rank-structured matrices
+ and two-coordinate unitary lower bounds imply that fixed-rank unitary scan stages still require 
+Ω
+(
+log
+⁡
+N
+)
+Ω(logN) stages, even with intermediate permutations. 
+
+citeseerx.ist.psu.edu
+
+The route that survives is narrower: overlapping, nonunitary global stages, with changing layouts and fully charged arithmetic. We have neither proved that route impossible nor found a faster exact construction.
+
+Final validation
+14/14
+Regression tests passed
+6,272
+Independent exact rank checks
+The final 13-run benchmark confirmed that the scan engine remained roughly 1.9–2.5× slower than ordinary Python radix-2 NTT over the tested sizes. 
+
+The complete archive was extracted into a fresh directory. All 14 tests, 14 file checksums, 254 Fourier basis comparisons, and 70 fresh random-vector comparisons passed.
+
+Download the research
+Download Complete Bidirectional FFT Research
+
+Mathematical proofs · Executable exact FFT · Exhaustive ordering search · Independent certificates · Benchmarks · Tests
+
+Complete mathematical proof
+
+Working exact scan-based FFT
+
+Independent rank certificate
+
+Next research gate
+
+Bro, we haven't achieved 
+O
+(
+N
+)
+O(N), but we have something more useful than another optimistic stage-count benchmark: a rigorous reason this particular sharing architecture cannot reach our goal, and a precise statement of what remains untested.
+
+Our next mathematical target remains a genuinely new, overlapping global computation that reduces the total work for every fresh input—not just the number of stages we call it.
+
+Do it broo
+I’ll continue with the one direction that survived: overlapping, nonunitary global stages with changing layouts. I’ll inspect the last proof and code, test a new exact factorization candidate, and count all arithmetic rather than just stages. If it fails, I’ll document precisely why.
+
+Проверил и спроектировал факторизацию Фурье, сравнив приближённые методы
+
+Изучен исследовательский код и материалы макроисследования
+
+Оценил нижние границы и сформулировал проверяемую гипотезу
+
+
+Поиск выполнен на 7 сайтах
+
+Выделил класс Грина, расширил барьер и проверил плотные этапы
+
+Проверена факторизация ДПФ через неунитарные стадии
+
+
+Поиск выполнен на 7 сайтах
+
+I found a useful distinction in the surviving class. A dense global stage built by solving a tridiagonal system has a sparse inverse, even though every output depends on every input. That gives a logarithmic stage lower bound despite arbitrary internal shuffles.
+
+But adding two different global solves can make the inverse dense, escaping that argument. I’m checking that case exactly and testing whether its apparent extra mixing translates into any reduction in FFT work.
+
+Обобщила результаты проверки
+
+Разработаны точные зелёные стадии и проведён FFT-аудит
+
+The exact experiments found an important false positive to guard against: I can make every FFT stage fully dense and globally overlapping, using nonunitary rank-one changes of coordinates, while the complete algorithm remains exactly the ordinary FFT—and gets slower.
+
+That means dense intermediate matrices alone are not evidence of useful sharing. I’m building an exact “gauge detector” that can recognize and reject this disguise, alongside the Green-stage lower bound.
+
+Проверены новые классы
+
+Разработан распознаватель скрытой калибровки FFT и исправлен seed
+
+Проверил FFT-реализацию, матричные тождества и зелёные преобразования
+
+Разработан серийно-аддитивный алгоритм FFT
+
+Протестировали компромисс стадий и каналов, обобщили FFT-синтез с Green-гейджем
+
+Подготовил подробную документацию по исследованию БПФ
+
+Усилил тесты зелёных преобразований
+
+Проверил логарифмическую нижнюю границу и бюджет норм
+
+
+fft_nonunitary_global_green_research_2026-10-09(2).zip
+Файл
+chain broken
+
+Обработка заняла 5m 51s
+FFT research — Two global stages are not enough
+Brooo, I recovered the project from your ZIP and found a stronger result than the previous numerical searches.
+
+We were studying overlapping, nonunitary global stages with permutations between them. The earlier experiments tried to express the Fourier matrix as two low-rank global stages but couldn't find an exact solution at 
+N
+=
+32
+N=32.
+
+Now we have a mathematical reason why those attempts could not succeed under the original endpoint ordering.
+
+The new two-stage obstruction
+Suppose:
+
+F
+N
+=
+S
+2
+P
+S
+1
+F 
+N
+​
+ =S 
+2
+​
+ PS 
+1
+​
+ 
+where 
+P
+P is any permutation, and 
+S
+1
+,
+S
+2
+S 
+1
+​
+ ,S 
+2
+​
+  are quasiseparable matrices with off-diagonal rank bounds 
+r
+1
+,
+r
+2
+r 
+1
+​
+ ,r 
+2
+​
+ .
+
+For even 
+N
+N, provided at least one endpoint remains in natural Fourier order, the ranks must satisfy:
+
+r
+1
++
+r
+2
+≥
+N
+4
+r 
+1
+​
+ +r 
+2
+​
+ ≥ 
+4
+N
+​
+ 
+​
+ 
+If both stages use the same channel count 
+r
+r:
+
+r
+≥
+N
+8
+r≥ 
+8
+N
+​
+ 
+​
+ 
+This does not assume stable coefficients or a limited amount of numerical amplification. It follows from exact matrix ranks.
+
+FFT length
+
+Minimum equal rank per stage
+
+8
+
+1
+
+16
+
+2
+
+32
+
+4
+
+64
+
+8
+
+The exact finite-field audit passed in two different fields, including random internal shuffles and independently chosen stage parameters. 
+
+What this settles: the earlier two-stage, rank-2 and rank-3 attempts at 
+N
+=
+32
+N=32 are impossible within this model and endpoint-order restriction. That's stronger than saying a numerical optimizer failed.
+
+The important limitation: if we independently reorder both input and output coordinates, this particular bound weakens. I'll keep that case separate rather than claim we've ruled it out.
+
+
+Предыдущие действия
+Проверил ранговые ограничения FFT, перестановок концов и битового разворота
+
+The endpoint check matters. With natural ordering at either end, the two-stage obstruction grows linearly with 
+N
+N. But when I bit-reverse both ends, the same rank test becomes much weaker: at 
+N
+=
+64
+N=64, it only forces a total channel rank of 2. That doesn't prove a fast factorization exists; it shows exactly where this proof stops working. I’m recording both results so we don’t accidentally claim a universal lower bound.
+
+Создана независимая проверка теоремы и проведён аудит FFT
+
+Протестировал ранговые границы FFT и проверил стресс-тест
+
+chain broken
+
+Обработка заняла 2m 10s
+Broooo, chain restored! 🔥 I recovered the completed experiment, verified the stronger proof, and fixed the research files that had become inconsistent.
+
+We're still following our original path: exact FFTs on fresh arbitrary inputs, with genuinely less arithmetic—not cached updates, threading, or CrocSwap's exponent race.
+
+Where we left off
+We were investigating whether fully dense, overlapping, nonunitary global operations could replace the FFT's logarithmic number of stages.
+
+We found a stronger mathematical restriction.
+
+For the normalized Fourier matrix 
+U
+N
+=
+F
+N
+/
+N
+U 
+N
+​
+ =F 
+N
+​
+ / 
+N
+​
+ , define the column-sum condition number:
+
+κ
+1
+(
+A
+)
+=
+∥
+A
+∥
+1
+∥
+A
+−
+1
+∥
+1
+κ 
+1
+​
+ (A)=∥A∥ 
+1
+​
+ ∥A 
+−1
+ ∥ 
+1
+​
+ 
+Then every invertible matrix factorization satisfies:
+
+N
+≤
+∏
+i
+=
+1
+t
+κ
+1
+(
+S
+i
+)
+N≤ 
+i=1
+∏
+t
+​
+ κ 
+1
+​
+ (S 
+i
+​
+ )
+​
+ 
+Therefore, if every stage has 
+κ
+1
+(
+S
+i
+)
+≤
+C
+κ 
+1
+​
+ (S 
+i
+​
+ )≤C, we need:
+
+t
+≥
+⌈
+log
+⁡
+C
+N
+⌉
+t≥⌈log 
+C
+​
+ N⌉
+​
+ 
+This applies even to fully dense, nonunitary stages and survives arbitrary permutations and global scalar rescalings.
+
+For our specific two-Green stage, we proved 
+κ
+1
+(
+S
+)
+≤
+17
+/
+4
+κ 
+1
+​
+ (S)≤17/4. Thus:
+
+FFT length
+
+Minimum stages for this family
+
+Standard radix-2 levels
+
+256
+
+4
+
+8
+
+4,096
+
+6
+
+12
+
+65,536
+
+8
+
+16
+
+1,048,576
+
+10
+
+20
+
+These are necessary stage counts, not constructions achieving them. The proof is restricted to bounded-
+κ
+1
+κ 
+1
+​
+  factors and does not establish a general FFT lower bound. 
+
+The negative result we must remember
+We also constructed an exact FFT where every stage is fully dense and globally overlapping.
+
+It looks different from an ordinary FFT, but an exact verifier shows it's simply an ordinary FFT disguised by cancelling rank-one changes of coordinates.
+
+At 
+N
+=
+4
+,
+096
+N=4,096, that implementation was approximately 2× slower and used 5.89× as many counted arithmetic operations as our ordinary Python NTT. 
+
+So dense global mixing alone is not the breakthrough.
+
+Recovered research package
+Download the recovered Nonunitary Global FFT Research
+
+Exact proofs · Green-stage implementations · Gauge detector · Native mathematical audits · Benchmarks · Tests
+
+Full corrected research
+
+Next research gate
+
+I extracted the archive independently and reran verification: 11/11 tests passed, all recorded file hashes matched, and the exact Green, gauge, and condition checks passed. 
+
+Our next mathematical target
+The surviving question is whether we can build a sublogarithmic sequence of overlapping global stages whose amplification grows with 
+N
+N, but whose implementation still costs only 
+O
+(
+N
+)
+O(N) operations per stage.
+
+The first concrete test is an exact two-stage Fourier factorization using rank-two quasiseparable operators, with arbitrary internal shuffles. We need either a scalable construction or a rigorous obstruction—not another numerical near-fit.
+
+No new 
+O
+(
+N
+)
+O(N) FFT yet, bro. But the research chain is recovered, the stronger proof is preserved, and we know exactly which hypothesis remains open.
+
+Вы достигли максимальной длины этого обсуждения, но можете продолжить обсуждение, начав новый чат.
+
+
+

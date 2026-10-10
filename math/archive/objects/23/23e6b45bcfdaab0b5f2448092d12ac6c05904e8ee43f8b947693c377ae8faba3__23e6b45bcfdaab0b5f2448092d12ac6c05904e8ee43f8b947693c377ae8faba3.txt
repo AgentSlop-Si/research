@@ -1,0 +1,78 @@
+"""Compare first-order equations from graph-cut minors with the actual generator Jacobian.
+
+All computations exact in finite field F_12289. The cut-variety tangent
+condition is a necessary constraint; a gap does not prove F_N is excluded.
+"""
+import json
+import random
+import sys
+from pathlib import Path
+import numpy as np
+from jacobian_gate import MOD,basis,rank_mod,row_col_constraints
+ROOT=Path(__file__).resolve().parent/'prior_checkpoint'
+sys.path.insert(0,str(ROOT))
+from fast_mincut import ScanFlowOracle
+
+def sample_sets(n, seed, queries):
+    rng=random.Random(seed)
+    def interval_union():
+        k=rng.choice([1,1,2,2,3,4]);s=set()
+        for _ in range(k):
+            start=rng.randrange(n);length=rng.randrange(1,n+1)
+            s.update(range(start,min(start+length,n)))
+        return sorted(s)
+    def random_set():
+        size=rng.randrange(1,n+1)
+        return sorted(rng.sample(range(n),size))
+    def near_full():
+        size=rng.randrange(max(1,n//2),n+1)
+        return sorted(rng.sample(range(n),size))
+    def dyadic():
+        m=2**rng.randrange(n.bit_length());m=min(n,m)
+        j=rng.randrange(n//m)
+        return list(range(j*m,(j+1)*m))
+    funs=[interval_union,random_set,near_full,dyadic]
+    seen=set()
+    for q in range(queries):
+        f,g=rng.choice(funs),rng.choice(funs)
+        R=f();C=g()
+        pair=(tuple(R),tuple(C))
+        if pair in seen:continue
+        seen.add(pair)
+        yield R,C
+
+def test(n,r,perm,queries=1500,seed=2442):
+    M,J,*_=basis(n,r,perm,1011)
+    jrank=rank_mod(J)
+    oracle=ScanFlowOracle(n,[r,r],[perm])
+    constraints=[]; witnesses=[]
+    degenerate=0;nontrivial=0;queries_real=0
+    for R,C in sample_sets(n,seed,queries):
+        queries_real+=1
+        if min(len(R),len(C))<2:continue
+        bound=oracle.bound(R,C)
+        if bound>=min(len(R),len(C)):continue
+        nontrivial+=1
+        real=rank_mod(M[np.ix_(R,C)])
+        if real!=bound:
+            degenerate+=1
+            continue
+        for g in row_col_constraints(M,R,C):
+            assert not np.any((g@J)%MOD), 'Invalid tangent constraint'
+            constraints.append(g)
+            if len(witnesses)<5:witnesses.append({'R':R,'C':C,'mincut':bound})
+    drank=rank_mod(np.array(constraints)) if constraints else 0
+    return {'n':n,'r':r,'queries_attempted':queries,'unique_pairs':queries_real,'nontrivial_cuts':nontrivial,
+      'nonmaximal_generator_rank_cases':degenerate,'generated_linearized_cut_constraints':len(constraints),
+      'rank_of_cut_linear_constraints':drank,'dimension_of_cut_tangent_lower_bound':n*n-drank,
+      'rank_of_generator_J':jrank,'generator_tangent_codimension':n*n-jrank,
+      'unexplained_by_sampled_cuts':(n*n-jrank)-drank, 'first_cut_witnesses':witnesses}
+
+if __name__=='__main__':
+    output=[]
+    for n,r,queries in [(8,1,2500),(16,1,3000),(16,2,4500)]:
+        perm=list(range(n));random.Random(919+n).shuffle(perm)
+        z=test(n,r,perm,queries)
+        print(json.dumps(z),flush=True)
+        output.append(z)
+    Path(__file__).with_name('mincut_tangent_results.json').write_text(json.dumps(output,indent=2)+'\n')

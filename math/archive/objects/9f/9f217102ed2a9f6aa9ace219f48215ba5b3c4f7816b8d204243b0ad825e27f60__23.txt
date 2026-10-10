@@ -1,0 +1,144 @@
+0001 #!/usr/bin/env python3
+0002 """Independent exact checks. No imports or execution of uploaded source."""
+0003 import json, math, random
+0004 from pathlib import Path
+0005 
+0006 COUNTS={}
+0007 def isprime(n):
+0008     if n<2:return False
+0009     return all(n%d for d in range(2,math.isqrt(n)+1))
+0010 def root_of_order(order,p):
+0011     factors=[]; r=order; d=2
+0012     while d*d<=r:
+0013         if r%d==0:
+0014             factors.append(d)
+0015             while r%d==0:r//=d
+0016         d+=1
+0017     if r>1:factors.append(r)
+0018     for a in range(2,p):
+0019         x=pow(a,(p-1)//order,p)
+0020         if pow(x,order,p)==1 and all(pow(x,order//d,p)!=1 for d in factors):return x
+0021     raise ValueError('no root')
+0022 def field_for(m):
+0023     n=m*m; L=1
+0024     while L<3*m-2:L*=2
+0025     l=math.lcm(n,L); p=l+1
+0026     while not isprime(p):p+=l
+0027     return p,root_of_order(n,p),L,root_of_order(L,p)
+0028 def ntt(a,w,p,inverse=False):
+0029     a=list(a); n=len(a); j=0
+0030     for i in range(1,n):
+0031         bit=n>>1
+0032         while j&bit:j^=bit;bit>>=1
+0033         j^=bit
+0034         if i<j:a[i],a[j]=a[j],a[i]
+0035     if inverse:w=pow(w,-1,p)
+0036     width=2
+0037     while width<=n:
+0038         ws=pow(w,n//width,p)
+0039         for start in range(0,n,width):
+0040             phase=1
+0041             for off in range(width//2):
+0042                 u=a[start+off];v=a[start+off+width//2]*phase%p
+0043                 a[start+off]=(u+v)%p;a[start+off+width//2]=(u-v)%p
+0044                 phase=phase*ws%p
+0045         width*=2
+0046     if inverse:
+0047         ni=pow(n,-1,p);a=[x*ni%p for x in a]
+0048     return a
+0049 def conv(a,b,p,L,w):
+0050     assert len(a)+len(b)-1<=L
+0051     aa=ntt(a+[0]*(L-len(a)),w,p);bb=ntt(b+[0]*(L-len(b)),w,p)
+0052     return ntt([x*y%p for x,y in zip(aa,bb)],w,p,True)[:len(a)+len(b)-1]
+0053 def geom_forward(b,q,p,L,w):
+0054     m=len(b)
+0055     c=[pow(q,r*(r-1)//2,p) for r in range(2*m-1)]
+0056     a=[b[j]*pow(c[j],-1,p)%p for j in range(m)]
+0057     z=conv(a[::-1],c,p,L,w)
+0058     return [z[t+m-1]*pow(c[t],-1,p)%p for t in range(m)]
+0059 def inv_geom(c,q,p,L,w):
+0060     m=len(c); fact=[1]
+0061     for r in range(1,m):fact.append(fact[-1]*(1-pow(q,r,p))%p)
+0062     assert all(fact)
+0063     fi=[pow(x,-1,p) for x in fact]
+0064     tri=[pow(q,r*(r-1)//2,p) for r in range(m)]
+0065     left=[c[t]*(-1 if t%2 else 1)*fi[t]%p for t in range(m)]
+0066     kernel=[tri[s]*fi[s]%p for s in range(m)]
+0067     d=conv(left,kernel,p,L,w)
+0068     a=[d[r]*pow(tri[r],-1,p)%p for r in range(m)]
+0069     bkernel=[(-1 if s%2 else 1)*tri[s]*fi[s]%p for s in range(m)]
+0070     rev=[a[r]*fact[r]%p for r in range(m)][::-1]
+0071     e=conv(rev,bkernel,p,L,w)
+0072     return [e[m-1-j]*fi[j]%p for j in range(m)]
+0073 def dense_geom(b,q,p):
+0074     return [sum(b[j]*pow(q,t*j,p) for j in range(len(b)))%p for t in range(len(b))]
+0075 def direct_dft(x,omega,p):
+0076     return [sum(v*pow(omega,-k*r,p) for r,v in enumerate(x))%p for k in range(len(x))]
+0077 def batch_inverse(values,p):
+0078     prefix=[1]
+0079     for v in values:
+0080         assert v
+0081         prefix.append(prefix[-1]*v%p)
+0082     z=pow(prefix[-1],-1,p);out=[0]*len(values)
+0083     for i in range(len(values)-1,-1,-1):
+0084         out[i]=z*prefix[i]%p;z=z*values[i]%p
+0085     return out
+0086 
+0087 def run():
+0088     rng=random.Random(202610092156)
+0089     out={'field_cases':[], 'convolution_checks':0, 'vandermonde_inverse_cases':0,
+0090          'raw_full_transform_cases':0,'full_output_bins':0,'batch_inverse_values':0,
+0091          'layout':'x[t+M*u] = y_t[u]; Fourier uses omega^(-k*n)',
+0092          'scope':'Exact finite controls corroborate the separate all-size proof; no uploaded source executed.'}
+0093     for m in [2,3,4,5,6,7,8,9,10,12,16,20,24,32]:
+0094         p,omega,L,w=field_for(m);eta=pow(omega,m,p);n=m*m
+0095         out['field_cases'].append({'M':m,'N':n,'p':p,'omega':omega,'L':L,'fft_root':w})
+0096         facts=[]
+0097         for h in range(m):
+0098             q=omega*pow(eta,-h,p)%p;f=1
+0099             for r in range(m):
+0100                 if r:f=f*(1-pow(q,r,p))%p
+0101                 facts.append(f)
+0102             for repeat in range(4):
+0103                 b=[rng.randrange(p) for _ in range(m)]
+0104                 c=geom_forward(b,q,p,L,w)
+0105                 assert c==dense_geom(b,q,p)
+0106                 assert inv_geom(c,q,p,L,w)==b
+0107                 out['vandermonde_inverse_cases']+=1
+0108         invs=batch_inverse(facts,p)
+0109         assert all(a*b%p==1 for a,b in zip(facts,invs))
+0110         out['batch_inverse_values']+=len(facts)
+0111         # Three arbitrary fresh dense raw inputs, all explicit output coordinates.
+0112         for repeat in range(3):
+0113             raw=[rng.randrange(p) for _ in range(n)]
+0114             rows=[[raw[t+m*u] for u in range(m)] for t in range(m)]
+0115             C=[geom_forward(row,pow(eta,-1,p),p,L,w) for row in rows]
+0116             B=[]
+0117             for h in range(m):
+0118                 q=omega*pow(eta,-h,p)%p
+0119                 B.append(inv_geom([C[t][h] for t in range(m)],q,p,L,w))
+0120             recoveredC=[]
+0121             for h in range(m):
+0122                 q=omega*pow(eta,-h,p)%p
+0123                 recoveredC.append(geom_forward(B[h],q,p,L,w))
+0124                 assert recoveredC[-1]==[C[t][h] for t in range(m)]
+0125             output=[0]*n
+0126             for h in range(m):
+0127                 z=[recoveredC[h][t]*pow(omega,-h*t,p)%p for t in range(m)]
+0128                 ff=geom_forward(z,pow(eta,-1,p),p,L,w)
+0129                 for s in range(m):output[h+s*m]=ff[s]
+0130             assert output==direct_dft(raw,omega,p)
+0131             out['raw_full_transform_cases']+=1;out['full_output_bins']+=n
+0132         # Test generic convolution against a separate direct product.
+0133         for repeat in range(4):
+0134             a=[rng.randrange(p) for _ in range(m)];b=[rng.randrange(p) for _ in range(m)]
+0135             expected=[sum(a[i]*b[k-i] for i in range(m) if 0<=k-i<m)%p for k in range(2*m-1)]
+0136             assert conv(a,b,p,L,w)==expected
+0137             out['convolution_checks']+=1
+0138     return out
+0139 
+0140 if __name__=='__main__':
+0141     result=run()
+0142     p=Path(__file__).with_name('CHECK_RESULTS.json')
+0143     p.write_text(json.dumps(result,indent=2)+'\n')
+0144     print(json.dumps(result,indent=2))

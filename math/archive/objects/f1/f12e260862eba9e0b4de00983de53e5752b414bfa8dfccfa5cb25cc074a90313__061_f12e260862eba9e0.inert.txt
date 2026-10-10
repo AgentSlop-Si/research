@@ -1,0 +1,47 @@
+# Source and model notes: sparse-surrogate Fourier decoder
+
+Research date: 2026-10-09. This is a targeted primary-source audit, not an exhaustive novelty search. No claim of a new general exact FFT algorithm follows from the approximate decoder.
+
+## Closest established primitives
+
+1. **Liberty and Zucker, The Mailman algorithm: a note on matrix-vector multiplication** (author manuscript; published 2009). [Author PDF](https://www.cs.yale.edu/homes/el327/papers/mailmanAlgorithm.pdf). The abstract and sections on preprocessing and general alphabets give application time O(m n log |Σ| / log max(m,n)) for a matrix over a fixed finite alphabet, after O(m n) preprocessing; the vector may have arbitrary real entries. This is the closest direct finite-alphabet primitive. A quantized N by O(log N) sampled-phasor matrix can therefore be applied in O(N) after its preparation. But forming that fresh matrix entry by entry costs O(N log N). The descriptor construction must pay and remove this preparation cost. The paper is relevant prior art for logarithmic savings, not a proof of the full proposed cold-start decoder.
+
+2. **Barman, Approximating Nash Equilibria and Dense Subgraphs via an Approximate Version of Carathéodory's Theorem** (2014 preprint). [Paper](https://arxiv.org/pdf/1406.2296), Theorem 2, PDF page 8. It proves sparse uniform convex approximations with support O(p γ² / ε²) in the p-norm. Our inference: take real and imaginary Fourier atom coordinates as a vector in R^(2N), and p approximately log(2N); bounded coordinates then give O(ε^-2 log N) samples for a sup-norm approximation. The signed-atom construction belongs to this established approximate-Carathéodory/sampling family. It does not by itself accelerate evaluation of all N coordinates or supply the desired failure parameter.
+
+3. **Edelman, McCorquodale and Toledo, The Future Fast Fourier Transform?**, SIAM J. Sci. Comput. 20(3), 1094–1114 (1999). [Author PDF](https://www.tau.ac.il/~stoledo/Bib/Pubs/future-fft.pdf), [DOI](https://doi.org/10.1137/S1064827597316266). This develops approximate DFT algorithms for reducing distributed-memory communication using singular values and multipole methods. Its proposed gain is up to a factor of three in communication; sections 3.2 and 4.5 explicitly account for arithmetic. It is not a linear-work all-output word-RAM result with the present global additive error criterion.
+
+4. **Iwen, Improved Approximation Guarantees for Sublinear-Time Fourier Algorithms**. [Author PDF](https://users.math.msu.edu/users/iwenmark/Papers/Iwen_Improved.pdf). Its opening formulation seeks a near-optimal k-term Fourier approximation, with guarantees in terms of the best Fourier tail. This is distinct from approximating all N coefficients to error ε times the input l1 norm. In particular, sampling a sparse surrogate in the time domain does not imply its Fourier transform is sparse.
+
+5. **Barnett, Magland and af Klinteberg, A Parallel Nonuniform Fast Fourier Transform Library Based on an Exponential of Semicircle Kernel** (2019). [Author PDF](https://ludvigak.github.io/publication/2019-finufft/2019_finufft_sisc.pdf). This is a relevant practical comparator for sums of arbitrary input phasors at regular output frequencies. It uses spreading, an FFT and correction; it is not evidence that the proposed packed cold-start decoder has already been implemented or achieves a practical speedup.
+
+The search did not identify a primary paper that states the full combination: arbitrary fresh dense word-sized complex input; all N outputs materialized; global additive ε L_box error; fixed ε; polynomially small failure; and O(N) time including all tables. This absence is not a novelty certificate.
+
+## Model obligations
+
+- Specify finite input representation. Signed integer components bounded by N^C, or a shared fixed-point scale times such integers, admit O(log N)-bit arithmetic. Arbitrary exact real inputs do not belong to this word-RAM model.
+- Choose a stated constant multiple of log N for word width so that input magnitudes, L_box, modular phase products, table addresses and output numerators fit. Bounded multiword arithmetic is also acceptable when its number of words is constant.
+- For fixed ε and δ at least N^-c, k = O(log N). The constants and table exponents depend on ε and c. The linear bound is not uniform when ε shrinks with N.
+- Exact rejection sampling gives expected runtime unless a worst-case cap and its failure probability are included. Alternatively, use dyadic approximate draws and explicitly charge total-variation error to the failure budget.
+- Every table is rebuilt and charged. Input-independent does not mean free. Computing table phasors needs a bounded-precision routine, not a real-number trigonometric oracle.
+- Output may consist of explicit rational/fixed-point values with a declared common scale, but writing N outputs is still charged. If actual normalized floating-point outputs are requested, scaling and its error must be charged.
+- The approximation is global additive. For example, unitary error ε L_box / sqrt(N) can greatly exceed the size of most bins of a dense noise signal. Use coherent tones, dense mixtures and spike/comb components as validation cases, and report actual errors as well as the allowance.
+- A fixed-error result does not imply exact integer multiplication. Rounding products to exact integers would require a precision that depends on size and coefficient magnitude, changing the sample and table bounds.
+- An asymptotic construction may have an enormous ε-dependent threshold before even g≥2. This should not be described as a measured FFT speedup.
+
+## Independent simplification of the packing obligation
+
+The second table and a packed transpose are unnecessary if the first table emits guarded digits. Let there be G equal-sized sample groups. For each real or imaginary output lane, let the first table produce q in [-Q,Q], obtained by rounding Q times the group mean, with fixed Q=O(1/ε). Bias q by Q and choose lane width
+
+    b = ceil(log2(2 Q G + 1)).
+
+Pack h=floor(w/b) lanes into each word. Adding the G words componentwise by ordinary integer addition cannot carry between lanes: each final digit is at most 2 Q G < 2^b. Every partial sum is nonnegative and no larger. Unpack once, subtract GQ and divide by GQ to recover the averaged real/imaginary value. Its complex rounding error is at most sqrt(2)/(2Q).
+
+For block length B=Theta(log N), G=O(log log N) and w=Theta(log N), each table vector uses O(1+B b/w)=O(log G) words. The table accumulation cost is O(G log G) per block, or O(N loglogN logloglogN / logN)=o(N) overall. Final unpacking costs O(N). This is an elementary proposed implementation observation, not attributed to the above sources. Round the requested sample count up to a multiple of g before sampling so that the group weights match.
+
+The root team's integrated theorem and implementation should independently check these constants, finite-size fallbacks, table construction, and the full probability/error budget.
+
+## Exact scan branch: source scope
+
+- [Pernet and Storjohann, Time and space efficient generators for quasiseparable matrices](https://arxiv.org/abs/1701.00396) studies exact representations, products, inversion and vector application for bounded off-diagonal rank. It supplies appropriate structural machinery. Its abstract does not establish a sublogarithmic-depth factorization of the DFT into arbitrary-permutation bidirectional scans.
+- [Ailon, An n log n Lower Bound for Fourier Transform Computation in the Well Conditioned Model](https://arxiv.org/abs/1403.1307) explicitly assumes control of the condition number of the composed intermediate linear transformations. A bounded-order quasiseparable stage alone does not supply that hypothesis. Thus this source cannot close the nonunitary, arbitrarily ill-conditioned scan route without an additional argument.
+- The supplied Delvaux–Van Barel DOI [10.1016/j.cam.2007.03.020](https://doi.org/10.1016/j.cam.2007.03.020) did not return accessible full text during this audit. No theorem from it is newly asserted here.

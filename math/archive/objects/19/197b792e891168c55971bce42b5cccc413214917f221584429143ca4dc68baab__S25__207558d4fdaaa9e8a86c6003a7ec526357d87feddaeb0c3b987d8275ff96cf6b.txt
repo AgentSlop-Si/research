@@ -1,0 +1,350 @@
+   1 #!/usr/bin/env python3
+   2 """Hero #0 Phase 9: learned *dense* circulant evolution plus sparse innovations.
+   3 
+   4 Contract
+   5 --------
+   6 For N=K*M (radix two), x[b*M+t] = v_t[b].  Learn a K-by-K
+   7 circulant C from clean first transition v1=C v0.  Subsequent transitions:
+   8     v_{t+1}=C v_t+e_t, t=1,..,M-2,
+   9 where every innovation e_t has at most s nonzero coordinates.
+  10 
+  11 Learn C's full K-coordinate eigenvalue vector with two K-NTTs, O(K log K),
+  12 recover each e_t from 2s Fourier syndromes (Prony/Berlekamp--Massey),
+  13 then evaluate all N outputs using M-point FFTs in O(N(log M+s)).
+  14 If total errors E is bounded, direct geometric corrections avoid the M FFTs:
+  15 O(N(s+E)+K log K).
+  16 
+  17 Membership is checked with R independent *random* Freivalds vectors at
+  18 O(R(N+K log K)); false acceptance probability <= p^-R under uniform random
+  19 vectors independent of input (unless an independent deterministic full check
+  20 is selected).  The transform is mathematically exact on the promised class.
+  21 Generic inputs may be rejected and fall back to NTT => worst-case N log N.
+  22 
+  23 Finite field prime p=2013265921 for executable certificates only. It admits
+  24 powers of two <=2^27. Asymptotic theorem assumes a compatible sequence of
+  25 fields or ideal exact complex arithmetic, not constant-size field for all N.
+  26 """
+  27 from __future__ import annotations
+  28 import random
+  29 import secrets
+  30 from typing import Optional
+  31 from phase8_weyl_cycle import (P, G, Costs, exact_ntt, roots,
+  32                                batch_inverse_nonzero, add, mul, inv)
+  33 from phase6_exact import root_of_unity
+  34 
+  35 
+  36 def ntt_inverse(values, root, c: Optional[Costs]=None):
+  37     n=len(values)
+  38     reverse_root=pow(root,P-2,P)
+  39     z=exact_ntt(list(values), reverse_root,c)
+  40     inverse_n=inv(n,c)
+  41     return [mul(e,inverse_n,c) for e in z]
+  42 
+  43 
+  44 def learn_eigenvalues(cols, n:int, c: Costs):
+  45     """Assume first transition has no innovation: F(v1)=lambda*F(v0)."""
+  46     k=len(cols[0]);m=len(cols)
+  47     table=roots(n,c)
+  48     wk=table[m]
+  49     wk_inv=table[-m]
+  50     f0=exact_ntt(cols[0],wk_inv,c)
+  51     f1=exact_ntt(cols[1],wk_inv,c)
+  52     lam=[0]*k
+  53     positions=[];denominators=[]
+  54     for ell,(a,b) in enumerate(zip(f0,f1)):
+  55         c.zero_tests+=1
+  56         if not a:
+  57             if b:return None,None,table
+  58             lam[ell]=0  # convention for unobservable zero seed mode
+  59         else:
+  60             positions.append(ell);denominators.append(a)
+  61     reciprocals=batch_inverse_nonzero(denominators,c)
+  62     for ell,reciprocal in zip(positions,reciprocals):
+  63         lam[ell]=mul(f1[ell],reciprocal,c)
+  64     return f0,lam,table
+  65 
+  66 
+  67 def berlekamp_massey(seq: list[int], c:Optional[Costs]=None)->list[int]:
+  68     """C=[1,C1,...,CL], satisfying seq[n]+sum(Ci seq[n-i])=0."""
+  69     cur=[1];old=[1]
+  70     length=0;gap=1;previous=1
+  71     for n in range(len(seq)):
+  72         discrepancy=seq[n]
+  73         for i in range(1,length+1):
+  74             discrepancy=add(discrepancy,mul(cur[i],seq[n-i],c),c)
+  75         if not discrepancy:
+  76             gap+=1
+  77             continue
+  78         scale=mul(discrepancy,inv(previous,c),c)
+  79         before=cur[:]
+  80         if len(cur)<len(old)+gap:
+  81             cur.extend([0]*(len(old)+gap-len(cur)))
+  82         for j,x in enumerate(old):
+  83             cur[j+gap]=add(cur[j+gap],-mul(scale,x,c),c)
+  84         if 2*length<=n:
+  85             length=n+1-length
+  86             old=before;previous=discrepancy;gap=1
+  87         else:
+  88             gap+=1
+  89     return cur[:length+1]
+  90 
+  91 
+  92 def solve_amplitudes(nodes:list[int], syndromes:list[int],c:Optional[Costs]=None):
+  93     """Small Vandermonde solve: sum_j amp[j] node[j]^ell = syndrome[ell]."""
+  94     s=len(nodes)
+  95     if s==0:return []
+  96     matrix=[]
+  97     powers=[1]*s
+  98     for ell in range(s):
+  99         matrix.append(powers[:]+[syndromes[ell]])
+ 100         powers=[mul(v,x,c) for v,x in zip(powers,nodes)]
+ 101     for i in range(s):
+ 102         pivot=next((j for j in range(i,s) if matrix[j][i]),None)
+ 103         if pivot is None:return None
+ 104         matrix[i],matrix[pivot]=matrix[pivot],matrix[i]
+ 105         factor=inv(matrix[i][i],c)
+ 106         for j in range(i,s+1):matrix[i][j]=mul(matrix[i][j],factor,c)
+ 107         for row in range(s):
+ 108             if row==i:continue
+ 109             factor=matrix[row][i]
+ 110             if factor:
+ 111                 for j in range(i,s+1):
+ 112                     matrix[row][j]=add(matrix[row][j],-mul(factor,matrix[i][j],c),c)
+ 113     return [r[s] for r in matrix]
+ 114 
+ 115 
+ 116 def decode_sparse_syndromes(syndromes:list[int],k:int,root_neg:int,
+ 117                             max_errors:int,c:Optional[Costs]=None):
+ 118     """Exact recovery when residual has <=s spikes, using 2s syndromes.
+ 119 
+ 120     If the residual is denser, candidate may alias; Freivalds subsequently
+ 121     certifies all transitions with random vectors.  Never use a syndrome
+ 122     match alone to assert exact membership on arbitrary inputs.
+ 123     """
+ 124     if max_errors==0:return [] if all(v==0 for v in syndromes) else None
+ 125     polynomial=berlekamp_massey(syndromes,c)
+ 126     s=len(polynomial)-1
+ 127     if s>max_errors:return None
+ 128     if not s:
+ 129         return [] if all(v==0 for v in syndromes) else None
+ 130     nodes=[];positions=[]
+ 131     node=1
+ 132     for b in range(k):
+ 133         # z^s+C1 z^(s-1)+...+Cs = 0 for each exponential node
+ 134         h=1
+ 135         for coeff in polynomial[1:]:h=add(mul(h,node,c),coeff,c)
+ 136         if h==0:
+ 137             nodes.append(node);positions.append(b)
+ 138             if len(nodes)>s:return None
+ 139         node=mul(node,root_neg,c)
+ 140     if len(nodes)!=s:return None
+ 141     amps=solve_amplitudes(nodes,syndromes,c)
+ 142     if amps is None:return None
+ 143     for ell,val in enumerate(syndromes):
+ 144         prediction=0
+ 145         for node,amp in zip(nodes,amps):
+ 146             # s only polylog; repeated pow here has log s exponent not log K
+ 147             prediction=add(prediction,mul(amp,pow(node,ell,P),c),c)
+ 148             if c:c.mults+=2*max(1,ell.bit_length())
+ 149         if prediction!=val:return None
+ 150     return [(b,a) for b,a in zip(positions,amps) if a]
+ 151 
+ 152 
+ 153 def find_innovations(cols,lam,table,max_errors:int,c:Costs):
+ 154     m=len(cols);k=len(cols[0]);n=k*m
+ 155     if max_errors==0:
+ 156         return [[] for _ in range(m-1)]
+ 157     if 2*max_errors>k:raise ValueError('require 2s<=K')
+ 158     # Sample Fourier coefficients 0,...,2s-1 of every column, O(s*N).
+ 159     probes=2*max_errors
+ 160     samples=[[0]*probes for _ in range(m)]
+ 161     for t in range(m):
+ 162         for ell in range(probes):
+ 163             acc=0
+ 164             for b in range(k):
+ 165                 acc=add(acc,mul(cols[t][b],table[(-m*ell*b)%n],c),c)
+ 166             samples[t][ell]=acc
+ 167     innovations=[[] for _ in range(m-1)]
+ 168     for t in range(1,m-1):
+ 169         syndrome=[add(samples[t+1][ell],-mul(lam[ell],samples[t][ell],c),c)
+ 170                   for ell in range(probes)]
+ 171         result=decode_sparse_syndromes(syndrome,k,table[-m],max_errors,c)
+ 172         if result is None:return None
+ 173         innovations[t]=result
+ 174     return innovations
+ 175 
+ 176 
+ 177 def apply_transpose_circulant_to_row(w,lam,tab,m,c:Costs):
+ 178     """phi=C^T w via 2 K-NTTs; C v has eigenvalues lam[ell]."""
+ 179     k=len(w);wk=tab[m];wk_inv=tab[-m]
+ 180     fw=exact_ntt(w,wk_inv,c)
+ 181     fphi=[mul(fw[ell],lam[-ell%k],c) for ell in range(k)]
+ 182     return ntt_inverse(fphi,wk_inv,c)
+ 183 
+ 184 
+ 185 def probabilistic_verify(cols,lam,innovations,tab,m,c:Costs,rounds=3,rng=None):
+ 186     """Freivalds certificate. For false candidates Pr[accept] <= p^(-rounds).
+ 187 
+ 188     The theorem needs independent truly uniform finite-field w vectors chosen
+ 189     AFTER learned lambda and innovations have been fixed.  Default SystemRandom
+ 190     uses OS randomness; deterministic seeded RNG is only for reproducible tests.
+ 191     """
+ 192     if rng is None:rng=secrets.SystemRandom()
+ 193     k=len(cols[0])
+ 194     for trial in range(rounds):
+ 195         w=[rng.randrange(P) for _ in range(k)]
+ 196         phi=apply_transpose_circulant_to_row(w,lam,tab,m,c)
+ 197         for t in range(m-1):
+ 198             lhs=rhs=0
+ 199             for b in range(k):
+ 200                 lhs=add(lhs,mul(w[b],cols[t+1][b],c),c)
+ 201                 rhs=add(rhs,mul(phi[b],cols[t][b],c),c)
+ 202             for b,a in innovations[t]:
+ 203                 rhs=add(rhs,mul(w[b],a,c),c)
+ 204             if lhs!=rhs:return False
+ 205     return True
+ 206 
+ 207 
+ 208 def exact_dense_cycle_with_innovations(x:list[int],m:int,max_errors_per_step:int,
+ 209              global_fast_limit:Optional[int]=3,verification_rounds:int=3,
+ 210              counter:Optional[Costs]=None,rng=None,return_certificate:bool=False):
+ 211     """Recover full transform on certified sparse-innovation dense cycles.
+ 212 
+ 213     If total innovations E<=global_fast_limit, O((s+E)N+KlogK).
+ 214     Otherwise O(N(s+log M)+KlogK). Input-dependent division is counted.
+ 215     Returns None if membership test rejects. For generic inputs, probability
+ 216     of a false accept is at most P^-verification_rounds under true randomness.
+ 217     """
+ 218     c=counter or Costs();n=len(x)
+ 219     if m<2 or n%m or n&(n-1) or m&(m-1):raise ValueError('N,K,M radix two')
+ 220     k=n//m
+ 221     if k<m or k&(k-1):raise ValueError('K>=M radix two')
+ 222     if (P-1)%n:raise ValueError('field lacks root')
+ 223     if max_errors_per_step<0:raise ValueError
+ 224     if verification_rounds<1:raise ValueError('at least one Freivalds round is required')
+ 225     c.input_reads+=n
+ 226     cols=[[x[b*m+t]%P for b in range(k)] for t in range(m)]
+ 227     f0,lam,tab=learn_eigenvalues(cols,n,c)
+ 228     if f0 is None:
+ 229         return (None,{"accepted":False,"reason":"clean first transition impossible"},c) if return_certificate else None
+ 230     innovations=find_innovations(cols,lam,tab,max_errors_per_step,c)
+ 231     if innovations is None:
+ 232         return (None,{"accepted":False,"reason":"sparse syndrome decoding failed"},c) if return_certificate else None
+ 233     if not probabilistic_verify(cols,lam,innovations,tab,m,c,verification_rounds,rng):
+ 234         return (None,{"accepted":False,"reason":"independent recurrence fingerprint failed"},c) if return_certificate else None
+ 235     total=sum(map(len,innovations))
+ 236     choose_direct=(global_fast_limit is not None and total<=global_fast_limit)
+ 237     w_m_inv=tab[-k]
+ 238     # All lambda powers in O(N), shared by both evaluators.
+ 239     lam_powers=[]
+ 240     for ell in range(k):
+ 241         pw=[1]
+ 242         for t in range(m):pw.append(mul(pw[-1],lam[ell],c))
+ 243         lam_powers.append(pw)
+ 244     base_num=[]
+ 245     for ell in range(k):
+ 246         base_num.append(mul(f0[ell],add(1,-mul(lam_powers[ell][m],tab[(-ell*m)%n],c),c),c))
+ 247     # Sparse event mode: direct sum, no length-M FFT needed.
+ 248     events=[(t,b,a) for t,row in enumerate(innovations) for b,a in row]
+ 249     coeffs=None; boundary=None
+ 250     if not choose_direct:
+ 251         # Compute all E_t(ell) with O(s*N) direct sparse Fourier sums.
+ 252         E=[[0]*k for _ in range(m-1)]
+ 253         for t,row in enumerate(innovations):
+ 254             for ell in range(k):
+ 255                 y=0
+ 256                 for b,a in row:
+ 257                     y=add(y,mul(a,tab[(-m*ell*b)%n],c),c)
+ 258                 E[t][ell]=y
+ 259         # B_ell = sum_t lambda_ell^(M-1-t)*E_t(ell)
+ 260         boundary=[0]*k
+ 261         for ell in range(k):
+ 262             y=0
+ 263             for t in range(m-1):
+ 264                 y=add(y,mul(E[t][ell],lam_powers[ell][m-1-t],c),c)
+ 265             boundary[ell]=y
+ 266         # H_ell(z_j) = sum_t E_t(ell) z_j^t.
+ 267         # z_j=omega_N^(-ell) omega_M^(-j): length-M FFT per ell.
+ 268         coeffs=[]
+ 269         for ell in range(k):
+ 270             coef=[0]*m
+ 271             for t in range(m-1):coef[t]=mul(E[t][ell],tab[(-ell*t)%n],c)
+ 272             coeffs.append(exact_ntt(coef,w_m_inv,c))
+ 273     # Prepare all denominators, invert in a single batch.
+ 274     nonsingular=[];position=[];answer=[0]*n; singular=[]
+ 275     for ell in range(k):
+ 276         for j in range(m):
+ 277             index=ell+j*k
+ 278             z=tab[-index%n]
+ 279             rho=mul(lam[ell],z,c)
+ 280             den=add(1,-rho,c)
+ 281             if den:
+ 282                 nonsingular.append(den);position.append((index,ell,j,z))
+ 283             else:singular.append((index,ell,j,z))
+ 284     inverses=batch_inverse_nonzero(nonsingular,c)
+ 285     def numerator_value(index,ell,j,z):
+ 286         if choose_direct:
+ 287             numer=base_num[ell]
+ 288             for t,b,a in events:
+ 289                 ehat=mul(a,tab[(-m*ell*b)%n],c)
+ 290                 exponent=t+1;L=m-exponent
+ 291                 geometric=add(1,-mul(lam_powers[ell][L],tab[(-index*L)%n],c),c)
+ 292                 zpow=tab[(-index*exponent)%n]
+ 293                 numer=add(numer,mul(mul(ehat,zpow,c),geometric,c),c)
+ 294             return numer
+ 295         zh=mul(z,coeffs[ell][j],c)
+ 296         z_m=tab[(-index*m)%n]
+ 297         return add(add(base_num[ell],zh,c),-mul(z_m,boundary[ell],c),c)
+ 298     for reciprocal,(index,ell,j,z) in zip(inverses,position):
+ 299         answer[index]=mul(numerator_value(index,ell,j,z),reciprocal,c)
+ 300     for index,ell,j,z in singular:
+ 301         value=mul(m%P,f0[ell],c)
+ 302         # limit of (1-rho^L)/(1-rho) as rho -> 1 is L
+ 303         for t,row in enumerate(innovations):
+ 304             if not row:continue
+ 305             ehat=0
+ 306             for b,a in row:
+ 307                 ehat=add(ehat,mul(a,tab[(-m*ell*b)%n],c),c)
+ 308             power=tab[(-index*(t+1))%n]
+ 309             value=add(value,mul(mul(ehat,power,c),(m-t-1)%P,c),c)
+ 310         answer[index]=value
+ 311     cert={"accepted":True,"n":n,"k":k,"m":m,"innovation_total":total,
+ 312           "innovation_max_per_step":max(map(len,innovations),default=0),
+ 313           "mode":"direct-geometric" if choose_direct else "batched-small-NTT",
+ 314           "verification_rounds":verification_rounds,"false_acceptance_bound":f"{P}^-{verification_rounds}",
+ 315           "lambda_nonzero":sum(v!=0 for v in lam),"counted_ops":c.total(),
+ 316           "counts":c.as_dict(),"detected_innovations":innovations}
+ 317     return (answer,cert,c) if return_certificate else answer
+ 318 
+ 319 
+ 320 def make_dense_cycle(k:int,m:int,innovations:dict[int,list[tuple[int,int]]],seed:int=0,lam_override=None):
+ 321     """Independent test-only generator; DFT/IDFT each column is *not* online work."""
+ 322     rng=random.Random(seed)
+ 323     n=k*m
+ 324     if k<m or n&(n-1) or (P-1)%n:raise ValueError
+ 325     wn=root_of_unity(n)
+ 326     wk=pow(wn,m,P);wk_inv=pow(wk,P-2,P)
+ 327     v0=[rng.randrange(1,P) for _ in range(k)]
+ 328     f0=exact_ntt(v0,wk_inv)
+ 329     if any(v==0 for v in f0):raise AssertionError('rare seed with zero Fourier entry')
+ 330     lam=[rng.randrange(1,P) for _ in range(k)] if lam_override is None else list(lam_override)
+ 331     assert len(lam)==k
+ 332     # Arbitrary dense circulant kernel obtained from inverse transform of lambda.
+ 333     cinv=pow(k,P-2,P)
+ 334     c=[a*cinv%P for a in exact_ntt(lam,wk_inv)]
+ 335     spectra=[f0]
+ 336     cols=[v0]
+ 337     for t in range(m-1):
+ 338         fnext=[lam[ell]*spectra[-1][ell]%P for ell in range(k)]
+ 339         for b,amplitude in innovations.get(t,[]):
+ 340             for ell in range(k):
+ 341                 fnext[ell]=(fnext[ell]+amplitude*pow(wk,(-ell*b)%k,P))%P
+ 342         spectra.append(fnext)
+ 343         cols.append([z*cinv%P for z in exact_ntt(fnext,wk)])
+ 344     x=[cols[t][b] for b in range(k) for t in range(m)]
+ 345     return x,{"v0":v0,"lambda":lam,"kernel_c":c,"innovations":innovations}
+ 346 
+ 347 
+ 348 def exact_reference_dft(x:list[int]):
+ 349     wn=root_of_unity(len(x))
+ 350     return exact_ntt(x,pow(wn,P-2,P))

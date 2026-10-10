@@ -1,0 +1,31 @@
+"""Create chain-safe Phase16 bundle, preserving complete Phase15 archive."""
+from pathlib import Path
+import zipfile
+import hashlib
+import os
+
+ROOT=Path(__file__).resolve().parent.parent
+SRC=ROOT/'fft_green_phase16_entropy_fusion'
+OUT=ROOT/'fft_green_research_phase16_2026-10-09.zip'
+PRIOR=ROOT/'fft_green_research_phase15_2026-10-09.zip'
+START=ROOT/'FFT_RESEARCH_START_HERE_PHASE16.md'
+assert PRIOR.exists() and START.exists()
+
+files=[]
+for p in sorted(SRC.rglob('*')):
+    if not p.is_file() or '__pycache__' in p.parts or p.name=='SHA256SUMS.txt':
+        continue
+    files.append(p)
+manifest=''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(ROOT)}\n' for p in files)
+(SRC/'SHA256SUMS.txt').write_text(manifest)
+files.append(SRC/'SHA256SUMS.txt')
+with zipfile.ZipFile(OUT,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+    z.write(START,START.relative_to(ROOT))
+    for p in files:z.write(p,p.relative_to(ROOT))
+    z.write(PRIOR,'previous_full_phase15_checkpoint.zip',compress_type=zipfile.ZIP_STORED)
+with zipfile.ZipFile(OUT) as z:
+    bad=z.testzip()
+    assert bad is None,bad
+    assert z.getinfo('previous_full_phase15_checkpoint.zip').file_size==PRIOR.stat().st_size
+    assert len(z.namelist())==len(set(z.namelist()))
+    print(f'{OUT}: {len(z.namelist())} files, {OUT.stat().st_size} bytes; integrity OK')

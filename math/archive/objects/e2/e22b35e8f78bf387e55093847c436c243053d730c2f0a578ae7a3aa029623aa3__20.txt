@@ -1,0 +1,95 @@
+   1	#!/usr/bin/env python3
+   2	"""Fresh exact controls for rank strata and the Fourier paired-row reduction."""
+   3	from pathlib import Path
+   4	import sys,json,random
+   5	HERE=Path(__file__).resolve().parent;ROOT=HERE.parent
+   6	sys.path.insert(0,str(ROOT/'seed_compatibility_gate'))
+   7	from check_n16_outer_gate import PRIME as P,green,multiply,pivots,LABELS
+   8	from check_lift_defects import cover_and_splice
+   9	from check_hierarchical_lift import lift
+  10	def rank(a):return len(pivots(a))
+  11	def solve_row(t,b):
+  12	    # Solve transpose(t)c=b, preserving every rank stratum and free variable.
+  13	    mat=[list(col)+[x] for col,x in zip(zip(*t),b)];r=0;cols=[]
+  14	    for c in range(len(t)):
+  15	        pivot=next((i for i in range(r,len(mat)) if mat[i][c]),None)
+  16	        if pivot is None:continue
+  17	        mat[r],mat[pivot]=mat[pivot],mat[r]
+  18	        inv=pow(mat[r][c],-1,P);mat[r]=[x*inv%P for x in mat[r]]
+  19	        for i in range(len(mat)):
+  20	            if i!=r:
+  21	                f=mat[i][c];mat[i]=[(x-f*y)%P for x,y in zip(mat[i],mat[r])]
+  22	        cols.append(c);r+=1
+  23	    if any(not any(row[:-1]) and row[-1] for row in mat):return None
+  24	    particular=[0]*len(t)
+  25	    for row,c in enumerate(cols):particular[c]=mat[row][-1]
+  26	    null=[]
+  27	    for c in range(len(t)):
+  28	        if c in cols:continue
+  29	        v=[0]*len(t);v[c]=1
+  30	        for row,pivot in enumerate(cols):v[pivot]=-mat[row][c]%P
+  31	        null.append(v)
+  32	    full_support_possible=all(particular[j] or any(v[j] for v in null) for j in range(len(t)))
+  33	    return particular,null,full_support_possible
+  34	def strata():
+  35	    results=[]
+  36	    for r in range(9):
+  37	        t=[[int(i==j and i<r) for j in range(64)] for i in range(8)]
+  38	        b=[int(j<r) for j in range(64)]
+  39	        solution=solve_row(t,b);assert solution is not None and solution[2]
+  40	        bad=b[:];bad[63]=1;assert solve_row(t,bad) is None
+  41	        assert rank(t)==r and rank(t+[bad])==r+1
+  42	        if r>=2:
+  43	            forced=b[:];forced[0]=0;assert solve_row(t,forced) is not None and not solve_row(t,forced)[2]
+  44	        results.append({'rank':r,'membership_positive':True,'nonmembership_negative':True,'nonzero_guards_checked':True})
+  45	    return results
+  46	def paired_synthetic():
+  47	    out=[]
+  48	    for i in range(32):
+  49	        excluded={i,i+32};other=[j for j in range(64) if j not in excluded]
+  50	        rows=[]
+  51	        for j in other[:6]+[i,i+32]:rows.append([int(k==j) for k in range(64)])
+  52	        # An invertible 8-by-8 Vandermonde mix avoids privileging coordinate rows.
+  53	        mix=[[pow(r+1,c,P) for c in range(8)] for r in range(8)]
+  54	        t=multiply(mix,rows);w=[[row[k] for k in other] for row in t]
+  55	        assert rank(t)==8 and rank(w)==6
+  56	        assert all(solve_row(t,[int(k==j) for k in range(64)]) is not None for j in excluded)
+  57	        broken=[row[:] for row in rows];broken[6][other[6]]=1
+  58	        tt=multiply(mix,broken);ww=[[row[k] for k in other] for row in tt]
+  59	        assert rank(tt)==8 and rank(ww)==7
+  60	        assert solve_row(tt,[int(k==i) for k in range(64)]) is None
+  61	        out.append({'row_pair':[i,i+32],'positive_wrong_rank':6,'negative_wrong_rank':7})
+  62	    return out
+  63	def real_route_identities():
+  64	    gs=[]
+  65	    for j,label in enumerate(LABELS):
+  66	        t,p,_=cover_and_splice(4,4,label);_,pl,_=lift(t,p,4,4,label);gs.append(green(pl,j+2))
+  67	    u=pow(3,(P-1)//64,P);inv64=pow(64,-1,P)
+  68	    fi=[[inv64*pow(u,(-i*j)%64,P)%P for j in range(64)] for i in range(64)]
+  69	    bank=[[0]*64 for _ in range(64)]
+  70	    for block in range(8):
+  71	        for i in range(8):
+  72	            for j in range(8):bank[8*block+i][8*block+j]=pow(u,8*i*j,P) if block in [0,1,4,5] else int(i==j)
+  73	    k=multiply(gs[0],bank);r=multiply(bank,gs[1]);rng=random.Random(171616)
+  74	    recs=[]
+  75	    for sign in (1,-1):
+  76	        coefficients=[[rng.randrange(1,P) for j in range(8)] for i in range(32)]
+  77	        coefficients += [[sign*x%P for x in row] for row in coefficients]
+  78	        l=[[sum(coefficients[i][j]*gs[j][i][c] for j in range(8))%P for c in range(64)] for i in range(64)]
+  79	        assert rank(l)==64
+  80	        for branch in ('input','middle'):
+  81	            u0=multiply(multiply(k,l),fi) if branch=='input' else multiply(multiply(l,r),fi)
+  82	            transported=[multiply(g,u0) for g in gs]
+  83	            for i in range(32):
+  84	                for j in range(8):
+  85	                    for c in range(64):assert transported[j][i+32][c]==sign*((-1)**c)*transported[j][i][c]%P
+  86	            recs.append({'branch':branch,'signed_symmetry':sign,'entrywise_pair_checks':32*8*64,
+  87	                         'inner_rank':64,'fixed_factors':'independent commuting controls, not the algebraic seed'})
+  88	    return recs
+  89	def main():
+  90	    result={'status':'PASS','rank_strata':strata(),'paired_rank_controls':paired_synthetic(),
+  91	            'actual_route_identity_controls':real_route_identities(),
+  92	            'scope':'Algebraic identities and guards only; no N64 coefficient solution or nonexistence claim.'}
+  93	    (HERE/'ROW_MEMBERSHIP_CONTROLS.json').write_text(json.dumps(result,indent=2)+'\n')
+  94	    print(json.dumps({'status':'PASS','rank_strata':9,'paired_positive_negative_cases':32,'route_cases':4}))
+  95	if __name__=='__main__':main()

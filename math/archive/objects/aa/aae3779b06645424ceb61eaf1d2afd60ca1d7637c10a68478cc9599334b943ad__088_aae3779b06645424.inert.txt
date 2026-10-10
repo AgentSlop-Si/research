@@ -1,0 +1,87 @@
+# Stronger exact half-cut obstruction: linear channel-rank growth
+
+**Date:** 2026-10-09. **Status:** exact self-contained algebraic proof with independent finite-field audits. This strictly improves the preceding sqrt(N) minor bound for the two-stage model. **No proof of any general FFT lower bound or new fast FFT algorithm is claimed; research priority has not been established.**
+
+## Theorem (two quasiseparable stages, arbitrary monomial intermediate shuffle)
+
+Let `N=2m`, let `F_N[i,j] = omega^(ij)` be the complex Fourier matrix with `omega` a primitive N-th root, and suppose
+
+    F_N = A P B,
+
+where `P` is an arbitrary invertible monomial matrix (one nonzero entry in each row and column), `A` has upper quasiseparable cut-rank at most `r_A`, and `B` has both upper and lower quasiseparable cut-ranks at most `r_B`. Then
+
+    r_A + r_B >= N/4.
+
+In particular, when the two stages have the same cut rank `r`,
+
+    r >= N/8.
+
+**The theorem holds for any N>=2 with m=floor(N/2), as** `r_A+r_B >= m/2`. For odd N, use the disjoint first and last `m` columns and allow the leftover central column; the proof is unchanged.
+
+It also holds if `F_N` is replaced by ANY Vandermonde-type transform `V[i,j]=alpha_i^j` with all `alpha_i` nonzero and pairwise distinct. An arbitrary output-row monomial relabeling (without an additional arbitrary input-column relabeling) is permitted. For the Fourier matrix specifically, arbitrary input-column monomial relabeling alone is also permitted, because its first m rows form a Vandermonde matrix for *any* set of m distinct Fourier frequencies. This input-column extension does not hold for arbitrary Vandermonde matrices. Both external arbitrary relabelings simultaneously are **not** covered.
+
+## Proof (even N)
+
+Partition the coordinates into `L={0,...,m-1}` and `R={m,...,2m-1}`. Since `A` is upper quasiseparable,
+
+    rank(A[L,R]) <= r_A.
+
+Write `(P B)[k,j] = d_k B[pi(k),j]`, where `pi` is an arbitrary permutation and `d_k != 0`.
+
+Let `c_L = #{k in L : pi(k) in L}` and `c_R = #{k in L : pi(k) in R}`. Then `c_L+c_R=m`.
+
+Consider the left `m x m` block of `M=A P B`:
+
+    M[L,L] = A[L,L] (PB)[L,L] + A[L,R] (PB)[R,L].
+
+The second term has rank <=r_A. Of the rows of `(PB)[L,L]`, only `c_L` originate from rows of `B` inside L. The other `c_R` originate from `B[R,L]`, which has rank <=r_B by the lower cut. Therefore
+
+    rank((PB)[L,L]) <= c_L+r_B,
+    rank(M[L,L]) <= c_L+r_A+r_B.                      (1)
+
+For the right `m x m` block:
+
+    M[L,R] = A[L,L] (PB)[L,R] + A[L,R] (PB)[R,R].
+
+Again the second term has rank <=r_A. Only `c_R` of the rows of `(PB)[L,R]` originate from B rows inside R; the others come from `B[L,R]`, of rank <=r_B by the upper cut. Hence
+
+    rank(M[L,R]) <= c_R+r_A+r_B.                      (2)
+
+Both Fourier blocks `F_N[L,L]` and `F_N[L,R]` have rank exactly m: for a consecutive interval of m columns starting at s=0 or s=m, the entries are `(omega^(s+j))^i` for 0<=i,j<m, a Vandermonde matrix in m distinct nodes.
+
+If `F_N=M`, equations (1),(2) force
+
+    m <= c_L+r_A+r_B,
+    m <= c_R+r_A+r_B.
+
+Adding, using `c_L+c_R=m`:
+
+    2m <= m + 2(r_A+r_B),
+    r_A+r_B >= m/2 = N/4.
+
+The proof allows arbitrary intermediate gains d_k, complex/unbounded coefficients, singular individual stages, and fully dense matrices. **QED.**
+
+## Compared with the previous certificate
+
+The earlier proof picked `sqrt(N)`-sized windows and derived `floor(sqrt(N)) <= r_A+2r_B+1`. The half-cut proof is stronger for large N because it pairs **two complementary full-rank Fourier minors** rather than bounding just one small window.
+
+| N | Previous symmetric necessary rank | New symmetric necessary rank |
+|---:|---:|---:|
+| 16 | >=1 | >=2 |
+| 32 | >=2 | >=4 |
+| 64 | >=3 | >=8 |
+| 128 | >=4 | >=16 |
+| 256 | >=5 | >=32 |
+| 1024 | >=11 | >=128 |
+
+Numbers in the new column are exact ceilings of N/8. Old column is `ceil((floor(sqrt(N))-1)/3)`.
+
+The archive's two-channel sum of tridiagonal Green inverses has cut rank at most two. **Consequently two such stages cannot equal the DFT whenever N>16** (at powers of two, first blocked size N=32), irrespective of intermediate permutation or scalar diagonal gains. The numerical synthesis failure at N=32 with r=3 is now also rigorously predicted: 3+3<32/4=8.
+
+## Very important model boundary
+
+This is an obstruction for a *two-stage factorization with the stages quasiseparable in the fixed natural coordinate order*, with arbitrary intermediate monomial permutation. It is **not** an Omega(N^2) arithmetic lower bound: high quasiseparable rank does not itself exclude a special fast executor. It does **not** extend to arbitrary input and output permutations simultaneously, more than two stages, general dense O(N)-time primitives, or approximate FFTs. In particular, Cooley–Tukey regrouping can involve external data-layout permutations and more general stage orderings that fall outside these hypotheses.
+
+## Numerical witness vs universal result
+
+The code `halfcut_certificate.py` independently checks the two block decompositions exactly modulo 998244353, with varied permutations/gains and stage ranks. It is a **finite audit**, not a proof of the universal statement. The proof above applies over the complex numbers, and does not depend on the modulus used in tests.

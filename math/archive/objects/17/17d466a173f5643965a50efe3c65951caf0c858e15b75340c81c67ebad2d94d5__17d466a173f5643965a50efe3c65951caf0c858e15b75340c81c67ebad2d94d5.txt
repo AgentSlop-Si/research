@@ -1,0 +1,110 @@
+"""Independent spectral-tail obstruction from adjacent C columns 1 and 2.
+
+In F8=B P A with P=[7,0,6,3,4,1,2,5], C=A^-1 globally
+separated semiseparable rank1, the two upper-B columns j5 and j6 are
+proportional in Fourier rows 0..4. Invertibility of C forces the lower
+C-generator tail L3..L7 to lie in Fourier high modes (5,6,7), hence
+its two 3rd-order recurrence checks vanish. Combine those two affine
+linear equations in (t,beta) with previously derived quartic Q,
+which is likewise affine linear in (t,beta), to get a 4-variable cubic.
+"""
+import json,hashlib,itertools
+from pathlib import Path
+from inverse_quartic import (ONE,ZERO,cadd,cmul,cpowroot,poly_constant,poly_var,poly_eval,padd,pscale,pmul,sum_polys)
+from exact_minor import make_exact
+from dual_support import primitive_root
+from sympy.polys.rings import ring
+from sympy.polys.domains import GF
+
+def sub(a,b):return padd(a,b,-1)
+def split_tb(P):
+    A={};B={};C={}
+    for m,v in P.items():
+        assert m.count(0)<=1 and m.count(5)<=1 and not(0 in m and 5 in m)
+        rem=tuple(x for x in m if x not in (0,5))
+        if 0 in m:A[rem]=v
+        elif 5 in m:B[rem]=v
+        else:C[rem]=v
+    return A,B,C
+
+def det3(M):
+    a,b,c=M[0];d,e,f=M[1];g,h,i=M[2]
+    return padd(sub(pmul(a,sub(pmul(e,i),pmul(f,h))),pmul(b,sub(pmul(d,i),pmul(f,g)))),pmul(c,sub(pmul(d,h),pmul(e,g))))
+
+def equations():
+    # variable indices: 0=t, 1=h0,2=h1,3=h2,4=hl,5=beta
+    t,h0,h1,h2,hl,beta=[poly_var(i) for i in range(6)]
+    one=poly_constant();zm1=cadd(cpowroot(1),(-1,0,0,0))
+    a1=cadd(cadd(ONE,cpowroot(-1)),cpowroot(-2))
+    a2=cadd(cadd(cpowroot(-1),cpowroot(-2)),cpowroot(-3))
+    a3=cpowroot(-3)
+    hs=[h0,h1,h2]
+    for k in range(4):hs.append(padd(sub(pscale(hs[k+2],a1),pscale(hs[k+1],a2)),pscale(hs[k],a3)))
+    H=hs[:6]+[hl]
+    bnum=padd(sub(t,one),pmul(beta,sub(h0,one)))
+    def lhat(k):
+        if k==7:return pscale(t,zm1)
+        assert 1<=k<=6
+        v=pscale(sub(one,pmul(beta,h0)),zm1)
+        v=padd(v,pscale(bnum,cadd(cpowroot(-k),(-1,0,0,0))))
+        v=padd(v,pscale(pmul(beta,H[k]),zm1))
+        return v
+    low=[lhat(k) for k in range(3,8)]
+    # high frequencies indices 5,6,7 -> time-domain characters z^-5,z^-6,z^-7 = z^3,z^2,z.
+    s1=cadd(cadd(cpowroot(1),cpowroot(2)),cpowroot(3))
+    s2=cadd(cadd(cpowroot(3),cpowroot(4)),cpowroot(5))
+    s3=cpowroot(6)
+    eq0=padd(padd(padd(low[3],pscale(low[2],s1),-1),pscale(low[1],s2)),pscale(low[0],s3),-1)
+    eq1=padd(padd(padd(low[4],pscale(low[3],s1),-1),pscale(low[2],s2)),pscale(low[1],s3),-1)
+    Q,AQ,BQ,CQ=make_exact()
+    # split in t/beta and count degrees; determinant 3x3 in those coefficients
+    L0=split_tb(eq0);L1=split_tb(eq1)
+    W=det3([L0,L1,(AQ,BQ,CQ)])
+    return [eq0,eq1,Q],W,L0,L1,(AQ,BQ,CQ)
+
+def check():
+    eq,W,low0,low1,qcoeff=equations()
+    print('tail recurrence term counts',list(map(len,eq[:2])),'3x3 elimination terms',len(W),'degree',max((len(k) for k in W),default=0))
+    assert W
+    assert max(map(len,W))<=3
+    for p in (12289,65537):
+        z=primitive_root(p,8)
+        for w in (z,pow(z,3,p)):
+            # Compare recurrence values to the exact, independent fifth-Fourier-mode interpolation test.
+            from general_onion import build
+            from dual_support import P8
+            import random
+            rng=random.Random(p+w)
+            for rep in range(12):
+                x=[rng.randrange(1,p) for _ in range(8)]
+                try:C,B,data=build(8,p,w,P8,x)
+                except ZeroDivisionError:continue
+                LL=data['L']
+                val0=poly_eval(eq[0],x[:6],p,w)
+                val1=poly_eval(eq[1],x[:6],p,w)
+                s1=(w+pow(w,2,p)+pow(w,3,p))%p
+                s2=(pow(w,3,p)+pow(w,4,p)+pow(w,5,p))%p
+                s3=pow(w,6,p)
+                want0=(LL[6]-s1*LL[5]+s2*LL[4]-s3*LL[3])%p
+                want1=(LL[7]-s1*LL[6]+s2*LL[5]-s3*LL[4])%p
+                assert val0==want0*x[0]*(w-1)%p
+                assert val1==want1*x[0]*(w-1)%p
+    # Mod p certificate that the cubic W is nonzero as a polynomial over Q(zeta8).
+    p=12289;w=primitive_root(p,8);h=[2,3,5,7];val=poly_eval(W,[0]+h+[0],p,w)
+    # W has monomials only h0,h1,h2,hl indices1..4
+    print('mod field certificate eval W at h=',h,':',val)
+    assert val!=0
+    obj=dict(coefficient_field='Z[z]/(z^4+1)',variables=['h0','h1','h2','hl'],
+        polynomial='W(h)=det([coeff_t(E3),coeff_beta(E3),const(E3)]; [coeff_t(E4),coeff_beta(E4),const(E4)]; [coeff_t(Q),coeff_beta(Q),const(Q)])',
+        equations='E3=L6-s1 L5+s2 L4-s3 L3=0; E4=L7-s1 L6+s2 L5-s3 L4=0',
+        high_roots='z,z^2,z^3',s1=list(cadd(cadd(cpowroot(1),cpowroot(2)),cpowroot(3))),
+        term_counts=[len(v) for v in eq[:2]],W_term_count=len(W),W_degree=max(map(len,W)),
+        W_terms=[[list(k),list(v)] for k,v in sorted(W.items(),key=lambda kv:(len(kv[0]),kv[0]))],
+        finite_field_certificate=dict(prime=p,root=w,h=h,W_nonzero=val),
+        scope='Fixed P8, C invertible, rank-one upper B columns j5,6 and lower spectral j1,2, nonzero t and C upper corner for 3-mode recurrence. Necessity only.',
+        exception_note='No S1 or Delta denominators. If two original stage columns are already proportional, invertibility fails; otherwise the high-mode recurrence is necessary.')
+    dst=Path(__file__).with_name('adjacent_tail_elimination.json')
+    dst.write_text(json.dumps(obj,indent=2)+'\n')
+    print('sha256',hashlib.sha256(dst.read_bytes()).hexdigest())
+    return obj
+if __name__=='__main__':check()

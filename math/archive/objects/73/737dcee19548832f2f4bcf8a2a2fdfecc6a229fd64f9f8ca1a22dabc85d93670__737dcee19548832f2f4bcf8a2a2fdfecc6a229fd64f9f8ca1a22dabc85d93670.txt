@@ -1,0 +1,98 @@
+"""Exact gauge-tangent audit + second fundamental form for chart at n=8.
+
+All 20 Jacobian-kernel directions are accounted for by explicit generators of
+stage scaling, unused boundary parameters, and intermediate diagonal gauge.
+This makes the projected quadratic obstruction independent of first-order
+parameter choices with the same output tangent, at the recorded generator point.
+"""
+import json,sys
+from pathlib import Path
+import numpy as np
+OLD=(Path(__file__).resolve().parent/'prior_checkpoint' if (Path(__file__).resolve().parent/'prior_checkpoint').exists() else Path(__file__).resolve().parents[1]/'fft_nonlinear_compatibility_2026-10-09')
+sys.path.insert(0,str(OLD))
+import jacobian_gate as j
+P=[7,0,6,3,4,1,2,5]; N=8; MOD=12289
+j.MOD=MOD
+
+def diffstage(coeff,par):
+    n=N
+    D=np.zeros((n,n),dtype=np.int64)
+    L=par['L'][:,0];V=par['V'][:,0];U=par['U'][:,0];W=par['W'][:,0]
+    for i in range(n):
+        D[i,i] = int(coeff[i])
+        for k in range(i):
+            D[i,k]= int(coeff[8+i])*int(V[k])+int(L[i])*int(coeff[16+k])
+        for k in range(i+1,n):
+            D[i,k]= int(coeff[24+i])*int(W[k])+int(U[i])*int(coeff[32+k])
+    return D%MOD
+
+def hessstage(u,v):
+    H=np.zeros((N,N),dtype=np.int64)
+    for i in range(N):
+        for k in range(i):
+            H[i,k] = int(u[8+i])*int(v[16+k])+int(v[8+i])*int(u[16+k])
+        for k in range(i+1,N):
+            H[i,k] = int(u[24+i])*int(v[32+k])+int(v[24+i])*int(u[32+k])
+    return H%MOD
+
+def hessmap(u,v,a,b):
+    A=j.value(a); B=j.value(b)
+    uA,vA=u[:40],v[:40];uB,vB=u[40:],v[40:]
+    H=(B@hessstage(uA,vA)[P,:] + diffstage(uB,b)@diffstage(vA,a)[P,:]
+        +diffstage(vB,b)@diffstage(uA,a)[P,:]
+        +hessstage(uB,vB)@A[P,:])%MOD
+    return H.reshape(-1)
+
+def gauge_basis(a,b):
+    paramvec=lambda p,f:p[f][:,0]
+    G=[];names=[]
+    for s,par in [(0,a),(40,b)]:
+        for fname,idx in [('L_unused',8),('V_unused',16+7),('U_unused',24+7),('W_unused',32)]:
+            v=np.zeros(80,dtype=np.int64);v[s+idx]=1;G.append(v);names.append(f'{s}:{fname}')
+        for low_or_up in (0,1):
+            v=np.zeros(80,dtype=np.int64)
+            if low_or_up==0:
+                v[s+8:s+16]=paramvec(par,'L');v[s+16:s+24]=-paramvec(par,'V')
+            else:
+                v[s+24:s+32]=paramvec(par,'U');v[s+32:s+40]=-paramvec(par,'W')
+            G.append(v%MOD);names.append(f'{s}:offdiag_rescale_{low_or_up}')
+    for k in range(8):
+        g=np.zeros(80,dtype=np.int64)
+        g[k]=int(a['d'][k]);g[8+k]=int(a['L'][k,0]);g[24+k]=int(a['U'][k,0])
+        bidx=P.index(k)
+        g[40+bidx]=-int(b['d'][bidx]);g[40+16+bidx]=-int(b['V'][bidx,0]);g[40+32+bidx]=-int(b['W'][bidx,0])
+        G.append(g%MOD);names.append(f'intermediate_k{k}')
+    return np.array(G,dtype=np.int64).T%MOD,names
+
+def check(seed=1011):
+    M,J,a,b=j.basis(8,1,P,seed)
+    Q=np.array(j.basis_null(J.T),dtype=np.int64)%MOD
+    G,names=gauge_basis(a,b)
+    assert G.shape==(80,20)
+    assert j.rank_mod(G)==20
+    assert j.rank_mod(J)==60
+    assert np.all((J@G)%MOD==0)
+    v=np.zeros(80,dtype=np.int64);v[7]=1;v[40+0]=1
+    dv=(J@v)%MOD
+    Hv=hessmap(v,v,a,b)
+    assert np.count_nonzero(Hv)==1 and Hv[7]%MOD==2
+    target=(Q@Hv)%MOD
+    for q in range(20):
+        assert np.all((Q@hessmap(v,G[:,q],a,b))%MOD==0),(q,names[q])
+        assert np.all((Q@hessmap(G[:,q],G[:,q],a,b))%MOD==0),(q,names[q])
+    # Cross checked for a random combination of gauge kernel directions.
+    rng=np.random.default_rng(24)
+    k=(G@rng.integers(1,MOD,size=20,dtype=np.int64))%MOD
+    assert np.all((Q@hessmap(v,k,a,b))%MOD==0)
+    assert np.all((Q@hessmap(k,k,a,b))%MOD==0)
+    out={'n':8,'rank_per_stage':1,'prime':MOD,'seed':seed,'rank_J':60,'dimension_kernel_J':20,
+         'explicit_independent_gauge_directions':20,'gauge_rank':int(j.rank_mod(G)),
+         'gauge_kernel_exact':True,'normal_quadratic_on_cross_gauge_zero':True,
+         'tangent_direction_parameters':['A diagonal d[7]','B diagonal d[0]'],
+         'tangent_conormal_zero':True,
+         'hessian_half_term':'E[0,7] = 1',
+         'conormal_quadratic_half':(Q@Hv*pow(2,-1,MOD)%MOD).tolist(),
+         'conclusion':'The local image at the stored generator point has a nonzero second fundamental form in this output tangent direction. A target straight line with this tangent cannot be lifted through this point, even after any first-order reparameterization by the full 20-dimensional gauge kernel.',
+         'scope':'Local obstruction at this generator point; not a global polynomial or Fourier nonmembership proof.'}
+    return out
+if __name__=='__main__':print(json.dumps(check(),indent=2))

@@ -1,0 +1,39 @@
+   1 """Exact counting experiment behind the degree-limited annihilator obstruction."""
+   2 from itertools import product
+   3 from math import exp
+   4 import random
+   5 
+   6 
+   7 def first_coefficients_binary(a,q):
+   8     n=len(a)
+   9     out=[]
+  10     for i in range(n):
+  11         out.append(sum(q[j]*a[i-j] for j in range(min(i,len(q)-1)+1))%2)
+  12     return tuple(out)
+  13 
+  14 
+  15 def exhaustive_small_case(n=8,d=3):
+  16     count=0
+  17     for q_tail in product([0,1],repeat=d):
+  18         q=(1,)+q_tail
+  19         image=set()
+  20         for bits in product([0,1],repeat=n):
+  21             image.add(first_coefficients_binary(bits,q))
+  22         if len(image)!=2**n:
+  23             raise AssertionError((q,len(image)))
+  24         count+=1
+  25     print(f'EXHAUSTIVE: {count} binary filters, every one bijects all {2**n} length-{n} arrays')
+  26 
+  27 
+  28 def random_hard_case(n=1024,d=8):
+  29     rng=random.Random(20261009)
+  30     x=[rng.randrange(2) for _ in range(n)]
+  31     weights=[sum(first_coefficients_binary(x,(1,)+q)) for q in product([0,1],repeat=d)]
+  32     bound=(2**d)*exp(-n/18)
+  33     print(f'RANDOM n={n}, all {2**d} degree<={d} filters: min-weight={min(weights)}, max={max(weights)}, threshold={n//3}')
+  34     print(f'THEORETICAL union Hoeffding upper bound on any weight <=n/3: {bound:.3e}')
+  35     assert min(weights)>n//3
+  36 
+  37 if __name__=='__main__':
+  38     exhaustive_small_case()
+  39     random_hard_case()

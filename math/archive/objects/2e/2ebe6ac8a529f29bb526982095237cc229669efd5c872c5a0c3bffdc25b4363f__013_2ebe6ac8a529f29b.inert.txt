@@ -1,0 +1,125 @@
+STATIC AUDIT: WIDE GLOBAL SCANS AND FOURIER CUT RANK
+Date: 2026-10-09 UTC
+Artifact: fft_wide_global_scan_rank_research_2026-10-09(1).zip
+Source Library ID: [private-id]
+Audited extraction: fft_wide_scan_cutrank
+Method: read every supplied Markdown, Python, JSON and checksum file; use the system sha256sum utility. NO uploaded Python was executed. Captured numerical results are inspected assertions/data, not independently rerun results.
+
+BOTTOM LINE
+
+The main all-size complex-number cut-rank arguments are sound within their declared architecture. Natural coordinate order requires at least N/2 forward plus N/2 backward pure scans for even N. Arbitrary endpoint permutations still require at least N/4 channels in each direction when 4 divides N. The internal-permutation cut-flow budget is valid but can become vacuous after an O(N)-work random-access shuffle. None of this establishes a general FFT work lower bound.
+
+A separate elementary sparse-inverse argument improves the pure serial-scan boundary: any serial product of invertible square pure one-state scans, diagonals and arbitrary permutations needs at least ceil(log_2 N) scan factors to equal a dense-inverse Fourier transform. It is inapplicable to a sum of scans, a general feedthrough state-space block, parallel channels summed at the output, or an expanded-register circuit. Distinguish a product of scan matrices from a sum/block network of scans.
+
+1. INTEGRITY AND STATIC COVERAGE
+
+All 11 manifest entries passed sha256sum -c SHA256SUMS.txt:
+NEXT_GATE.md, README.md, RESEARCH.md, audit_results.json,
+independent_certificate.py, independent_results.json,
+routing_budget.py, routing_results.json,
+tests/test_potential.py, tests/test_wide_scan.py, wide_scan.py.
+SHA256SUMS.txt is naturally not self-hashed. Matching an internal manifest establishes consistency with that manifest, not provenance or an external signature.
+
+Read all code. It is finite-field matrix/rank and unittest code using the Python standard library. No source code was imported or run. Static code review finds conventional modular Gaussian elimination, correct forward/backward recurrence matrix construction and correct square multiplication. Independent elimination is separately implemented and does not import wide_scan.py. This is structural independence, not a guarantee against correlated conceptual mistakes.
+
+Captured data claim:
+- natural balanced ranks N/2 and parity/bit-reversal ranks N/4 for N=8 through 256;
+- N=8 exhaustive histogram {2:20, 3:576, 4:4304}, totaling 4,900;
+- two-prime independent checks at N=8,16,32,64;
+- randomized scan and shuffle inequalities with zero captured violations.
+These claims agree with the mathematics and visible loops where applicable, but were not recomputed here.
+
+Minor reproducibility/coverage issues, not theorem failures:
+(a) README's three reproduction commands do not regenerate audit_results.json or its N=256 entries. wide_scan.py's main block only reports N=8 through 128; tests/test_wide_scan.py likewise stops its natural/parity checks at 128. The callable balanced_rank_report(256) exists, but an exact captured-report generator or command is missing.
+(b) routing_budget.py reuses variable n in its reporting loop; consequently balanced_cut_budget_example reports N=64 regardless of the n argument used for randomized_factorizations_checked. This does not falsify the displayed N=64 formula, but conflates experiment length and illustrative length. Rename the loop variable and label both.
+(c) RoutingTests is defined after the unittest.main() guard in tests/test_potential.py. The documented unittest discovery imports the module and includes it; running that test file directly would call unittest.main before defining RoutingTests and omit those tests.
+(d) Random scan coefficient generation excludes zero, although the proof correctly allows zero/reset coefficients. Add explicit reset and singular-coefficient cases if future test execution is authorized.
+(e) dft assumes the supplied modulus/root is suitable; the default is standard and rank/root tests cover small defaults. independent_certificate.py explicitly verifies the power-of-two order in its selected fields. This is not a general arbitrary-modulus validator.
+
+2. MATHEMATICAL CHECK
+
+For cut L=[0,s), R=[s,N), write u_s(A)=rank A[L,R] and l_s(A)=rank A[R,L]. A forward scan is lower triangular; its lower-left block factors through the single state at the cut and has rank <=1. Backward scans interchange these roles. Diagonals contribute zero. The block product identity yields u_s(AB)<=u_s(A)+u_s(B), and likewise l_s. Zero coefficients do not invalidate this.
+
+Natural Fourier off-diagonal blocks have rank min(s,N-s), by rectangular Vandermonde rank. Hence even N needs f>=N/2 and b>=N/2. Odd N analogously gives f,b>=floor(N/2). The Omega(N^2) work corollary requires charging Theta(N) per full scan. It is not a lower bound against arbitrary circuits or shortened/degenerate implementations.
+
+Normalize F_N to the unitary U=F_N/sqrt(N). For arbitrary row set R and column set C, the submatrix A has squared Frobenius norm |R||C|/N and operator norm <=1. Therefore rank A>=ceil(|R||C|/N). This proof is correct over C. It does not establish the same universal finite-field assertion: positive Hermitian norms are essential to this proof. The finite-field experiments are supporting cases, not a transfer theorem.
+
+For balanced endpoint cuts, this gives rank >=ceil(floor(N^2/4)/N). In particular, N divisible by 4 gives N/4 in each direction and N/2 total channels. This is sharp as an off-diagonal-rank lower bound: even-first/odd-second row and column layouts achieve N/4 when 4 divides N. Rank sharpness does not construct a scan factorization attaining that number of factors.
+
+The code's multichannel primitive is a diagonal plus a sum of r_forward forward scans and r_backward backward scans. Rank subadditivity gives the claimed directional budgets. Serial products of such blocks add their channel budgets. These statements concern this specific factor/block algebra; they are not universal lower bounds for every circuit using channels or shared arithmetic.
+
+3. INTERNAL SHUFFLES AND POTENTIAL
+
+Phi(A)=sum over nontrivial cuts of [u_s(A)+l_s(A)] is subadditive under products. A one-way scan contributes at most N-1. Natural Fourier for even N has Phi=N^2/2; arbitrary endpoint permutations satisfy Phi>=(N^2-1)/3 (with possible integer-rounding improvements).
+
+For a permutation matrix P with P[i,pi(i)]=1, off-diagonal ranks equal the numbers of matching edges crossing the cut. Summing cut crossings gives Phi(P)=sum_i |pi(i)-i|. At the balanced cut, the counts in each direction are equal. Therefore the package's scan-plus-permutation inequalities are correct.
+
+One bit reversal has N/4 balanced crossings for powers of two >=4. A half-swap or reversal has N/2 balanced crossings, making that cut bound vacuous. A half-swap or reversal also has Phi=N^2/2 for even N and can exhaust the multicut lower bound. Their physical movement cost can still be O(N) on a random-access model. A necessary budget being exhausted neither implies a Fourier factorization nor means a fast algorithm was found.
+
+4. ELEMENTARY EXTENSION: PURE SERIAL SCANS WITH ANY INTERNAL PERMUTATIONS
+
+For forward scan S defined by y_i=a_i y_{i-1}+b_i x_i, write S=(I-A)^{-1}B where A has only a_i on its first subdiagonal and B=diag(b_i). In any square serial factorization of nonsingular F_N, every factor is nonsingular, hence every b_i is nonzero. Thus S^{-1}=B^{-1}(I-A), a bidiagonal matrix with at most two nonzeros per row and column. Backward scans give upper bidiagonal inverses. Invertible diagonal and permutation factors have one nonzero per row and column.
+
+Let r(M)=maximum row support size. Then r(AB)<=r(A)r(B), because a row of AB is a sum of at most r(A) rows of B. Cancellations can only reduce support. Consequently the inverse of a product with t pure scan factors, however shuffled and diagonally scaled, has row support <=2^t. Fourier's inverse has N nonzero entries in every row over C. Therefore t>=ceil(log_2 N). The same statement holds over a field where an Nth primitive root and 1/N exist, since the inverse Fourier entries are then all nonzero.
+
+This is a bounded-dependency/fan-in argument applied to the inverse operator. It needs no coefficient magnitude, conditioning, or local movement assumption. With an architecture that fully charges every scan Theta(N), it excludes o(N log N) work through o(log N) such full passes. It is NOT a general arithmetic-circuit work bound and does not establish exact optimal scan count or an attaining construction.
+
+Generalization: if inverse stage j has maximum row support k_j, then product_j k_j>=N. This remains only an inverse-support restriction. A stage with a dense inverse can be cheap.
+
+5. GENUINE ESCAPES FROM THE SPARSE-INVERSE PREMISE
+
+5a. Single scalar state with independent feedthrough.
+Let Z be the lower shift and L=(I-Z)^{-1}, the inclusive prefix-sum matrix. Set y=Lx+x. This is one prefix scan plus N additions, O(N) work; y_i=s_i+x_i with s_i=s_{i-1}+x_i.
+
+L+I=(2I-Z)(I-Z)^{-1}, so
+(L+I)^{-1}=(I-Z)(2I-Z)^{-1}
+            =(1/2)I - sum_{k=1}^{N-1} Z^k / 2^{k+1}.
+All lower-triangular entries are nonzero over C; the final inverse row has N dependencies. Thus the inverse is dense below its diagonal, with Theta(N^2) nonzero entries. It is NOT a fully dense N-by-N matrix because the upper triangle remains zero. Do not describe it as having every entry nonzero.
+
+A general state-space scan has s_i=a_i s_{i-1}+b_i x_i and output y_i=c_i s_i+d_i x_i. The independent d_i feedthrough is a real model extension; it cannot generally be absorbed into the package's pure recurrence y_i=a'_i y_{i-1}+b'_i x_i. The simple L+I example proves the distinction. Off-diagonal rank remains <=1 in its forward direction, so fixed-layout cut-rank bounds still apply; arbitrary internal shuffles plus general feedthrough are not settled by the new support proof.
+
+5b. Two directions summed: fully dense inverse in O(N).
+Let U=L^T and J=11^T. Then L+U=I+J. A forward and a backward inclusive scan summed coordinatewise compute this map in O(N). Its inverse is I-J/(N+1). For N>=2 over C every inverse entry is nonzero. This is already inside the package's bidirectional summed-channel family, but outside a serial product of pure scans. It decisively prevents extending the 2^t claim by merely counting these summed scans as factors.
+
+Neither example computes Fourier. Dense inverse is only a necessary way to evade the sparse-inverse certificate, not a construction principle.
+
+5c. A further elementary rejection test for cheap dense-inverse rank-one mixers.
+The example I+J is diagonal plus rank one. More generally, let each stage be M_j+E_j, with M_j monomial (diagonal times permutation) and rank E_j<=r_j. Arbitrary inserted monomial factors can be included. Inductively the total product is M+E, with M monomial and rank E<=sum_j r_j: expand (M_2+E_2)(M_1+E_1) as M_2 M_1 + M_2 E_1 + E_2(M_1+E_1).
+
+For any monomial M and any selected m rows, choose N-m columns that avoid those rows' matching entries. Then M[R,C]=0 and (F_N-M)[R,C]=F_N[R,C]. Thus
+rank(F_N-M)>=ceil(m(N-m)/N).
+With m=floor(N/2), sum_j r_j>=ceil(floor(N^2/4)/N). Therefore constant-rank diagonal-plus-global-update stages still require Omega(N) stages even with arbitrary internal permutations. This is a direct synthesis of rank subadditivity and the package's Fourier submatrix bound, not a claimed novel theorem.
+
+The feedthrough prefix L+I is not just diagonal plus bounded-rank: its strict lower-triangular part already has rank N-1. It remains a genuinely broader next family than either pure scans or diagonal-plus-rank-one global broadcasts.
+
+6. PRIMARY-SOURCE PRIOR ART AND CORRECT LABELING
+
+(a) Clement Pernet, Computing with quasiseparable matrices (2016):
+https://arxiv.org/abs/1602.01246
+Clement Pernet and Arne Storjohann, Time and space efficient generators for quasiseparable matrices (2017 preprint, revised 2019):
+https://arxiv.org/abs/1701.00396
+These are the package's accurate background references for bounded off-diagonal rank structures and their algorithms. The elementary block proof here stands on its own.
+
+(b) Alexander Golovnev, Alexander S. Kulikov, R. Ryan Williams, Circuit Depth Reductions, ITCS 2021:
+https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ITCS.2021.24
+Author-hosted full manuscript: https://golovnev.org/papers/depth.pdf
+Section 1.2 explicitly records the elementary logarithmic-depth necessity for an output depending on all N inputs. Section 4.1 uses the depth-four, sixteen-input dependency bound for linear circuits. This is an appropriate primary-source anchor for the fan-in argument, NOT evidence that this paper states the precise pure-scan Fourier corollary. A limited search did not establish priority for that precise formulation. Use “elementary sparse-inverse corollary” without an originality claim.
+
+(c) Raphael Vandebril's author-hosted paper section, “Theoretical proof of the structure,” states the classical inverse-bidiagonal/triangular-semiseparable relationship:
+https://people.cs.kuleuven.be/~raf.vandebril/homepage/publications/papers_html/trideig/node3.html
+For the scan identity itself, direct algebra above is simpler and more precise than appealing to the broader semiseparable class.
+
+(d) E. Alijagic and P. Dewilde, Minimal quasi-separable realizations for the inverse of a quasi-separable operator, Linear Algebra and its Applications 414 (2006), 445–463, DOI 10.1016/j.laa.2005.10.042:
+https://www.sciencedirect.com/science/article/pii/S0024379505005112
+Author-hosted PDF located: https://sps.ewi.tudelft.nl/pubs/dewilde06laa.pdf
+The indexed publisher abstract concerns minimal state-space representations of inverses. Full PDF fetch timed out, so no detailed theorem from it was relied upon. Relevant background for the difference between sparse inverse matrices and low-state inverse realizations.
+
+(e) Yingzhou Li, Haizhao Yang, Eileen Martin, Kenneth Ho, Lexing Ying, Butterfly Factorization (2015):
+https://arxiv.org/abs/1502.01379
+The abstract explicitly describes a data-sparse APPROXIMATION of complementary-low-rank matrices, with O(log N) sparse factors and O(N log N) application. Cite it as related structured approximate factorization work; it does not itself certify a general exact Fourier identity in the package's scan model.
+
+7. RECOMMENDED RESEARCH-GATE REVISION
+
+Retain the fixed-layout channel theorem. Add a separate pure-product theorem allowing arbitrary internal permutations and proving at least ceil(log_2 N) scan factors. This closes the proposed “shuffle pure scans into o(log N) stages” branch.
+
+Keep a distinct unresolved gate for independent feedthrough/state-output maps, genuinely summed channels, expanded workspaces, or other O(N)-work stage families. Require an exact all-N Fourier identity, fully charged operations and coefficient preparation, and proof that the candidate is not only a dense-inverse rank-one broadcast or a renamed known FFT. Merely defeating an invariant is not a speedup.

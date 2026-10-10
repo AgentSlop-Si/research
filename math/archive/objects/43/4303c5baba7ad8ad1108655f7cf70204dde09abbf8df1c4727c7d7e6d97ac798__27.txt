@@ -1,0 +1,128 @@
+1: """Exact full-basis certificates for the new sparse decimation identities."""
+2: from collections import Counter
+3: import json
+4: from pathlib import Path
+5: 
+6: from prior_exact_arithmetic import PrimeField, CyclotomicField
+7: from fixed_kernel import Counted, prepare
+8: from operators import prepare_sparse, apply_sparse_c, horner_c
+9: from decimation import (prepare_decimation, apply_family, split_coordinates,
+10:                          merge_coordinates, apply_minus, apply_full_h,
+11:                          apply_polynomial)
+12: 
+13: 
+14: def basis(field, n, j):
+15:     return [field.one if i == j else field.zero for i in range(n)]
+16: 
+17: 
+18: def check_case(field, n, label):
+19:     q = field.root(n)
+20:     plan = prepare_decimation(field, n, q)
+21:     sparse = prepare_sparse(field, n, q)
+22:     full_basis, split_basis = 0, 0
+23:     h_count = None
+24:     arbitrary = [field.integer(j*j-3*j+2) for j in range(n)]
+25:     for j in range(n):
+26:         x = basis(field, n, j)
+27:         # Independent sparse-C oracle has the original finite corner.
+28:         expected, reference_count = horner_c(field, sparse, plan.kernel, x)
+29:         actual, this_count = apply_full_h(field, plan, x)
+30:         assert actual == expected, (label, n, j, "full H")
+31:         if h_count is not None:
+32:             assert this_count == h_count
+33:         h_count = this_count
+34:         expected_p, _ = horner_c(field, sparse, arbitrary, x)
+35:         actual_p, _ = apply_polynomial(field, plan, arbitrary, x)
+36:         assert actual_p == expected_p, (label, n, j, "general polynomial")
+37:         gauged = [field.mul(a, b) for a, b in zip(plan.sigma, x)]
+38:         cx = apply_sparse_c(field, sparse, gauged)
+39:         normalized_cx = [field.mul(a, b) for a, b in zip(plan.sigma_inverse, cx)]
+40:         assert normalized_cx == apply_family(field, plan.levels[0], x)
+41:         # J^(N/2) is an exact monomial anti-commuter after the gauge.
+42:         shift = x[n//2:] + x[:n//2]
+43:         right = apply_family(field, plan.levels[0], shift)
+44:         cx = apply_family(field, plan.levels[0], x)
+45:         left = cx[n//2:] + cx[:n//2]
+46:         assert left == [field.neg(a) for a in right]
+47:         full_basis += 1
+48:     for index, level in enumerate(plan.levels[:-1]):
+49:         size, h = level.n, level.n//2
+50:         for j in range(size):
+51:             x = basis(field, size, j)
+52:             u, v = split_coordinates(field, plan, index, x)
+53:             assert merge_coordinates(field, plan, index, u, v) == x
+54:             dx = apply_family(field, level, x)
+55:             top, bottom = split_coordinates(field, plan, index, dx)
+56:             assert top == apply_family(field, plan.levels[index+1], v)
+57:             assert bottom == u
+58:             split_basis += 1
+59:         for j in range(h):
+60:             x = basis(field, h, j)
+61:             y = apply_minus(field, level, x)
+62:             assert apply_minus(field, level, y, inverse=True) == x
+63: 
+64:     negative_controls = {}
+65:     if n >= 8:
+66:         # D_2 has three nonzero entries in every row, while a monomial
+67:         # conjugate of the original (I+J)U form has only two.
+68:         m = n//2
+69:         columns = [apply_family(field, plan.levels[1], basis(field, m, j))
+70:                    for j in range(m)]
+71:         row_supports = [sum(columns[j][i] != field.zero for j in range(m))
+72:                         for i in range(m)]
+73:         assert row_supports == [3]*m
+74:         negative_controls["first_reduced_row_support"] = row_supports
+75:         # Even coefficients are not H_(q^2) with merely a scalar z rescaling.
+76:         half_kernel = prepare(field, m, field.mul(q, q)).kernel
+77:         scale = field.mul(plan.kernel[2], field.inv(half_kernel[1]))
+78:         mismatch = field.sub(plan.kernel[4],
+79:                              field.mul(field.mul(scale, scale), half_kernel[2]))
+80:         assert mismatch != field.zero
+81:         negative_controls["even_coefficients_not_rescaled_H_q_squared"] = True
+82:     expected_nodes = {d: 3**d for d in range(n.bit_length()-1)}
+83:     assert h_count["recursive_nodes_by_depth"] == expected_nodes
+84:     return dict(field=label, n=n, status="PASS", full_basis_vectors=full_basis,
+85:                 normalized_split_basis_vectors=split_basis,
+86:                 full_H_count=h_count,
+87:                 sparse_Horner_comparison=reference_count["field_operations"],
+88:                 preparation=plan.preparation,
+89:                 negative_controls=negative_controls)
+90: 
+91: 
+92: def main():
+93:     rows = []
+94:     for p in (65537, 998244353):
+95:         field = PrimeField(p)
+96:         for n in (2, 4, 8, 16, 32):
+97:             rows.append(check_case(field, n, f"F_{p}"))
+98:     for n in (2, 4, 8):
+99:         rows.append(check_case(CyclotomicField(n), n, f"Q(zeta_{n})"))
+100:     # Counts at larger N are deterministic gate ledgers on one dense input,
+101:     # not numerical timing comparisons or extra full-basis proof claims.
+102:     count_rows = []
+103:     field = PrimeField(65537)
+104:     for n in (64, 128, 256, 512):
+105:         plan = prepare_decimation(field, n, field.root(n))
+106:         _, counts = apply_full_h(field, plan, [field.integer(j+1) for j in range(n)])
+107:         online_total = sum(counts["field_operations"].values())
+108:         prep_total = sum(sum(c.values()) for c in plan.preparation.values())
+109:         count_rows.append(dict(n=n, online_field_operations=online_total,
+110:                                preparation_field_operations=prep_total,
+111:                                sparse_Horner_online_operations=5*n*n-4*n,
+112:                                ordinary_FFT_calls=0))
+113:     result = dict(status="PASS", cases=len(rows),
+114:                   full_basis_vectors=sum(r["full_basis_vectors"] for r in rows),
+115:                   normalized_split_basis_vectors=sum(r["normalized_split_basis_vectors"] for r in rows),
+116:                   all_size_scope="Proof in README; finite exact checks audit the implementation",
+117:                   complexity="Theta(N^(1+log_2(3)/2)) online; O(N log N) preparation; O(N) storage",
+118:                   verdict="Slower than the available O(N log N) complete-operator comparator; not an FFT improvement",
+119:                   rows=rows, larger_gate_ledgers=count_rows)
+120:     destination = Path(__file__).parent / "results" / "decimation_audit.json"
+121:     destination.parent.mkdir(parents=True, exist_ok=True)
+122:     destination.write_text(json.dumps(result, indent=2)+"\n")
+123:     print(json.dumps({k: result[k] for k in ("status", "cases", "full_basis_vectors",
+124:                      "normalized_split_basis_vectors", "larger_gate_ledgers")}, indent=2))
+125: 
+126: 
+127: if __name__ == "__main__":
+128:     main()

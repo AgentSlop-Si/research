@@ -1,0 +1,55 @@
+"""Fresh-extraction integrity, Phase24 tests, and recursively all prior phases."""
+from __future__ import annotations
+import hashlib,json,os,pathlib,subprocess,sys,tempfile,zipfile
+
+def main(archive,full=False):
+    archive=pathlib.Path(archive).resolve()
+    with tempfile.TemporaryDirectory(prefix='fft_phase24_fresh_') as tmp:
+        root=pathlib.Path(tmp)
+        with zipfile.ZipFile(archive) as z:
+            assert z.testzip() is None,'Archive corruption'
+            z.extractall(root)
+        here=root/'fft_green_phase24_ordering_defect'
+        entries=(here/'SHA256SUMS.txt').read_text().splitlines()
+        for entry in entries:
+            hash_value,rel=entry.split('  ',1)
+            assert hashlib.sha256((here/rel).read_bytes()).hexdigest()==hash_value,rel
+        env=os.environ.copy();env['PYTHONPATH']=str(here)
+        env['OPENBLAS_NUM_THREADS']='1'
+        run=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'],
+                           cwd=here,capture_output=True,text=True,timeout=180,env=env)
+        if run.returncode:raise RuntimeError(run.stdout+'\n'+run.stderr)
+        print('PHASE24:', '\n'.join(run.stderr.splitlines()[-4:]))
+        before=json.loads((here/'audit.json').read_text())
+        audit=subprocess.run([sys.executable,'audit.py'],cwd=here,
+                             capture_output=True,text=True,timeout=180,env=env)
+        if audit.returncode:raise RuntimeError(audit.stdout+'\n'+audit.stderr)
+        after=json.loads((here/'audit.json').read_text())
+        assert before==after,'Audit output changed after fresh extraction'
+        print('PHASE24 AUDIT: exact exhaustive distribution, all-stride checks, Woodbury: PASSED')
+        prev=here/'previous_full_phase23_checkpoint.zip'
+        with zipfile.ZipFile(prev) as z:
+            assert z.testzip() is None
+            z.extractall(root/'older')
+        prior=root/'older'/'fft_green_phase23_real_resolvent'
+        for entry in (prior/'SHA256SUMS.txt').read_text().splitlines():
+            h,rel=entry.split('  ',1)
+            assert hashlib.sha256((prior/rel).read_bytes()).hexdigest()==h,rel
+        res=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'],
+                           cwd=prior,env={**env,'PYTHONPATH':str(prior)},
+                           capture_output=True,text=True,timeout=180)
+        if res.returncode:raise RuntimeError(res.stdout+'\n'+res.stderr)
+        print('PHASE23:', '\n'.join(res.stderr.splitlines()[-4:]))
+        print('VERIFIED IN THIS FRESH EXTRACTION: 7 PHASE24 + 24 PHASE23 = 31 TESTS.')
+        print('OLDER PHASE12–22 ARCHIVE: integrity/hash chain retained; prior validation recorded 234 tests.')
+        if full:
+            runner=prior/'verify_full_lineage.py'
+            old=subprocess.run([sys.executable,str(runner),str(prev)],env=env,
+                               capture_output=True,text=True,timeout=600)
+            if old.returncode:raise RuntimeError(old.stdout+'\n'+old.stderr)
+            print('\n'.join(old.stdout.splitlines()[-12:]))
+            print('FULL RE-RUN: 7 NEW + 258 INHERITED = 265 TESTS (PHASES 12–24)')
+
+if __name__=='__main__':
+    if len(sys.argv) not in (2,3):raise SystemExit('Usage: verify_full_lineage.py <Phase24.zip> [--full]')
+    main(sys.argv[1], len(sys.argv)==3 and sys.argv[2]=='--full')

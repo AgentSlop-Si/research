@@ -1,0 +1,28 @@
+   1 #!/usr/bin/env python3
+   2 """Phase17 complete finite-field test + optional preserved Phase16 regression."""
+   3 import argparse,subprocess,sys,tempfile,zipfile
+   4 from pathlib import Path
+   5 BASE=Path(__file__).resolve().parent
+   6 
+   7 def call(*args,cwd=BASE):
+   8     print('>>>',*args,flush=True)
+   9     subprocess.run([sys.executable,*args],cwd=cwd,check=True)
+  10 
+  11 def main():
+  12     p=argparse.ArgumentParser()
+  13     p.add_argument('--prior',action='store_true',help='replay original Phase16 archive without modifying it')
+  14     args=p.parse_args()
+  15     call('-m','unittest','-v','test_phase17')
+  16     call('field_basis_audit.py')
+  17     call('operation_benchmark.py')
+  18     call('precision_gate.py')
+  19     if args.prior:
+  20         with tempfile.TemporaryDirectory() as dest:
+  21             with zipfile.ZipFile(BASE/'PRIOR_PHASE16_COMPLETE.zip') as z:
+  22                 for name in z.namelist():
+  23                     if name.startswith('/') or '..' in Path(name).parts:
+  24                         raise ValueError('unsafe embedded archive member')
+  25                 z.extractall(dest)
+  26             call('run_all.py',cwd=Path(dest)/'fft_hero1_phase16')
+  27     print('PHASE17 PASSED: 16 focused tests, 222111 exact field entries, 32 benchmark comparisons',flush=True)
+  28 if __name__=='__main__':main()

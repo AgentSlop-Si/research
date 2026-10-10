@@ -1,0 +1,110 @@
+0001 #!/usr/bin/env python3
+0002 """Independent exact modular checks of the bounded-fragmentation collapse.
+0003 Newly authored; no uploaded modules are imported or executed.
+0004 """
+0005 import json, math, pathlib, random
+0006 
+0007 ROOT = pathlib.Path(__file__).resolve().parent
+0008 P = 1009
+0009 RNG = random.Random(202610092247)
+0010 
+0011 def rank(a):
+0012     if not a: return 0
+0013     a = [[x % P for x in row] for row in a]
+0014     rr = 0
+0015     for j in range(len(a[0])):
+0016         piv = next((i for i in range(rr, len(a)) if a[i][j]), None)
+0017         if piv is None: continue
+0018         a[rr], a[piv] = a[piv], a[rr]
+0019         inv = pow(a[rr][j], -1, P)
+0020         a[rr] = [x * inv % P for x in a[rr]]
+0021         for i in range(rr + 1, len(a)):
+0022             c = a[i][j]
+0023             if c: a[i] = [(x - c*y) % P for x,y in zip(a[i], a[rr])]
+0024         rr += 1
+0025         if rr == len(a): break
+0026     return rr
+0027 
+0028 def block(a, rows, cols): return [[a[i][j] for j in cols] for i in rows]
+0029 def mm(a,b):
+0030     bt = list(zip(*b))
+0031     return [[sum(x*y for x,y in zip(row,col)) % P for col in bt] for row in a]
+0032 def ident(n): return [[int(i==j) for j in range(n)] for i in range(n)]
+0033 def perm(p): return [[int(i==p[j]) for j in range(len(p))] for i in range(len(p))]
+0034 def tr(a): return list(map(list,zip(*a)))
+0035 
+0036 def qs(n,r):
+0037     """Sum of r scalar-transition QS1 generators, with transition zeros."""
+0038     a = [[0]*n for _ in range(n)]
+0039     for i in range(n): a[i][i] = RNG.randrange(P)
+0040     for component in range(r):
+0041         u,v,g,h = [[RNG.randrange(P) for _ in range(n)] for _ in range(4)]
+0042         lower = [RNG.randrange(P) if RNG.randrange(5) else 0 for _ in range(n)]
+0043         upper = [RNG.randrange(P) if RNG.randrange(5) else 0 for _ in range(n)]
+0044         for j in range(n):
+0045             val = v[j]
+0046             for i in range(j+1,n):
+0047                 a[i][j] = (a[i][j] + u[i]*val) % P
+0048                 val = val*lower[i] % P
+0049             val = h[j]
+0050             for i in range(j-1,-1,-1):
+0051                 a[i][j] = (a[i][j] + g[i]*val) % P
+0052                 val = val*upper[i] % P
+0053     return a
+0054 
+0055 def cut_ranks(a):
+0056     n = len(a)
+0057     return [(rank(block(a,range(k),range(k,n))),rank(block(a,range(k,n),range(k)))) for k in range(1,n)]
+0058 
+0059 subset_checks = 0
+0060 for n in range(2,9):
+0061     for r in [0,1,2]:
+0062         a = qs(n,r)
+0063         assert max(map(max,cut_ranks(a))) <= r
+0064         for mask in range(1,2**n-1):
+0065             k = [i for i in range(n) if mask>>i&1]
+0066             kc = [i for i in range(n) if not mask>>i&1]
+0067             boundaries = sum(((mask>>i)&1) != ((mask>>(i+1))&1) for i in range(n-1))
+0068             assert rank(block(a,k,kc)) <= boundaries*r
+0069             assert rank(block(a,kc,k)) <= boundaries*r
+0070             subset_checks += 2
+0071 
+0072 affine_cases = []
+0073 collapse_checks = 0
+0074 for n in [8,16,32,40,64]:
+0075     for multiplier in [1,3,5,7]:
+0076         if math.gcd(multiplier,n) != 1: continue
+0077         q = [(multiplier*j)%n for j in range(n)]
+0078         qm = perm(q)
+0079         for r in [0,1,2]:
+0080             s2 = qs(n,r)
+0081             c = mm(mm(qm,s2),tr(qm))
+0082             ranks = cut_ranks(c)
+0083             actual = max(map(max,ranks))
+0084             bound = (2*multiplier-1)*r
+0085             for t in range(1,n):
+0086                 k = [i for i in range(n) if q[i]<t]
+0087                 boundaries = sum((q[i]<t) != (q[i+1]<t) for i in range(n-1))
+0088                 assert k[0] == 0
+0089                 assert boundaries <= 2*multiplier-1
+0090                 assert max(ranks[t-1]) <= boundaries*r
+0091             assert actual <= bound
+0092             affine_cases.append({'N':n,'multiplier':multiplier,'stage_order':r,'conjugate_order':actual,'certified_bound':bound})
+0093             if n<=32 and multiplier==3:
+0094                 s1,s3,s4 = qs(n,1),qs(n,1),qs(n,1)
+0095                 p1 = list(range(n)); p3=list(range(n))
+0096                 RNG.shuffle(p1);RNG.shuffle(p3)
+0097                 p1m,p3m = perm(p1),perm(p3)
+0098                 t = mm(s3,c)
+0099                 left = mm(mm(mm(mm(mm(mm(s4,p3m),s3),qm),s2),p1m),s1)
+0100                 right = mm(mm(mm(mm(s4,p3m),t),mm(qm,p1m)),s1)
+0101                 assert left==right
+0102                 assert max(map(max,cut_ranks(t))) <= 1+bound
+0103                 collapse_checks += 1
+0104 
+0105 out = {'field':P,'subset_direction_checks':subset_checks,'affine_cases':affine_cases,
+0106        'exact_four_to_three_word_checks':collapse_checks,
+0107        'max_A3_order_for_QS1':max(c['conjugate_order'] for c in affine_cases if c['multiplier']==3 and c['stage_order']==1),
+0108        'zero_transitions_included':True,'uploaded_code_executed':False}
+0109 (ROOT/'EXACT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+0110 print(json.dumps(out,indent=2))

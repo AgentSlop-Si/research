@@ -1,0 +1,73 @@
+1: """Exact dynamic-programming search across ALL independent row/column permutations.
+2: 
+3: The DP enumerates pairs of nested prefix subsets, not (n!)**2 orders.
+4: It minimizes max strict off-diagonal cut rank of the endpoint-permuted DFT,
+5: which is a necessary channel count for ONE bidirectional-sum stage.
+6: 
+7: For finite-field computations, a nonzero modular minor implies that the
+8: corresponding cyclotomic minor is nonzero over C. An ordering found modulo p
+9: must be independently validated over a cyclotomic field before claiming a
+10: complex-field upper bound. The n=4 and n=8 positive witnesses below can be
+11: checked exactly in Q[z]/Phi_n(z).
+12: """
+13: from __future__ import annotations
+14: from functools import lru_cache
+15: from itertools import combinations
+16: from exact_scan_macro import dft_matrix, rank_mod, P, G
+17: 
+18: 
+19: def _subset(mask, n):
+20:     return [i for i in range(n) if mask >> i & 1]
+21: 
+22: 
+23: def optimal_orders(n: int, p: int=P, g: int=G) -> dict:
+24:     if n not in (2,4,8):
+25:         raise ValueError('exhaustive two-order subset DP currently limited to n<=8')
+26:     F=dft_matrix(n,p,g)
+27:     full=(1<<n)-1
+28:     states_examined=0
+29:     ranks_computed=0
+30:     @lru_cache(None)
+31:     def cross_ranks(r_mask:int,c_mask:int)->tuple[int,int]:
+32:         nonlocal ranks_computed
+33:         ranks_computed+=1
+34:         row0=_subset(r_mask,n)
+35:         row1=_subset(full^r_mask,n)
+36:         col0=_subset(c_mask,n)
+37:         col1=_subset(full^c_mask,n)
+38:         if not row0 or not row1: return (0,0)
+39:         up=rank_mod([[F[i][j] for j in col1] for i in row0],p)
+40:         down=rank_mod([[F[i][j] for j in col0] for i in row1],p)
+41:         return (up,down)
+42:     # state -> (minimax rank, ordered-row prefix, ordered-column prefix)
+43:     dp={(0,0):(0,(),())}
+44:     layer_sizes=[1]
+45:     for size in range(1,n+1):
+46:         new={}
+47:         for (R,C),(cost,ro,co) in dp.items():
+48:             rrem=full^R;crem=full^C
+49:             for i in _subset(rrem,n):
+50:                 rr=R|(1<<i)
+51:                 for j in _subset(crem,n):
+52:                     cc=C|(1<<j)
+53:                     ranks=cross_ranks(rr,cc)
+54:                     next_cost=max(cost,*ranks)
+55:                     key=(rr,cc)
+56:                     current=new.get(key)
+57:                     # Deterministic lexicographic tie-break: reproducibility.
+58:                     if current is None or (next_cost,(ro+(i,),co+(j,))) < (current[0],(current[1],current[2])):
+59:                         new[key]=(next_cost,ro+(i,),co+(j,))
+60:         dp=new
+61:         states_examined+=len(dp)
+62:         layer_sizes.append(len(dp))
+63:     optimum,row_order,col_order=dp[(full,full)]
+64:     return {'n':n,'p':p,'optimum':optimum,'row_order':row_order,'col_order':col_order,
+65:             'layer_state_counts':layer_sizes,'states_examined':states_examined,
+66:             'ranks_computed':ranks_computed}
+67: 
+68: 
+69: if __name__=='__main__':
+70:     import json
+71:     for n in (2,4,8):
+72:         d=optimal_orders(n)
+73:         print(json.dumps(d))

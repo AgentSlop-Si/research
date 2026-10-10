@@ -1,0 +1,252 @@
+===== SOURCE 83 fft_phase10_aot/tests/test_algebra_fft.py SHA256 3ce744663175af9ccc12954227049d7be959890bc50adb93ec08501ecb3c3de5 =====
+   1 import sys
+   2 import unittest
+   3 from pathlib import Path
+   4 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+   5 import numpy as np
+   6 from scipy import fft
+   7 from algebra_fft import AlgebraFFT, DegreeExceeded
+   8 
+   9 
+  10 class AlgebraTests(unittest.TestCase):
+  11     def setUp(self):
+  12         self.n=64
+  13         self.rng=np.random.default_rng(20261009)
+  14         self.eng=AlgebraFFT(self.n)
+  15         self.xdata=self.rng.normal(scale=.2,size=self.n)
+  16         self.ydata=self.rng.normal(scale=.2,size=self.n)
+  17         self.zdata=self.rng.normal(scale=.2,size=self.n)
+  18         self.x=self.eng.signal(self.xdata,'X')
+  19         self.y=self.eng.signal(self.ydata,'Y')
+  20         self.z=self.eng.signal(self.zdata,'Z')
+  21 
+  22     def close(self,a,b):
+  23         np.testing.assert_allclose(a,b,rtol=2e-9,atol=2e-9)
+  24 
+  25     def direct(self,ax,ay,az,which):
+  26         X=fft.rfft(ax);Y=fft.rfft(ay);Z=fft.rfft(az)
+  27         if which==1:
+  28             return fft.irfft(X*Y+Z**2,n=self.n)
+  29         if which==2:
+  30             return fft.irfft(X*X+Y*Z,n=self.n)
+  31         if which==3:
+  32             return fft.irfft(X**3+2*X*Y+Z,n=self.n)
+  33 
+  34     def test_canonical_associative_commutative(self):
+  35         e=self.eng
+  36         self.assertEqual(e.add(e.add(self.x,self.y),self.z),e.add(self.z,self.x,self.y))
+  37         self.assertEqual(e.mul(e.mul(self.x,self.y),self.z),e.mul(self.z,self.x,self.y))
+  38         self.assertEqual(e.add(self.x,self.x),e.scale(self.x,2))
+  39         self.assertEqual(e.add(self.x,e.scale(self.x,-1)),e.zero)
+  40         self.assertEqual(e.mul(self.y,e.one),self.y)
+  41         self.assertEqual(e.mul(self.y,e.zero),e.zero)
+  42         self.assertEqual(e.scale(e.scale(self.x,3),2),e.scale(self.x,6))
+  43 
+  44     def test_dag_sharing_and_replacement(self):
+  45         e=self.eng
+  46         mid=e.mul(self.x,self.y)
+  47         root=e.add(mid,e.mul(mid,self.z))
+  48         v=e.edit_version(root,self.x,{3:.4})
+  49         np.testing.assert_allclose(e.evaluate_time(v),fft.irfft(fft.rfft(self.xdata+np.eye(1,self.n,k=3)[0]*.4)*fft.rfft(self.ydata)*(1+fft.rfft(self.zdata)),n=self.n),atol=1e-9)
+  50         self.assertLessEqual(e.reachable_count(v)-e.reachable_count(root),5)
+  51         self.assertEqual(v,e.edit_version(root,self.x,{3:.4}))
+  52 
+  53     def test_frequency_and_full_spectrum(self):
+  54         e=self.eng
+  55         root=e.add(e.mul(self.x,self.y),e.mul(self.z,self.z))
+  56         vals=e.evaluate_spectrum(root)
+  57         self.close(fft.irfft(vals,n=self.n),self.direct(self.xdata,self.ydata,self.zdata,1))
+  58         for k in [0,1,2,19,31,32,50,63]:
+  59             self.assertAlmostEqual(e.frequency(root,k).real,fft.fft(self.direct(self.xdata,self.ydata,self.zdata,1))[k].real,places=8)
+  60             self.assertAlmostEqual(e.frequency(root,k).imag,fft.fft(self.direct(self.xdata,self.ydata,self.zdata,1))[k].imag,places=8)
+  61 
+  62     def test_linear_single_all_and_bins(self):
+  63         e=self.eng
+  64         root=e.add(e.mul(self.x,self.y),e.mul(self.z,self.z))
+  65         prep=e.prepare(root,self.x)
+  66         self.assertEqual(prep.degree,1)
+  67         for t,delta in [(0,.2),(3,-.15),(49,.5),(63,-.1)]:
+  68             ax=self.xdata.copy();ax[t]+=delta
+  69             wanted=self.direct(ax,self.ydata,self.zdata,1)
+  70             self.close(prep.single(t,delta),wanted)
+  71             self.close(prep.single(t,delta,[0,5,10,63]),wanted[[0,5,10,63]])
+  72             f=fft.fft(wanted)
+  73             for k in [0,1,3,41,63]:
+  74                 self.assertAlmostEqual(prep.single_frequency(t,delta,k).real,f[k].real,places=8)
+  75                 self.assertAlmostEqual(prep.single_frequency(t,delta,k).imag,f[k].imag,places=8)
+  76 
+  77     def test_quadratic_single_and_many(self):
+  78         e=self.eng
+  79         root=e.add(e.mul(self.x,self.x),e.mul(self.y,self.z))
+  80         prep=e.prepare(root,self.x)
+  81         self.assertEqual(prep.degree,2)
+  82         self.assertEqual(prep.sparse_coefficients[2],{0:1.0})
+  83         self.assertIsNone(prep.kernels[2])
+  84         for edits in [{5:.2},{0:-.1,31:.25},{4:.15,17:-.3,33:.1},{}]:
+  85             ax=self.xdata.copy()
+  86             for t,d in edits.items():ax[t]+=d
+  87             wanted=self.direct(ax,self.ydata,self.zdata,2)
+  88             if len(edits)==1:
+  89                 t,d=next(iter(edits.items()))
+  90                 self.close(prep.single(t,d),wanted)
+  91             self.close(prep.many(edits),wanted)
+  92             self.close(prep.many(edits,method='spectral'),wanted)
+  93             self.close(prep.many(edits,indices=[0,8,19,60]),wanted[[0,8,19,60]])
+  94 
+  95     def test_cubic_single_and_many(self):
+  96         e=self.eng
+  97         root=e.add(e.mul(self.x,self.x,self.x),e.scale(e.mul(self.x,self.y),2),self.z)
+  98         prep=e.prepare(root,self.x)
+  99         self.assertEqual(prep.degree,3)
+ 100         self.assertEqual(prep.sparse_coefficients[3],{0:1.0})
+ 101         self.assertIsNone(prep.kernels[3])
+ 102         self.assertRaises(DegreeExceeded,e.prepare,root,self.x,max_degree=2)
+ 103         for t,d in [(3,.01),(19,-.02)]:
+ 104             ax=self.xdata.copy();ax[t]+=d
+ 105             self.close(prep.single(t,d),self.direct(ax,self.ydata,self.zdata,3))
+ 106         edits={5:.01,15:-.04,28:.02}
+ 107         ax=self.xdata.copy()
+ 108         for t,d in edits.items():ax[t]+=d
+ 109         wanted=self.direct(ax,self.ydata,self.zdata,3)
+ 110         self.close(prep.many(edits,max_shift_terms=2),wanted)
+ 111         self.close(prep.many(edits,method='shifts'),wanted)
+ 112         self.close(prep.many(edits,indices=[0,4,55]),wanted[[0,4,55]])
+ 113 
+ 114     def test_exact_fallback_replacement(self):
+ 115         e=self.eng
+ 116         root=e.mul(self.x,self.x,self.x,self.x,self.y)
+ 117         self.assertRaises(DegreeExceeded,e.prepare,root,self.x,max_degree=3)
+ 118         edited=e.edit_version(root,self.x,{4:.03,20:-.01})
+ 119         ax=self.xdata.copy();ax[4]+=.03;ax[20]-=.01
+ 120         wanted=fft.irfft(fft.rfft(ax)**4*fft.rfft(self.ydata),n=self.n)
+ 121         self.close(e.evaluate_time(edited),wanted)
+ 122 
+ 123     def test_no_leaf_occurrence(self):
+ 124         e=self.eng
+ 125         root=e.mul(self.y,self.z)
+ 126         p=e.prepare(root,self.x)
+ 127         self.assertEqual(p.degree,0)
+ 128         self.close(p.single(2,20),e.evaluate_time(root))
+ 129 
+ 130     def test_symbolic_taylor_coefficients(self):
+ 131         e=self.eng
+ 132         root=e.add(e.mul(self.x,self.x,self.x),e.scale(e.mul(self.x,self.y),2),self.z)
+ 133         symbols=e.symbolic_jets(root,self.x)
+ 134         self.assertEqual(len(symbols),4)
+ 135         prepared=e.prepare(root,self.x)
+ 136         for h,uid in enumerate(symbols):
+ 137             expected=e.evaluate_time(uid)
+ 138             if prepared.kernels[h] is not None:
+ 139                 self.close(expected,prepared.kernels[h])
+ 140             else:
+ 141                 sparse=prepared.sparse_coefficients[h]
+ 142                 got=np.zeros(self.n)
+ 143                 for pos,amp in sparse.items():got[pos]=amp
+ 144                 self.close(expected,got)
+ 145 
+ 146     def test_common_factor_search(self):
+ 147         e=self.eng
+ 148         root=e.add(e.mul(self.x,self.y),e.mul(self.x,self.z),
+ 149                    e.scale(e.mul(self.x,self.y,self.z),-2.))
+ 150         optimized=e.factor_common(root)
+ 151         self.assertNotEqual(root,optimized)
+ 152         self.close(e.evaluate_time(root),e.evaluate_time(optimized))
+ 153         a=e.spectral_operation_estimate(root)
+ 154         b=e.spectral_operation_estimate(optimized)
+ 155         self.assertLess(b['multiplications'],a['multiplications'])
+ 156         # Cost reductions do not rely on repeated numerical input values.
+ 157         self.assertEqual(optimized,e.factor_common(optimized))
+ 158 
+ 159     def test_shift_phase(self):
+ 160         e=self.eng
+ 161         root=e.mul(self.x,e.impulse(5,2))
+ 162         self.close(e.evaluate_time(root),2*np.roll(self.xdata,5))
+ 163         self.close(e.evaluate_spectrum(root),fft.rfft(2*np.roll(self.xdata,5)))
+ 164 
+ 165     def test_bounded_spectrum_cache(self):
+ 166         e=AlgebraFFT(64,max_spectrum_cache_bytes=64)
+ 167         a=e.signal(self.xdata)
+ 168         b=e.signal(self.ydata)
+ 169         for j in range(12):
+ 170             e.evaluate_spectrum(e.add(e.mul(a,b),e.impulse(j,0.2)))
+ 171         self.assertLessEqual(e._spectrum_cache_bytes,64)
+ 172 
+ 173     def test_dispatcher_expected_reuse_and_memory(self):
+ 174         e=self.eng
+ 175         root=e.add(e.mul(self.x,self.x),e.mul(self.y,self.z))
+ 176         cheap=e.plan_updates(root,self.x,expected_versions=1)
+ 177         self.assertEqual(cheap.mode,'fallback')
+ 178         hot=e.plan_updates(root,self.x,expected_versions=64)
+ 179         self.assertEqual(hot.mode,'jets')
+ 180         constrained=e.plan_updates(root,self.x,expected_versions=64,max_prepared_bytes=64)
+ 181         self.assertEqual(constrained.mode,'fallback')
+ 182         for p in [cheap,hot,constrained]:
+ 183             a=self.xdata.copy();a[12]+=.04
+ 184             self.close(p.single(12,.04),self.direct(a,self.ydata,self.zdata,2))
+ 185 
+ 186     def test_array_immutability(self):
+ 187         e=AlgebraFFT(64)
+ 188         a=self.xdata.copy()
+ 189         uid=e.signal(a)
+ 190         before=e.evaluate_time(uid)
+ 191         a[:]=0
+ 192         self.close(e.evaluate_time(uid),before)
+ 193         self.assertRaises(ValueError,e.signal,np.ones(12))
+ 194         self.assertRaises(ValueError,e.signal,np.full(64,float('inf')))
+ 195 
+ 196 if __name__=='__main__':unittest.main()
+ 197 
+ 198 class Phase7ImportTests(unittest.TestCase):
+ 199     def test_import_shared_seeds_shift_edits(self):
+ 200         from legacy_phase7.persistent_chain import ChainEngine
+ 201         rng=np.random.default_rng(11)
+ 202         n=64
+ 203         old=ChainEngine()
+ 204         a,b,c=[old.seed(rng.normal(scale=.15,size=n)) for _ in range(3)]
+ 205         chain=old.chain([a,b,c])
+ 206         chain2=chain.edit(0,4,.12).shift(1,3).scale(2,2.)
+ 207         eng=AlgebraFFT(n)
+ 208         root=eng.import_phase7(chain)
+ 209         root2=eng.import_phase7(chain2)
+ 210         self.assertEqual(eng.stats['imported_spectra'],3)
+ 211         self.assertEqual(len(eng._seeds),3)
+ 212         np.testing.assert_allclose(eng.evaluate_time(root),chain.dense(),rtol=2e-8,atol=2e-8)
+ 213         np.testing.assert_allclose(eng.evaluate_time(root2),chain2.dense(),rtol=2e-8,atol=2e-8)
+===== END SOURCE 83; 9605 bytes; 213 lines =====
+===== SOURCE 84 fft_phase10_aot/tests/test_auto_dispatch.py SHA256 65a55dd43556b7cc233fc2526227671c3c411dabb334657fe6172eeb2668cd95 =====
+   1 import sys
+   2 from pathlib import Path
+   3 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+   4 import unittest
+   5 import numpy as np
+   6 from algebra_fft import AlgebraFFT
+   7 from auto_dispatch import plan_auto
+   8 
+   9 class DispatchTests(unittest.TestCase):
+  10     def test_small_batch_never_pays_new_jit(self):
+  11         rng=np.random.default_rng(301)
+  12         n=48; eng=AlgebraFFT(n)
+  13         a=eng.signal(rng.standard_normal(n));b=eng.signal(rng.standard_normal(n))
+  14         p=eng.prepare(eng.add(eng.mul(a,a),b),a)
+  15         ans=plan_auto(p,expected_versions=1,min_unseen_jit_versions=1000000)
+  16         self.assertEqual(ans.mode,'numpy')
+  17         np.testing.assert_allclose(ans.single(5,.03),p.single(5,.03))
+  18     def test_invalid_batch(self):
+  19         rng=np.random.default_rng(22)
+  20         n=32;e=AlgebraFFT(n)
+  21         a=e.signal(rng.standard_normal(n));p=e.prepare(e.mul(a,a),a)
+  22         with self.assertRaises(ValueError):plan_auto(p,expected_versions=0)
+  23         low=plan_auto(p,expected_versions=10000,max_compiled_bytes=1)
+  24         self.assertEqual(low.mode,'numpy')
+  25     def test_calibration_validity_and_partial(self):
+  26         rng=np.random.default_rng(99)
+  27         n=128;e=AlgebraFFT(n)
+  28         a,b,c=[e.signal(rng.normal(size=n)) for _ in range(3)]
+  29         p=e.prepare(e.add(e.mul(a,a,a),e.mul(b,c)),a)
+  30         for inds in (None,[1,4,16,127]):
+  31             plan=plan_auto(p,expected_versions=10000,output_bins=inds,min_unseen_jit_versions=1,samples=2)
+  32             for edit in [(2,.01),(53,-.02)]:
+  33                 np.testing.assert_allclose(plan.single(*edit,indices=inds),p.single(*edit,indices=inds),rtol=1e-9,atol=1e-9)
+  34             self.assertIn(plan.mode,('native','numpy'))
+  35 if __name__=='__main__':unittest.main()
+===== END SOURCE 84; 1697 bytes; 35 lines =====

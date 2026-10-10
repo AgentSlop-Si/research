@@ -1,0 +1,348 @@
+
+===== SOURCE 21 772d574ba6f25a869066738261a0747b0e6b1a1568c14e6e49739eb8472e1e95 fft_materials_extension_20261009/fft_rational_reuse_research/detected_fourier.py | 5702 bytes 134 lines =====
+   1 """Deterministic cold Fourier evaluator for verified low-defect inputs.
+   2 
+   3 Uses a majority of exact Ex_i/x_i ratios to discover a favorable shift.
+   4 The fallback handles sparse inputs. This is a conditional family evaluator,
+   5 not an algorithm accelerating arbitrary fresh dense inputs.
+   6 """
+   7 from collections import Counter
+   8 
+   9 from fourier_rational import Counted, _power, prepare_fourier_rational
+  10 from rational_reuse import solve_band
+  11 
+  12 
+  13 def _delta(before, after):
+  14     return {key: after[key]-before.get(key,0) for key in after
+  15             if after[key] != before.get(key,0)}
+  16 
+  17 
+  18 def _sparse_fourier(c, n, q, entries, roots=None):
+  19     """Complete positive-sign DFT of explicit sparse entries; all gates paid."""
+  20     steps = ([_power(c,q,j) for j,_ in entries] if roots is None
+  21              else [roots[j] for j,_ in entries])
+  22     terms = [value for _,value in entries]
+  23     out = []
+  24     for k in range(n):
+  25         value = c.zero
+  26         for j,term in enumerate(terms):
+  27             value = c.add(value,term)
+  28             if k+1 < n:
+  29                 terms[j] = c.mul(term,steps[j])
+  30         out.append(value)
+  31     return out
+  32 
+  33 
+  34 def try_detected_fourier(field,n,q,query,*,max_defects=8):
+  35     """Return (full exact DFT, metadata), or (None, charged decline metadata).
+  36 
+  37 q is a supplied primitive Nth root. Acceptance covers all inputs with at
+  38 most 2s nonzero coordinates, and all inputs for which some nonzero lambda,
+  39 lambda**N != 1, gives at most s nonzeros in (E-lambda I)query, s=max_defects.
+  40 No nonzero Fourier anchor is used. Every accepted output is freshly computed.
+  41 """
+  42     if (not isinstance(n,int) or isinstance(n,bool) or n<4 or n&(n-1)
+  43             or len(query)!=n):
+  44         raise ValueError('dyadic N>=4 and an exactly N-coordinate input required')
+  45     if (not isinstance(max_defects,int) or isinstance(max_defects,bool)
+  46             or max_defects<0):
+  47         raise ValueError('max_defects must be a nonnegative integer')
+  48     c=Counted(field)
+  49     entries=[(i,value) for i,value in enumerate(query) if value!=field.zero]
+  50     m=len(entries)
+  51     stages={}
+  52     metadata=dict(accepted=False,input_support=m,input_support_comparisons=n,
+  53         supplied_root_order=n,paid_anchor_transform_calls=0,
+  54         ordinary_fft_calls=0,full_output_writes=0,stages=stages)
+  55 
+  56     def decline(reason, **extra):
+  57         metadata.update(path='declined',reason=reason,field_operations=dict(c.count),**extra)
+  58         return None,metadata
+  59 
+  60     if m<=2*max_defects:
+  61         result=_sparse_fourier(c,n,q,entries)
+  62         stages['sparse_input_evaluation']=dict(c.count)
+  63         metadata.update(accepted=True,path='sparse_input',field_operations=dict(c.count),
+  64             phase_root_count=m,phase_roots_from_existing_table=False,
+  65             full_output_writes=n)
+  66         return result,metadata
+  67 
+  68     # Paid E action and q powers, shared with the eventual sparse-defect DFT.
+  69     powers=[field.one]
+  70     for _ in range(1,n):
+  71         powers.append(c.mul(powers[-1],q))
+  72     image=[]
+  73     for i in range(n):
+  74         value=query[i]
+  75         if i+1<n:
+  76             value=c.add(value,c.mul(c.sub(powers[i+1],field.one),query[i+1]))
+  77         image.append(c.neg(c.mul(powers[i],value)))
+  78     stages['root_powers_and_E_action']=dict(c.count)
+  79 
+  80     # Boyer-Moore cancellation on ratios without forming or dividing each one.
+  81     before=dict(c.count)
+  82     balance=0
+  83     numerator=denominator=None
+  84     comparisons=0
+  85     for i,value in entries:
+  86         if balance==0:
+  87             numerator,denominator=image[i],value
+  88             balance=1
+  89         else:
+  90             equal=c.mul(image[i],denominator)==c.mul(numerator,value)
+  91             comparisons+=1
+  92             balance += 1 if equal else -1
+  93     stages['ratio_cancellation']=_delta(before,c.count)
+  94     metadata.update(ratio_comparisons=comparisons,majority_index_steps=m,
+  95                     candidate_balance=balance)
+  96     if balance==0:
+  97         return decline('no_strict_ratio_majority')
+  98 
+  99     before=dict(c.count)
+ 100     shift=c.mul(numerator,c.inv(denominator))
+ 101     metadata['detected_shift']=shift
+ 102     if shift==field.zero:
+ 103         stages['candidate_and_root_test']=_delta(before,c.count)
+ 104         return decline('zero_shift_excluded')
+ 105     if _power(c,shift,n)==field.one:
+ 106         stages['candidate_and_root_test']=_delta(before,c.count)
+ 107         return decline('root_of_unity_shift_excluded')
+ 108     stages['candidate_and_root_test']=_delta(before,c.count)
+ 109 
+ 110     # Candidate selection never substitutes for verifying the full residual.
+ 111     before=dict(c.count)
+ 112     defect=[c.sub(value,c.mul(shift,x)) for value,x in zip(image,query)]
+ 113     supported=[(i,value) for i,value in enumerate(defect) if value!=field.zero]
+ 114     stages['full_residual_verification']=_delta(before,c.count)
+ 115     metadata.update(defect_support=len(supported),defect_support_comparisons=n)
+ 116     if len(supported)>max_defects:
+ 117         return decline('candidate_defect_too_dense')
+ 118 
+ 119     # Existing solver independently prepares all its coefficients. Its duplicate
+ 120     # power work is conservatively retained and explicitly charged below.
+ 121     plan=prepare_fourier_rational(field,n,q,shift)
+ 122     stages['cold_rational_preparation']=plan.preparation
+ 123     before=dict(c.count)
+ 124     forcing=_sparse_fourier(c,n,q,supported,roots=powers)
+ 125     stages['sparse_defect_evaluation']=_delta(before,c.count)
+ 126     result,solve_count=solve_band(field,plan.target,forcing)
+ 127     stages['target_solve']=solve_count
+ 128     counts=Counter(c.count)
+ 129     counts.update(plan.preparation)
+ 130     counts.update(solve_count)
+ 131     metadata.update(accepted=True,path='detected_recurrence',field_operations=dict(counts),
+ 132         phase_root_count=len(supported),phase_roots_from_existing_table=True,
+ 133         full_output_writes=n,duplicate_solver_preparation_paid=True)
+ 134     return result,metadata
+
+===== SOURCE 22 3c24812b136236f98bdde6ce3b7990c2019d54f4e8f98ee28f20ea909e7a0541 fft_materials_extension_20261009/fft_rational_reuse_research/detector_independent_checks.py | 3483 bytes 69 lines =====
+   1 """Focused adversarial detector checks; existing band solver is not re-audited."""
+   2 from collections import Counter
+   3 from pathlib import Path
+   4 import hashlib
+   5 import json
+   6 from detected_fourier import try_detected_fourier
+   7 from fourier_rational import Counted,prepare_fourier_rational,source_solve
+   8 from prior_exact_arithmetic import PrimeField,fourier,mv
+   9 
+  10 
+  11 def main():
+  12     field=PrimeField(65537);n=8;q=field.root(n)
+  13     plan=prepare_fourier_rational(field,n,q,field.integer(2))
+  14     matrix=fourier(field,n)
+  15     forcing=[field.zero]*n;forcing[-1]=field.one
+  16     dense,_=source_solve(field,plan,forcing)
+  17     hidden=list(dense);hidden[0]=field.zero
+  18     forcing=[field.zero]*n;forcing[4]=field.one
+  19     boundary,_=source_solve(field,plan,forcing)
+  20     diagonal=[field.neg(field.power(q,i)) for i in range(n)]
+  21     upper=[field.neg(field.mul(field.power(q,i),
+  22                              field.sub(field.power(q,i+1),field.one)))
+  23            for i in range(n-1)]
+  24     eigen=[field.zero]*n;eigen[-1]=field.one
+  25     for i in range(n-2,-1,-1):
+  26         eigen[i]=field.mul(field.neg(field.mul(upper[i],eigen[i+1])),
+  27                            field.inv(field.sub(diagonal[i],diagonal[-1])))
+  28     zero_shift=[field.zero]*n
+  29     for i in range(n-1,-1,-1):
+  30         rhs=field.one if i==n-1 else field.neg(field.mul(upper[i],zero_shift[i+1]))
+  31         zero_shift[i]=field.mul(rhs,field.inv(diagonal[i]))
+  32     cases=[('zero',[0]*n,0,'sparse_input',None),
+  33            ('support_2s',[1,2,3,4,0,0,0,0],2,'sparse_input',None),
+  34            ('support_2s_plus_1',boundary,2,'detected_recurrence',None),
+  35            ('dense_recurrence',dense,1,'detected_recurrence',None),
+  36            ('defect_at_zero_coordinate',hidden,1,'declined','candidate_defect_too_dense'),
+  37            ('zero_ratio_majority',zero_shift,1,'declined','zero_shift_excluded'),
+  38            ('root_ratio_majority',eigen,0,'declined','root_of_unity_shift_excluded'),
+  39            ('no_majority',list(range(1,n+1)),0,'declined','no_strict_ratio_majority')]
+  40     rows=[]
+  41     for name,query,cap,path,reason in cases:
+  42         observed=Counted(field)
+  43         output,meta=try_detected_fourier(observed,n,q,query,max_defects=cap)
+  44         assert meta['path']==path
+  45         assert Counter(meta['field_operations'])==observed.count
+  46         staged=Counter()
+  47         for count in meta['stages'].values():staged.update(count)
+  48         assert staged==observed.count
+  49         if output is not None:
+  50             assert output==mv(field,matrix,query)
+  51             assert meta['full_output_writes']==n
+  52         else:
+  53             assert meta['reason']==reason and meta['full_output_writes']==0
+  54         if path!='sparse_input':
+  55             assert sum(meta['stages']['root_powers_and_E_action'].values())==6*n-4
+  56         if name=='defect_at_zero_coordinate':
+  57             assert meta['detected_shift']==2 and meta['defect_support']==2
+  58             assert meta['defect_support_comparisons']==n
+  59         rows.append(dict(name=name,path=path,reason=reason,
+  60                          field_operations=dict(observed.count),ledger_exact=True))
+  61     root=Path(__file__).resolve().parent
+  62     result=dict(status='PASS',cases=rows,accepted_full_dfts=4,adverse_declines=4,
+  63                 outer_field_ledger_matches=8,stage_ledger_matches=8,
+  64                 source_sha256=hashlib.sha256((root/'detected_fourier.py').read_bytes()).hexdigest())
+  65     (root/'detector_independent_checks.json').write_text(json.dumps(result,indent=2)+'\n')
+  66     print(json.dumps(result,indent=2))
+  67 
+  68 
+  69 if __name__=='__main__':main()
+
+===== SOURCE 23 ea4813ef8ed6e7c107137ebead9a11aa6d425bba7573534b7640e41f77b7b18b fft_materials_extension_20261009/fft_rational_reuse_research/fourier_rational.py | 5589 bytes 139 lines =====
+   1 """Verified dense rational edges for the FULL positive-sign DFT.
+   2 
+   3 F E=J F, E upper bidiagonal, J cyclic with two upper bands. Related queries
+   4 solve (E-lambda I)x'=x and (J-lambda I)y'=y in linear field work.
+   5 """
+   6 from collections import Counter
+   7 from dataclasses import dataclass
+   8 from rational_reuse import Counted, prepare_band, solve_band
+   9 
+  10 
+  11 @dataclass
+  12 class FourierRationalPlan:
+  13     n: int
+  14     q: object
+  15     shift: object
+  16     source_diagonal: list
+  17     source_inverse_diagonal: list
+  18     source_upper: list
+  19     target: object
+  20     common_preparation: dict
+  21     preparation: dict
+  22 
+  23 
+  24 def batch_inverse(field, values):
+  25     if any(value == field.zero for value in values):
+  26         raise ValueError('singular source shift')
+  27     prefixes=[field.one]
+  28     for value in values:
+  29         prefixes.append(field.mul(prefixes[-1],value))
+  30     suffix=field.inv(prefixes[-1])
+  31     out=[field.zero]*len(values)
+  32     for i in range(len(values)-1,-1,-1):
+  33         out[i]=field.mul(prefixes[i],suffix)
+  34         suffix=field.mul(suffix,values[i])
+  35     return out
+  36 
+  37 
+  38 def prepare_fourier_rational(field,n,q,shift):
+  39     if n < 4 or n&(n-1) or shift == field.zero:
+  40         raise ValueError('dyadic N>=4 and nonzero shift required')
+  41     c=Counted(field)
+  42     powers=[field.one]
+  43     for _ in range(1,n): powers.append(c.mul(powers[-1],q))
+  44     diagonal=[c.sub(c.neg(v),shift) for v in powers]
+  45     upper=[c.neg(c.mul(powers[i],c.sub(powers[(i+1)%n],field.one))) for i in range(n)]
+  46     inverse=batch_inverse(c,diagonal)
+  47     # Common work generates the requested source vectors for both comparisons.
+  48     common=dict(c.count)
+  49     first=[c.sub(powers[(-i-1)%n],field.one) for i in range(n)]
+  50     second=[c.neg(powers[(-i-1)%n]) for i in range(n)]
+  51     target=prepare_band(field,c.neg(shift),[first,second])
+  52     count=Counter(c.count);count.update(target.preparation)
+  53     return FourierRationalPlan(n,q,shift,diagonal,inverse,upper,target,common,dict(count))
+  54 
+  55 
+  56 def source_action(field,plan,values):
+  57     if len(values)!=plan.n: raise ValueError('wrong input length')
+  58     out=[]
+  59     for i in range(plan.n):
+  60         acc=field.mul(plan.source_diagonal[i],values[i])
+  61         if i+1<plan.n:
+  62             acc=field.add(acc,field.mul(plan.source_upper[i],values[i+1]))
+  63         out.append(acc)
+  64     return out
+  65 
+  66 
+  67 def source_solve(field,plan,rhs):
+  68     if len(rhs)!=plan.n: raise ValueError('wrong input length')
+  69     c=Counted(field);out=[field.zero]*plan.n
+  70     for i in range(plan.n-1,-1,-1):
+  71         acc=rhs[i]
+  72         if i+1<plan.n: acc=c.sub(acc,c.mul(plan.source_upper[i],out[i+1]))
+  73         out[i]=c.mul(plan.source_inverse_diagonal[i],acc)
+  74     return out,dict(c.count)
+  75 
+  76 
+  77 def verified_fourier_output(field,plan,anchor_input,anchor_output,query):
+  78     if any(len(x)!=plan.n for x in (anchor_input,anchor_output,query)):
+  79         raise ValueError('wrong vector length')
+  80     c=Counted(field)
+  81     if source_action(c,plan,query)!=list(anchor_input):
+  82         raise ValueError('query does not satisfy supplied Fourier relation')
+  83     result,counts=solve_band(field,plan.target,anchor_output)
+  84     total=Counter(counts);total.update(c.count)
+  85     return result,dict(field_operations=dict(total),relation_comparisons=plan.n,
+  86                        full_output_writes=plan.n,new_fourier_calls=0)
+  87 
+  88 
+  89 def _power(c,value,exponent):
+  90     result=c.one
+  91     while exponent:
+  92         if exponent&1:result=c.mul(result,value)
+  93         exponent//=2
+  94         if exponent:value=c.mul(value,value)
+  95     return result
+  96 
+  97 
+  98 def corrected_fourier_output(field,plan,anchor_input,anchor_output,query,*,max_defects=8):
+  99     """Allow a VERIFIED sparse recurrence residual, paying its full DFT.
+ 100 
+ 101     Returns (None,metadata) if the supplied edge has too many defects. Giving
+ 102     exact zero anchors yields a cold structured-input FFT; no paid cache is
+ 103     assumed in that special case. lambda and its plan remain supplied/paid.
+ 104     """
+ 105     if not isinstance(max_defects,int) or isinstance(max_defects,bool) or max_defects<0:
+ 106         raise ValueError('max_defects must be a nonnegative integer')
+ 107     if any(len(x)!=plan.n for x in (anchor_input,anchor_output,query)):
+ 108         raise ValueError('wrong vector length')
+ 109     c=Counted(field)
+ 110     recovered=source_action(c,plan,query)
+ 111     residual=[c.sub(a,b) for a,b in zip(recovered,anchor_input)]
+ 112     entries=[(j,a) for j,a in enumerate(residual) if a!=field.zero]
+ 113     meta=dict(accepted=len(entries)<=max_defects,defect_support=len(entries),
+ 114               support_comparisons=plan.n,field_operations=dict(c.count),
+ 115               new_full_fourier_calls=0,full_output_writes=0)
+ 116     if len(entries)>max_defects:return None,meta
+ 117     steps=[_power(c,plan.q,j) for j,_ in entries]
+ 118     terms=[a for _,a in entries]
+ 119     forcing=[]
+ 120     for k in range(plan.n):
+ 121         value=anchor_output[k]
+ 122         for j,term in enumerate(terms):
+ 123             value=c.add(value,term)
+ 124             if k+1<plan.n:terms[j]=c.mul(term,steps[j])
+ 125         forcing.append(value)
+ 126     result,counts=solve_band(field,plan.target,forcing)
+ 127     combined=Counter(c.count);combined.update(counts)
+ 128     meta.update(field_operations=dict(combined),full_output_writes=plan.n,
+ 129                 sparse_phase_root_count=len(entries),sparse_frequency_values=plan.n)
+ 130     return result,meta
+ 131 
+ 132 
+ 133 def try_recurrence_fourier(field,plan,query,*,max_defects=8):
+ 134     """Fresh-input exact full DFT when (E-lambda I)query has bounded support."""
+ 135     zeros=[field.zero]*plan.n
+ 136     result,info=corrected_fourier_output(field,plan,zeros,zeros,query,max_defects=max_defects)
+ 137     info.update(cold_structured_input=True,paid_anchor_transform_calls=0,
+ 138                 initial_zero_values=plan.n)
+ 139     return result,info

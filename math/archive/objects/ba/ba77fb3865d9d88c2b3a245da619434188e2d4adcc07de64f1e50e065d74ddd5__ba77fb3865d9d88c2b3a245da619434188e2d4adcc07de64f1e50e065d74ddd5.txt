@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Restricted two-coordinate UNITARY gate obstruction, with tight FFT certificate.
+
+Potential Phi(A)=sum_i H(|A[i,j]|^2). Any 2x2 unitary row update of a
+unitary matrix changes Phi by at most 2 bits. Normalized DFT has Phi=N log2 N.
+The lower bound is N/2 log2 N gates and is saturated by radix-2 FFT.
+NOT a lower bound for general arithmetic circuits or quantum qubit gates.
+"""
+import json,math
+import numpy as np
+
+def entropy_rows(a):
+    b=np.abs(a)**2
+    return float(-np.sum(b[b>0]*np.log2(b[b>0])))
+
+def bit_reversal(i,bits):
+    return int(f'{i:0{bits}b}'[::-1],2)
+
+def test_radix2(N):
+    bits=int(math.log2(N)); assert N==1<<bits
+    mat=np.eye(N,dtype=complex)[[bit_reversal(i,bits) for i in range(N)]]
+    before=entropy_rows(mat)
+    gate_count=0;per_gate=[]
+    for stage in range(1,bits+1):
+        size=1<<stage;half=size//2
+        for base in range(0,N,size):
+            for j in range(half):
+                i=base+j;t=i+half
+                u=mat[i].copy();v=mat[t].copy()
+                phase=np.exp(-2j*np.pi*j/size)
+                prev=entropy_rows(mat)
+                mat[i]=(u+phase*v)/math.sqrt(2)
+                mat[t]=(u-phase*v)/math.sqrt(2)
+                gain=entropy_rows(mat)-prev
+                per_gate.append(gain)
+                gate_count+=1
+    target=np.fft.fft(np.eye(N,dtype=complex),axis=0)/math.sqrt(N)
+    err=float(np.max(abs(mat-target)))
+    target_entropy=N*math.log2(N)
+    assert err<1e-12
+    assert abs(entropy_rows(mat)-target_entropy)<1e-8
+    assert gate_count==N*bits//2
+    assert max(abs(g-2) for g in per_gate)<1e-8
+    return dict(N=N,gates=gate_count,entropy_gain=round(entropy_rows(mat)-before,7),
+       proven_minimum=N*bits//2,maximum_single_gain_error=max(abs(g-2) for g in per_gate),matrix_residual=err)
+
+if __name__=='__main__':
+    rows=[test_radix2(n) for n in [8,16,32,64,128]]
+    print(json.dumps(rows,indent=2))
+    open('unitary_entropy_certificate.json','w').write(json.dumps(rows,indent=2))

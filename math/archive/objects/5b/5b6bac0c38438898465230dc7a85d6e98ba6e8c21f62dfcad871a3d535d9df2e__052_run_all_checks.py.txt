@@ -1,0 +1,25 @@
+"""Run new regression tests and the supplied baseline suites in isolation."""
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+HERE=Path(__file__).resolve().parent
+suites=[('graph_and_history',HERE,['-m','unittest','-v','test_graph_reuse','test_projected_history']),
+        ('phase4_original',HERE/'baseline_phase4',['-m','unittest','-v']),
+        ('relation_view_original',HERE/'baseline_relation_view',['-m','unittest','discover','-s','tests','-v'])]
+results=[]
+log=[]
+for name,cwd,args in suites:
+    p=subprocess.run([sys.executable]+args,cwd=cwd,capture_output=True,text=True)
+    output=p.stdout+p.stderr
+    found=re.search(r'Ran (\d+) tests?',output)
+    results.append({'suite':name,'returncode':p.returncode,'tests':int(found.group(1)) if found else None})
+    log.append(name+'\n'+output)
+    print(name,p.returncode,results[-1]['tests'],flush=True)
+    if p.returncode:
+        print(output)
+        sys.exit(p.returncode)
+(HERE/'results'/'test_log.txt').write_text('\n\n'.join(log))
+(HERE/'results'/'verification.json').write_text(json.dumps({'suites':results,'total_tests':sum(r['tests'] for r in results),'all_passed':True},indent=2))

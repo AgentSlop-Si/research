@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Independent 22-vertex rational certificate. See PROOF.md Section 9."""
+from itertools import combinations
+from fractions import Fraction as Q
+# Variables a=x0,b=x1,c=x2,d=x3; e=110-a-b-c-d
+ineq=[([-1,0,0,0],0),([1,0,0,0],60),([0,-1,0,0],0),([1,2,0,0],120),([0,0,-1,0],0),([0,0,1,0],36),([0,0,0,-1],0),([0,0,0,1],20),([1,1,1,1],110),([-1,-1,-1,-1],-100)]
+def solve(eq):
+ A=[[Q(v) for v in row]+[Q(rhs)] for row,rhs in eq]
+ for j in range(4):
+  p=next((i for i in range(j,4) if A[i][j]),None)
+  if p is None:return
+  A[j],A[p]=A[p],A[j];v=A[j][j];A[j]=[a/v for a in A[j]]
+  for i in range(4):
+   if i!=j:
+    v=A[i][j];A[i]=[a-v*b for a,b in zip(A[i],A[j])]
+ return tuple(row[-1] for row in A)
+V=set()
+for q in combinations(ineq,4):
+ v=solve(q)
+ if v is None:continue
+ if all(sum(a*x for a,x in zip(row,v))<=rhs for row,rhs in ineq):V.add((*v,110-sum(v),Q(11)))
+def M(x,y):return sum(a*b*(1 if i+j>=5 else -1 if i+j==4 else 0) for i,a in enumerate(x) for j,b in enumerate(y))
+score,x,y=max((M(x,y),x,y) for x in V for y in V)
+assert len(V) == 22
+assert score == 3425
+assert 4 * score < 121 ** 2
+print('vertices',len(V),'max',score,'at',x,y)

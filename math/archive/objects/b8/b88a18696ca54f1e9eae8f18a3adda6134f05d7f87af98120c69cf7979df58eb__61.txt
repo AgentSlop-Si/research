@@ -1,0 +1,20 @@
+   1 """Independent analytic spectral and corner-entry checks; standard library only."""
+   2 from fractions import Fraction
+   3 from pathlib import Path
+   4 import math
+   5 import json
+   6 
+   7 out=[]
+   8 for n in (8,16,32,64,128):
+   9     c=math.cos(math.pi/(n+1))
+  10     lo,hi=3-2*c,3+2*c
+  11     k=(1/lo+1/(lo+1))/(1/hi+1/(hi+1))
+  12     a,b=1,7
+  13     for _ in range(2,n+1):
+  14         a,b=b,7*b-4*a
+  15     smallest=float(Fraction(2**(n-1),4*b))
+  16     assert k<45/11
+  17     out.append({'n':n,'kappa2_from_spectrum':k,
+  18                 'exact_corner_magnitude_as_float':smallest})
+  19 print(json.dumps(out,indent=2))
+  20 (Path(__file__).resolve().parent/'spectral_recomputed.json').write_text(json.dumps(out,indent=2)+'\n')

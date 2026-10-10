@@ -1,0 +1,88 @@
+   1 #!/usr/bin/env python3
+   2 """Exact unbalanced/balanced Fourier operator-Schmidt rank and flat spectrum.
+   3 
+   4 Let N=A*B with A,B powers of two, A<=B, and index input x=aB+b,
+   5 output y=cB+d (a,c in [A], b,d in [B]). Let R be the realignment
+   6 of the *unitary* Fourier matrix with rows (a,c), cols (b,d):
+   7  R[(a,c),(b,d)] = (1/sqrt(N))*omega_N^(-(aB+b)(cB+d)).
+   8 As A divides B,
+   9  R = (1/sqrt(N))*[omega_A^(-a*d-c*b)]*diag(omega_N^(-b*d)).
+  10 Each row of middle matrix is orthogonal to every other (inner product
+  11 B^2*delta_(a,a')*delta_(c,c')), hence
+  12       R R* = (B/A) I_(A^2).
+  13 All A^2 nonzero singular values equal sqrt(B/A).
+  14 An exact sum of s tensor-separable operators requires s>=A^2.
+  15 Best relative Frobenius error of rank-s separable approximation:
+  16  sqrt(1-s/A^2), for 0<=s<=A^2.
+  17 
+  18 This is only about a ONE-SHOT sum of tensor-product operators across
+  19 this particular register partition, not a general arithmetic FFT lower bound.
+  20 """
+  21 from __future__ import annotations
+  22 import json
+  23 import math
+  24 import numpy as np
+  25 from phase10_rational import P,root_table
+  26 from operator_schmidt_gate import rank_mod
+  27 
+  28 
+  29 def run(n,a):
+  30     if n%a:raise ValueError
+  31     b=n//a
+  32     if a>b or a&(a-1) or b&(b-1) or a==0:raise ValueError
+  33     tbl=root_table(n)
+  34     tab_a=root_table(a)
+  35     entries=[]
+  36     for ia in range(a):
+  37         for oc in range(a):
+  38             row=[]
+  39             for ib in range(b):
+  40                 for od in range(b):
+  41                     x=ia*b+ib;y=oc*b+od
+  42                     actual=tbl[(-x*y)%n]
+  43                     predicted=tab_a[(-ia*od-oc*ib)%a]*tbl[(-ib*od)%n]%P
+  44                     assert actual==predicted
+  45                     row.append(actual)
+  46             entries.append(row)
+  47     rk=rank_mod(entries)
+  48     assert rk==a*a
+  49     # Independent numerical Gram verification, no numerical proof needed.
+  50     aa=np.arange(a);bb=np.arange(b)
+  51     # Rows correspond (ia,oc) columns (ib,od).
+  52     rows=[]
+  53     for ia in range(a):
+  54         for oc in range(a):
+  55             x=ia*b+bb[:,None]
+  56             y=oc*b+bb[None,:]
+  57             rows.append((np.exp(-2j*np.pi*(x*y)/n)/np.sqrt(n)).reshape(-1))
+  58     matrix=np.array(rows)
+  59     gram=matrix@matrix.conj().T
+  60     gram_error=float(np.max(np.abs(gram-(b/a)*np.eye(a*a))))
+  61     assert gram_error<1e-11*max(1,b/a)
+  62     sv=np.linalg.svd(matrix,compute_uv=False)
+  63     assert np.max(np.abs(sv-np.sqrt(b/a)))<1e-10
+  64     return {'n':n,'left_register_dim':a,'right_register_dim':b,
+  65             'exact_modular_realignment_rank':rk,
+  66             'exact_theoretical_rank':a*a,
+  67             'flat_schmidt_coefficient':math.sqrt(b/a),
+  68             'max_gram_residual_complex128':gram_error,
+  69             'checked_modular_entries':a*a*b*b,
+  70             'relative_error_at_50pct_rank':math.sqrt(1-(a*a//2)/(a*a))}
+  71 
+  72 
+  73 def main():
+  74     records=[]
+  75     for n,a in [(16,2),(16,4),(64,2),(64,4),(64,8),(128,4),(256,4),(256,8),(256,16)]:
+  76         v=run(n,a)
+  77         records.append(v)
+  78         print('N=%-3d A=%-2d B=%-2d rank=%-3d flat singular=%.4f gram max=%.2g' %
+  79               (v['n'],v['left_register_dim'],v['right_register_dim'],
+  80                v['exact_modular_realignment_rank'],
+  81                v['flat_schmidt_coefficient'],v['max_gram_residual_complex128']))
+  82     with open('SCHMIDT_GENERAL_AUDIT.json','w') as f:
+  83         json.dump({'exact_theorem':'operator-Schmidt rank min(A,B)^2 and flat nonzero Schmidt spectrum for the Fourier operator at a contiguous bit cut',
+  84         'approximation_consequence':'relative Frobenius error >=sqrt(1-s/A^2) for s separable terms across A|B and A<=B',
+  85         'caveat':'one-shot tensor separability restriction; not an unrestricted exact FFT lower bound',
+  86         'cases':records},f,indent=2)
+  87 
+  88 if __name__=='__main__':main()

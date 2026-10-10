@@ -1,0 +1,308 @@
+   1 """Independent Phase16 mathematical audit. Never imports or runs supplied files.
+   2 Dense arithmetic is an oracle/checker, not an algorithmic complexity claim.
+   3 """
+   4 import json
+   5 import math
+   6 from pathlib import Path
+   7 import numpy as np
+   8 
+   9 SEED = 2026100916
+  10 rng = np.random.default_rng(SEED)
+  11 
+  12 def entropy(A):
+  13     p = abs(A)**2
+  14     z = p > 0
+  15     return float(-(p[z]*np.log2(p[z])).sum())
+  16 
+  17 def fourier(n):
+  18     # Reduce the integer exponent modulo n before evaluating the complex root.
+  19     j = np.arange(n)
+  20     return np.exp((2j*np.pi/n)*((j[:,None]*j[None,:]) % n))/np.sqrt(n)
+  21 
+  22 def cycles(n,b):
+  23     unused=set(range(n)); out=[]
+  24     while unused:
+  25         start=min(unused); c=[]; k=start
+  26         while k in unused:
+  27             unused.remove(k); c.append(k); k=k*(1+b)%n
+  28         assert k==start
+  29         out.append(c)
+  30     return out
+  31 
+  32 def direct_factor_audit(n,b):
+  33     """Build R from direct stream regrouping, without a folding executor."""
+  34     L=n//b; orb=cycles(n,b)
+  35     R=np.zeros((n,n),complex); O=np.zeros((n,n),complex)
+  36     phase=np.ones(n,complex); degrees=[]; frequencies=[]; cursor=0
+  37     for c in orb:
+  38         d=len(c); g=L//d; u=c[0]//g
+  39         O[cursor:cursor+d,cursor:cursor+d]=fourier(d)
+  40         for e in range(d):
+  41             a=(e*pow(u,-1,d))%d if d>1 else 0
+  42             carry=(u*a-e)//d
+  43             for r in range(g):
+  44                 col=(a+d*r)*b+(u*g)%b
+  45                 R[cursor+e,col]=np.exp(2j*np.pi*((carry+u*r)%b)/b)/np.sqrt(g)
+  46             phase[cursor+e]=np.exp(2j*np.pi*(e*g)/n)
+  47             degrees.append(g)
+  48         frequencies += c; cursor += d
+  49     B=np.kron(np.eye(L),fourier(b))
+  50     inp=[a+L*h for a in range(L) for h in range(b)]
+  51     P=np.eye(n)[inp,:]
+  52     assembled=(O@(phase[:,None]*R)@B@P)[np.argsort(frequencies)]
+  53     err=float(abs(assembled-fourier(n)).max())
+  54     gram=float(abs(R@R.conj().T-np.eye(n)).max())
+  55     support=(abs(R)>1e-12).sum(axis=1)
+  56     assert list(support)==degrees
+  57     assert err<1e-11 and gram<1e-11
+  58     E=[entropy(B),entropy(R),entropy(O)]
+  59     expected=[n*math.log2(b),n-b,b+n*(math.log2(L)-1)]
+  60     assert max(abs(x-y) for x,y in zip(E,expected))<1e-8
+  61     return dict(N=n,B=b,entropies=E,expected=expected,
+  62                 full_DFT_error=err,residual_gram_error=gram,
+  63                 total_gate_optimum=n*int(math.log2(n))//2)
+  64 
+  65 def circuit_audit(n,b):
+  66     """Recursive even/odd FFT wiring, independent of supplied iterative schedule."""
+  67     L=n//b; A=np.eye(n,dtype=complex)[[a+L*h for a in range(L) for h in range(b)]]
+  68     counts={"base":0,"fold":0,"orbit":0}; gains=[]; max_overlap=0.
+  69     def gate(i,j,w,kind):
+  70         nonlocal max_overlap
+  71         rows=A[[i,j]].copy(); old=entropy(rows)
+  72         max_overlap=max(max_overlap,float(np.minimum(abs(rows[0])**2,abs(rows[1])**2).sum()))
+  73         A[i]=(rows[0]+w*rows[1])/np.sqrt(2)
+  74         A[j]=(rows[0]-w*rows[1])/np.sqrt(2)
+  75         gains.append(entropy(A[[i,j]])-old); counts[kind]+=1
+  76     def fft(wires,kind):
+  77         if len(wires)==1: return wires
+  78         even=fft(wires[::2],kind); odd=fft(wires[1::2],kind)
+  79         for k,(i,j) in enumerate(zip(even,odd)):
+  80             gate(i,j,np.exp(2j*np.pi*k/len(wires)),kind)
+  81         return even+odd
+  82     registers={}
+  83     for a in range(L):
+  84         order=fft(list(range(a*b,(a+1)*b)),"base")
+  85         for q,w in enumerate(order): registers[L,a,q]=w
+  86     d=L
+  87     while d>1:
+  88         for a in range(d//2):
+  89             for q in range(b//2):
+  90                 i=registers.pop((d,a,2*q)); j=registers.pop((d,a+d//2,2*q))
+  91                 gate(i,j,np.exp(2j*np.pi*q/b),"fold")
+  92                 registers[d//2,a,q]=i; registers[d//2,a,q+b//2]=j
+  93         d//=2
+  94     out=np.empty_like(A)
+  95     for c in cycles(n,b):
+  96         d=len(c); g=L//d; u=c[0]//g; wires=[]
+  97         for e in range(d):
+  98             a=(e*pow(u,-1,d))%d if d>1 else 0
+  99             carry=(u*a-e)//d
+ 100             w=registers[d,a,u]
+ 101             A[w]*=np.exp(2j*np.pi*(carry/b+e*g/n)); wires.append(w)
+ 102         ordered=fft(wires,"orbit")
+ 103         out[c]=A[ordered]
+ 104     error=float(abs(out-fourier(n)).max())
+ 105     assert error<1e-11 and max(abs(x-2) for x in gains)<1e-10
+ 106     assert max_overlap<1e-24
+ 107     assert len(gains)==n*int(math.log2(n))//2
+ 108     return dict(N=n,B=b,counts=counts,gate_count=len(gains),
+ 109                 min_entropy_gain=min(gains),max_entropy_gain=max(gains),
+ 110                 max_input_support_overlap=max_overlap,DFT_error=error)
+ 111 
+ 112 def givens(a,b):
+ 113     r=np.hypot(abs(a),abs(b))
+ 114     if r==0: return np.eye(2,dtype=complex)
+ 115     return np.array([[a.conjugate(),b.conjugate()],[-b,a]],complex)/r
+ 116 
+ 117 def compile_rankone(U,pivot="adaptive"):
+ 118     """Two sweeps; robust prefix pivot handles zero-generator degeneracies."""
+ 119     A=U.copy(); n=len(A); operations=[]
+ 120     def eliminate(i,j,col):
+ 121         G=givens(A[i,col],A[j,col]); A[[i,j]]=G@A[[i,j]]
+ 122         operations.append((i,j,G))
+ 123     for k in range(n-1,1,-1):
+ 124         if pivot=="nearest": col=k-2
+ 125         else:
+ 126             mass=abs(A[k-1,:k-1])**2+abs(A[k,:k-1])**2
+ 127             col=int(np.argmax(mass))
+ 128         eliminate(k-1,k,col)
+ 129     hess=float(abs(np.tril(A,-2)).max())
+ 130     for j in range(n-1): eliminate(j,j+1,j)
+ 131     diagonal=np.diag(A).copy()
+ 132     off=float(abs(A-np.diag(diagonal)).max())
+ 133     assembled=np.diag(diagonal)
+ 134     for i,j,G in operations[::-1]: assembled[[i,j]]=G.conj().T@assembled[[i,j]]
+ 135     return assembled,dict(gates=len(operations),hessenberg_error=hess,
+ 136         diagonal_error=off,reconstruction_error=float(abs(assembled-U).max()),
+ 137         phase_modulus_error=float(abs(abs(diagonal)-1).max()))
+ 138 
+ 139 def cayley(A,alpha):
+ 140     I=np.eye(len(A),dtype=complex)
+ 141     # Solve, rather than explicitly forming an inverse.
+ 142     return 2*np.linalg.solve(I-1j*alpha*A,I)-I
+ 143 
+ 144 def path_audits():
+ 145     cases=[]
+ 146     for n in [2,3,4,8,16,32,64,128]:
+ 147         for mode in ["real_signed","split","hermitian_diagonal"]:
+ 148             weights=rng.uniform(.25,1.75,n-1)*rng.choice([-1,1],n-1)
+ 149             if mode=="split" and n>3: weights[n//2-1]=0
+ 150             if mode=="hermitian_diagonal":
+ 151                 weights=weights*np.exp(1j*rng.uniform(-np.pi,np.pi,n-1))
+ 152             A=np.diag(weights,1)+np.diag(np.conj(weights),-1)
+ 153             if mode=="hermitian_diagonal": A += np.diag(rng.uniform(-1,1,n))
+ 154             for alpha in [0.,-2.,1/32,.5,2.,float(n),float(n*n),1e-9]:
+ 155                 U=cayley(A,alpha); unit=float(abs(U@U.conj().T-np.eye(n)).max())
+ 156                 rebuilt,stats=compile_rankone(U)
+ 157                 stats.update(N=n,mode=mode,alpha=alpha,unitarity_error=unit)
+ 158                 # Solves at larger strengths may accumulate ordinary floating-point error.
+ 159                 assert unit<1e-8 and stats['reconstruction_error']<1e-8
+ 160                 assert stats['diagonal_error']<1e-8 and stats['gates']==2*n-3
+ 161                 if mode!="hermitian_diagonal":
+ 162                     stats['determinant_one_error']=float(abs(np.linalg.det(U)-1))
+ 163                     assert stats['determinant_one_error']<1e-8
+ 164                 cases.append(stats)
+ 165     # Exact signed permutation: global strict-lower generator exists, nearest-pivot fails.
+ 166     U=np.eye(4,dtype=complex); U[[0,3]]=U[[3,0]]
+ 167     _,nearest=compile_rankone(U,pivot="nearest")
+ 168     _,adaptive=compile_rankone(U,pivot="adaptive")
+ 169     assert nearest['hessenberg_error']==1 and adaptive['reconstruction_error']==0
+ 170     return cases,dict(matrix=U.real.tolist(),nearest=nearest,adaptive=adaptive)
+ 171 
+ 172 def haar(m):
+ 173     # Explicit orthonormal basis functions, independent of recursion executor.
+ 174     H=np.empty((m,m)); H[:,0]=1/np.sqrt(m)
+ 175     for level in range(int(math.log2(m))):
+ 176         length=m//(2**level)
+ 177         for node in range(2**level):
+ 178             column=2**level+node; lo=node*length
+ 179             H[:,column]=0
+ 180             H[lo:lo+length//2,column]=1/np.sqrt(length)
+ 181             H[lo+length//2:lo+length,column]=-1/np.sqrt(length)
+ 182     return H
+ 183 
+ 184 def haar_circuit(m):
+ 185     A=np.eye(m,dtype=complex); active=[0]; wavelet=1; gates=0
+ 186     while len(active)<m:
+ 187         next_active=[]
+ 188         for current in active:
+ 189             first=A[current].copy(); second=A[wavelet].copy()
+ 190             A[current]=(first+second)/np.sqrt(2)
+ 191             A[wavelet]=(first-second)/np.sqrt(2)
+ 192             next_active.extend([current,wavelet]); wavelet+=1; gates+=1
+ 193         active=next_active
+ 194     return A[active],gates
+ 195 
+ 196 def binary_entropy(p):
+ 197     return sum(-x*math.log2(x) for x in [p,1-p] if x>0)
+ 198 
+ 199 def stage_audits():
+ 200     records=[]
+ 201     for n in [4,8,16,32,64,128]:
+ 202         m=n//2; H=haar(m); Hc,ng=haar_circuit(m)
+ 203         assert ng==m-1 and abs(Hc-H).max()<1e-12
+ 204         for eps in [0.,1/512,-.5,1.,float(n),float(n*n)]:
+ 205             p=eps*eps/(1+eps*eps)
+ 206             I=np.eye(m); R=np.block([[np.zeros((m,m)),H],[H.T,np.zeros((m,m))]])
+ 207             V=(np.eye(n)+1j*eps*R)/np.hypot(1.,eps)
+ 208             W=np.block([[Hc,np.zeros((m,m))],[np.zeros((m,m)),I]])
+ 209             J=np.block([[I,1j*eps*I],[1j*eps*I,I]])/np.hypot(1.,eps)
+ 210             Vc=W@J@W.conj().T
+ 211             components=[]
+ 212             for alpha in [-n,n*n]:
+ 213                 edge=rng.uniform(.5,1.5,n-1)*rng.choice([-1,1],n-1)
+ 214                 A=np.diag(edge,1)+np.diag(edge,-1)
+ 215                 permutation=rng.permutation(n)
+ 216                 C=cayley(A,float(alpha)); Cc,info=compile_rankone(C)
+ 217                 components.append((C[np.ix_(permutation,permutation)],Cc[np.ix_(permutation,permutation)],info))
+ 218             S=V@components[0][0]@components[1][0]
+ 219             Sc=Vc@components[0][1]@components[1][1]
+ 220             err=float(abs(S-Sc).max())
+ 221             E=entropy(V); predicted=n*binary_entropy(p)+2*p*(n-2)
+ 222             gates=sum(c[2]['gates'] for c in components)+2*ng+m
+ 223             assert err<1e-9 and gates==11*n//2-8
+ 224             assert abs(E-predicted)<1e-8 and abs(entropy(H)-2*(m-1))<1e-9
+ 225             assert abs(np.linalg.det(S)-1)<1e-8
+ 226             records.append(dict(N=n,epsilon=eps,alphas=[-n,n*n],gates=gates,
+ 227                                 full_matrix_error=err,inverse_matrix_error=float(abs(S.conj().T-Sc.conj().T).max()),
+ 228                                 V_entropy=E,predicted_V_entropy=predicted,
+ 229                                 determinant_one_error=float(abs(np.linalg.det(S)-1))))
+ 230     return records
+ 231 
+ 232 def random_gate_checks():
+ 233     records=[]
+ 234     for n in [4,8,16,32]:
+ 235         A=np.eye(n,dtype=complex); lo=2.; hi=-2.
+ 236         for step in range(10*n):
+ 237             i,j=rng.choice(n,2,replace=False)
+ 238             X=rng.normal(size=(2,2))+1j*rng.normal(size=(2,2))
+ 239             Q,_=np.linalg.qr(X)
+ 240             old=entropy(A[[i,j]])
+ 241             A[[i,j]]=Q@A[[i,j]]
+ 242             gain=entropy(A[[i,j]])-old; lo=min(lo,gain); hi=max(hi,gain)
+ 243             assert abs(gain)<=2+1e-10
+ 244         records.append(dict(N=n,gates_tested=10*n,min_gain=lo,max_gain=hi))
+ 245     return records
+ 246 
+ 247 def workspace_checks():
+ 248     records=[]
+ 249     for n in [4,8,16]:
+ 250         m=3*n
+ 251         A=np.vstack([np.eye(n,dtype=complex),np.zeros((m-n,n),complex)])
+ 252         maximum=-2.; minimum=2.
+ 253         for step in range(20*m):
+ 254             i,j=rng.choice(m,2,replace=False)
+ 255             X=rng.normal(size=(2,2))+1j*rng.normal(size=(2,2))
+ 256             Q,_=np.linalg.qr(X)
+ 257             mass=float((abs(A[[i,j]])**2).sum())
+ 258             before=entropy(A[[i,j]])
+ 259             A[[i,j]]=Q@A[[i,j]]
+ 260             gain=entropy(A[[i,j]])-before
+ 261             assert abs(gain)<=mass+1e-10 and mass<=2+1e-10
+ 262             maximum=max(maximum,gain); minimum=min(minimum,gain)
+ 263         assert abs(A.conj().T@A-np.eye(n)).max()<1e-10
+ 264         records.append(dict(inputs=n,workspace_dimension=m,gates=20*m,min_gain=minimum,max_gain=maximum))
+ 265     return records
+ 266 
+ 267 def determinant_checks():
+ 268     records=[]
+ 269     for n in [2,4,8,16,32,64,128]:
+ 270         actual=np.linalg.det(fourier(n))
+ 271         exponent=((n-1)*(3*n-2))%8
+ 272         expected=np.exp(1j*np.pi*exponent/4)
+ 273         error=float(abs(actual-expected))
+ 274         assert error<1e-10
+ 275         records.append(dict(N=n,actual=[actual.real,actual.imag],expected=[expected.real,expected.imag],error=error))
+ 276     return records
+ 277 
+ 278 def approximate_checks():
+ 279     records=[]
+ 280     for n in [8,16,32,64]:
+ 281         F=fourier(n)
+ 282         for theta in [.01,.1,.3]:
+ 283             Q=np.eye(n,dtype=complex); c=math.cos(theta); s=math.sin(theta)
+ 284             Q[:2,:2]=[[c,s],[-s,c]]
+ 285             U=Q@F; err=float(np.linalg.norm(U-F,2))
+ 286             lower=n*(math.log2(n)-binary_entropy(err)-err*math.log2(n-1))
+ 287             assert entropy(U)+1e-10>=lower
+ 288             records.append(dict(N=n,operator_error=err,actual_entropy=entropy(U),
+ 289                                 conservative_entropy_lower_bound=lower))
+ 290     return records
+ 291 
+ 292 if __name__=='__main__':
+ 293     paths,degenerate=path_audits()
+ 294     sizes=[(16,8),(32,8),(64,8),(128,16),(256,16),(256,128),(512,32)]
+ 295     result=dict(audit_date='2026-10-09',seed=SEED,uploaded_code_executed=False,
+ 296                 direct_factors=[direct_factor_audit(n,b) for n,b in sizes],
+ 297                 gate_circuits=[circuit_audit(n,b) for n,b in sizes],
+ 298                 path_cases=paths,degenerate_pivot_counterexample=degenerate,
+ 299                 stage_cases=stage_audits(),random_gates=random_gate_checks(),
+ 300                 approximate_cases=approximate_checks(),workspace_cases=workspace_checks(),determinant_cases=determinant_checks())
+ 301     result['summary']=dict(status='PASS',path_cases=len(paths),stage_cases=len(result['stage_cases']),
+ 302         max_path_reconstruction_error=max(x['reconstruction_error'] for x in paths),
+ 303         max_stage_error=max(x['full_matrix_error'] for x in result['stage_cases']),
+ 304         max_DFT_error=max(x['DFT_error'] for x in result['gate_circuits']),
+ 305         max_two_bit_deviation=max(max(abs(x['min_entropy_gain']-2),abs(x['max_entropy_gain']-2)) for x in result['gate_circuits']))
+ 306     Path(__file__).with_name('independent_phase16_results.json').write_text(json.dumps(result,indent=2)+'\n')
+ 307     print(json.dumps(result['summary'],indent=2))
+ 308     print('Nearest shared column is not a valid generic zero-case pivot:',json.dumps(degenerate))

@@ -1,0 +1,121 @@
+"""Wall clock microbenchmarks, SciPy rFFT comparison with workload labels.
+
+Prepared dense: exact same dense-output contract after every update.
+Lazy/Tracked: only Q requested frequency bins after each edit.
+Final-only: one dense spectrum after many edits; shows where cache loses.
+"""
+import json
+import time
+from statistics import median
+from pathlib import Path
+import numpy as np
+from scipy import fft
+from lazy_fft import LazyRealFFT, PreparedDenseFFT, TrackedFrequencies
+
+NUM_UPDATES = 40
+REPEATS = 3
+
+def measure(fn):
+    vals=[]
+    ans=None
+    for _ in range(REPEATS):
+        s=time.perf_counter_ns()
+        ans=fn()
+        vals.append((time.perf_counter_ns()-s)/1e6)
+    return median(vals), ans
+
+
+def benchmark():
+    rows=[]
+    for n in [2**12,2**14,2**16,2**18,2**20]:
+        rng=np.random.default_rng(n+200)
+        base=rng.normal(size=n)
+        pos=n//7
+        delta=rng.normal(size=NUM_UPDATES)*0.5
+        pos4=[n//17,n//7,n//3,n//2+12]
+        edited_pos=[pos4[i%len(pos4)] for i in range(NUM_UPDATES)]
+        qs=[0,1,23,123,n//7,n//4,n//3,n//2]
+        fft.rfft(base) # warm up backend; excluded equally from all methods
+
+        # Scenario 1: all N//2+1 outputs required after each edit.
+        def all_fresh():
+            signal=base.copy()
+            checksum=0.
+            for d in delta:
+                signal[pos]+=d
+                y=fft.rfft(signal)
+                checksum+=y[7].real
+            return y,checksum
+        def all_prepared():
+            run=PreparedDenseFFT.from_signal(base,pos) # includes seed FFT and phase prep
+            checksum=0.
+            for d in delta:
+                y=run.edit(d)
+                checksum+=y[7].real
+            return y.copy(),checksum
+        fresh_ms,(yfresh,cfresh)=measure(all_fresh)
+        prep_ms,(yprep,cprep)=measure(all_prepared)
+        dense_err=float(np.max(np.abs(yfresh-yprep)))
+        assert np.allclose(yfresh,yprep,atol=1e-8,rtol=1e-9)
+
+        # Scenario 2: only Q fixed frequencies needed after each edit.
+        def q_fresh():
+            signal=base.copy();checksum=0.
+            for p,d in zip(edited_pos,delta):
+                signal[p]+=d
+                qvals=fft.rfft(signal)[qs]
+                checksum+=qvals[3].real
+            return qvals,checksum
+        def q_lazy():
+            state=LazyRealFFT(base) # includes seed FFT
+            checksum=0.
+            for p,d in zip(edited_pos,delta):
+                state.edit(p,float(d))
+                qvals=state.frequencies(qs)
+                checksum+=qvals[3].real
+            return qvals,checksum,state.distinct_edits
+        def q_tracked():
+            state=TrackedFrequencies(base,qs,pos4)
+            checksum=0.
+            for p,d in zip(edited_pos,delta):
+                qvals=state.edit(p,float(d))
+                checksum+=qvals[3].real
+            return qvals.copy(),checksum
+        qfull_ms,(qfull,cq)=measure(q_fresh)
+        qlazy_ms,(qlazy,clazy,distinct)=measure(q_lazy)
+        qtracked_ms,(qtracked,ctracked)=measure(q_tracked)
+        qerr=float(max(np.max(np.abs(qfull-qlazy)),np.max(np.abs(qfull-qtracked))))
+        assert np.allclose(qfull,qlazy,atol=1e-8,rtol=1e-9)
+        assert np.allclose(qfull,qtracked,atol=1e-8,rtol=1e-9)
+
+        # Scenario 3: no intermediate output, only final full spectrum.
+        def final_one_full():
+            signal=base.copy()
+            for p,d in zip(edited_pos,delta):
+                signal[p]+=d
+            return fft.rfft(signal)
+        def final_lazy_and_reconstruct():
+            st=LazyRealFFT(base)
+            for p,d in zip(edited_pos,delta):
+                st.edit(p,float(d))
+            return st.materialize(direct_threshold=1)
+        final_ms,zf=measure(final_one_full)
+        final_lazy_ms,zl=measure(final_lazy_and_reconstruct)
+        assert np.allclose(zf,zl,atol=1e-8,rtol=1e-9)
+
+        row=dict(n=n,updates=NUM_UPDATES,requested_bins=len(qs),distinct_edited_positions=distinct,
+            dense_fresh_ms=round(fresh_ms,4),dense_prepared_ms=round(prep_ms,4),
+            dense_speedup=round(fresh_ms/prep_ms,2),dense_max_absolute_error=dense_err,
+            q_fresh_ms=round(qfull_ms,4),q_lazy_ms=round(qlazy_ms,4),
+            q_tracked_ms=round(qtracked_ms,4),q_lazy_speedup_vs_fresh=round(qfull_ms/qlazy_ms,2),
+            q_tracked_speedup_vs_fresh=round(qfull_ms/qtracked_ms,2),q_max_abs_error=qerr,
+            one_final_fresh_ms=round(final_ms,4),one_final_cached_ms=round(final_lazy_ms,4),
+            one_final_cache_speedup=round(final_ms/final_lazy_ms,2))
+        rows.append(row)
+        print(json.dumps(row))
+    out=Path(__file__).parent/'benchmark_results.json'
+    out.write_text(json.dumps({'notes':'SciPy 1.17, NumPy 2.3; 3-run median; warmup excluded; initialization/preparation included on adaptive side; Python event workload', 'rows':rows},indent=2))
+    print('saved',out)
+
+if __name__=='__main__':
+    benchmark()

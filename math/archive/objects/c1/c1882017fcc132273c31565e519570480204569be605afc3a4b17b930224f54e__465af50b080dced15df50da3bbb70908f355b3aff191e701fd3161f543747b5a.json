@@ -1,0 +1,38 @@
+{
+  "source_sha256": "465af50b080dced15df50da3bbb70908f355b3aff191e701fd3161f543747b5a",
+  "source_path": "additions/1628/audit_provenance.py",
+  "source_bytes": 5177,
+  "line_count": 73,
+  "full_first_to_last_read": true,
+  "source_executed_imported_or_compiled": false,
+  "mathematical_or_operational_scope": "Recursive ZIP byte-provenance inventory for the 16:28 addition; no mathematical theorem is checked.",
+  "positive_controls": [
+    "Lines 12–23 reject excessive recursion, member counts, advertised expansion, absolute/traversal/backslash paths, archive symlinks, and duplicate file names; cumulative decompressed bytes are capped.",
+    "Lines 28–32 preserve every file occurrence and deduplicate canonical byte hashes. Lines 60–62 explicitly separate byte novelty from mathematical novelty."
+  ],
+  "findings": [
+    {
+      "severity": "medium",
+      "lines": "12–23,72",
+      "issue": "All structural limits and the final failure gate use assert; optimized Python removes them. This is an unsuitable adversarial acceptance boundary unless optimization is forbidden or explicit exceptions replace assertions."
+    },
+    {
+      "severity": "medium",
+      "lines": "34–45,47–52,60–72",
+      "issue": "Manifest presence/completeness is not enforced. An empty source_archives directory or archives without a recognized manifest produce zero verification failures. A manifest checks only its named entries; it cannot establish that every member is committed."
+    },
+    {
+      "severity": "low",
+      "lines": "40–45",
+      "issue": "A manifest reference can resolve relative to its manifest or archive root, and any hash-matching candidate passes. This compatibility rule is not a unique canonical path interpretation."
+    },
+    {
+      "severity": "low",
+      "lines": "63–72",
+      "issue": "Outputs are written before the terminal manifest-failure assertion; failure can leave apparently complete inventory artifacts behind."
+    }
+  ],
+  "cost_and_scaling": "O(B) hashing plus manifest rereads for B total recursively decompressed bytes. Holds all uncompressed members of each active archive and the input ZIP in memory. Top-level ZIP bytes are read before a compressed-input size cap; cumulative bounds are assertion-based.",
+  "test_scope_and_limits": "No tests executed in this review. The source defines runtime safety/manifest assertions but no adversarial unit tests, known-prior schema validation, or required archive-count check.",
+  "certificate_acceptance": "Accepts identity against the declared prior and manifests only. It neither authenticates that prior nor proves content completeness, authorship, mathematical novelty, or source correctness."
+}

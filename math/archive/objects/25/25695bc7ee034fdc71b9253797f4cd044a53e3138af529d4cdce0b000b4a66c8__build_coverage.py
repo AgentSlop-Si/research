@@ -1,0 +1,392 @@
+"""Build the separately owned, exact-hash text-review ledger; never run uploads."""
+from pathlib import Path
+import json, hashlib
+
+ROOT=Path(__file__).resolve().parent
+QUEUE=ROOT.parent/'BASELINE_TEXT_REVIEW_QUEUE_2.json'
+sources=json.loads(QUEUE.read_text())['sources']
+R={}
+def entry(i, category, claims, proof, corrections, dependencies, implications):
+    R[i]={'classification':category,'substantive_claims':claims,
+          'independent_proof_scope':proof,'corrections_and_qualifications':corrections,
+          'unresolved_dependencies':dependencies,'constructive_fft_implications':implications}
+
+entry(90,'theorem_and_results_summary',
+ ['Fourier induced-1-condition N forces product stage conditions >=N; the two-Green stage has condition <=17/4.',
+  'Rank-one dressed dense FFT factors telescope to the ordinary FFT; reported numerical fits and timing losses produce no new construction.'],
+ 'P1 independently rederives all-N norm budget and two-Green bounds; 16 exact rational controls passed. Gauge cancellation follows by adjacent H^-1 H cancellation.',
+ 'Necessary stage counts are not constructions or an unrestricted arithmetic lower bound. Historical 11 tests, 54 vectors and benchmark medians were not rerun.',
+ ['Uploaded executors, operation counters, gauge recognizer and numerical optimizer are outside this text-only inspection.','Novelty and full prior-art audit are not established.'],
+ 'A candidate must escape both inverse sparsity and bounded one-condition without hidden fusion cost or gauge cancellation.')
+entry(91,'patch_and_validation_report',
+ ['Reports four Phase-5 defects: spectrum-only auto input loss; calibration/admission disagreement; backing-allocation omission; insufficient live temporary budget.',
+  'Defines max_temp_bytes as eligibility estimate, not hard RSS cap; records 12 tests and unreproducible original benchmark metadata.'],
+ 'The documented counterexamples and accounting distinctions were inspected; patched code and regression suite were not run or source-audited here.',
+ 'Do not report this as a freshly applied patch, hard allocator cap, speedup, or a direct eFFT comparison.',
+ ['Original/patched exact source and regressions for implementation acceptance.','Missing original benchmark driver/seed; eFFT contract alignment and independent current source check.'],
+ 'Correct output semantics and honest memory admission are prerequisites for useful persistent-FFT comparisons.')
+entry(92,'historical_research_checkpoint',
+ ['Separates cached/dynamic FFT work and failed tiny finite-win optimizations from arbitrary-input exact computation.',
+  'Proposes h=24 parameter retuning with margin 1,835,266,048, padding 2^45 and conservative exponent decrement 3e-10.'],
+ 'P8 and new exact-integer/70-digit controls validate the displayed h=24 arithmetic only. The dense 2x2 diagonal-equivalence cross-ratio statement holds when every entry is nonzero; t=0 is not in that dense class.',
+ 'Optimization residuals are failures to find certificates, not impossibility proofs. The published/existing formalization attribution and claimed 1,879x factor remain tied to the source manuscript.',
+ ['Full parameterized network/frame/batching proof, subsequent Fourier reductions, published source identity, separate formalization.'],
+ 'Constant retuning is a conditional continuation of an external exact-complex construction and does not provide a practical or independently constructed Green/Haar FFT.')
+entry(93,'prior_independent_review',
+ ['Summarizes sandwich preparation 17N-19, application 9N-8, inverse support <=2b+1 and a Fourier permutation-movement condition.',
+  'Reports finite generator, zero-pattern, sharpness and permutation checks against named source hashes.'],
+ 'P3 independently rederives the generic support/movement implications and arithmetic sums. The undisplayed generator-to-LAR algebra and prior code execution are not independently certified here.',
+ 'Contiguous separated T components and bidiagonal side factors are essential. Displacement is not RAM time; cut rank alone is not a scalar-channel realization.',
+ ['Exact named implementation and prior review-edge script/results for execution claims.','Companion generator definition for full sandwich identity acceptance.'],
+ 'Useful architecture-specific constraints while allowing longer products or different primitives.')
+entry(94,'benchmark_findings',
+ ['Compiled C++/FFTW ablation reports exact repeats winning at large N, shifts losing, and single-edit reuse approaching break-even.',
+  'Attributes remaining costs to reading for relationship discovery, dense output writes, and memory traffic.'],
+ 'The cost interpretation is consistent with linear input/output requirements; reported timings and source features were not independently executed.',
+ 'Machine-specific medians do not isolate universal bottlenecks or certify speedups on other hardware. Materializing low-rank outputs can erase transform savings.',
+ ['C++ source, FFTW build, workload/seed/timing harness, hardware counter and variance data.'],
+ 'Producer-supplied edits/shifts and lazy coefficient/basis representations avoid work that relation discovery cannot make free.')
+entry(95,'implementation_readme',
+ ['Phase6 proposes graph/MST parent selection, cyclic-coset corrections, and bounded new-event replay.',
+  'Correction for 64 regularly spaced edits can be retained in 64 complex values before dense output.'],
+ 'P6 independently proves the coset formula; 45 fresh exact modular coset controls passed. The MST objective requires additive independent edge/root costs; implementation optimality is not proved from this README.',
+ 'Compactness describes the correction, not the arbitrary base spectrum. Estimated edge weights, all-pairs discovery and graph overhead remain charged.',
+ ['Graph certificates, measured weights, adapter/source code, historical tests and memory reports.'],
+ 'Useful for related-version workloads; simple known lineage can be cheaper than optimization and unrelated fresh vectors gain no general bound.')
+entry(96,'self_contained_packing_appendix',
+ ['Biased guarded lanes use h=ceil(log2(2UG+1)) and permit exact word additions with no cross-lane carries or word overflow.',
+  'For the stated asymptotic parameters, accumulation is o(N), with O(N) descriptors and explicit outputs.'],
+ 'P4 independently checks the all-size lane proof and scoped cost algebra; 593 new 16-bit packed cases/2,089 lane sums passed.',
+ 'The primitive does not certify the entire approximate Fourier evaluator. The historical lazy/repacking prototype and 72–76-bit toy keys are not a one-word implementation.',
+ ['Companion descriptor/phase/quantization theorem, fixed bounded-input and word-operation model.','Practical performance, exact/relative accuracy and novelty remain open.'],
+ 'Closes a real packing gap for the coarse additive approximation branch without advancing exact arbitrary-input Fourier complexity.')
+entry(97,'implementation_readme',
+ ['Phase9 generates fused single-edit convolution polynomial kernels and optionally JIT compiles them.',
+  'For A^3+2AB+CD the coefficients are K0, 3A^2+2B, 3A and an impulse; cold compile cost differs from warm streams.'],
+ 'P6 rederives the exact commutative-ring identity; 144 new modular cases/1,480 output coordinates passed. Code-generation safety and auto dispatch were not audited from implementation.',
+ 'Edits are relative to an immutable base, not silently cumulative; partial time-coefficient outputs are not a full FFT comparison.',
+ ['Compiler/generated source, Numba version, bounds validation, calibration and same-output benchmark.'],
+ 'Fusing a known relation can save array allocations but does not supply a fresh-input transform.')
+entry(98,'benchmark_report',
+ ['Reports cold shared-graph rewrite medians across four sizes and seven workloads, including losses and near-unity ratios.',
+  'Tight-cache stream at N262144 reports 193 to24 vector multiplications and 1.28x end-to-end; seed/cache/evaluation memory categories overlap.'],
+ 'Fully read the timing scope, workload definitions and memory exclusions; no fresh benchmark or numerical-stability proof was performed.',
+ 'Do not sum overlapping payload categories, interpret them as RSS, or equate evaluation ratios with end-to-end speed. A small ordinary relative difference does not remove cancellation risks.',
+ ['Raw run-level benchmark JSON, graph/source identity, cancellation test and best specialized baseline.'],
+ 'Rewrites are useful only when saved arithmetic exceeds planning/cache overhead; sparse cache and graph structure control opportunity.')
+entry(99,'synthesis_summary',
+ ['Reports eager packed-decoder improvements, restricted weighted-affine-cycle exact fast path and stronger architecture bounds.',
+  'Retains global additive accuracy, infeasible asymptotic table thresholds, F32 rank gate and separate F8 realization.'],
+ 'P3/P4 independently support underlying generic support and packing arguments, not the companion graph identities, F8/F32 certificates or 74 manifest bindings.',
+ 'One source comparison should read one fewer cross-product comparison, saving two multiplications. Fixed small finite table experiments are not the growing asymptotic schedule.',
+ ['WORDRAM_AUDIT, exact graph and rank proofs/certificates, source-result bindings.','Coefficient bit growth, practical accuracy and novelty.'],
+ 'Implementation completeness can improve without creating a new exact all-input algorithm.')
+entry(100,'theorem_summary',
+ ['Low-rank proximity to Fourier forces kappa1(G)>=N/(r+1)^2; deleting B rank-one wrappers yields 7^t(B+1)^2>=N.',
+  'Forward-K and mixed Green/K factor families require logarithmically many stages under stated unitary/global-scalar separators.'],
+ 'P2 independently proves low-rank bound, telescoping tradeoff and forward-K determinant isolation. Source companion mixed-family numerical constants remain dependent on their detailed proof.',
+ 'Free arbitrary unitaries are allowed only in the branch containing a K; in the zero-K branch they would trivialize the target. Individual norm bounds require r<N.',
+ ['Companion mixed Green spectral bounds; recorded exact/numerical checker outputs were not rerun.'],
+ 'Rules out these explicit-pass families, not inverse-K, arbitrary gain or fused-circuit alternatives.')
+entry(101,'derivative_audit_readme',
+ ['Adds full DFT from a degree-d filter producing s-sparse QA, including singular roots and right boundary.',
+  'Reports Phase11 plan-label patch, exact checks and Phase10 floating symbolic-cancellation defect.'],
+ 'P7 independently proves the filtered-evaluation complexity with explicit exceptional-root work. Historical patch/test and numerical results remain source-reported.',
+ 'Fresh structured input is genuinely distinct from dynamic reuse, but arbitrary QA can be dense. Native/AOT claims were explicitly not validated by that source audit.',
+ ['Exact patch and source selection; filter discovery; full bit/stability analysis.'],
+ 'A valid restricted fresh-input fast path with no general arbitrary-input speedup.')
+entry(102,'self_contained_norm_gate',
+ ['Expander Green sums remain bounded in induced1 condition (<=101/19).',
+  'Haar times Green has O(N) apply, bounded spectral condition and growing one-condition, but no Fourier identity.'],
+ 'P1 independently derives both bounds and Haar work/column behavior.',
+ 'Growing kappa1 need not mean growing kappa2. All-order cut-rank robustness of M does not automatically transfer to WM.',
+ ['Exact all-N non-gauge Fourier factorization; generator and executor cost/precision analysis.'],
+ 'Haar is a valid escape/control for the norm gate, not evidence of a Fourier algorithm.')
+entry(103,'historical_test_log',
+ ['Records 40 named tests passing in 0.146s, including ten hardening-specific tests over a 30-test functional suite.'],
+ 'Complete log text read; no test body, environment reconstruction or execution is inferred.',
+ 'OK is a historical claim, not a current receipt. Test names do not certify their asserted behaviors or all-input correctness.',
+ ['Exact test/source hashes, environment and actual replay if execution validation is sought.'],
+ 'Useful as a checklist for replay/storage/accounting boundaries only.')
+entry(104,'self_contained_spectral_proof',
+ ['Two forward unit-modulus full-cycle K stages cannot be scalar-unitary for dyadic N>=8, even with arbitrary unitaries.',
+  'Reverse singular-value pairing extends exclusion to all N>=3 except4; N1,2,4 are boundaries.'],
+ 'P2 independently verifies the spectrum, derivative, reverse-pair identity and odd-multiplicity argument; new N1..32 numerical controls corroborate.',
+ 'No inverse K, coordinate gain, three-stage or zero-K exclusion follows. Surviving small sizes do not give cheap Fourier separators.',
+ ['Actual affine executor and larger-family construction are separate; no novelty audit.'],
+ 'A strong inexpensive necessary-condition gate before longer-word synthesis.')
+entry(105,'prior_implementation_review',
+ ['Exact-mean periodic fit chooses per-component residual no worse than zero fit; short Fourier baseline remains Gaussian-integer.',
+  'Specifies residual scaling, exact selected-bin overrides, failure flags and a conservative O(logN)-word bound.'],
+ 'P6 independently derives fit decomposition, mass inequality and common-denominator scaling; 200 new exact clusters passed. Actual decoder and intermediate instrumentation were not run.',
+ 'Stub tests isolate logic rather than accuracy; failure placeholder has no guarantee. Arbitrary-bigint inputs fall outside fixed-width theorem.',
+ ['control_variate source and its exact hash, full real-decoder integration, range/counter implementation.'],
+ 'Improves data-dependent additive scale and exact structured cases; nonzero residual remains approximate.')
+entry(106,'prior_art_and_conditional_reduction',
+ ['Historical audit reports explicit published total-O(n²) thin-matrix assertions but no independently checked addition-count construction.',
+  'Gives a conditional O(N) k=O(logN) sparse exponential expansion via n≈sqrtN thin products.'],
+ 'P8 rederives the reduction and costs conditional on the stated uniform total-operation hypothesis; 42 fresh finite-field shape controls passed.',
+ 'Do not promote multiplication rank alone to total work, transpose commutative algorithms without conversion, or treat inaccessible proof as refutation. Citations were not newly retrieved in this review.',
+ ['Full thin-matrix construction/addition and uniformity audit, field hypotheses and primary-source verification.'],
+ 'A substantive conditional sparse-expansion lead, not yet a verified new arbitrary-input FFT.')
+entry(107,'parameter_retuning_candidate',
+ ['Parameterized network margin becomes positive at h22; h24 gives W=34666942577344, padding2^45 and decrement≈3.957610023859e-10.',
+  'Proposes general-h frame/batching substitutions and conservative 3e-10 exact-complex exponent corollary.'],
+ 'P8 new exact integer and 70-digit controls confirm displayed constants, boundary and decrement. Full symbolic-h proof is not supplied or independently formalized here.',
+ 'Arithmetic consistency does not establish all downstream hypotheses, publication status, formal proof or practical stable speedup.',
+ ['General-h network/frame role proof, replacement of all hard-coded padding constants, later Fourier reductions and source attribution.'],
+ 'Potential constants improvement only, kept separate from independent Green/Haar research and real-world FFT claims.')
+entry(108,'phase13_checkpoint',
+ ['Claims fixed-strength resolvent ell_p bound implies t>0.9303 log2N, while a Haar-adapted stage escapes that bound.',
+  'Reports finite full-rank covariance defects and 30 two-stage phase/permutation veto instances.'],
+ 'P3 independently proves defect-rank correction and diagonal-multiset implications, conditional on actual reported matrices. Fixed-strength constant and robust-Haar all-order theorem require companion proof.',
+ 'Finite sampled vetoes do not exclude all choices or longer products. All-order cut claims must come from analysis, not 12 sampled cuts.',
+ ['THEOREM, lp constants, covariance matrices and exact hashes; implementation and finite receipts.'],
+ 'Next positive object is an all-N normalized Weyl intertwiner, not a dense numerical fit.')
+entry(109,'approximate_integration_readme',
+ ['Integrates integer-mass sampling and eager decoder for global additive epsilon L output error.',
+  'Records 24 fresh cases/10760 coordinates at tolerance0.5L, complete 16384-row tables and B4,g1 finite schedule.'],
+ 'P4 independently verifies sampling probability algebra, but the end-to-end error/cost relies on companion decoder proof and code.',
+ 'Finite fixed schedule is not the growing O(N) schedule; reused input-independent plan is charged as cold setup per reported call. Python is slower than NumPy; observed successes do not estimate theorem probability.',
+ ['Eager table implementation, certified quantization/trig and exact count binding; useful accuracy and epsilon(N) analysis.'],
+ 'Coarse fresh-input approximation is genuine but neither exact Fourier nor an integer-multiplication consequence.')
+entry(110,'fresh_graph_and_translation_readme',
+ ['Claims sparse-entry correction barrier for evenly spaced Fourier modes and Omega(N^1.5) for direct-dot skeleton architecture.',
+  'AB=(A-k)B+kB gives special near-power gains but no universal cover; factored dense correction recovers ordinary FFT.'],
+ 'The target/model distinctions were fully read; architecture lower-bound proofs are referenced and not present in this README.',
+ 'Dense residual rank/count is not a general runtime lower bound. Historical 21 pass/2 dependency errors and 18 new passes are source receipts only.',
+ ['RESEARCH and translation coverage proofs; exact graph certificates, all-cost comparator.'],
+ 'A useful candidate must jointly factor decoder and residual more cheaply; renaming correction does not save work.')
+entry(111,'sparse_expansion_checkpoint',
+ ['Displacement correction rank grows to min(t,k); common-denominator parity recursion still needs half-grid and terminal maps.',
+  'Full-space aliasing rank k drops to max(0,2k-L) on restricted numerators, so padding removes that defect but not all costs.'],
+ 'Scope and reductions were inspected; exact displacement/aliasing rank proofs and thousands of prior checks are dependencies, not repeated here.',
+ 'Full rank is not runtime lower bound; a faster half-grid alone is insufficient; thin multiplication counts cannot hide additions.',
+ ['DISPLACEMENT_PROOF, SPECTRAL_BRIDGE and batching proofs; total-operation prior art.'],
+ 'Construct a joint constrained-family half-grid/terminal evaluator with o(Nlogk) total cost, including setup and outputs.')
+entry(112,'self_contained_sampling_model',
+ ['Exact bounded-integer mass sampling plus capped rejection gives global Fourier additive bound with k=O(logN).',
+  'Explicit rational outputs, all scans/writes and ideal random-word primitive define a finite-input randomized word-RAM model.'],
+ 'P4 independently rederives Hoeffding union bound, cap failure and O(log²N) post-scan work.',
+ 'Word precision is a sufficiently large constant times logN; fixed seeds are not independent-random-word evidence. Common sqrtN normalization is not exact rational output materialization.',
+ ['Decoder deterministic error bound and complete setup proof; sampling implementation and exact parameter routine.'],
+ 'Provides rigorous probability/input accounting for the approximate branch only.')
+entry(113,'historical_test_log',
+ ['Records 29 finite-tensor, NTT, graph and Walsh tests passing in1.133s.'],
+ 'Entire log read; no implied source inspection or execution.',
+ 'Named exhaustive/independent tests are not independently accepted from names alone.',
+ ['Exact test bodies, result/source binding, arithmetic/field assumptions and execution environment.'],
+ 'Replay checklist and historical provenance, not new FFT or tensor proof.')
+entry(114,'structured_convolution_readme',
+ ['Phase11 uses annihilating filters for fresh structured convolution with modular NTT/CRT and schoolbook fallback.',
+  'Known bounded-degree structure can give exact linear field work; sample screening misses opportunities but verified identities should prevent wrong answers.'],
+ 'P7 validates the general filtered-identity route; the finder, admission, CRT capacity and fallback implementation are not certified here.',
+ 'Modular fallback is limited by supported roots; large integers can use quadratic schoolbook. Comparisons with native approximate SciPy are different models.',
+ ['Filter verification implementation, root/carry/CRT bounds, cost-aware planner and raw benchmark.'],
+ 'Restricted fresh structure is useful; no guarantee that arbitrary inputs admit short filters.')
+entry(115,'synthesis_readme',
+ ['Summarizes complete approximate packing proof, sharp complex F32 11x11 rank>=5 gate and explicit F8 three-channel construction.',
+  'Lists independent proof/certificate scripts and prior scopes; original exact arbitrary-complex goal remains open.'],
+ 'P4 independently supports guarded packing primitive; P10 supports cyclotomic specialization method only. Specific F8/F32 certificates are dependencies.',
+ 'No source executable was newly run in this review; source statement about repeated archives is not independently inferred from filenames.',
+ ['Exact rank proofs/certificates and archive hash comparison, approximate full model, targeted prior art.'],
+ 'Keep proven scoped obstructions and repaired finite constructions while retaining approximate/exact separation.')
+entry(116,'network_certificate_readme',
+ ['A fixed N64 two-rank-one-stage network has capacity16 but Fourier submatrix rank>=17; earlier interval bound17 missed it.',
+  'Rank(2,2) search over25000 sampled candidates found no obstruction and remains open.'],
+ 'P10 confirms nonzero cyclotomic specialization can prove complex rank; actual cut partition/minor residues were not replayed.',
+ 'One endpoint/shuffle certificate is not all permutations; non-detection in sampled rank2 search is not existence proof.',
+ ['Explicit certificate, correct primitive roots, cut topology/capacities and independently verified determinant.'],
+ 'Network cuts can sharpen interval gates without producing a faster FFT.')
+entry(117,'green_and_gauge_readme',
+ ['Dense two-Green stages escape inverse sparsity but remain condition-budget blocked; dense gauge FFT equals slower ordinary FFT.',
+  'Preparation, output, finite-field root limits and numerical-fit caveats are explicit.'],
+ 'P1 independently proves relevant norm bounds; adjacent gauge cancellation is exact algebra, not a test claim.',
+ 'O(N) stage cost must include O(N) local coefficient preparation; modulus998244353 does not provide arbitrary transform lengths.',
+ ['Executors/recognizer, counted operations, finite receipts and complex coefficient growth.'],
+ 'Dense matrices/dense inverses do not demonstrate complexity savings.')
+entry(118,'historical_test_log',
+ ['Records30 functional projection/relation/adapter tests passing in0.143s.'],
+ 'Full log read only; no fresh run.',
+ 'Exact-hash distinct from hardened40-test log; retained as separate evidence, not a duplicate because names overlap.',
+ ['Associated source/test hashes, environment and regression behavior.'],
+ 'Useful baseline for hardening comparison only.')
+entry(119,'two_stage_research_readme',
+ ['Combines classical two-stage Cooley–Tukey control, prime/full-minor obstruction and N64 multi-interval certificate.',
+  'Heuristic rank-profile search and exact saved certificate have different evidentiary roles.'],
+ 'P10 supports the modular-to-complex determinant implication; detailed inequalities and certificate data require companion source.',
+ 'Power-of-two gate escape is an ordinary FFT control, not a sub-NlogN algorithm; two-prime data do not prove floating stability.',
+ ['Exact permutation, 21x21 minor, two-stage generator and cost audit.'],
+ 'Strengthens falsification of architectures while protecting legitimate known-factorization controls.')
+entry(120,'guarded_decoder_readme',
+ ['An eager prepacked table plus guarded addition targets fixed-accuracy O(N) approximate sparse sample means including cold table build.',
+  'API exposes explicit rational outputs, error bounds, table caps, finite-base fallback and integer trig.'],
+ 'P4/P5 independently support packing/probability primitive and stated trig error arithmetic; code and full asymptotic descriptor proof are not rereviewed.',
+ 'Lazy mode is only functional demonstration; manageable configurations are not asymptotic-size implementation. Scaling input mass and unitary normalization must be charged.',
+ ['THEOREM, eager implementation, word-width instrumentation and all-base-regime driver.'],
+ 'Advances completeness of a coarse approximation implementation rather than exact FFT complexity.')
+entry(121,'phase14_start_here',
+ ['Summarizes Galois single-mask obstructions over Q(zeta8), finite positive controls and two-mask radix8 descent.',
+  'States conductor tradeoff iff N<=B² and residual K-valued sparsity; identifies residual mixing as remaining cost.'],
+ 'This README supplies theorem statements, not their proof; conductor classification, polynomial-chirp impossibility and exact controls remain companion-proof dependent.',
+ 'Retain dyadic/conductor hypotheses from THEOREM before applying iff N<=B²; do not extrapolate arbitrary B. Two masks being sufficient at selected lengths is not cheap mixing.',
+ ['Full Galois theorem, residual construction/cost recurrence, exact positive control, all-N and prior-art audit.'],
+ 'Try charged compression of a valid residual K computation, satisfying ordinary and Galois covariance, rather than merely adding phases.')
+entry(122,'joint_orbit_next_gate',
+ ['Measurement-only joint decoding from r odd bins has exponential conditioning unless r=Omega(N/logN).',
+  'Calls for an evaluator using original input and shared forms, with all outputs and bit widths charged.'],
+ 'P9 independently rederives the Lipschitz lower bound. Specific quantized-bit threshold requires metric/grid convention in companion precision proof.',
+ 'Not a general FFT time lower bound; automorphisms and symbolic orbit descriptors cannot be charged as free scalar output.',
+ ['Actual all-N evaluator and cost recurrence; field-automorphism prior-art/model alignment.'],
+ 'Do not squeeze the full spectrum through a few unstable scalar representatives.')
+entry(123,'trigonometric_proof_review',
+ ['Machin fixed-point arctangent and rounded complex Taylor construction yield advertised phasor error without a transcendental oracle.',
+  'Quarter-phase folding shrinks descriptor alphabet and nearest quantization yields stated angle error.'],
+ 'P5 independently checks conservative analytic error ledger under the stated rounding recurrence. 1024 historical comparisons and source hash were not rerun.',
+ 'Binary64 reference comparisons are corroboration, not certified trigonometry. Fixed requested accuracy is essential.',
+ ['Actual implementation and intermediate word widths; complete descriptor enumeration and phase-grid conditions.'],
+ 'Makes table preparation model credible but does not supply useful relative accuracy or practical speed.')
+entry(124,'input_integration_audit',
+ ['Maps Phase7/8 and query-v2/v3 features and fixes, including replay scans, history/copy budgets and projected jets.',
+  'Flags checksum-only original correctness and omitted retained-event payload; external exponent transfer remains incomplete.'],
+ 'Read complete provenance/repair descriptions; no code rerun, GitHub repin or output-value audit performed in this pass.',
+ 'Checksum equality is weaker than all-output comparison. Frequency-only and time-output workloads must remain distinct; nested logs are historical.',
+ ['Exact source/result binding, graph import/adapter regressions, full-output benchmarks, external theorem-transfer assumptions.'],
+ 'Scheduling and projected reuse are genuine separate improvements but no arbitrary-input transform breakthrough.')
+entry(125,'dense_convolution_readme',
+ ['Optimal bilinear variable-product count is2n-1, achieved by evaluation/interpolation whose simple linear work is quadratic.',
+  'Covers arbitrary modular inputs with NTT/schoolbook dispatch and separates signed-digit experiments.'],
+ 'P7 independently verifies flattening lower bound and enough-points interpolation construction, separate from total runtime.',
+ 'Evaluation fields need enough points, and modular NTT root lengths are restricted. O(n) variable products already occur in standard FFT multiplication.',
+ ['Actual dense algebra/counters, coverage and complex-dimension certificates, field-specific software bounds.'],
+ 'The hard target is cheaper full transforms and interpolation, not fewer pointwise variable multiplications alone.')
+entry(126,'green_next_gate',
+ ['Identifies unresolved sublogarithmic multi-channel overlapping stages but rejects concrete bounded-condition two-Green family.',
+  'Requires exact minor invariant or scalable formulas, generator cost, bit/condition bounds and anti-gauge certificate.'],
+ 'P1 independently validates both amplification and condition-budget obstruction; broad multi-stage invariant remains proposed work.',
+ 'One-stage channel lower bound does not automatically compose through shuffles. kappa1 growth and spectral instability differ.',
+ ['A new uniform factorization or arbitrary-parameter/permutation invariant; prior-art comparison.'],
+ 'A precise constructive gate before additional numerical fitting.')
+entry(127,'orbit_and_linearization_readme',
+ ['O(N) cyclotomic symbolic descriptors and selected representatives do not give all numerical outputs.',
+  'Adaptive rational branch linearization gives nonuniform tangent circuits; binary quotient differs from open-domain algebra.'],
+ 'P9 supports the symbolic/interface distinction. Generic-branch extraction requires finitely described suitable branches, differentiable valid point and charged constants as in companion theorem.',
+ 'Galois conjugacy requires fixed-field inputs; arbitrary complex inputs only retain fold identity. No unit-cost conjugation or uniformity conclusion is granted.',
+ ['Detailed algebraic computation-tree lemma, orbit expansion implementation and uniform coefficient preparation.'],
+ 'A new evaluated all-output linear circuit is needed for unrestricted fresh complex input.')
+entry(128,'phase13_start_here',
+ ['Summarizes fixed-stage ell_p closure, Haar escape, covariance-rank defects and finite diagonal-multiset vetoes.',
+  'Preserves original Phase12 sources and calls for at least three capable stages with all-N covariance synthesis.'],
+ 'P3 validates generic covariance/multiset logic only. The exact constants and claimed all-order Haar properties need their detailed theorem.',
+ 'No finite-field run is an all-N factorization proof; source preservation is provenance, not a new execution result.',
+ ['Phase13 THEOREM and exact matrices/results; all-N generator and normalization.'],
+ 'Consistent roadmap after scoped stage obstructions, with no new complexity exponent.')
+entry(129,'prior_art_comparison_boundary',
+ ['Contrasts event-driven2D FFT state with Phase9 known-amplitude1D polynomial-convolution outputs.',
+  'Records failed installation and no direct eFFT run; suggests aligned2D event contract before comparison.'],
+ 'Comparison-scope logic is sound. External repository/version/license facts and installation outcome are historical source claims, not newly verified here.',
+ 'No direct speed ratio can be inferred. Event polarity, activation semantics, geometry, normalization, precision and dense materialization must match.',
+ ['Current primary-source eFFT review, supported install, license-sensitive distribution review and equal-output harness.'],
+ 'Avoids comparing different problems while preserving a useful future event-source adapter experiment.')
+entry(130,'joint_stability_readme',
+ ['Binary complement-half family shares even bins; r odd measurements force L>=[2^floor(N/(4r))-1]/N for all-output decoding.',
+  'Numeric nearest-pair searches and modular checks illustrate different parts of the proof.'],
+ 'P9 independently rederives all-N packing/Parseval bound and polynomial-stability consequence.',
+ 'Decoder must use only those measurements. Original input or other intermediates invalidate this interface restriction; finite fields do not prove complex conditioning.',
+ ['Quantization-grid variants and actual numeric witness correctness; no general algorithm/lower bound.'],
+ 'Encourages wide original-input computation instead of representative-only decoding.')
+entry(131,'linearization_next_gate',
+ ['Orbit expansion is another DFT; adaptive rational algebra linearizes on an open domain; Boolean quotient may defeat differentiation.',
+  'Compact Boolean-basis conversion is proposed, not found; constants, memory, output representation and word/bit cost must be paid.'],
+ 'P9 checks relevant interface distinctions; full generic-branch and global-multilinear lemmas require companion proof.',
+ 'Do not infer binary-only gains transfer to arbitrary complex input, or nonuniform tangent circuits are uniform algorithms.',
+ ['A real compact Boolean circuit/linear evaluator and all-N operation recurrence; bounded-coefficient/stability model.'],
+ 'Keeps future search tied to an actual evaluator rather than symbolic expansion.')
+entry(132,'historical_rank_scan_log',
+ ['Nine endpoint-layout scans at N16/32/64 report all natural-order candidates rejected and selected double-reversal survivors.',
+  'Survivor lists specify only candidates passing this rank screen.'],
+ 'Complete raw lines read, including every survivor; log itself does not prove ranks or execution provenance.',
+ 'Survival is not an exact factorization. Rejected finite menus are not all permutations. Identical layout names across sizes are not duplicate data.',
+ ['Scanner definitions, rank capacities, exact permutation expansion, field/root and source-result hashes.'],
+ 'Useful candidate-selection evidence with sharply finite scope.')
+entry(133,'dynamic_benchmark_summary',
+ ['Phase8 reports related48-variant speedups with charged preparation and comparison to hand-specialized updates.',
+  'Single-edit polynomial reconstruction is O(dN) or O(dQ), after seed/preparation cost; associativity/commutativity sharing is not full distributive canonicalization.'],
+ 'P6 validates generic jet identity and per-output work, not graph planner/preparation count implementation or timings.',
+ 'Selected-output SciPy comparison computes more outputs and cannot establish best partial-method superiority. Worst-case floating stability remains unproved.',
+ ['Raw timings, source/seed binding, exact degree audits and all-cost specialized comparator.'],
+ 'Useful persistent low-degree stream gains; no fresh unrelated input or global multiplication bound.')
+entry(134,'width_and_representation_next_gate',
+ ['Smooth full DFT factorization through w scalars needs w>=N; bounded/Lipschitz binary compression has packing restrictions.',
+  'Giant integer packing can hide Omega(NlogN) bits; next target is a wide uniform charged evaluator.'],
+ 'P9 independently verifies Jacobian-width consequence. Exact compression inequality requires source metric and bounding conventions; giant operand lower bound requires companion packing construction.',
+ 'Width is not total-operation lower bound; scalar counts cannot ignore bit size or coefficient conditioning.',
+ ['Complete packing/metric proofs and a concrete scalable non-gauge circuit.'],
+ 'A constructive saving must be in charged elementary work, not a macro redefinition.')
+entry(135,'endpoint_rank_readme',
+ ['Claims r1+r2>=N/4 for two stages with one natural endpoint at even N; prime-size all-minor theorem makes endpoint permutations robust.',
+  'Double endpoint reorderings at powers of two remain an escape from this particular gate.'],
+ 'The transfer/Vandermonde argument is referenced but not printed; no independent all-parameter proof accepted from this README alone.',
+ 'Do not transfer prime all-minors property to arbitrary finite primes or dyadic complex Fourier; supplied finite checks are scoped controls.',
+ ['RESEARCH theorem, endpoint conventions, correct Chebotarev corollary and exact code/certificates.'],
+ 'Strong ordered two-stage filter, not a universal lower bound or exclusion of reordered multi-stage circuits.')
+entry(136,'boolean_completion_readme',
+ ['Claims quadratic non-generation of a missing Fourier bin from a strict subset on all binary inputs.',
+  'Reports cubic exclusion at N8,16,32 when removing ±1, with a different single-missing-bin tiny positive identity.'],
+ 'P10 validates modular specialization as a possible certificate method only; determinant data and general quadratic proof need companion artifacts.',
+ 'Tiny positive identity can be slower than direct evaluation; binary polynomial scope does not cover arbitrary complex inputs.',
+ ['RESEARCH argument, graded monomial enumeration completeness, exact determinant witnesses and field specialization.'],
+ 'Prunes low-degree spectral completion ideas without proving a general FFT lower bound.')
+entry(137,'bidirectional_next_gate',
+ ['Summarizes F4 one-channel and F8 exact three-channel realization/minimum, radix-block channel/work growth and unitary restrictions.',
+  'Leaves nonunitary overlapping stages with cheap shuffles as a precisely stated unresolved family.'],
+ 'Generic cut-rank/support cautions are sound; sharp F8 realization/minimum and Givens-lower-bound applicability need detailed proofs.',
+ 'Quasiseparable cut rank alone does not certify literal independent scan channels; blockwise radix enlargement does not make its internal channels free.',
+ ['F8 construction/uncertainty proof, channel execution cost and correct unitary circuit model.'],
+ 'Require normalized all-N circuit, coefficients and memory paid; dense inverse alone is insufficient.')
+entry(138,'approximate_models_readme',
+ ['Separates conditional quantized-table O(NlogN/loglogN) and sampling/pruned O(NloglogN) coarse approximation.',
+  'Inputs magnitude<=1, output FFT/N, fixed additive epsilon, cold tables and finite toy/lazy regimes are explicit.'],
+ 'P4 validates the basic sampling-union-bound mechanism; stage quantization error, table asymptotics and pruning recurrence require RESEARCH.',
+ 'Global across-bin epsilon on FFT/N is weaker than ordinary relative accuracy; lazy emulator and toy tables are not full asymptotic implementation.',
+ ['Quantization/cost proof, full-table regime, tested grouping implementation and useful accuracy comparison.'],
+ 'Earlier approximate route, not an exact DFT improvement or practical native-FFT replacement.')
+entry(139,'green_gates_readme',
+ ['Points to low-rank/condition and forward-K/mixed-family proofs with exact versus numerical check distinctions.',
+  'Explicit-pass scope, deterministic finite checks and no novelty/general FFT claim are emphasized.'],
+ 'P1/P2 independently derive selected elementary arguments; exact companion source and all prior test outputs remain separate dependencies.',
+ 'This distinct README is not merged with same-named sources. Its original scripts were not imported/run merely because they call themselves independent.',
+ ['PROOF and FORWARD_K companion details; exact source hashes for historical numerical/exact checks.'],
+ 'Keeps family-specific factor-count obstructions reusable without overclaiming all-circuit impossibility.')
+
+assert sorted(R)==list(range(90,140))
+(ROOT/'source_texts').mkdir(exist_ok=True)
+rows=[]
+for i in range(90,140):
+    s=sources[i];p=Path(s.get('absolute_path') or Path('master_v20_integration_20261010/fft_research_master_20261009/library')/s['canonical_path'])
+    b=p.read_bytes();h=hashlib.sha256(b).hexdigest()
+    assert h==s['sha256'] and len(b)==s['size_bytes']
+    snapshot=Path('source_texts')/f'{i}_{h[:16]}{p.suffix}'
+    (ROOT/snapshot).write_bytes(b)
+    row={'queue':'BASELINE_TEXT_REVIEW_QUEUE_2.json','queue_index':i,
+         'sha256':h,'filename':s['filename'],'size_bytes':len(b),
+         'canonical_path':s['canonical_path'],'absolute_path':str(p),
+         'source_provenance':s.get('provenance',[]),
+         'inspection':'complete_text_read','full_read_scope':{
+             'bytes':[0,len(b)],'lines':[1,len(b.decode('utf-8').splitlines())],
+             'encoding':'utf-8','method':'Entire source printed and inspected in bounded untruncated batches; row93 independently reprinted after an initial batch truncation.',
+             'later_evidence_substitution':False},
+         'source_execution':'not executed or imported',
+         'historical_logs_and_measurements':'source-reported only; not fresh receipts',
+         'local_inert_snapshot':str(snapshot),
+         'proof_reference':'PROOF_SCOPE.md',**R[i]}
+    rows.append(row)
+ledger={'scope':'Queue2 rows90–139 full text review, with proof/implementation/prior-art dependencies explicitly separate.',
+        'review_date':'2026-10-10','completed_rows':50,'completed_bytes':sum(r['size_bytes'] for r in rows),
+        'queue_indices':[90,139],'queue_sha256':hashlib.sha256(QUEUE.read_bytes()).hexdigest(),
+        'all_hashes_verified':True,'uploaded_executable_run':False,
+        'originals_and_other_ledgers_modified':False,
+        'identity_policy':'Only byte hashes establish exact duplicates; filenames and thematic similarities do not.',
+        'independent_checks':'INDEPENDENT_RESULTS.json','rows':rows}
+(ROOT/'COVERAGE.json').write_text(json.dumps(ledger,indent=2,ensure_ascii=False)+'\n')
+print(f'Wrote {len(rows)} exact-hash reviews, {ledger["completed_bytes"]} bytes, and byte-identical inert snapshots.')

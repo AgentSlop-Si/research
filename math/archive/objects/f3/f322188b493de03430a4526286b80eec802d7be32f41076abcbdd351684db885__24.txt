@@ -1,0 +1,275 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh exact controls for the explicit infinite chirp restriction theorem.
+   3 Standard library only; no predecessor program is imported or executed.
+   4 Writes its deterministic result only to the specified output directory.
+   5 """
+   6 import argparse
+   7 import hashlib
+   8 import itertools
+   9 import json
+  10 import math
+  11 from pathlib import Path
+  12 
+  13 
+  14 def invmat(a, p):
+  15     n = len(a)
+  16     b = [[x % p for x in row] + [int(i == j) for j in range(n)] for i, row in enumerate(a)]
+  17     for j in range(n):
+  18         k = next((i for i in range(j, n) if b[i][j]), None)
+  19         if k is None:
+  20             raise ValueError('singular matrix')
+  21         b[j], b[k] = b[k], b[j]
+  22         t = pow(b[j][j], -1, p)
+  23         b[j] = [x * t % p for x in b[j]]
+  24         for i in range(n):
+  25             if i != j and b[i][j]:
+  26                 t = b[i][j]
+  27                 b[i] = [(x - t * y) % p for x, y in zip(b[i], b[j])]
+  28     return [row[n:] for row in b]
+  29 
+  30 
+  31 def cycle(traversal):
+  32     a = [0] * len(traversal)
+  33     for i, j in zip(traversal, traversal[1:] + traversal[:1]):
+  34         a[i] = j
+  35     return a
+  36 
+  37 
+  38 def induced(sigma, weights, selected, p):
+  39     labels = {x: i for i, x in enumerate(selected)}
+  40     tau, arcs, lengths = [], [], []
+  41     for start in selected:
+  42         x, product, length = start, 1, 0
+  43         while True:
+  44             product = product * weights[x] % p
+  45             x = sigma[x]
+  46             length += 1
+  47             if x in labels:
+  48                 tau.append(labels[x]); arcs.append(product); lengths.append(length)
+  49                 break
+  50     return tau, arcs, lengths
+  51 
+  52 
+  53 def green(sigma, weights, p):
+  54     n = len(sigma)
+  55     a = [[int(i == j) for j in range(n)] for i in range(n)]
+  56     for i in range(n):
+  57         a[i][sigma[i]] = (a[i][sigma[i]] - weights[i]) % p
+  58     return invmat(a, p)
+  59 
+  60 
+  61 def principal(a, selected):
+  62     return [[a[i][j] for j in selected] for i in selected]
+  63 
+  64 
+  65 def endpoint(a, left, right, p):
+  66     return [[left[i] * x * right[j] % p for j, x in enumerate(row)] for i, row in enumerate(a)]
+  67 
+  68 
+  69 def restriction_controls():
+  70     p, cases, entries, masked, illegal = 241, 0, 0, 0, 0
+  71     singleton, reordered = 0, 0
+  72     for n in range(1, 8):
+  73         traversals = [list(range(n))]
+  74         if n >= 3:
+  75             traversals += [[0] + list(reversed(range(1, n)))]
+  76         for traversal in traversals:
+  77             sigma = cycle(traversal)
+  78             for mode in ('varied', 'one_zero', 'all_zero', 'unit_product'):
+  79                 weights = [(2 * i + 3) % p for i in range(n)]
+  80                 if mode == 'one_zero': weights[n // 2] = 0
+  81                 if mode == 'all_zero': weights = [0] * n
+  82                 if mode == 'unit_product': weights = [1] * n
+  83                 rho = math.prod(weights) % p
+  84                 legal = rho != 1
+  85                 g = green(sigma, weights, p) if legal else None
+  86                 left = [0 if i % 2 == 0 else i + 2 for i in range(n)]
+  87                 right = [0 if i % 3 == 0 else i + 5 for i in range(n)]
+  88                 ended = endpoint(g, left, right, p) if legal else None
+  89                 for size in range(1, n + 1):
+  90                     for subset in itertools.combinations(range(n), size):
+  91                         selected = list(reversed(subset))
+  92                         tau, arcs, lengths = induced(sigma, weights, selected, p)
+  93                         assert sum(lengths) == n
+  94                         assert math.prod(arcs) % p == rho
+  95                         assert sorted(tau) == list(range(size))
+  96                         seen, v = set(), 0
+  97                         for _ in range(size): seen.add(v); v = tau[v]
+  98                         assert len(seen) == size and v == 0
+  99                         if not legal:
+ 100                             illegal += 1
+ 101                             try: green(tau, arcs, p)
+ 102                             except ValueError: pass
+ 103                             else: raise AssertionError('illegal Green guard admitted')
+ 104                             continue
+ 105                         small = green(tau, arcs, p)
+ 106                         assert small == principal(g, selected)
+ 107                         assert endpoint(small, [left[i] for i in selected], [right[i] for i in selected], p) == principal(ended, selected)
+ 108                         cases += 1; entries += size * size; masked += size * size
+ 109                         singleton += int(size == 1); reordered += int(size > 1)
+ 110     # A two-summand positive control with different structural cycles.
+ 111     n, selected = 11, [7, 0, 4, 9, 2]
+ 112     total = [[0] * n for _ in range(n)]
+ 113     small_total = [[0] * len(selected) for _ in selected]
+ 114     for branch, traversal in enumerate([list(range(n)), [0, 3, 8, 2, 9, 1, 5, 10, 7, 4, 6]]):
+ 115         sigma = cycle(traversal)
+ 116         weights = [0 if i == 3 + branch else (i + 2 + branch) for i in range(n)]
+ 117         left = [0 if i % 3 == branch else i + 3 for i in range(n)]
+ 118         right = [0 if i % 4 == branch else i + 7 for i in range(n)]
+ 119         g = endpoint(green(sigma, weights, p), left, right, p)
+ 120         tau, arcs, _ = induced(sigma, weights, selected, p)
+ 121         small = endpoint(green(tau, arcs, p), [left[i] for i in selected], [right[i] for i in selected], p)
+ 122         total = [[(a + b) % p for a, b in zip(r, s)] for r, s in zip(total, g)]
+ 123         small_total = [[(a + b) % p for a, b in zip(r, s)] for r, s in zip(small_total, small)]
+ 124     assert principal(total, selected) == small_total
+ 125     return {'prime': p, 'legal_cases': cases, 'Green_entries': entries, 'masked_entries': masked,
+ 126             'illegal_guard_cases_rejected': illegal, 'singleton_cases': singleton,
+ 127             'reordered_cases': reordered, 'distinct_cycle_two_sum_entries': 25}
+ 128 
+ 129 
+ 130 def factors(n):
+ 131     out, t = [], 2
+ 132     while t * t <= n:
+ 133         if n % t == 0:
+ 134             out.append(t)
+ 135             while n % t == 0: n //= t
+ 136         t += 1
+ 137     if n > 1: out.append(n)
+ 138     return out
+ 139 
+ 140 
+ 141 def prime(p):
+ 142     return p >= 2 and all(p % j for j in range(2, math.isqrt(p) + 1))
+ 143 
+ 144 
+ 145 def root_field(n):
+ 146     mult = 2
+ 147     while not prime(mult * n + 1): mult += 1
+ 148     p = mult * n + 1
+ 149     for x in range(2, p):
+ 150         w = pow(x, mult, p)
+ 151         if all(pow(w, n // d, p) != 1 for d in factors(n)):
+ 152             return p, w
+ 153     raise AssertionError('no root')
+ 154 
+ 155 
+ 156 def block(n, w, p):
+ 157     h = (n + 1) // 2
+ 158     g = sum(pow(w, h * j * j, p) for j in range(n)) % p
+ 159     denominator = (1 + n * g) % p
+ 160     if not denominator: raise ValueError('resonant feedback')
+ 161     m, eta = n // 5, pow(w, (n // 5) ** 2, p)
+ 162     answer = [[(pow(eta, a * b, p) - g * pow(eta, -3 * (a + b) ** 2, p)
+ 163                + (n * g * pow(eta, -3 * a * a, p) if a == b else 0))
+ 164               * pow(denominator, -1, p) % p for b in range(5)] for a in range(5)]
+ 165     return g, eta, denominator, answer
+ 166 
+ 167 
+ 168 def direct_inverse_control(n, w, p):
+ 169     h = (n + 1) // 2
+ 170     ni = pow(n, -1, p)
+ 171     target_inv = [[(ni * pow(w, -i * j, p) + (pow(w, h * i * i, p) if i == j else 0)) % p
+ 172                    for j in range(n)] for i in range(n)]
+ 173     g, eta, guard, expected = block(n, w, p)
+ 174     actual = principal(invmat(target_inv, p), [a * (n // 5) for a in range(5)])
+ 175     assert actual == expected
+ 176     return {'N': n, 'p': p, 'omega': w, 'eta': eta, 'G': g, 'denominator': guard, 'direct_inverse_entries': 25}
+ 177 
+ 178 
+ 179 def arithmetic_controls():
+ 180     crt, inverses, rejections = [], [], []
+ 181     for q in (1, 3, 7, 9, 11, 13, 21, 27):
+ 182         n = 5 * q * q
+ 183         p, root = root_field(n)
+ 184         for exponent in (1, 2, 4):
+ 185             w, h = pow(root, exponent, p), (n + 1) // 2
+ 186             assert pow(w, n, p) == 1
+ 187             assert all(pow(w, n // d, p) != 1 for d in factors(n))
+ 188             eta, xi = pow(w, q ** 4, p), pow(w, 5, p)
+ 189             assert pow(eta, 5, p) == 1 and eta != 1
+ 190             residues = {(q * q * u + 5 * v) % n for u in range(5) for v in range(q * q)}
+ 191             assert len(residues) == n
+ 192             g = sum(pow(w, h * j * j, p) for j in range(n)) % p
+ 193             g5 = sum(pow(eta, 3 * j * j, p) for j in range(5)) % p
+ 194             square = sum(pow(xi, 5 * h * v * v, p) for v in range(q * q)) % p
+ 195             assert square == q % p and g == q * g5 % p
+ 196             assert g5 * g5 % p == 5 and g * g % p == n % p
+ 197             # Exact character-sum cancellation, including composite q.
+ 198             inner_sums = [sum(pow(xi, q * 2 * 5 * h * s * t, p) for t in range(q)) % p for s in range(q)]
+ 199             assert inner_sums == [q % p] + [0] * (q - 1)
+ 200             guard = (1 + n * g) % p
+ 201             crt.append({'q': q, 'N': n, 'p': p, 'omega': w, 'eta': eta, 'G': g, 'g5': g5,
+ 202                         'square_factor': square, 'denominator': guard, 'CRT_residues': len(residues)})
+ 203             if n <= 45 and guard:
+ 204                 inverses.append(direct_inverse_control(n, w, p))
+ 205     for n in (15, 35, 65):
+ 206         p, w = root_field(n)
+ 207         if (1 + n * sum(pow(w, ((n + 1) // 2) * j * j, p) for j in range(n))) % p:
+ 208             inverses.append(direct_inverse_control(n, w, p))
+ 209     for w in (4, 8):
+ 210         assert pow(w, 5, 31) == 1 and w != 1
+ 211         assert (1 + 5 * sum(pow(w, 3 * j * j, 31) for j in range(5))) % 31 == 0
+ 212         try: block(5, w, 31)
+ 213         except ValueError: rejections.append({'N': 5, 'p': 31, 'omega': w, 'denominator': 0})
+ 214         else: raise AssertionError('resonance admitted')
+ 215     return {'CRT_square_Gauss_cases': crt, 'direct_inverse_cases': inverses, 'resonances_rejected': rejections}
+ 216 
+ 217 
+ 218 def reduce_phi5(poly):
+ 219     a = list(poly)
+ 220     while len(a) > 4:
+ 221         c, d = a[-1], len(a) - 1
+ 222         for j in range(5): a[d - 4 + j] -= c
+ 223         a.pop()
+ 224     return a + [0] * (4 - len(a))
+ 225 
+ 226 
+ 227 def coefficient_controls():
+ 228     g = [1, 0, 2, 2]
+ 229     gsq = [sum(g[i] * g[j] for i in range(4) for j in range(4) if i + j == d) for d in range(7)]
+ 230     assert reduce_phi5(gsq) == [5, 0, 0, 0]
+ 231     p, eta = 241, 91
+ 232     assert pow(eta, 5, p) == 1 and eta != 1
+ 233     assert sum(pow(eta, j, p) for j in range(5)) % p == 0
+ 234     g5 = (1 + 2 * (eta * eta + eta ** 3)) % p
+ 235     assert g5 == 103 and (1 + 5 * g5) % p == 34
+ 236     expected = [[161,20,102,102,20],[20,182,62,26,92],[102,62,236,28,26],
+ 237                 [102,26,28,236,62],[20,92,26,62,182]]
+ 238     assert block(5, eta, p)[3] == expected
+ 239     tests = []
+ 240     for k in (0, 1, 2, 7, 241, 10**6):
+ 241         q, n = 2410 * k + 1, 5 * (2410 * k + 1) ** 2
+ 242         assert q % 2 == 1 and math.gcd(q, 5) == 1 and q % p == 1 and n % p == 5
+ 243         den = (1 + 5 * q ** 3 * g5) % p
+ 244         b = [[(pow(eta, a * c, p) - q * g5 * pow(eta, -3 * (a + c) ** 2, p)
+ 245              + (5 * q ** 3 * g5 * pow(eta, -3 * a * a, p) if a == c else 0))
+ 246               * pow(den, -1, p) % p for c in range(5)] for a in range(5)]
+ 247         assert den == 34 and b == expected
+ 248         assert 1 - 125 * q ** 6 != 0
+ 249         tests.append({'k': k, 'q': q, 'N': n, 'denominator_mod_241': den, 'target_entries': 25})
+ 250     # Congruence is universal in k: (1+2410k)^3-1 has every positive coefficient divisible by 241.
+ 251     cubic_minus_one = [0, 3 * 2410, 3 * 2410**2, 2410**3]
+ 252     assert all(c % p == 0 for c in cubic_minus_one)
+ 253     return {'g5_squared_remainder': reduce_phi5(gsq), 'eta': eta, 'g5': g5, 'denominator': 34,
+ 254             'B5_mod_241': expected, 'universal_cubic_congruence_coefficients': cubic_minus_one,
+ 255             'sequence_controls': tests, 'quadratic_conjugate_denominator_product': '1-125*q^6'}
+ 256 
+ 257 
+ 258 def main():
+ 259     parser = argparse.ArgumentParser()
+ 260     parser.add_argument('--out-dir', default='.')
+ 261     args = parser.parse_args()
+ 262     result = {'status': 'PASS', 'restriction': restriction_controls(),
+ 263               'arithmetic': arithmetic_controls(), 'coefficients': coefficient_controls(),
+ 264               'scope': 'Exact controls supporting the written all-length proof; the accepted N5 exclusion is a dependency, not rerun here.'}
+ 265     output = Path(args.out_dir); output.mkdir(parents=True, exist_ok=True)
+ 266     path = output / 'EXACT_RESULTS.json'
+ 267     path.write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
+ 268     print(json.dumps({'status': result['status'], 'Green_cases': result['restriction']['legal_cases'],
+ 269                       'Green_entries': result['restriction']['Green_entries'],
+ 270                       'CRT_cases': len(result['arithmetic']['CRT_square_Gauss_cases']),
+ 271                       'direct_inverse_cases': len(result['arithmetic']['direct_inverse_cases']),
+ 272                       'result_sha256': hashlib.sha256(path.read_bytes()).hexdigest()}, sort_keys=True))
+ 273 
+ 274 
+ 275 if __name__ == '__main__': main()

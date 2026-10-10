@@ -1,0 +1,168 @@
+import unittest
+from collections import Counter
+from dataclasses import replace
+import numpy as np
+
+from cache_rewrite import CacheRewriteFFT
+from baseline_compiler.algebra_fft import AlgebraFFT
+from exact_audit import audit_witness,evaluate
+
+
+def build(rewrite=True,n=32,degree=8,cache_bytes=2**24,**options):
+    e=CacheRewriteFFT(n,rewrite=rewrite,cache_bytes=cache_bytes,**options)
+    rng=np.random.default_rng(403)
+    values=rng.normal(0,.02/np.sqrt(n),(degree+1,n));values[:,0]+=1
+    xs=[e.signal(a) for a in values];g=e.mul(*xs[:-1]);b=xs[-1]
+    p=e.mul(g,b);q=e.mul(e.add(g,e.one),b)
+    return e,g,b,p,q
+
+
+class Rewrites(unittest.TestCase):
+    def test_cold_same_query_hit(self):
+        results=[];engines=[]
+        for enabled in (False,True):
+            e,g,b,p,q=build(enabled);results.append(e.evaluate_time(e.add(p,q)));engines.append(e)
+        np.testing.assert_allclose(*results,rtol=1e-12,atol=1e-12)
+        self.assertEqual(engines[1].last_stats['starting_cache_bytes'],0)
+        self.assertEqual(engines[1].last_witnesses[0].cache_source,'same_query')
+        self.assertLess(engines[1].last_stats['vector_multiplies'],engines[0].last_stats['vector_multiplies'])
+
+    def test_warm_cached_product_skips_base(self):
+        e,g,b,p,q=build();e.evaluate_spectrum(p);e.evaluate_spectrum(q)
+        self.assertEqual(e.last_witnesses[0].cached_product,p)
+        self.assertEqual(e.last_witnesses[0].cache_source,'prior_query')
+        self.assertEqual(e.last_stats.get('vector_multiplies',0),0)
+        self.assertNotIn(g,e._spectrum_cache)
+
+    def test_cached_root_cuts_evicted_descendants(self):
+        e,g,b,p,q=build(False,cache_bytes=16*17)
+        first=e.evaluate_spectrum(q);self.assertEqual(list(e._spectrum_cache),[q])
+        second=e.evaluate_spectrum(q)
+        np.testing.assert_array_equal(first,second)
+        self.assertEqual(e.last_stats['demand_nodes'],1)
+        self.assertEqual(e.last_stats.get('computed_nodes',0),0)
+
+    def test_legacy_cached_root_traverses_descendants(self):
+        old=AlgebraFFT(32,max_spectrum_cache_bytes=16*17)
+        xs=[old.signal(np.arange(32)/100) for _ in range(5)]
+        g=old.mul(*xs[:-1]);q=old.mul(old.add(g,old.one),xs[-1])
+        old.evaluate_spectrum(q);count=old.stats['evaluated_spectra']
+        old.evaluate_spectrum(q)
+        self.assertGreater(old.stats['evaluated_spectra']-count,0)
+
+    def test_zero_cache_falls_back(self):
+        e,g,b,p,q=build(cache_bytes=0);e.evaluate_time(e.add(p,q))
+        self.assertFalse(e.last_witnesses);self.assertFalse(e.factor_index)
+        self.assertEqual(e._spectrum_cache_bytes,0)
+
+    def test_one_entry_cache_pin_survives_eviction(self):
+        outs=[]
+        for enabled in (False,True):
+            e,g,b,p,q=build(enabled,cache_bytes=16*17)
+            e.evaluate_spectrum(p);outs.append(e.evaluate_time(q))
+            self.assertLessEqual(e._spectrum_cache_bytes,16*17)
+            if enabled:self.assertTrue(e.last_witnesses)
+        np.testing.assert_allclose(*outs,rtol=1e-12,atol=1e-12)
+
+    def test_general_signal_correction(self):
+        e,g,b,p,q=build();d=e.signal(np.arange(32)/64)
+        target=e.mul(e.add(g,d),b);e.evaluate_spectrum(p);e.evaluate_spectrum(target)
+        self.assertTrue(e.last_witnesses)
+        self.assertEqual(e.last_witnesses[0].correction,d)
+        self.assertEqual(e.last_stats.get('vector_multiplies',0),1)
+
+    def test_both_products_cached(self):
+        e,g,b,p,q=build();d=e.signal(np.arange(32)/64)
+        target=e.mul(e.add(g,d),b);e.evaluate_spectrum(p);e.evaluate_spectrum(e.mul(d,b))
+        e.evaluate_spectrum(target)
+        self.assertTrue(e.last_witnesses)
+        self.assertEqual(e.last_stats.get('vector_multiplies',0),0)
+        self.assertEqual(e.last_stats['vector_adds'],1)
+
+    def test_repeated_shared_factor(self):
+        e,g,b,p,q=build();p=e.mul(g,b,b);q=e.mul(e.add(e.mul(g,b),e.one),b)
+        e.evaluate_spectrum(p);e.evaluate_spectrum(q)
+        self.assertTrue(e.last_witnesses)
+        self.assertTrue(all(audit_witness(e,e.last_witnesses[0]).values()))
+
+    def test_noninteger_symbolic_coefficient_fallback(self):
+        e,g,b,p,q=build();q=e.mul(e.add(g,e.const(.5)),b)
+        e.evaluate_spectrum(p);e.evaluate_time(q)
+        self.assertFalse(e.last_witnesses)
+
+    def test_equal_numeric_seeds_are_not_aliased(self):
+        e,g,b,p,q=build();a=e.signal(np.ones(32));u=e.signal(np.ones(32))
+        self.assertNotEqual(a,u);p=e.mul(a,b);q=e.mul(u,b)
+        e.evaluate_spectrum(p);e.evaluate_spectrum(q)
+        self.assertFalse(e.last_witnesses)
+
+    def test_unrelated_dense_products_rejected(self):
+        e,g,b,p,q=build();a=e.signal(np.arange(32))
+        e.evaluate_spectrum(p);e.evaluate_spectrum(e.mul(a,b))
+        self.assertFalse(e.last_witnesses)
+
+    def test_bounds_and_index_eviction(self):
+        e,g,b,p,q=build(cache_bytes=16*17*2,max_new_nodes=2,max_total_probes=3,max_scan_nodes=20)
+        e.evaluate_spectrum(e.add(p,q))
+        self.assertLessEqual(e.last_stats['new_graph_nodes'],2)
+        self.assertLessEqual(e.last_stats['candidate_probes'],3)
+        self.assertLessEqual(sum(e.last_stats.get(k,0) for k in ('cost_nodes','signature_nodes','pin_nodes')),20)
+        self.assertLessEqual(e._spectrum_cache_bytes,e.max_spectrum_cache_bytes)
+        for factor,group in e.factor_index.items():
+            for uid in group:self.assertIn(uid,e._spectrum_cache);self.assertIn(factor,e.nodes[uid].args)
+        e.clear_cache();self.assertFalse(e._index_reverse);self.assertFalse(e.factor_index)
+
+    def test_budget_exhaustion_preserves_result(self):
+        out=[]
+        for enabled in (False,True):
+            e,g,b,p,q=build(enabled,max_scan_nodes=1);out.append(e.evaluate_time(e.add(p,q)))
+        np.testing.assert_allclose(*out,rtol=1e-12,atol=1e-12)
+        self.assertEqual(e.last_stats['planning_budget_exhausted'],1)
+
+    def test_seed_and_returned_arrays_are_isolated(self):
+        e=CacheRewriteFFT(16);a=np.arange(16,dtype=float);u=e.signal(a);v=e.signal(a/16)
+        a[:]=999;p=e.mul(u,v);x=e.evaluate_time(p);x[:]=0
+        y=e.evaluate_time(p);self.assertGreater(np.linalg.norm(y),1)
+        self.assertEqual(e._seeds[u][0],0)
+
+    def test_signature_agrees_under_negative_integer_weights(self):
+        e,g,b,p,q=build();target=e.mul(e.add(g,e.scale(e.impulse(3),-2)),b)
+        e.evaluate_spectrum(p);e.evaluate_spectrum(target)
+        self.assertTrue(e.last_witnesses)
+        for w in e.last_witnesses:self.assertTrue(all(audit_witness(e,w,97).values()))
+
+    def test_exact_modular_witnesses(self):
+        count=0
+        for n in (5,8,13):
+            for seed in range(8):
+                rng=np.random.default_rng(seed)
+                e=CacheRewriteFFT(n);xs=[e.signal(rng.integers(-2,3,n)) for _ in range(9)]
+                g=e.mul(*xs[:7]);b=xs[7];d=xs[8];p=e.mul(g,b)
+                q=e.mul(e.add(g,e.scale(d,seed%3-1),e.const(seed+1)),b)
+                e.evaluate_spectrum(e.add(p,q))
+                self.assertTrue(e.last_witnesses)
+                for w in e.last_witnesses:
+                    for prime in (97,257):self.assertTrue(all(audit_witness(e,w,prime).values()));count+=1
+        self.assertGreaterEqual(count,48)
+
+    def test_corrupted_witness_is_detected(self):
+        e,g,b,p,q=build();e.evaluate_spectrum(e.add(p,q));w=e.last_witnesses[0]
+        bad=replace(w,correction=e.zero)
+        self.assertFalse(audit_witness(e,bad)['left_equals_base_plus_correction'])
+
+    def test_float_cancellation_is_not_an_exact_backend(self):
+        outputs=[]
+        for enabled in (False,True):
+            e=CacheRewriteFFT(8,rewrite=enabled)
+            unit=np.zeros(8);unit[0]=1
+            xs=[e.signal(unit*(-1+2**-52))]+[e.signal(unit) for _ in range(7)]
+            b=e.signal(unit*1e16);g=e.mul(*xs);p=e.mul(g,b);q=e.mul(e.add(g,e.one),b)
+            e.evaluate_spectrum(p);outputs.append(e.evaluate_time(q)[0])
+        self.assertGreater(abs(outputs[0]-outputs[1]),.1)
+
+    def test_integer_coefficient_cap_fallback(self):
+        e,g,b,p,q=build();target=e.mul(e.add(g,e.const(2**41)),b)
+        e.evaluate_spectrum(p);e.evaluate_spectrum(target);self.assertFalse(e.last_witnesses)
+
+
+if __name__=='__main__':unittest.main()

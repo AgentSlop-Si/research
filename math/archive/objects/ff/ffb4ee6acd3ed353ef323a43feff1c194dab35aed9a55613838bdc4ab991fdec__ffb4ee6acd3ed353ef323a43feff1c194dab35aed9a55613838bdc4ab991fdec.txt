@@ -1,0 +1,74 @@
+"""Two-stage Fourier *multi-interval* cut-rank certificate.
+
+Necessary (over any field): rank(F[R,C]) <= |R ∩ P(C)| + b(R) r2 + b(C) r1,
+where R, C are position sets in the second and first stage orders respectively,
+b(A)=number of adjacent indicator switches in 0..n-1.
+For a quasiseparable order-r stage, rank(S[A, A^c]) <= b(A)*r.
+This detects constraints invisible to the ordinary prefix/suffix cut test.
+
+Any nonzero modular Fourier minor supplies a VALID complex rank lower bound,
+by specializing the integral cyclotomic ring at the same primitive root mod q.
+"""
+from pathlib import Path
+import json,math,time
+import numpy as np
+from two_stage_ct import P,root,TwoStage
+from cut_rank_gate import bitrev,rank_np
+
+
+def boundary_count(R,n):
+    s=set(R)
+    return sum((i in s) != (i+1 in s) for i in range(n-1))
+
+
+def cert_intervals(I,O,shuffle,length=None):
+    n=len(I)
+    h=length if length is not None else n//2
+    w=root(n);powers=[pow(w,i,P) for i in range(n)]
+    best={'min_sum':0,'min_equal_rank':0}
+    # P[k] is stage1 output index that feeds stage2 input index k
+    for k in range(n-h+1):
+        R=list(range(k,k+h));Rset=set(R)
+        br=boundary_count(R,n)
+        outrows=[O[i] for i in R]
+        midpoints={shuffle[pos] for pos in R}
+        for m in range(n-h+1):
+            C=list(range(m,m+h));Cset=set(C)
+            bc=boundary_count(C,n)
+            intersection=len(midpoints&Cset)
+            actual_rank=rank_np(outrows,[I[j] for j in C],powers)
+            excess=max(0,actual_rank-intersection)
+            # Necessary r1+r2 >= ceil(gap/max(bR,bC)), since
+            # bR*r2+bC*r1 <= max(bR,bC)*(r1+r2).
+            min_sum=(excess+max(br,bc)-1)//max(br,bc) if max(br,bc)>0 else 0
+            min_equal=(excess+br+bc-1)//(br+bc) if br+bc>0 else 0
+            if min_sum>best['min_sum'] or (min_sum==best['min_sum'] and excess>best.get('gap',-1)):
+                best.update({'min_sum':min_sum,'min_equal_rank':min_equal,
+                    'k':k,'m':m,'length':h,'rank':actual_rank,'overlap':intersection,
+                    'gap':excess,'bR':br,'bC':bc})
+    return best
+
+
+def run():
+    opt=json.load(open(str(Path(__file__).resolve().parent/'rank_profiles_results.json')))
+    results=[]
+    for result in opt:
+        n=result['n']; tag=result['endpoints']
+        if tag!='bitrev_both':continue
+        I=O=bitrev(n)
+        perm=result['optimized_shuffle']
+        for L in (n//2,n//4):
+            t=time.time()
+            cert=cert_intervals(I,O,perm,length=L)
+            print('OPT_SHUFFLE',n,'bitrev_both','prefix_score',result['optimized_score'],
+                  'interval_length',L,'interval_certificate',cert,'seconds',round(time.time()-t,2),flush=True)
+            results.append({'n':n,'endpoints':tag,'prefix_score':result['optimized_score'],**cert})
+    for a,b in [(4,4),(4,8),(8,8)]:
+        ct=TwoStage(a,b)
+        cert=cert_intervals(ct.input_order,ct.output_order,ct.shuffle)
+        assert cert['min_sum']<=sum(ct.channel_ceiling),(cert,ct.channel_ceiling)
+        assert cert['min_equal_rank']<=max(ct.channel_ceiling),(cert,ct.channel_ceiling)
+        print('CT_CONTROL',ct.n,'true_channels',ct.channel_ceiling,'interval_certificate',cert,flush=True)
+    with open(str(Path(__file__).resolve().parent/'interval_gate_results.json'),'w') as f:json.dump(results,f,indent=2)
+
+if __name__=='__main__':run()

@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Independent provenance audit. Source members are inert data; no source code is run."""
+import hashlib, io, json, re, stat, zipfile
+from pathlib import Path, PurePosixPath
+ROOT=Path(__file__).resolve().parent
+prior=json.loads((ROOT/'PRIOR_HASH_REFERENCE.json').read_text())
+sets={k:set(v['hashes']) for k,v in prior.items()}
+known=set().union(*sets.values())
+records=[]; manifests=[]; archives=[]; total_bytes=0; canonical={}
+def walk(blob,chain,depth=0):
+    global total_bytes
+    assert depth<16
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        infos=z.infolist(); assert len(infos)<10000
+        assert sum(i.file_size for i in infos)<100_000_000
+        members={}
+        for i in infos:
+            p=PurePosixPath(i.filename)
+            assert not p.is_absolute() and '..' not in p.parts and '\\' not in i.filename
+            assert not stat.S_ISLNK(i.external_attr>>16)
+            if i.is_dir(): continue
+            assert i.filename not in members
+            b=z.read(i); total_bytes+=len(b); assert total_bytes<500_000_000
+            members[i.filename]=b; h=hashlib.sha256(b).hexdigest()
+            role='nested archive' if p.suffix.lower()=='.zip' else 'text/data'
+            try: b.decode('utf-8')
+            except UnicodeDecodeError: role='binary (not executed)' if role!='nested archive' else role
+            record={'chain':chain,'member_path':i.filename,'sha256':h,'bytes':len(b),'role':role,
+                    'known_in':[k for k,s in sets.items() if h in s],
+                    'new_to_combined_prior':h not in known}
+            records.append(record)
+            canonical.setdefault(h,record)
+        for name,b in members.items():
+            if PurePosixPath(name).name.lower() in ('sha256sums.txt','sha256sums','manifest.sha256'):
+                for line in b.decode('utf-8').splitlines():
+                    if not line.strip(): continue
+                    match=re.fullmatch(r'([0-9a-fA-F]{64})\s+\*?(.+)',line)
+                    if not match:
+                        manifests.append({'chain':chain,'manifest':name,'line':line,'status':'unparsed'}); continue
+                    expected,ref=match.groups(); expected=expected.lower()
+                    paths=list(dict.fromkeys(p for p in [str(PurePosixPath(name).parent/ref),ref] if p in members))
+                    good=[p for p in paths if hashlib.sha256(members[p]).hexdigest()==expected]
+                    manifests.append({'chain':chain,'manifest':name,'referenced_path':ref,
+                                      'resolved_path':good[0] if good else (paths[0] if paths else None),
+                                      'expected':expected,'status':'pass' if good else ('mismatch' if paths else 'missing')})
+            if name.lower().endswith('.zip'): walk(b,chain+'!/'+name,depth+1)
+for p in sorted((ROOT/'source_archives').glob('*.zip')):
+    b=p.read_bytes(); before=len(records); walk(b,p.name)
+    sub=records[before:]
+    archives.append({'archive':p.name,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),
+                     'member_occurrences':len(sub),'unique_hashes':len({x['sha256'] for x in sub}),
+                     'new_unique_hashes':len({x['sha256'] for x in sub if x['new_to_combined_prior']})})
+new=[x for x in canonical.values() if x['new_to_combined_prior']]
+summary={'member_occurrences':len(records),'unique_hashes':len(canonical),
+         'new_unique_hashes':len(new),'new_unique_text_data_hashes':sum(x['role']=='text/data' for x in new),
+         'new_unique_nested_archives':sum(x['role']=='nested archive' for x in new),
+         'new_unique_binaries':sum(x['role']=='binary (not executed)' for x in new),
+         'known_occurrences':sum(not x['new_to_combined_prior'] for x in records),
+         'total_recursive_uncompressed_bytes':total_bytes,'by_archive':archives,
+         'source_manifest_entries':len(manifests),'source_manifest_passed':sum(x['status']=='pass' for x in manifests),
+         'source_manifest_failures':[x for x in manifests if x['status']!='pass'],
+         'comparison_scope':'528 baseline canonical text contents plus recorded baseline Library-file hashes; all member and top-level archive hashes in 14:50 and 15:20 addition inventories. Source-byte identity, not novelty of mathematical claims.'}
+for name,obj in [('SOURCE_MEMBER_INVENTORY.json',records),('source_manifest_verification.json',manifests),
+                 ('recursive_summary.json',summary),('NEW_UNIQUE_CONTENT.json',new)]:
+    (ROOT/name).write_text(json.dumps(obj,indent=2)+'\n')
+lines=['# New unique source contents','',summary['comparison_scope'],'',
+       'New means unseen byte content in the stated comparison set; repeated proofs with changed wording are not mathematical novelty. Nested archives and compiled files are labeled separately.','']
+for x in sorted(new,key=lambda x:(x['chain'],x['member_path'])):
+    lines.append('- '+x['sha256'][:16]+' · '+x['role']+' · '+x['chain']+'!/'+x['member_path'])
+(ROOT/'NEW_CONTENT_INDEX.md').write_text('\n'.join(lines)+'\n')
+print(json.dumps(summary,indent=2))
+assert not summary['source_manifest_failures'], 'source manifest verification failed'
+

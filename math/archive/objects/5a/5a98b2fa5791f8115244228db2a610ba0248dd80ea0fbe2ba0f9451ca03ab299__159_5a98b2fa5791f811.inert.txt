@@ -1,0 +1,11 @@
+# Scope: What Phase 10 does and does not outperform
+
+This package accelerates **batched updates to a previously prepared real-valued convolution expression** when one sample in each of two selected source signals changes. It includes nonlinear repeated factors and mixed contributions.
+
+- **SciPy fresh recomputation baseline:** two new `rfft` evaluations and one `irfft` per version, with fixed `C*D` spectrum reused. Both methods emit N coefficients. Phase 10 showed measured speedups for this task; results are in `benchmark_results.json`.
+- **Handwritten C++ incremental formula:** the same two-edit update with algebra explicitly specialized. The generated AOT source was roughly 6% slower in the N=262144 warm trial. It is not faster than the handwritten algorithm on this workload.
+- **Phase 9 Numba:** the old version compiled kernels on first invocation. Phase 10's C++ binaries are produced offline; their build costs are not zero and are recorded separately. Existing Phase 9 files remain for regression and historical reference.
+- **eFFT:** an event-driven implementation for incremental FFTs. eFFT computes transform updates; Phase 10 evaluates nonlinear convolution-expression updates. No like-for-like head-to-head measurement is offered.
+- **OpenAI exact-DFT result #130 / CrocSwap integer multiplication:** different tasks and computational models. Nothing in Phase 10 proves faster fresh dense DFT or faster multiplication of unrelated arbitrary integers.
+
+A clear failure scenario: two random, unrelated arrays for which no previously cached expression or known edits exist. In that setting Phase 10 must first compute and prepare its coefficient kernels. The dynamic update theorem offers no fresh-input advantage.

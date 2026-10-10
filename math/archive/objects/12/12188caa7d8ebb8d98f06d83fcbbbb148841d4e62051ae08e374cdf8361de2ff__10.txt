@@ -1,0 +1,210 @@
+   1 """Exact-subproblem sharing in a radix-2 FFT (educational research prototype).
+   2 
+   3 Canonical signatures are constructed bottom-up for each even/odd FFT recursion
+   4 node. Identical coefficient sequences share a node ID, and each unique FFT is
+   5 computed once. This is not a sub-n-log-n algorithm for arbitrary FFT input.
+   6 
+   7 Run: python fft_collision_research.py
+   8 Requires only Python's standard library. NumPy is optional for extra checks.
+   9 """
+  10 import cmath
+  11 import math
+  12 import random
+  13 from collections import Counter
+  14 
+  15 
+  16 def canonical_fft(signal):
+  17     """FFT using a hash-consed DAG of repeated *exact* recursive subproblems.
+  18 
+  19     Return (FFT values, stats). n must be a positive power of two.
+  20     Expected O(n) canonicalization under RAM constant-time hash tables.
+  21     Arithmetic butterfly count is sum over levels of size/2 per unique node.
+  22     """
+  23     n = len(signal)
+  24     if n == 0 or n & (n - 1):
+  25         raise ValueError("length must be a positive power of 2")
+  26 
+  27     intern = {}
+  28     nodes = []  # each node: (size, left id, right id, leaf value)
+  29     calls = 0
+  30     def build(offset, stride, size):
+  31         nonlocal calls
+  32         calls += 1
+  33         if size == 1:
+  34             val = signal[offset]
+  35             key = (1, val)
+  36             spec = (1, -1, -1, val)
+  37         else:
+  38             left = build(offset, stride * 2, size // 2)
+  39             right = build(offset + stride, stride * 2, size // 2)
+  40             key = (size, left, right)
+  41             spec = (size, left, right, None)
+  42         ident = intern.get(key)
+  43         if ident is None:
+  44             ident = len(nodes)
+  45             intern[key] = ident
+  46             nodes.append(spec)
+  47         return ident
+  48 
+  49     root = build(0, 1, n)
+  50     results = {}
+  51     twiddles = {}
+  52     butterflies = 0
+  53     def evaluate(ident):
+  54         nonlocal butterflies
+  55         if ident in results:
+  56             return results[ident]
+  57         size, left_id, right_id, value = nodes[ident]
+  58         if size == 1:
+  59             out = (complex(value),)
+  60         else:
+  61             left = evaluate(left_id)
+  62             right = evaluate(right_id)
+  63             half = size // 2
+  64             factors = twiddles.get(size)
+  65             if factors is None:
+  66                 factors = [cmath.exp(-2j * math.pi * k / size) for k in range(half)]
+  67                 twiddles[size] = factors
+  68             out = [0j] * size
+  69             for k in range(half):
+  70                 t = factors[k] * right[k]
+  71                 out[k] = left[k] + t
+  72                 out[k + half] = left[k] - t
+  73                 butterflies += 1
+  74             out = tuple(out)
+  75         results[ident] = out
+  76         return out
+  77 
+  78     fft = evaluate(root)
+  79     unique_by_size = Counter(size for size, _, _, _ in nodes)
+  80     return fft, {
+  81         'input_length': n,
+  82         'radix2_butterflies': n * (n.bit_length()-1) // 2,
+  83         'shared_butterflies': butterflies,
+  84         'unique_fft_nodes': len(nodes),
+  85         'tree_nodes_visited': calls,
+  86         'unique_by_size': dict(sorted(unique_by_size.items())),
+  87         'cached_complex_entries': sum(len(x) for x in results.values()),
+  88     }
+  89 
+  90 
+  91 def reference_dft(a):
+  92     n = len(a)
+  93     return [sum(a[j] * cmath.exp(-2j * math.pi * j * k / n) for j in range(n)) for k in range(n)]
+  94 
+  95 
+  96 def tests():
+  97     for n in (2, 4, 8, 16, 32, 64):
+  98         for seed in range(4):
+  99             r = random.Random(300 + 10*n + seed)
+ 100             seq = [r.randrange(2) for _ in range(n)]
+ 101             actual, stats = canonical_fft(seq)
+ 102             expected = reference_dft(seq)
+ 103             err = max(abs(x-y) for x,y in zip(actual,expected))
+ 104             assert err < 1e-8, (n,seed,err)
+ 105             assert stats['tree_nodes_visited'] == 2*n-1
+ 106     a = [4,3,2,1,0,0,0,0]
+ 107     b = [8,7,6,5,0,0,0,0]
+ 108     fa,_ = canonical_fft(a)
+ 109     fb,_ = canonical_fft(b)
+ 110     prod = [x*y for x,y in zip(fa,fb)]
+ 111     # reverse FFT by the conjugation identity
+ 112     rev,_ = canonical_fft([v.conjugate() for v in prod])
+ 113     coeffs = [round((v.conjugate()/8).real) for v in rev]
+ 114     assert coeffs == [32,52,61,60,34,16,5,0], coeffs
+ 115     print('TESTS PASSED: 24 direct-DFT comparisons; canonicalization node invariant; 1234*5678 =',
+ 116           sum(coeffs[j]*10**j for j in range(8)))
+ 117 
+ 118 
+ 119 def experiment():
+ 120     print('N | distribution | standard_butterflies | shared_butterflies | fraction_saved | unique_nodes | cached_entries')
+ 121     for n in (256, 1024, 4096, 16384):
+ 122         rng = random.Random(1000+n)
+ 123         random_input = [rng.randrange(2) for _ in range(n)]
+ 124         rng256 = random.Random(2000+n)
+ 125         alphabet256_input = [rng256.randrange(256) for _ in range(n)]
+ 126         cases = {
+ 127             'uniform_ones': [1]*n,
+ 128             'period_8': ([1,0,1,1,0,0,1,0]*(n//8)),
+ 129             'random_binary': random_input,
+ 130             'random_0_255': alphabet256_input,
+ 131         }
+ 132         for label, values in cases.items():
+ 133             _,s = canonical_fft(values)
+ 134             frac = 1-s['shared_butterflies']/s['radix2_butterflies']
+ 135             print(f"{n} | {label} | {s['radix2_butterflies']} | {s['shared_butterflies']} | {frac:.3%} | {s['unique_fft_nodes']} | {s['cached_complex_entries']}")
+ 136         if n == 4096:
+ 137             _,s1 = canonical_fft(cases['random_binary'])
+ 138             _,s2 = canonical_fft(cases['period_8'])
+ 139             print('LEVELS random binary N=4096:',s1['unique_by_size'])
+ 140             print('LEVELS period 8 N=4096:',s2['unique_by_size'])
+ 141 
+ 142 
+ 143 def standard_fft(signal):
+ 144     """Ordinary radix-2 FFT without memoization; separate independent reference."""
+ 145     n = len(signal)
+ 146     twiddles = {}
+ 147     def rec(offset, stride, length):
+ 148         if length == 1:
+ 149             return (complex(signal[offset]),)
+ 150         even = rec(offset, stride * 2, length // 2)
+ 151         odd = rec(offset + stride, stride * 2, length // 2)
+ 152         factors = twiddles.get(length)
+ 153         if factors is None:
+ 154             factors = [cmath.exp(-2j * math.pi * k / length) for k in range(length // 2)]
+ 155             twiddles[length] = factors
+ 156         out = [0j] * length
+ 157         for k in range(length // 2):
+ 158             t = factors[k] * odd[k]
+ 159             out[k] = even[k] + t
+ 160             out[k + length // 2] = even[k] - t
+ 161         return tuple(out)
+ 162     return rec(0, 1, n)
+ 163 
+ 164 
+ 165 def expected_unique_binary(n, m):
+ 166     """Expected distinct independent uniform binary blocks of size m."""
+ 167     B = n // m
+ 168     if m > 50:
+ 169         return B  # the expected relative duplicate count is negligible here
+ 170     p = 2**(-m)
+ 171     return -math.expm1(B * math.log1p(-p)) / p
+ 172 
+ 173 
+ 174 def expected_butterflies_binary(n):
+ 175     return sum((m / 2) * expected_unique_binary(n, m)
+ 176                for m in (1 << j for j in range(1, n.bit_length())))
+ 177 
+ 178 
+ 179 def benchmarks():
+ 180     from time import perf_counter
+ 181     import statistics
+ 182     print('EXPECTED_RANDOM_BUTTERFLIES (independent uniform bits)')
+ 183     for n in (256, 1024, 4096, 16384, 65536):
+ 184         print(f'N={n}, expected={expected_butterflies_binary(n):.1f}, regular={n*(n.bit_length()-1)//2}')
+ 185     print('TIMINGS_SECONDS (pure Python, per-run median of 3; not a hardware-level performance claim)')
+ 186     for n in (4096,16384,65536):
+ 187         rng = random.Random(123456+n)
+ 188         for label,values in (
+ 189             ('period_8',[1,0,1,1,0,0,1,0]*(n//8)),
+ 190             ('random_binary',[rng.randrange(2) for _ in range(n)]),
+ 191         ):
+ 192             times = {}
+ 193             for fn in (standard_fft,canonical_fft):
+ 194                 tt=[]
+ 195                 for _ in range(3):
+ 196                     t0=perf_counter()
+ 197                     result=fn(values)
+ 198                     dt=perf_counter()-t0
+ 199                     tt.append(dt)
+ 200                 times[fn.__name__]=statistics.median(tt)
+ 201             reference=standard_fft(values)
+ 202             actual,_=canonical_fft(values)
+ 203             assert max(abs(a-b) for a,b in zip(reference,actual)) < 1e-8
+ 204             print(f"N={n} {label} standard={times['standard_fft']:.5f}s shared={times['canonical_fft']:.5f}s ratio={times['standard_fft']/times['canonical_fft']:.2f}x")
+ 205 
+ 206 
+ 207 if __name__ == '__main__':
+ 208     tests()
+ 209     experiment()
+ 210     benchmarks()

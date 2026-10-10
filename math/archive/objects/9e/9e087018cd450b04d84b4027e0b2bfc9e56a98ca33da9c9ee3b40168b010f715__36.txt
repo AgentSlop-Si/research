@@ -1,0 +1,91 @@
+   1	"""Output-pruned DFT helpers for projected Fourier views.
+   2	
+   3	The fast path implements the classical first-K-output pruning for N=K*M:
+   4	reshape into M strided length-K transforms, compute those K-point FFTs, then
+   5	sum each desired output with its Cooley--Tukey twiddle.  Arithmetic complexity
+   6	is O(N log K) and working storage is O(N) for one streamed basis vector.
+   7	
+   8	This is classical pruning, not a new FFT algorithm.  The purpose here is to
+   9	avoid ever storing an r-by-N basis spectrum when a consumer only needs K bins.
+  10	"""
+  11	from __future__ import annotations
+  12	import numpy as np
+  13	try:
+  14	    from scipy import fft as sp_fft
+  15	except ImportError:
+  16	    sp_fft=None
+  17	
+  18	
+  19	def first_k_dft(x, k: int, *, backend='scipy') -> np.ndarray:
+  20	    a=np.asarray(x,dtype=np.complex128)
+  21	    if a.ndim!=1 or a.size<1: raise ValueError('x must be nonempty 1-D')
+  22	    n=a.size; k=int(k)
+  23	    if k<1 or k>n or n%k: raise ValueError('k must divide n and satisfy 1<=k<=n')
+  24	    m=n//k
+  25	    # group[m,r] = x[m + M*r]
+  26	    groups=np.ascontiguousarray(a.reshape(k,m).T)
+  27	    if backend=='scipy' and sp_fft is not None:
+  28	        inner=sp_fft.fft(groups,axis=1)
+  29	    elif backend in ('scipy','numpy'):
+  30	        inner=np.fft.fft(groups,axis=1)
+  31	    else: raise ValueError('backend must be scipy or numpy')
+  32	    mm=np.arange(m,dtype=np.float64)[:,None]
+  33	    kk=np.arange(k,dtype=np.float64)[None,:]
+  34	    tw=np.exp((-2j*np.pi/n)*(mm*kk))
+  35	    return np.sum(inner*tw,axis=0)
+  36	
+  37	
+  38	def stream_basis_first_k(basis_vectors, k:int, *, backend='scipy') -> np.ndarray:
+  39	    """Build an r-by-k projection one basis vector at a time.
+  40	
+  41	    ``basis_vectors`` may be a generator, so only one N-vector plus the final
+  42	    r-by-k projection need be live if the caller streams its basis source.
+  43	    """
+  44	    rows=[first_k_dft(row,k,backend=backend) for row in basis_vectors]
+  45	    if not rows:return np.empty((0,int(k)),dtype=np.complex128)
+  46	    return np.ascontiguousarray(np.stack(rows))
+  47	
+  48	
+  49	class FirstKDFTPlan:
+  50	    """Reusable first-K-output pruning plan for many length-N inputs."""
+  51	    def __init__(self,n:int,k:int,*,backend='scipy'):
+  52	        self.n=int(n); self.k=int(k); self.backend=backend
+  53	        if self.n<1 or self.k<1 or self.k>self.n or self.n%self.k:
+  54	            raise ValueError('k must divide n')
+  55	        self.m=self.n//self.k
+  56	        mm=np.arange(self.m,dtype=np.float64)[:,None]
+  57	        kk=np.arange(self.k,dtype=np.float64)[None,:]
+  58	        self.twiddle=np.exp((-2j*np.pi/self.n)*(mm*kk))
+  59	    @property
+  60	    def plan_bytes(self): return int(self.twiddle.nbytes)
+  61	    def execute(self,x):
+  62	        a=np.asarray(x,dtype=np.complex128)
+  63	        if a.shape!=(self.n,): raise ValueError('input has wrong length')
+  64	        groups=np.ascontiguousarray(a.reshape(self.k,self.m).T)
+  65	        if self.backend=='scipy' and sp_fft is not None:
+  66	            inner=sp_fft.fft(groups,axis=1)
+  67	        elif self.backend in ('scipy','numpy'):
+  68	            inner=np.fft.fft(groups,axis=1)
+  69	        else: raise ValueError('backend must be scipy or numpy')
+  70	        return np.einsum('mk,mk->k',inner,self.twiddle,optimize=False)
+  71	    def project_stream(self,basis_vectors):
+  72	        rows=[self.execute(row) for row in basis_vectors]
+  73	        return np.ascontiguousarray(np.stack(rows)) if rows else np.empty((0,self.k),dtype=np.complex128)
+  74	
+  75	class BandDFTPlan:
+  76	    """Reusable pruning plan for K consecutive bins starting at ``start``.
+  77	
+  78	    Modulation shifts the requested band to bins 0..K-1, then FirstKDFTPlan
+  79	    applies.  Complexity remains O(N log K), with one extra O(N) multiply.
+  80	    """
+  81	    def __init__(self,n:int,k:int,start:int,*,backend='scipy'):
+  82	        self.n=int(n); self.k=int(k); self.start=int(start)%self.n
+  83	        self.inner=FirstKDFTPlan(self.n,self.k,backend=backend)
+  84	        idx=np.arange(self.n,dtype=np.float64)
+  85	        self.modulation=np.exp((-2j*np.pi*self.start/self.n)*idx)
+  86	    @property
+  87	    def plan_bytes(self): return int(self.inner.plan_bytes+self.modulation.nbytes)
+  88	    def execute(self,x):
+  89	        a=np.asarray(x,dtype=np.complex128)
+  90	        if a.shape!=(self.n,): raise ValueError('input has wrong length')
+  91	        return self.inner.execute(a*self.modulation)

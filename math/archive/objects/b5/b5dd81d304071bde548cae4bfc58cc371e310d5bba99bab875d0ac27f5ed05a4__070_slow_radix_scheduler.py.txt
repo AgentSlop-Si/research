@@ -1,0 +1,67 @@
+"""Toy scheduler illustrating the slow-radix diagonalization principle.
+
+This is not a bound on the actual #130 condition growth.  It demonstrates how
+an arbitrary finite local-condition function can be absorbed by making the
+macro radix grow slowly.
+"""
+import math
+
+
+def closed_form_examples(logN_values, delta=1e-2):
+    # We work with natural logs. Suppose K(B) <= exp(B^a), and ask for
+    # K(B) <= (log N)^p. Then B <= (p log log N)^(1/a).
+    rows=[]
+    for logN in logN_values:  # log N, not N itself
+        ll = math.log(max(logN, math.e))
+        for a in (1.0, 2.0):
+            p=1.0
+            B=max(2.0,(p*ll)**(1.0/a))
+            logB=math.log(B)
+            # coarse #130-style local normalized cost ratio ~(log B)^(-delta)
+            local_ratio=(logB**(-delta)) if logB>1 else 1.0
+            overhead=1.0/max(logB,1.0)
+            rows.append({"logN":logN,"a":a,"B":B,"local_ratio_proxy":local_ratio,"macro_overhead_proxy":overhead})
+    return rows
+
+
+def staircase_schedule(local_rows, target_R):
+    """Construct a finite-prefix staircase schedule from supplied local rows.
+
+    local_rows: list of dicts {'b': int, 'rho': positive, 'K': positive},
+                where B=2^b and rho is normalized local cost s/(B*b).
+    target_R(k): allowed condition budget for N=2^k; must diverge.
+
+    This routine searches thresholds only for demonstration.  A theorem uses
+    the same diagonal selection argument abstractly.
+    """
+    chosen=[]
+    k_floor=1
+    for t in range(1, min(12,len(local_rows))+1):
+        candidates=[x for x in local_rows if x['b']>=t and x['rho']<=1/t]
+        if not candidates:
+            continue
+        x=min(candidates,key=lambda z:z['b'])
+        k=max(k_floor, t*x['b'])
+        while target_R(k) < x['K']:
+            k*=2
+            if k>10**9:
+                break
+        if k>10**9:
+            break
+        chosen.append({"t":t,"start_k":k,**x})
+        k_floor=k+1
+    return chosen
+
+
+if __name__=='__main__':
+    # Synthetic local family only: rho_b -> 0, K_b finite but quickly growing.
+    rows=[]
+    for b in range(2,80):
+        rho=1/math.sqrt(b)
+        logK=0.15*b*b
+        K=math.exp(logK) if logK<700 else float('inf')
+        rows.append({'b':b,'rho':rho,'K':K})
+    sched=staircase_schedule(rows, lambda k:max(2.0, math.log(k+2)**3))
+    print('synthetic staircase schedule (not #130 condition data):')
+    for x in sched:
+        print(x)

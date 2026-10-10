@@ -1,0 +1,343 @@
+   1 #!/usr/bin/env python3
+   2 """Hero #0 Phase 10: exact FFT for certified order-d *spectral* recurrence families.
+   3 
+   4 For N=K*M, columns v_t[b]=x[b*M+t], frequency streams
+   5 F_t[ell]=DFT_K(v_t)[ell] have an UNKNOWN frequency-dependent recurrence
+   6   F_t[ell] + sum_{i=1}^d q_i[ell]*F_{t-i}[ell] = 0.
+   7 Each of d arbitrary circulant controllers may be fully dense, and first d
+   8 columns are arbitrary. Learn from 2d columns; check every raw column using
+   9 independent random-vector fingerprints; synthesize all N exact outputs using
+  10 truncated generating-function numerator/denominator polynomials.
+  11 
+  12 With M=Theta(log N), compatible exact scalar field and fixed rounds:
+  13  O(d*N + d*d*K + N) operations, O(N) memory.  d=O(1) -> O(N),
+  14  d=O(log log N) -> O(N log log N). CONDITIONED ON CERTIFICATE.
+  15 False accepts on nonpromised inputs <=p^-rounds. No universal faster FFT.
+  16 Fixed test prime P=2013265921 supports lengths up to 2^27 only.
+  17 """
+  18 from __future__ import annotations
+  19 import dataclasses
+  20 import random
+  21 import secrets
+  22 from typing import Optional
+  23 
+  24 P=2013265921
+  25 G=31
+  26 
+  27 @dataclasses.dataclass
+  28 class Count:
+  29     adds:int=0
+  30     muls:int=0
+  31     comparisons:int=0
+  32     inversions:int=0
+  33     input_reads:int=0
+  34     output_writes:int=0
+  35     butterflies:int=0
+  36     def total(self):return self.adds+self.muls+self.comparisons+2*P.bit_length()*self.inversions
+  37     def record(self):return dataclasses.asdict(self)|{'total':self.total()}
+  38 
+  39 
+  40 def add(a,b,c:Optional[Count]=None):
+  41     if c:c.adds+=1
+  42     return (a+b)%P
+  43 
+  44 def mul(a,b,c:Optional[Count]=None):
+  45     if c:c.muls+=1
+  46     return (a*b)%P
+  47 
+  48 def nonzero(a,c:Optional[Count]=None):
+  49     if c:c.comparisons+=1
+  50     return a%P != 0
+  51 
+  52 def inv(a,c:Optional[Count]=None):
+  53     if a%P==0:raise ZeroDivisionError
+  54     if c:c.inversions+=1
+  55     return pow(a,P-2,P)
+  56 
+  57 def root_of_unity(n):
+  58     if n<1 or n&(n-1) or (P-1)%n:
+  59         raise ValueError('requires power-of-two n dividing P-1')
+  60     return pow(G,(P-1)//n,P)
+  61 
+  62 def root_table(n,c:Optional[Count]=None):
+  63     w=root_of_unity(n)
+  64     z=[1]*n
+  65     for i in range(1,n):z[i]=mul(z[i-1],w,c)
+  66     return z
+  67 
+  68 def ntt(seq,negative=True,c:Optional[Count]=None):
+  69     """Standalone radix-two modular FFT; forward uses negative powers."""
+  70     n=len(seq)
+  71     w=root_of_unity(n)
+  72     if negative:w=pow(w,P-2,P)
+  73     a=[x%P for x in seq]
+  74     j=0
+  75     for i in range(1,n):
+  76         bit=n>>1
+  77         while j&bit:
+  78             j^=bit;bit>>=1
+  79         j^=bit
+  80         if i<j:a[i],a[j]=a[j],a[i]
+  81     stride=2
+  82     while stride<=n:
+  83         base=pow(w,n//stride,P)
+  84         if c:c.muls+=2*max(1,(n//stride).bit_length()) # charge scalar root preparation
+  85         for start in range(0,n,stride):
+  86             z=1
+  87             for t in range(stride//2):
+  88                 u=a[start+t]
+  89                 v=mul(a[start+t+stride//2],z,c)
+  90                 a[start+t]=add(u,v,c)
+  91                 a[start+t+stride//2]=add(u,-v,c)
+  92                 z=mul(z,base,c)
+  93                 if c:c.butterflies+=1
+  94         stride*=2
+  95     if not negative:
+  96         ninv=inv(n,c)
+  97         a=[mul(v,ninv,c) for v in a]
+  98     return a
+  99 
+ 100 
+ 101 def berlekamp_massey(s,c:Optional[Count]=None):
+ 102     """Shortest monic connection q for finite sequence: s_t+sum_i q_i*s_(t-i)=0.
+ 103 
+ 104     Algorithm yields a recurrence fitting *all* given 2d observations,
+ 105     potentially overfitting arbitrary data; the later random check is vital.
+ 106     """
+ 107     connection=[1]; previous=[1]
+ 108     L=0; m=1; b=1
+ 109     for n in range(len(s)):
+ 110         delta=s[n]
+ 111         for i in range(1,L+1):
+ 112             delta=add(delta,mul(connection[i],s[n-i],c),c)
+ 113         if not nonzero(delta,c):
+ 114             m+=1;continue
+ 115         correction=mul(delta,inv(b,c),c)
+ 116         old=connection[:]
+ 117         if len(connection)<len(previous)+m:
+ 118             connection.extend([0]*(len(previous)+m-len(connection)))
+ 119         for j,z in enumerate(previous):
+ 120             connection[j+m]=add(connection[j+m],-mul(correction,z,c),c)
+ 121         if 2*L<=n:
+ 122             L=n+1-L;previous=old;b=delta;m=1
+ 123         else:m+=1
+ 124     return connection[:L+1]
+ 125 
+ 126 
+ 127 def batch_inverse_nonzero(a,c:Optional[Count]=None):
+ 128     """Invert an array containing NO zeros, with one field inversion."""
+ 129     if not a:return []
+ 130     prefix=[1]
+ 131     for z in a:prefix.append(mul(prefix[-1],z,c))
+ 132     v=inv(prefix[-1],c)
+ 133     out=[0]*len(a)
+ 134     for i in range(len(a)-1,-1,-1):
+ 135         out[i]=mul(v,prefix[i],c)
+ 136         v=mul(v,a[i],c)
+ 137     return out
+ 138 
+ 139 
+ 140 def poly_eval(coefficients,z,c:Optional[Count]=None):
+ 141     v=0
+ 142     for a in reversed(coefficients):v=add(mul(v,z,c),a,c)
+ 143     return v
+ 144 
+ 145 
+ 146 def extract_columns(x,m,c:Optional[Count]=None):
+ 147     n=len(x)
+ 148     if n%m:raise ValueError('M must divide N')
+ 149     k=n//m
+ 150     if k<m or k&(k-1) or m&(m-1):
+ 151         raise ValueError('radix-two K,M required and K>=M')
+ 152     root_of_unity(n)
+ 153     if c:c.input_reads+=n
+ 154     return [[x[b*m+t]%P for b in range(k)] for t in range(m)]
+ 155 
+ 156 
+ 157 def learn_spectral_recurrences(cols,max_order,c:Optional[Count]=None):
+ 158     m=len(cols);k=len(cols[0])
+ 159     if not 1<=max_order or 2*max_order>m:
+ 160         raise ValueError('require 1<=d and 2d<=M')
+ 161     train=[ntt(cols[t],True,c) for t in range(2*max_order)]
+ 162     q=[]
+ 163     for ell in range(k):
+ 164         samples=[train[t][ell] for t in range(2*max_order)]
+ 165         coeff=berlekamp_massey(samples,c)
+ 166         if len(coeff)-1>max_order:return None,None
+ 167         order=len(coeff)-1
+ 168         # Verify connection even on rank-deficient training prefixes.
+ 169         for t in range(order,2*max_order):
+ 170             val=samples[t]
+ 171             for i in range(1,order+1):
+ 172                 val=add(val,mul(coeff[i],samples[t-i],c),c)
+ 173             if nonzero(val,c):return None,None
+ 174         q.append(coeff)
+ 175     return train,q
+ 176 
+ 177 
+ 178 def transpose_circulant_action(w, eigenvalues,c:Optional[Count]=None):
+ 179     """Return C^T w where DFT(Cv)[ell]=eigenvalues[ell]*DFT(v)[ell]."""
+ 180     fw=ntt(w,True,c)
+ 181     k=len(w)
+ 182     z=[mul(fw[ell],eigenvalues[-ell%k],c) for ell in range(k)]
+ 183     return ntt(z,False,c)
+ 184 
+ 185 
+ 186 def verify_raw_recurrence(cols,q,max_order,rounds=3,rng=None,c:Optional[Count]=None):
+ 187     """Freivalds-style one-sided certificate; false pass <=p^-rounds.
+ 188 
+ 189     Sample w only after q has been learned. For each t>=d, certify:
+ 190        w^T v_t + sum_i (C_i^T w)^T v_(t-i) = 0.
+ 191     Even if all K coefficients of each C_i are dense, this uses only
+ 192     d inverse/forward K transforms per random w plus dN dot products.
+ 193     """
+ 194     if rounds<1:raise ValueError('positive independent rounds required')
+ 195     if rng is None:rng=secrets.SystemRandom()
+ 196     m=len(cols);k=len(cols[0]);d=max_order
+ 197     for _ in range(rounds):
+ 198         w=[rng.randrange(P) for _ in range(k)]
+ 199         # Share the forward Fourier transform of w across all d operators.
+ 200         fw=ntt(w,True,c)
+ 201         projected=[None]*d
+ 202         for i in range(1,d+1):
+ 203             products=[mul(fw[ell],q[-ell%k][i] if i<len(q[-ell%k]) else 0,c)
+ 204                       for ell in range(k)]
+ 205             projected[i-1]=ntt(products,False,c)
+ 206         # t<2d may be checked too, even though they were used for training.
+ 207         for t in range(d,m):
+ 208             value=0
+ 209             for b in range(k):value=add(value,mul(w[b],cols[t][b],c),c)
+ 210             for i in range(1,d+1):
+ 211                 phi=projected[i-1]
+ 212                 for b in range(k):
+ 213                     value=add(value,mul(phi[b],cols[t-i][b],c),c)
+ 214             if nonzero(value,c):return False
+ 215     return True
+ 216 
+ 217 
+ 218 def synthesize_from_recurrences(train,q,m,n,c:Optional[Count]=None):
+ 219     """Evaluate S_ell(z)=sum_(t=0)^(M-1) F_t[ell] z^t exactly at all
+ 220     z=omega_N^(-ell-j*K) with O(d*N) scalar operations.
+ 221 
+ 222     Use Q(z)*S(z)=P(z)+z^M B(z), deg(P),deg(B)<order.
+ 223     Since z^M=omega_K^(-ell), at all M outputs the numerator
+ 224     has degree<order. Numerator/denominator evaluations take O(order)
+ 225     per output. Q has at most order singular roots; each is evaluated
+ 226     by a direct length-M Horner evaluation, cost O(order*M) per ell.
+ 227     Nonzero denominators are inverted in one batch.
+ 228     """
+ 229     k=n//m
+ 230     table=root_table(n,c)
+ 231     numerators=[0]*n;denominators=[0]*n
+ 232     outputs=[0]*n
+ 233     nonzero_indices=[];nz_den=[]
+ 234     singular_count=0
+ 235     for ell in range(k):
+ 236         coeff=q[ell]
+ 237         r=len(coeff)-1
+ 238         if not r:
+ 239             # BM order zero on nonempty sample means all sample values zero;
+ 240             # certified later columns zero too.
+ 241             continue
+ 242         f=[train[t][ell] for t in range(min(len(train),m))]
+ 243         for t in range(len(f),m):
+ 244             val=0
+ 245             for i in range(1,r+1):
+ 246                 val=add(val,-mul(coeff[i],f[t-i],c),c)
+ 247             f.append(val)
+ 248         if len(f)!=m:raise AssertionError('invalid recurrence prefix')
+ 249         head=[];tail=[]
+ 250         zm=table[(-ell*m)%n]
+ 251         for j in range(r):
+ 252             p=0;b=0
+ 253             for i in range(j+1):p=add(p,mul(coeff[i],f[j-i],c),c)
+ 254             for i in range(j+1,r+1):b=add(b,mul(coeff[i],f[m+j-i],c),c)
+ 255             head.append(p);tail.append(add(p,mul(zm,b,c),c))
+ 256         # tail[j] stores P[j]+zm*B[j].
+ 257         z=table[(-ell)%n]
+ 258         phase=table[(-k)%n]
+ 259         for j in range(m):
+ 260             pos=ell+j*k
+ 261             denom=poly_eval(coeff,z,c)
+ 262             if nonzero(denom,c):
+ 263                 numerators[pos]=poly_eval(tail,z,c)
+ 264                 nz_den.append(denom);nonzero_indices.append(pos)
+ 265             else:
+ 266                 singular_count+=1
+ 267                 # A root of Q is removable (S is a polynomial), but using
+ 268                 # the truncated direct sum avoids any derivative assumptions.
+ 269                 outputs[pos]=poly_eval(f,z,c)
+ 270             z=mul(z,phase,c)
+ 271     recip=batch_inverse_nonzero(nz_den,c)
+ 272     for pos,v in zip(nonzero_indices,recip):
+ 273         outputs[pos]=mul(numerators[pos],v,c)
+ 274     if c:c.output_writes+=n
+ 275     return outputs,singular_count
+ 276 
+ 277 
+ 278 def phase10_transform(x:list[int],m:int,max_order:int,rounds=3,rng=None,
+ 279                       counter:Optional[Count]=None,return_certificate=False):
+ 280     """Certified exact fast-path transform, or None (rejected).
+ 281 
+ 282     A correct promised input ALWAYS passes and returns exact DFT.
+ 283     Non-promised input may false-accept with probability <=P^-rounds
+ 284     under independent uniform w vectors (input fixed before randomness).
+ 285     """
+ 286     c=counter or Count()
+ 287     cols=extract_columns(x,m,c)
+ 288     train,q=learn_spectral_recurrences(cols,max_order,c)
+ 289     if train is None:
+ 290         cert={'accepted':False,'reason':'no order-d recurrence fits initial 2d columns'}
+ 291         return (None,cert,c) if return_certificate else None
+ 292     if not verify_raw_recurrence(cols,q,max_order,rounds,rng,c):
+ 293         cert={'accepted':False,'reason':'independent random-vector recurrence check failed'}
+ 294         return (None,cert,c) if return_certificate else None
+ 295     out,singular=synthesize_from_recurrences(train,q,m,len(x),c)
+ 296     cert={'accepted':True,'max_order':max(len(x)-1 for x in q),
+ 297           'max_allowed_order':max_order,'singular_outputs':singular,
+ 298           'rounds':rounds,'false_accept_bound':f'{P}^(-{rounds})',
+ 299           'operator_support_model':'arbitrary circulants, one per recurrence lag'}
+ 300     return (out,cert,c) if return_certificate else out
+ 301 
+ 302 
+ 303 def make_spectral_recurrent_example(k,m,d,seed=0,force_roots=None):
+ 304     """Generate fully dense spectral streams with unknown order-d controller.
+ 305 
+ 306     Uses independent frequency-specific coefficients and d initial spectral
+ 307     columns. For d=2 the residuals against every one-step controller
+ 308     are generically dense in BOTH spatial and Fourier representations.
+ 309     """
+ 310     rng=random.Random(seed)
+ 311     q=[];freqs=[[0]*k for _ in range(m)]
+ 312     for ell in range(k):
+ 313         coeff=[1]+[rng.randrange(1,P) for _ in range(d)]
+ 314         if force_roots is not None and ell==0:
+ 315             # Example Q(z)=(1-z)^d creates a pole at output k=0,
+ 316             # but it is always removable from the finite S(z).
+ 317             import math
+ 318             coeff=[(-1)**i*math.comb(d,i)%P for i in range(d+1)]
+ 319         q.append(coeff)
+ 320         for t in range(d):freqs[t][ell]=rng.randrange(P)
+ 321         for t in range(d,m):
+ 322             freq_val=0
+ 323             for i in range(1,d+1):freq_val=(freq_val-coeff[i]*freqs[t-i][ell])%P
+ 324             freqs[t][ell]=freq_val
+ 325     cols=[ntt(row,False) for row in freqs]
+ 326     x=[cols[t][b] for b in range(k) for t in range(m)]
+ 327     return x,q,freqs
+ 328 
+ 329 
+ 330 def reference_full_ntt(x):
+ 331     return ntt(x,True)
+ 332 
+ 333 
+ 334 def direct_full_dft(x):
+ 335     n=len(x);table=root_table(n)
+ 336     return [sum(x[t]*table[(-k*t)%n] for t in range(n))%P for k in range(n)]
+ 337 
+ 338 if __name__=='__main__':
+ 339     n=2048;m=16;k=n//m
+ 340     x,q,_=make_spectral_recurrent_example(k,m,2,87,force_roots=True)
+ 341     y,cert,c=phase10_transform(x,m,2,rng=random.Random(42),return_certificate=True)
+ 342     assert y==reference_full_ntt(x)
+ 343     print('Phase 10 self-test:',n,cert,'ops/input:',round(c.total()/n,3))

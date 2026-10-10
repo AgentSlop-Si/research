@@ -1,0 +1,61 @@
+# Cancellation-aware search audit
+
+8 October 2026. This is an independent model and certificate audit of the bounded continuation, not an optimality or novelty claim. The finite checks below establish only the stated restricted results.
+
+## What the prior proof excludes
+
+The earlier 2N lower bound applies only when every intermediate is a signed, support-consistent subform of each output using it. Cancellation permits a shared form to contain variables or signs later removed by correction gates. Consequently, neither the pair-incidence bound nor the rule that a triple can serve only one output survives unchanged. Intermediate dyadic scaling also lies outside that grammar.
+
+For example, let S=b+c+d and F=a-S. Then the four H4 outputs are a+S, F+2c, F+2b, F+2d. F is reused in three outputs, despite having different signs from each corrected result. Exact arithmetic gives seven additions and three explicit doublings, ten operations if doubling is charged. The ordinary circuit uses eight additions. Thus this example genuinely escapes the support argument without establishing a cheaper fully charged circuit.
+
+Worthwhile richer grammars include overlapping signed anchors with sparse corrections, more than one shared anchor, three-or-more-layer motifs, and compatible scaled input/output modes. Merely changing signs, permuting wires, or reassociating disjoint sums stays within the old grammar. A low-rank decomposition is only a starting point: forming the low-rank coordinates, evaluating the sparse residual, combining the two, and every scalar multiplier must be charged.
+
+## What determinant bounds do and do not establish
+
+For a straight-line gate z=alpha*u+beta*v with |alpha|,|beta|<=1, the largest absolute determinant formed by any N available coefficient rows grows by at most two per gate. Hence an unnormalized matrix A needs at least log2|det A| such gates. This is the classical bounded-coefficient determinant method, not a cancellation-free argument. [Morgenstern, 1973](https://doi.org/10.1145/321752.321761)
+
+Applying it here is an elementary calculation: each unnormalized butterfly layer has determinant magnitude 2^(N/2); signed permutations have determinant magnitude one. Two layers therefore give |det M|=2^N, only an N-gate bound versus the 2N baseline. For H4 and H8 the analogous bounds are four and twelve gates, versus baselines eight and twenty-four. They do not settle the exact minima.
+
+The actual 8-by-8 target was independently read from the previous certificate: det M=256 and M M^T=4I. Its input-support graph is connected, so it is not a signed-permutation copy of H4 direct-sum H4.
+
+Normalization matters: det(M/4)=2^(-N), and the dirty additive-output extension has determinant one. The same determinant calculation gives no useful bound for either final map. Uncharged scaling above one invalidates the gate-growth premise. [Ailon, model and scale-sensitivity discussion](https://arxiv.org/html/1403.1307v1#S1)
+
+For the proposed primitive set of signed addition, explicit doubling, and exact halving, each charged primitive grows the maximal determinant by at most two, so the N-operation bound still applies to its unnormalized target. If a fused alpha*u+beta*v primitive permits |alpha|,|beta|<=C, the corresponding growth ceiling is 2C instead; the cost model cannot be switched silently.
+
+## Published controls and scaling traps
+
+Alman–Rao’s scaled-input H4 kernel uses seven additions plus one halving, consuming three already doubled coordinates. Preparing them separately gives eleven operations. Their H8 kernel uses twenty-two additions plus one halving and consumes seven already doubled coordinates: thirty operations with standalone preparation. Their unscaled decomposition costs twenty-nine, still above the ordinary twenty-four. These are implementations, not proven local minima.
+
+Their recursive algorithm moves compatible scalings to leaves, where combined powers of two are charged, obtaining a published (23/24)N log2 N+O(N) arithmetic bound. This is a leading-constant improvement. A local search cannot inherit that saving unless its adjacent interfaces really provide the required scale modes. [Alman–Rao, Algorithms 5 and 9, Sections 2.2 and 6](https://arxiv.org/html/2211.06459v2#S6)
+
+## Encoding review
+
+The fifteen-gate SMT formulation targets the exact unnormalized prior 8-by-8 matrix, allows all signed binary sums, explicit doubling and exact halving, and bounds every intermediate coefficient to a half-integer in [-2,2]. Fanout and global output signs are free in this arithmetic-DAG model.
+
+Its five-bit encoding is nonwrapping at the specified budget: encoded coefficients are integers in [-4,4]; the signed sums, doubles, and doubled-output sides of halving equations lie in [-8,8], inside the signed five-bit range. All chosen predecessor indices are strictly earlier. The a<=b symmetry restriction preserves every signed binary-sum choice because both operand signs are selectable. The output matrix was compared entry-by-entry with the previous certificate.
+
+A SAT answer needs an independently replayed rational gate list. An UNSAT answer applies only to the stated coefficient grid, gate set, output convention and budget; without a separately checked proof it is a solver result rather than an independent proof certificate. A timeout or unknown result supplies neither a witness nor an exclusion. Bounding intermediates can exclude valid circuits even though all requested outputs themselves have coefficients +/-1.
+
+## Acceptance boundary
+
+An exact forward-DAG certificate does not certify dirty-scratch restoration. Copies, fanout materialization, scalar scaling, cleanup, physical routing and intermediate magnitude/denominator growth remain separate obligations. Nor does it give common frames or a child-rank histogram for the recursive framework. There is no new recursive moment to evaluate without those objects.
+
+The old rounded-interface counterexample remains applicable: moving a truncation boundary is a semantic change even if exact matrices agree. A candidate must preserve the staged rounded map or supply a replacement error/precision proof. Report a finite arithmetic improvement only after comparing like-for-like scalar costs; report an asymptotic improvement only after the full lifting and final assembly checks.
+
+## Computational-result review
+
+The independently written audit_verify.py imports neither search implementation. It replays all ten saved circuits with exact rational coefficients against an independently reconstructed signed-polynomial DIF or WHT matrix. The synthetic reference was also checked against the previous experiment's normalized target before making the verifier self-contained. Every gate references earlier nodes, operand signs are explicit, output order/signs are checked, and doublings are charged separately. All ten certificates passed, along with nine deliberate corruptions (wrong output sign, forward reference, or hidden coefficient) being rejected.
+
+An alternate optimizer enumerates permitted doubled-input masks, minimizes output choices independently for each mask, then pays the least extra cost needed to force at least one cancelling coordinate. It independently reproduced the entire histograms over all 40 H4 anchors and all 3,280 anchors for each eight-input case. This is separate from the main dynamic-programming implementation.
+
+For the synthetic map the cancellation-required single-anchor template needs at least 24 operations: its witness uses 23 additions and one doubling. Its two opposite-sign overlapping additions genuinely exercise cancellation. The ordinary baseline uses 16 additions. The H4 and H8 template minima are 11 and 37; these are not the costs or optimality claims of the richer published algorithms. In particular this template excludes sharing proper subexpressions, including a prefix of the anchor, and cannot reproduce the staged baseline. Its exhaustive negative result therefore has a deliberately narrow scope.
+
+For the synthetic witness, all unnormalized intermediate coefficient denominators are one, maximum coefficient magnitude is two and maximum row l1 norm is four. There are 47 arithmetic operand reads and 24 gate-result writes, before common final quarter-scaling/output handling. Fanout is a read-only DAG convention, not a restored physical implementation.
+
+The fifteen-gate bounded SMT run returned unknown with a timeout reason after its configured 30-second limit. An earlier 120-second run likewise timed out; its result-collection handler then errored while requesting a model. The corrected run and saved log establish no witness and no lower bound. Larger coefficients, finer dyadic grids, more gates, or another search encoding remain unexcluded.
+
+The broader deterministic common-subexpression heuristic compiled 37,144 synthetic candidates over all 3,280 anchors using a fixed finite set of output-mode policies, greedy signed-pair extraction and exact-form reuse. Independent reconstruction of the policy enumeration confirmed the candidate count. This is not exhaustive over circuits, all output modes, pair-selection orders, or coefficients. The best returned circuit is the sixteen-addition baseline; the best genuinely cancelling returned circuit uses sixteen additions plus one doubling. Its saved exact certificate passed, has one cancelling gate, maximum intermediate row l1 norm four and denominator one. It uses 33 arithmetic operand reads and 17 gate-result writes, before common normalization. The corresponding H4 heuristic controls are eight operations without cancellation and nine with cancellation, among 299 policy candidates.
+
+The separately emitted known H4 circuit verifies at seven additions plus three doublings. The literal raw-input Alman–Rao H8 Algorithm 5 verifies at twenty-two additions, seven doublings and one halving. In the latter, intermediate coefficient denominators happen to remain one because doubled inputs make the halved sum exact; the halving operation is still charged. Its largest intermediate row l1 norm is fourteen.
+
+No arithmetic saving was found and no improved framed recursive profile was constructed. This does not prove optimality in general cancellation-aware circuits, nor rule out a better framed profile for some circuit with a different scalar-gate count. The audit and search both stop at the stated finite evidence.

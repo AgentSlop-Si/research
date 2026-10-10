@@ -1,0 +1,257 @@
+A SMALLER FINITE WITNESS FOR THE EXACT FOURIER CONSTRUCTION
+Research certificate and scope note, 8 October 2026
+
+RESULT
+
+There is a concrete sharpening of the finite witness in the inspected OpenAI
+construction. Use all triples of 24 coordinates, and remove the redundant
+extra total-sum center from each scalar invocation. The following checks
+passed in exact arithmetic:
+
+  h = 24; v = C(24,3) = 2,024; m = h^3 = 13,824
+  centers per invocation rho = 24
+  ordered-neighbor degree d = 1,393
+  invocations I = 3 v^2 = 12,289,728
+  physical roles W = 34,666,930,287,616
+  padded roles W* = 2^45 = 35,184,372,088,832
+  strict directional saving Delta = 2,425,172,992
+  unpadded residual sum s = 479,235,641,870,830,592
+  padded directional sum S = 486,388,757,330,840,576
+
+The rebuilt tensor recurrence has critical exponent
+  theta = log_m(S/W*)
+  1 - theta = 5.2296989632709109... x 10^-10.
+
+A rational certificate, not this floating-point estimate, proves
+  theta < 1 - 5.2 x 10^-10.
+Keeping the paper's original all-length compiler then yields the eventual
+bound O(n (log n)^(1 - 5 x 10^-10)). This is a mathematical transfer of the
+paper's interfaces with changed fixed parameters. It has NOT been checked
+by a Lean proof kernel. No complete transform implementation was run.
+
+This is a small parameter/certificate sharpening, not a new FFT mechanism
+or a practical speedup. Novelty beyond the inspected source snapshot has
+not been established. Even 2^13,824-entry objects in the construction are
+infeasible. Exact arithmetic is unrestricted; no finite-precision result
+is claimed.
+
+1. SOURCE AND BASELINE
+
+Pinned source snapshot:
+  https://github.com/openai/math/tree/fd4aeeb2ee4fc729c18d98444fed42fd0529eeeb
+
+Paper's finite network and recurrence:
+  https://github.com/openai/math/blob/fd4aeeb2ee4fc729c18d98444fed42fd0529eeeb/preprints/An-explicit-power-saving-for-the-exact-discrete-Fourier-transform-September-25-2026/build/sections/network.tex
+
+All-length transfer and charged preparation:
+  https://github.com/openai/math/blob/fd4aeeb2ee4fc729c18d98444fed42fd0529eeeb/preprints/An-explicit-power-saving-for-the-exact-discrete-Fourier-transform-September-25-2026/build/sections/all-lengths.tex
+
+Local compiler and synchronization:
+  Same paper directory, local.tex and synchronization.tex.
+
+The published main-text witness uses h=100, h+1 centers, and W*=2^71.
+The actual pinned Lean construction is stronger than that displayed
+witness. Its files under lean/OAI/Computability/FourierTransform/ include
+NetworkRoles.lean, NetworkStages.lean, TensorSaving.lean, Asymptotics.lean,
+and CirculantUpdates.lean. The inspected Lean witness uses 32 coordinates,
+4,060 triples avoiding two pivots, 33 centers, 2^50 padded roles, m=32^3,
+and bank saving 29,406,742,400. Its raw critical saving is approximately
+7.6662 x 10^-11, and a certified exponent parameter is 1 - 2 x 10^-11.
+Thus the new witness's raw saving is about 6.8 times that actual witness's
+raw saving; comparing only with the weaker printed decimal bound would
+misrepresent the baseline.
+
+An initially considered O(log^2 r) local compiler is already present in
+those Lean sources, using dirty-bank circulant updates. It was rejected
+as a new research target. The present sharpening does not rely on adopting
+or modifying that compiler: the paper's O(log^4 r) compiler suffices.
+
+2. THE ONLY SCALAR-NETWORK CHANGE
+
+Let T be the 2,024 triples of {1,...,24}. S and T are neighbors when their
+intersection size is even (0 or 2). Keep the side wires and eight rows of
+the paper. Replace its h+1 center wires c_1,...,c_h,c_* by only c_1,...,c_h.
+Define
+
+  (Gx)_j = sum over T containing j of x_T,
+  (Rc)_S = (1/2) sum over j in S of c_j - (1/6) sum over all j of c_j.
+
+This gives
+  (RG)_(S,T) = |S intersect T|/2 - 3/6
+             = (|S intersect T|-1)/2.
+This is exactly the old RG matrix. Keep V and J from the paper: V copies
+x_T to side wire (S,T), and J cancels the above coefficient on every
+ordered neighboring pair. Consequently RG+JV=I. The checker exhausts all
+4,096,576 ordered triple pairs and verifies this identity with integers,
+scaled by six. It also checks each triple's neighbor degree.
+
+There is no assumption that the initial center values satisfy a linear
+relation. The eight rows are, chronologically,
+
+  y -= J A; y -= R c; A += V x; c += G x;
+  y += R c; y += J A; c -= G x; A -= V x.
+
+For arbitrary initial x,y,A,c they leave x,A,c unchanged and add
+(RG+JV)x to y. The checker proves this algebraically as a formal
+noncommutative polynomial identity, keeping R,G,J,V symbolic. The three
+paper stages, forward X->Y, inverse Y->X, forward X->Y, therefore send
+(X,Y) to (-Y,X), restoring every side and center value.
+
+3. WHY THE FRAME-LABEL CERTIFICATE STILL APPLIES
+
+Keep the labels and edge schedule in network.tex verbatim, with h=24,
+D=F_2^24 and the h center wires just specified. The labels depend on the
+physical wire groups, not on whether a coefficient in R was originally
+1/2 or -1/2. R and G touch the same two groups (one bank and the centers).
+Changing their coefficients therefore preserves the frame-commutation
+argument. Removing c_* deletes its entire physical route and its labels.
+
+Triple indicators have binary norm one. Neighboring indicators are
+orthogonal. The paper's inclusions, terminal labels, and exceptional
+terminal correction only use these facts and the odd weight 3^3=27.
+Every nonzero residual in its displayed list remains nonalternating:
+
+- t-perp contains a coordinate unit outside a support of size 3.
+- span(t_S,t_T)-perp contains one outside supports of total size at most 6.
+- The nonzero B=P-perp and Q-perp contain units outside tensor supports
+  of size 3^j in ambient dimension 24^j.
+- Tensor products and orthogonal sums retain a norm-one vector whenever
+  the selected factor/summand is nonzero.
+
+Here h>6, so these outside coordinates exist. The paper's constructive
+orthonormalization lemma applies. The only decreases are still the
+center edges from row 3 to row 4, each of dimension h. There are I*rho
+such edges. Source dimensions sum to v^3; sink dimensions sum to Wm-v^3.
+Thus
+
+  W = 2v^3 + 3v^2(vd+rho),
+  s = Wm - 2v^3 + 2(3v^2)rho*h,
+  Delta = Wm-s = 2v^2(v-3h*rho).
+
+rho=h and 2024>3*24^2=1728 give strict positivity. The exact counts and
+both residual formulas are checked by the script. This paragraph is a
+proof reduction to the parameterized displayed label construction, not
+an enumeration of the approximately 35 trillion physical routes.
+
+Every role, including arbitrary-valued auxiliaries, undergoes the tensor
+transform after telescoping and terminal corrections. This full-state
+identity is essential for recursive batching and has not been replaced
+by a zero-workspace assumption.
+
+4. COMPLETE CHARGED RECURRENCE
+
+Pad to W*=2^45 by ordinary roles. They add (W*-W)m directions, so
+  S = s+(W*-W)m = W*m-Delta.
+For k above the fixed base threshold K=m*(45+1)=635,904, set
+f=floor(k/m). Each of S directional operations acts on 2^(k-f) independent
+length-2^f fibers. Since k-f>=45, that count divides into complete batches
+of W* fibers, with no partially filled batch. Every batch may use all its
+roles because the interface holds on arbitrary role values.
+
+Let T(k) count exact scalar operations, integer/index work, array
+initialization, copying, permutations, scalar preparation, recursion
+setup, and fixed network-table construction. With t(k)=T(k)/(W*2^k),
+the same indexing lemma as the paper yields
+
+  T(k) <= A W*2^k + S [2^(k-f)/W*] T(f),
+  t(k) <= A + (S/W*) t(f).
+
+A and the bounded base costs are fixed constants. They are not assumed
+small and not omitted from total work. Existing prefix-tree address
+enumeration avoids an extra factor k or f in array movement. The paper's
+fixed-table and O(log n)-bit integer model is unchanged. Unrolling gives
+T(k)=O(W*2^k (k+1)^theta), theta=log_m(S/W*).
+
+The denser modified R adds fixed work. A straightforward implementation
+with one or two charged scalar operations per shear has, per invocation,
+
+  6vd + (4h+6)v = 17,123,040 scalar operations.
+
+Across all I invocations this is 210,437,504,133,120 scalar operations per
+address before frame transformations. There are 11,387,024 elementary
+shears per invocation. If desired, replacing all such shears by the
+paper's three-C word uses 419,830,283,068,416 C calls per address plus
+monomial factors. These explicit finite costs are included in A; they
+are not recursive directional costs and cannot be subtracted from s.
+The modified constants require only rational numbers with denominators
+2,3,6 and the original fixed kernel's i. No input-dependent division or
+zero test is introduced. The supplied-root model, charged local scalar
+preparation, and logarithmic-word integer model all remain unchanged.
+
+5. EXACT EXPONENT CERTIFICATE
+
+Let epsilon=Delta/(mW*) and gamma=13/25,000,000,000=5.2e-10.
+The checker establishes entirely with Fraction/integer arithmetic:
+
+  sum(j=0,...,40) (191/20)^j/j! > 13,824,
+  epsilon - gamma*(191/20)
+    = 2,328,493,845,853 / 115,964,116,992,000,000,000,000 > 0.
+
+The positive Taylor lower sum proves log(m)<191/20. Since
+exp(-z)>=1-z,
+
+  1-epsilon < 1-gamma*log(m) <= exp(-gamma*log(m)).
+
+Multiplying by m proves S/W* < m^(1-gamma), hence theta<1-gamma.
+The paper transfers the tensor bound to all n with total charged cost
+O(n (log n)^theta (log log n)^(4-theta)) plus lower-order preparation.
+The exponent 4-theta can safely be bounded by the fixed constant 4.
+Because gamma - 5e-10 = 2e-11 is positive, that loglog factor is eventually
+absorbed by (log n)^(2e-11). Thus
+
+  T(n) = O(n (log n)^(1-5e-10)).
+
+This asymptotic absorption says nothing useful about a practical
+crossover. The allowed n before asymptotic dominance may be enormous.
+
+6. BOUNDED SEARCH AND STOPPING CONDITION
+
+As a negative control, the checker scans only the following finite family:
+q in {3,5,7,9}, integer 2q<h<=128. For q odd put t=(q-1)/2,
+v=C(h,q), rho=C(h,t), and d=sum over even s of C(q,s)C(h-q,q-s).
+The overlap polynomial
+  p(z)=product over odd j<q of (z-j)/(q-j)
+has p(q)=1 and vanishes at the other odd intersection sizes. Expanding
+p(z)=sum c_j C(z,j) factors it through rho inclusion features because
+  sum_{A subset T, |A|=t} C(|S intersect A|,j)
+    = C(|S intersect T|,j) C(q-j,t-j).
+Hence these are natural candidates for the same dimensional accounting.
+No wider family or arbitrary tensor-network search is claimed.
+
+Of 464 parameter pairs, 435 have positive dimensional saving. The best
+candidate in this scan is the q=3,h=24 compressed-center witness above.
+The scan rankings use 70-digit Decimal arithmetic only to compare
+candidates; the winning certificate itself is checked by exact integers
+and rational inequalities. An independent audit obtained the same winner.
+There is no reason to keep repeating this exhausted finite search.
+
+7. WHAT HAS AND HAS NOT BEEN VERIFIED
+
+PASSED
+- Exact RG+JV=I for every ordered pair of the 2,024 triples.
+- Exact even-intersection neighbor count for every triple.
+- Formal eight-row identity for arbitrary dirty auxiliaries.
+- Signed bank exchange from the three stages.
+- Role, residual, padding, and pointwise arithmetic counts.
+- Exact rational exponent certificate.
+- Bounded parameter scan, independently cross-checked.
+
+MATHEMATICAL REDUCTION, NOT MACHINE-FORMALIZED HERE
+- Transfer of the paper's nested-label/nonalternating-residual lemma to h24.
+- Full tensor telescoping and arbitrary-role recursive interface.
+- Prefix indexing bound, recurrence, and all-length transfer.
+
+NOT RUN OR ESTABLISHED
+- No Lean build or new Lean theorem proof.
+- No materialization of the entire fixed network.
+- No implementation or timing of its full Fourier transform.
+- No coefficient conditioning or finite-precision error bound.
+- No literature-wide novelty claim.
+
+Reproduce with Python 3.12 and no third-party packages:
+  python3 check_certificate.py
+The machine-readable result is certificate_results.json. Assertions fail
+on an incorrect identity, count, or exponent inequality. To falsify the
+mathematical transfer, a counterexample must identify a failed residual
+inclusion, missing arbitrary-role identity, uncharged nonconstant work,
+or an invalid recurrence step; smaller scalar counts alone do not suffice.

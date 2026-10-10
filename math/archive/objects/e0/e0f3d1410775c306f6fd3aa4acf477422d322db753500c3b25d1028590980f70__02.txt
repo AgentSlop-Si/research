@@ -1,0 +1,245 @@
+   1 #!/usr/bin/env python3
+   2 """Independent Phase21 exact review controls. No uploaded code imported.
+   3 Polynomial and determinant primitives reused from our independent Phase20 audit.
+   4 """
+   5 import argparse,json,math,random,itertools
+   6 from pathlib import Path
+   7 def trim(q):
+   8     q=list(q)
+   9     while q and q[-1]==0:q.pop()
+  10     return q
+  11 
+  12 def pmul(a,b,p):
+  13     c=[0]*(len(a)+len(b)-1)
+  14     for i,x in enumerate(a):
+  15         for j,y in enumerate(b):c[i+j]=(c[i+j]+x*y)%p
+  16     return trim(c)
+  17 def padd(a,b,p):
+  18     c=[0]*max(len(a),len(b))
+  19     for i,v in enumerate(a):c[i]=v
+  20     for i,v in enumerate(b):c[i]=(c[i]+v)%p
+  21     return trim(c)
+  22 def peval(q,x,p):
+  23     v=0
+  24     for c in reversed(q):v=(v*x+c)%p
+  25     return v
+  26 
+  27 def premainder(a,b,p):
+  28     a=trim(a);b=trim(b);iv=pow(b[-1],-1,p)
+  29     while len(a)>=len(b):
+  30         q=a[-1]*iv%p;shift=len(a)-len(b)
+  31         for i,c in enumerate(b):a[shift+i]=(a[shift+i]-q*c)%p
+  32         a=trim(a)
+  33     return a
+  34 
+  35 def pgcd(a,b,p):
+  36     a,b=trim(a),trim(b)
+  37     while b:a,b=b,premainder(a,b,p)
+  38     return [v*pow(a[-1],-1,p)%p for v in a] if a else []
+  39 
+  40 def determinant(M,p):
+  41     A=[row[:] for row in M];value=1
+  42     for k in range(len(A)):
+  43         j=next((j for j in range(k,len(A)) if A[j][k]%p),None)
+  44         if j is None:return 0
+  45         if j!=k:A[k],A[j]=A[j],A[k];value=-value
+  46         pivot=A[k][k];value=value*pivot%p;iv=pow(pivot,-1,p)
+  47         for i in range(k+1,len(A)):
+  48             q=A[i][k]*iv%p
+  49             for j in range(k,len(A)):A[i][j]=(A[i][j]-q*A[k][j])%p
+  50     return value%p
+  51 
+  52 def dft(r,w,p,count=None):
+  53     n=len(r)
+  54     return [sum(v*pow(w,j*k%n,p) for j,v in enumerate(r))%p for k in range(n if count is None else count)]
+  55 def idft(R,w,p):return [v*pow(len(R),-1,p)%p for v in dft(R,pow(w,-1,p),p)]
+  56 def interp(xs,ys,p):
+  57     master=[1]
+  58     for x in xs:master=pmul(master,[-x%p,1],p)
+  59     out=[0]*len(xs)
+  60     for x,y in zip(xs,ys):
+  61         q=[0]*len(xs);q[-1]=master[-1]
+  62         for j in range(len(q)-2,-1,-1):q[j]=(master[j+1]+x*q[j+1])%p
+  63         assert (master[0]+x*q[0])%p==0
+  64         denominator=peval(q,x,p);assert denominator
+  65         factor=y*pow(denominator,-1,p)%p
+  66         for j,c in enumerate(q):out[j]=(out[j]+factor*c)%p
+  67     return trim(out)
+  68 
+  69 def pencil(T,w,e,s,p):
+  70     m=s+1;nodes=list(range(m+1));values=[]
+  71     for a in nodes:values.append(determinant([[T[e+i+j]*(1-a*pow(w,e+i+j,p))%p for j in range(m)] for i in range(m)],p))
+  72     return interp(nodes,values,p)
+  73 
+  74 def res(T,w,s,p):
+  75     m=s+1;P=pencil(T,w,0,s,p);Q=pencil(T,w,1,s,p)
+  76     P=(P+[0]*(m+1-len(P)))[::-1];Q=(Q+[0]*(m+1-len(Q)))[::-1]
+  77     A=[]
+  78     for f in [P,Q]:
+  79         for j in range(m):A.append([0]*j+f+[0]*(m-1-j))
+  80     return determinant(A,p)
+  81 
+  82 def compress(T,s,p):
+  83     b=s*(s+1)*(2*s+1)//6;v=s*(s+1)*(4*s+5)//6;q=(s+1)**2
+  84     xs=[];ws=[];vals=[];seen=set()
+  85     for w in range(2,p):
+  86         x=(w+pow(w,-1,p))%p
+  87         if x in seen:continue
+  88         seen.add(x);xs.append(x);ws.append(w)
+  89         val=res(T,w,s,p)*pow(pow(w,v+b,p)*pow(w-1,q,p)%p,-1,p)%p;vals.append(val)
+  90         if len(xs)==b+4:break
+  91     assert len(xs)==b+4
+  92     V=interp(xs[:b+1],vals[:b+1],p)
+  93     assert all(peval(V,x,p)==y for x,y in zip(xs[b+1:],vals[b+1:]))
+  94     U=[0]*(2*b+1)
+  95     for j,c in enumerate(V):
+  96         for k in range(j+1):U[b+j-2*k]=(U[b+j-2*k]+c*math.comb(j,k))%p
+  97     assert U==U[::-1]
+  98     return U
+  99 
+ 100 def factor_at_one(f,p):
+ 101     f=f[:];out=[0]*(len(f)-1)
+ 102     out[-1]=f[-1]
+ 103     for j in range(len(out)-2,-1,-1):out[j]=(f[j+1]+out[j+1])%p
+ 104     assert (f[0]+out[0])%p==0
+ 105     return trim(out)
+ 106 
+ 107 def algebra_tests():
+ 108     rng=random.Random(21010);out=[]
+ 109     for p,orders in [(65537,range(1,7)),(12289,range(1,5))]:
+ 110         for s in orders:
+ 111             T=[rng.randrange(1,p) for _ in range(4*s)];D=(s+1)**2*(2*s+1)
+ 112             f=interp(list(range(D+1)),[res(T,w,s,p) for w in range(D+1)],p)
+ 113             v=s*(s+1)*(4*s+5)//6;q=(s+1)**2;b=s*(s+1)*(2*s+1)//6
+ 114             grade=f+[0]*(D+1-len(f));sign=(-1)**q
+ 115             assert all(grade[j]==sign*grade[D-j]%p for j in range(D+1))
+ 116             assert not any(f[:v]);U=f[v:]
+ 117             for _ in range(q):U=factor_at_one(U,p)
+ 118             U+= [0]*(2*b+1-len(U));assert U==U[::-1] and U==compress(T,s,p)
+ 119             for w in [D+1,D+2,D+13,p-1]:assert res(T,w,s,p)==pow(w,v,p)*pow(w-1,q,p)*peval(U,w,p)%p
+ 120             out.append({'s':s,'field':p,'grade_D':D,'v':v,'one_factor':q,'b':b,'resultant_degree':len(f)-1,'compressed_degree':len(trim(U))-1,'core_samples':b+1,'witness_samples':3})
+ 121     degenerates=0
+ 122     for s in [1,2,4,8]:
+ 123         for T in [[0]*(4*s),[1]*(4*s)]:assert not any(compress(T,s,65537));degenerates+=1
+ 124     for s in range(1,65):
+ 125         D=(s+1)**2*(2*s+1);v=s*(s+1)*(4*s+5)//6;b=s*(s+1)*(2*s+1)//6
+ 126         assert D-sum(max(2*i,2*j+1) for i in range(s+1) for j in range(s+1))==v
+ 127         assert D-2*v-(s+1)**2==2*b
+ 128     return {'full_reconstructions':out,'degenerate_compressions':degenerates,'symbolic_integer_identity_orders':64}
+ 129 
+ 130 def solve(A,b,p):
+ 131     n=len(b);M=[row[:]+[v] for row,v in zip(A,b)]
+ 132     for j in range(n):
+ 133         z=next((z for z in range(j,n) if M[z][j]%p),None)
+ 134         if z is None:return None
+ 135         M[z],M[j]=M[j],M[z];iv=pow(M[j][j],-1,p);M[j]=[x*iv%p for x in M[j]]
+ 136         for i in range(n):
+ 137             if i!=j:
+ 138                 q=M[i][j];M[i]=[(x-q*y)%p for x,y in zip(M[i],M[j])]
+ 139     return [row[-1] for row in M]
+ 140 
+ 141 def prony(Y,s,powers,p):
+ 142     for d in range(1,s+1):
+ 143         c=solve([[Y[i+j] for j in range(d)] for i in range(d)],[-Y[i+d]%p for i in range(d)],p)
+ 144         if c is None:continue
+ 145         c+=[1]
+ 146         if any(sum(c[j]*Y[i+j] for j in range(d+1))%p for i in range(len(Y)-d)):continue
+ 147         exps=[e for e,z in enumerate(powers) if peval(c,z,p)==0]
+ 148         if len(exps)!=d:continue
+ 149         a=solve([[pow(powers[e],k,p) for e in exps] for k in range(d)],Y[:d],p)
+ 150         if a is None:continue
+ 151         A={e:v for e,v in zip(exps,a) if v}
+ 152         if all(sum(v*pow(powers[e],k,p) for e,v in A.items())%p==y for k,y in enumerate(Y)):return A
+ 153     return None
+ 154 
+ 155 def gate(r,w,p,s):
+ 156     n=len(r);R=dft(r,w,p,4*s);meta={'full_checks':0,'candidate_roots':0}
+ 157     if not all(R):return None,{**meta,'reason':'zero-probe'}
+ 158     T=[pow(x,-1,p) for x in R];U=compress(T,s,p)
+ 159     if not any(U):return None,{**meta,'reason':'zero-resultant'}
+ 160     powers=[pow(w,k,p) for k in range(n)];roots=[d for d in range(1,n) if peval(U,powers[d],p)==0]
+ 161     assert len(roots)<=s*(s+1)*(2*s+1)//3;meta['candidate_roots']=len(roots)
+ 162     for delta in roots:
+ 163         z=powers[delta];g=pgcd(pencil(T,z,0,s,p),pencil(T,z,1,s,p),p)
+ 164         if len(g)!=2:continue
+ 165         alpha=-g[0]%p
+ 166         if not alpha:continue
+ 167         Y=[T[k]*(1-alpha*pow(z,k,p))%p for k in range(4*s)];A=prony(Y,s,powers,p)
+ 168         if not A:continue
+ 169         Ahat=[sum(v*pow(z,e,p) for e,v in A.items())%p for z in powers]
+ 170         if not all(Ahat):continue
+ 171         meta['full_checks']+=1
+ 172         rhs=[(int(j==0)-alpha*int(j==delta))%p for j in range(n)]
+ 173         lhs=[sum(v*r[(j-e)%n] for e,v in A.items())%p for j in range(n)]
+ 174         if lhs!=rhs:return None,{**meta,'reason':'full-certificate-failed'}
+ 175         out=[(1-alpha*pow(w,k*delta,p))*pow(Ahat[k],-1,p)%p for k in range(n)]
+ 176         assert out==dft(r,w,p)
+ 177         return (A,delta,alpha,out),{**meta,'reason':'accepted'}
+ 178     return None,{**meta,'reason':'no-candidate'}
+ 179 
+ 180 def prime(x):return x>=2 and all(x%d for d in range(2,math.isqrt(x)+1))
+ 181 def field(n):
+ 182     k=100
+ 183     while not prime(n*k+1):k+=1
+ 184     p=n*k+1;fac=[d for d in range(2,n+1) if n%d==0 and prime(d)]
+ 185     for a in range(2,p):
+ 186         w=pow(a,k,p)
+ 187         if all(pow(w,n//d,p)!=1 for d in fac):return p,w
+ 188 
+ 189 def sparse_eval(A,w,n,p):return [sum(a*pow(w,k*e,p) for e,a in A.items())%p for k in range(n)]
+ 190 def sparse_product(A,B,n,p):
+ 191     R={}
+ 192     for i,a in A.items():
+ 193         for j,b in B.items():R[(i+j)%n]=(R.get((i+j)%n,0)+a*b)%p
+ 194     return {i:v for i,v in R.items() if v}
+ 195 
+ 196 def application_tests():
+ 197     rng=random.Random(781121);out=[];adversaries=[]
+ 198     for n,t,reps in [(30,2,3),(32,1,2),(32,2,3),(64,2,3),(128,2,2),(64,3,1)]:
+ 199         p,w=field(n);s=2**t
+ 200         for rep in range(reps):
+ 201             while True:
+ 202                 Q={0:1};ds=rng.sample(range(1,n),t);aa=[rng.randrange(2,p) for _ in range(t)]
+ 203                 for d,a in zip(ds,aa):Q=sparse_product(Q,{0:1,d:-a%p},n,p)
+ 204                 Qhat=sparse_eval(Q,w,n,p)
+ 205                 if all(Qhat):break
+ 206             u,v=rng.sample(range(n),2);H={u:7,v:11};Hhat=sparse_eval(H,w,n,p)
+ 207             R=[a*pow(b,-1,p)%p for a,b in zip(Hhat,Qhat)];r=idft(R,w,p)
+ 208             found,meta=gate(r,w,p,s)
+ 209             if found:
+ 210                 assert found[-1]==R
+ 211                 if n>4*s:
+ 212                     k=4*s;corrupt=[(r[j]+pow(w,-k*j%(n),p))%p for j in range(n)]
+ 213                     assert dft(corrupt,w,p,4*s)==dft(r,w,p,4*s)
+ 214                     f,m=gate(corrupt,w,p,s);assert f is None and m['reason']=='full-certificate-failed';adversaries.append({'N':n,'s':s,'full_checks':m['full_checks']})
+ 215             out.append({'N':n,'field':p,'s':s,'actual_Q_terms':len(Q),'meta':meta})
+ 216     # Exact Phase20 counterexample is declined here because its second Fourier probe is zero.
+ 217     r=[1,50,64,96,22,33,50,75];f,m=gate(r,64,97,2);assert f is None and m["reason"]=="zero-probe"
+ 218     out.append({'N':8,'field':97,'s':2,'inherited_guard_counterexample_new_path':m})
+ 219     # Probe zero and identically-zero-resultant exclusions.
+ 220     p,w=field(32);f,z=gate([0]*32,w,p,4);assert f is None and z['reason']=='zero-probe'
+ 221     negatives=[]
+ 222     for n in [16,32,64]:
+ 223         p,w=field(n)
+ 224         for _ in range(3):
+ 225             r=[rng.randrange(p) for _ in range(n)];f,m=gate(r,w,p,2)
+ 226             assert f is None or f[-1]==dft(r,w,p);negatives.append(m['reason'])
+ 227     return {'structured':out,'probe_preserving_adversaries':adversaries,'generic_controls':negatives,'zero_vector_reason':z['reason']}
+ 228 
+ 229 def inherited_solver_control():
+ 230     p=1201;n=8;w=(-7)%p;g=29
+ 231     assert pow(g,150,p)==w and all(pow(g,1200//q,p)!=1 for q in [2,3,5])
+ 232     assert prime(p) and pow(w,n,p)==1 and all(pow(w,k,p)!=1 for k in range(1,n)) and (p-1)%(2*n)==0
+ 233     L=[[(7+pow(w,i,p))*int(i==j)+2*int(j==(i-1)%n) for j in range(n)] for i in range(n)]
+ 234     P=[[(7+2*pow(w,-i%n,p))*int(i==j)+int(j==(i-1)%n) for j in range(n)] for i in range(n)]
+ 235     assert L[1][1]%p==0 and determinant(L,p)==945 and determinant(P,p)!=0
+ 236     x=[1]+[0]*(n-1);r=[sum(a*b for a,b in zip(row,x))%p for row in P];R=dft(r,w,p)
+ 237     y=solve(L,R,p);assert y==dft(x,w,p)
+ 238     return {'N':n,'field':p,'omega':w,'primitive_generator':g,'L_zero_diagonal_index':1,'L_determinant':945,'P_determinant':determinant(P,p),'roots_for_Bluestein_exist':True,'mathematical_Green_identity_pass':True,'source_CyclicSolver_requires_inverse_of_zero':True}
+ 239 
+ 240 def main():
+ 241     ap=argparse.ArgumentParser();ap.add_argument('--output',default='INDEPENDENT_RESULTS.json');args=ap.parse_args()
+ 242     r={'status':'PASS','uploaded_code_executed':False,'algebra':algebra_tests(),'applications':application_tests(),'inherited_solver_control':inherited_solver_control()}
+ 243     Path(args.output).write_text(json.dumps(r,indent=2,sort_keys=True)+'\n')
+ 244     print('PASS Phase21 independent controls',len(r['algebra']['full_reconstructions']),'full resultant reconstructions',len(r['applications']['structured']),'structured cases',len(r['applications']['probe_preserving_adversaries']),'adversaries')
+ 245 if __name__=='__main__':main()

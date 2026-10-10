@@ -1,0 +1,61 @@
+0001 import unittest, math
+0002 import numpy as np
+0003 
+0004 from sparse_surrogate import (
+0005     accuracy_tradeoff, make_head_tail_plan, plan_head_tail,
+0006     sparsify_head_tail, approximate_dft_all_head_tail,
+0007     sparse_surrogate_linf_lower_bound, flat_natural_scale_support_lower_bound,
+0008     best_k_term_l2_tail,
+0009 )
+0010 
+0011 class SparseSurrogateV2Tests(unittest.TestCase):
+0012     def test_vanishing_accuracy_tradeoff(self):
+0013         n=2**20; delta=n**-2
+0014         eps=1/math.sqrt(math.log(n))
+0015         p=accuracy_tradeoff(n,eps,delta)
+0016         self.assertLess(p.samples,n)
+0017         self.assertLess(p.depth_ratio,1.0)
+0018 
+0019     def test_head_tail_plan_beats_plain_on_compressible_input(self):
+0020         n=4096
+0021         x=(1.0/(np.arange(n)+1.0)**1.2).astype(np.complex128)
+0022         eps=.20; delta=.05
+0023         base=make_head_tail_plan(x,eps,delta,0)
+0024         best=plan_head_tail(x,eps,delta,max_head=128)
+0025         self.assertLess(best.support_upper_bound,base.support_upper_bound)
+0026         self.assertGreaterEqual(best.head_size,1)
+0027 
+0028     def test_head_tail_guarantee_typical(self):
+0029         n=4096
+0030         rng=np.random.default_rng(123)
+0031         phases=np.exp(2j*np.pi*rng.random(n))
+0032         x=phases/(np.arange(n)+1.0)**1.1
+0033         eps=.22; delta=.05
+0034         plan=plan_head_tail(x,eps,delta,max_head=128)
+0035         out,_=approximate_dft_all_head_tail(x,eps,delta,plan=plan,rng=np.random.default_rng(7),return_plan=True)
+0036         ref=np.fft.fft(x,norm='ortho')
+0037         target=eps*np.linalg.norm(x,1)/math.sqrt(n)
+0038         self.assertLessEqual(np.max(np.abs(out-ref)),target)
+0039 
+0040     def test_best_k_term_tail_flat(self):
+0041         n=128; x=np.ones(n,dtype=np.complex128)
+0042         k=36
+0043         self.assertAlmostEqual(best_k_term_l2_tail(x,k),math.sqrt(n-k),places=10)
+0044         self.assertAlmostEqual(sparse_surrogate_linf_lower_bound(x,k),math.sqrt((n-k)/n),places=10)
+0045 
+0046     def test_natural_scale_requires_linear_support(self):
+0047         n=10000
+0048         self.assertEqual(flat_natural_scale_support_lower_bound(n,.5),7500)
+0049         self.assertEqual(flat_natural_scale_support_lower_bound(n,0),n)
+0050 
+0051     def test_head_only_when_tail_deterministically_small(self):
+0052         n=1024; x=np.zeros(n,dtype=np.complex128)
+0053         x[0]=10
+0054         x[1:]=1e-5
+0055         p=make_head_tail_plan(x,.01,.05,1)
+0056         self.assertEqual(p.requested_samples,0)
+0057         self.assertEqual(p.method,'head-only')
+0058         sparse,_=sparsify_head_tail(x,.01,.05,plan=p,rng=np.random.default_rng(1))
+0059         self.assertEqual(set(sparse),{0})
+0060 
+0061 if __name__=='__main__': unittest.main()

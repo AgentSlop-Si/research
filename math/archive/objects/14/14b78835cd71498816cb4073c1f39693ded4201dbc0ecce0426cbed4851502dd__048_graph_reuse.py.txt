@@ -1,0 +1,338 @@
+"""Offline Fourier reuse via a minimum spanning forest with fresh-FFT roots.
+
+The optimality theorem is ONLY for supplied undirected edges, fixed additive
+weights, one-parent computations, and retained outputs. It is not a claim of
+minimum runtime over all FFT algorithms or all possible algebraic circuits.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import isfinite, log2
+from statistics import median
+from time import perf_counter_ns
+from types import MappingProxyType
+
+import numpy as np
+from scipy import fft
+
+from support_graph import (normalize_changes, direct_update, validate_n,
+                           coset_parameters, quotient_update)
+
+
+class RelationBatch:
+    """Versions x_v=base+patch_v; patch metadata is authoritative input.
+
+    No FFT is computed by this constructor. Metadata copying/validation is
+    linear in its size. Candidate relation discovery is charged separately.
+    """
+    def __init__(self, base, patches, *, cached_spectrum=None):
+        a = np.asarray(base)
+        if a.ndim != 1 or not a.size or np.iscomplexobj(a):
+            raise ValueError("need a nonempty real 1D base")
+        self.n = validate_n(a.size)
+        self.base = np.array(a, dtype=np.float64, copy=True)
+        if not np.isfinite(self.base).all():
+            raise ValueError("nonfinite base")
+        self.base.flags.writeable = False
+        self.patches = tuple(MappingProxyType(normalize_changes(self.n, p)) for p in patches)
+        if not self.patches:
+            raise ValueError("need at least one version")
+        self.cached_spectrum = None
+        if cached_spectrum is not None:
+            z = np.asarray(cached_spectrum, dtype=np.complex128)
+            if z.shape != (self.n//2+1,) or not np.isfinite(z).all():
+                raise ValueError("invalid supplied base spectrum")
+            # The producer certifies that this is the spectrum of base.
+            self.cached_spectrum = z.copy()
+            self.cached_spectrum.flags.writeable = False
+
+    def __len__(self):
+        return len(self.patches)
+
+    def signal(self, v):
+        out = self.base.copy()
+        for p, value in self.patches[v].items():
+            out[p] += value
+        return out
+
+    def difference(self, u, v):
+        out = dict(self.patches[v])
+        for p, value in self.patches[u].items():
+            d = out.get(p, 0.0) - value
+            if not isfinite(d):
+                raise ValueError("difference overflows float64")
+            if d == 0.0:
+                out.pop(p, None)
+            else:
+                out[p] = d
+        return out
+
+
+@dataclass(frozen=True)
+class KernelCosts:
+    copy_ns: float
+    point_extra_ns: float
+    fresh_ns: float
+    quotient_lift_ns: float | None = None
+
+    def __post_init__(self):
+        if any(not isfinite(v) or v < 0 for v in (self.copy_ns, self.point_extra_ns, self.fresh_ns)):
+            raise ValueError("costs must be finite and nonnegative")
+        if self.quotient_lift_ns is not None and (not isfinite(self.quotient_lift_ns) or self.quotient_lift_ns < 0):
+            raise ValueError("invalid quotient cost")
+
+    def delta_cost(self, k):
+        return self.copy_ns + k * self.point_extra_ns
+
+    def estimate(self, n, delta):
+        direct = self.delta_cost(len(delta))
+        if self.quotient_lift_ns is None or len(delta) <= 1:
+            return direct, "direct"
+        g, _, length = coset_parameters(n, delta)
+        if g == 1:
+            return direct, "direct"
+        # Cost-model estimate, not an exact wall-time or arithmetic identity.
+        quotient = self.quotient_lift_ns + self.fresh_ns * (length * log2(max(2, length))) / (n * log2(max(2, n)))
+        return (quotient, "quotient") if quotient < direct else (direct, "direct")
+
+
+def calibrate(base, repeats=3):
+    """Small measured cost model. Callers must charge or amortize this work.
+
+    Linear extrapolation in k is a heuristic. FFT cost excludes variable-size
+    patch application; weights are estimates, not exact runtime promises.
+    """
+    if repeats < 1:
+        raise ValueError("repeats must be positive")
+    base = np.asarray(base, dtype=np.float64)
+    spectrum = fft.rfft(base)
+
+    def timing(fn):
+        ts = []
+        for _ in range(repeats):
+            t = perf_counter_ns()
+            fn()
+            ts.append(perf_counter_ns() - t)
+        return median(ts)
+
+    copy_ns = timing(lambda: spectrum.copy())
+    point_ns = timing(lambda: direct_update(spectrum, base.size, {base.size // 7: 1.25}))
+    fresh_ns = timing(lambda: fft.rfft(base.copy()))
+    lift_ns = timing(lambda: quotient_update(spectrum, base.size, {base.size // 7: 1.25}))
+    return KernelCosts(float(copy_ns), float(max(1, point_ns - copy_ns)), float(fresh_ns), float(lift_ns))
+
+
+@dataclass(frozen=True)
+class Edge:
+    u: int
+    v: int
+    cost: float
+    changes: tuple[tuple[int, float], ...] = ()
+    kernel: str = "direct"
+
+
+@dataclass(frozen=True)
+class Step:
+    parent: int
+    vertex: int
+    cost: float
+    changes: tuple[tuple[int, float], ...]
+    depth: int
+    kernel: str = "direct"
+
+
+@dataclass(frozen=True)
+class Plan:
+    steps: tuple[Step, ...]
+    chosen_edges: tuple[Edge, ...]
+    estimated_cost: float
+    candidate_edges: int
+
+    @property
+    def fresh_transforms(self):
+        return sum(s.parent == -1 and s.kernel != "cached" for s in self.steps)
+
+    @property
+    def corrected_coordinates(self):
+        return sum(len(s.changes) for s in self.steps)
+
+    @property
+    def max_depth(self):
+        return max(s.depth for s in self.steps)
+
+
+def build_edges(batch: RelationBatch, costs: KernelCosts, candidates=None):
+    """None means all pairs, O(M^2*K) metadata work and potentially storage.
+
+    A producer-supplied sparse list of version pairs avoids this search.
+    Differences are checked from the authoritative patches, not guessed.
+    Vertex -1 is the virtual fresh-transform source.
+    """
+    m = len(batch)
+    edges = []
+    for v in range(m):
+        cached = batch.cached_spectrum is not None and not batch.patches[v]
+        edges.append(Edge(-1, v, costs.copy_ns if cached else costs.fresh_ns,
+                          kernel="cached" if cached else "fresh"))
+    if candidates is None:
+        candidates = ((u, v) for u in range(m) for v in range(u + 1, m))
+    seen = set()
+    for u, v in candidates:
+        if (not isinstance(u, (int, np.integer)) or not isinstance(v, (int, np.integer))
+                or not 0 <= u < m or not 0 <= v < m or u == v):
+            raise ValueError("invalid candidate edge")
+        u, v = sorted((int(u), int(v)))
+        if (u, v) in seen:
+            continue
+        seen.add((u, v))
+        delta = batch.difference(u, v)
+        weight, kernel = costs.estimate(batch.n, delta)
+        edges.append(Edge(u, v, weight, tuple(sorted(delta.items())), kernel))
+    return edges
+
+
+def minimum_spanning_plan(vertices: int, edges: list[Edge]) -> Plan:
+    """Kruskal on versions plus virtual fresh source, then root/orient it."""
+    if vertices < 1:
+        raise ValueError("need vertices")
+    parent = list(range(vertices + 1))
+
+    def find(x):
+        x = vertices if x == -1 else x
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for e in edges:
+        if (not -1 <= e.u < vertices or not -1 <= e.v < vertices or e.u == e.v
+                or not isfinite(e.cost) or e.cost < 0):
+            raise ValueError("invalid edge or weight")
+    chosen = []
+    for e in sorted(edges, key=lambda e: (e.cost, e.u, e.v)):
+        a, b = find(e.u), find(e.v)
+        if a == b:
+            continue
+        parent[a] = b
+        chosen.append(e)
+        if len(chosen) == vertices:
+            break
+    if len(chosen) != vertices:
+        raise ValueError("graph is not connected to a fresh-transform source")
+    adjacency = {v: [] for v in range(-1, vertices)}
+    for e in chosen:
+        adjacency[e.u].append((e.v, e))
+        adjacency[e.v].append((e.u, e))
+    todo = [(-1, -2, -1)]
+    steps = []
+    while todo:
+        u, previous, depth = todo.pop()
+        for v, e in sorted(adjacency[u], key=lambda item: item[0], reverse=True):
+            if v == previous:
+                continue
+            changes = e.changes if e.u == u else tuple((p, -d) for p, d in e.changes)
+            steps.append(Step(u, v, e.cost, changes, depth + 1, e.kernel))
+            todo.append((v, u, depth + 1))
+    # Every parent's step is emitted before its descendants even with siblings.
+    return Plan(tuple(steps), tuple(chosen), sum(e.cost for e in chosen), len(edges))
+
+
+def verify_minimum_spanning_plan(vertices, edges, plan):
+    """Independent cycle-property certificate; deliberately outside hot path."""
+    chosen = plan.chosen_edges
+    if len(chosen) != vertices or any(e not in edges for e in chosen):
+        return False
+    adj = {v: [] for v in range(-1, vertices)}
+    for e in chosen:
+        adj[e.u].append((e.v, e.cost))
+        adj[e.v].append((e.u, e.cost))
+
+    def path_max(source, target):
+        seen = set()
+        todo = [(source, 0.0)]
+        while todo:
+            v, maximum = todo.pop()
+            if v == target:
+                return maximum
+            if v in seen:
+                continue
+            seen.add(v)
+            for w, cost in adj[v]:
+                if w not in seen:
+                    todo.append((w, max(maximum, cost)))
+        return None
+
+    if any(path_max(-1, v) is None for v in range(vertices)):
+        return False
+    for e in edges:
+        maximum = path_max(e.u, e.v)
+        if maximum > e.cost + 1e-12 * max(1, abs(e.cost)):
+            return False
+    return True
+
+
+def execute_plan(batch: RelationBatch, plan: Plan, *, max_reuse_depth=None):
+    """Retain every requested dense rFFT in an M by (N//2+1) array.
+
+    Optional rebasing limits floating-point drift; it may add work beyond the
+    minimum spanning tree. Output memory is M*(N//2+1)*16 bytes.
+    """
+    if max_reuse_depth is not None and max_reuse_depth < 1:
+        raise ValueError("max_reuse_depth must be positive")
+    output = np.empty((len(batch), batch.n // 2 + 1), dtype=np.complex128)
+    ready = set()
+    depths = {}
+    fresh = 0
+    kernels = {"direct": 0, "quotient": 0}
+    for step in plan.steps:
+        v, p = step.vertex, step.parent
+        if v in ready or not 0 <= v < len(batch) or p != -1 and p not in ready:
+            raise ValueError("invalid execution order")
+        depth = 0 if p == -1 else depths[p] + 1
+        rebase = max_reuse_depth is not None and depth > max_reuse_depth
+        if p == -1 or rebase:
+            if p == -1 and step.kernel == "cached":
+                if batch.cached_spectrum is None or batch.patches[v]:
+                    raise ValueError("cached root is not available")
+                output[v] = batch.cached_spectrum
+            else:
+                output[v] = fft.rfft(batch.signal(v))
+                fresh += 1
+            depth = 0
+        else:
+            if step.kernel not in kernels:
+                raise ValueError("unknown correction kernel")
+            update = direct_update if step.kernel == "direct" else quotient_update
+            update(output[p], batch.n, dict(step.changes), out=output[v])
+            kernels[step.kernel] += 1
+        depths[v] = depth
+        ready.add(v)
+    if len(ready) != len(batch):
+        raise ValueError("plan omits a version")
+    return output, {"fresh_transforms": fresh, "max_reuse_depth": max(depths.values()),
+                    "output_bytes": output.nbytes, "correction_kernels": kernels}
+
+
+def run_graph(base, patches, candidates=None, *, costs=None, max_reuse_depth=None,
+              cached_spectrum=None):
+    """All construction, optional calibration, planning and execution included."""
+    start = perf_counter_ns()
+    batch = RelationBatch(base, patches, cached_spectrum=cached_spectrum)
+    ingested = perf_counter_ns()
+    if costs is None:
+        costs = calibrate(batch.base)
+    calibrated = perf_counter_ns()
+    edges = build_edges(batch, costs, candidates)
+    plan = minimum_spanning_plan(len(batch), edges)
+    planned = perf_counter_ns()
+    out, execution = execute_plan(batch, plan, max_reuse_depth=max_reuse_depth)
+    finished = perf_counter_ns()
+    stats = dict(execution, metadata_ms=(ingested-start)/1e6,
+                 calibration_ms=(calibrated-ingested)/1e6,
+                 planning_ms=(planned-calibrated)/1e6,
+                 execution_ms=(finished-planned)/1e6,
+                 total_ms=(finished-start)/1e6,
+                 candidate_edges=len(edges),
+                 corrected_coordinates=plan.corrected_coordinates,
+                 estimated_cost_ns=plan.estimated_cost)
+    return out, plan, stats

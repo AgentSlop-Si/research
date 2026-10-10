@@ -1,0 +1,243 @@
+# Audit of the bidirectional macro-stage FFT package
+
+Date: 9 October 2026
+
+## Verdict
+
+The principal restricted-model mathematics is correct. The dyadic three-character lemma is sound; the minimum attainable endpoint quasiseparable order of F8 is exactly 3; and an explicitly evaluated, one-stage, independent-channel implementation of a complete B-point DFT requires Ω(B²) scan-position visits. These conclusions survive adding ordinary scalar feedthrough and output gains to the independent forward/backward scans.
+
+They do not provide a sub-N log N Fourier algorithm or a logarithmic depth lower bound for arbitrarily interleaved, nonunitary global feedthrough stages. The ordinary mixed-radix control remains Θ(N log N).
+
+There are two important distinctions:
+
+1. RESEARCH.md line 4 is false literally: it says F8 has exact quasiseparable order 3 “under every pair of endpoint permutations.” Natural endpoint order has order 4. The correct statement is that every pair has order **at least** 3, and the minimum over pairs is 3.
+2. The package proves an endpoint rank optimum, but does not supply the three-independent-channel realization asserted in NEXT_GATE.md line 7. This is a missing implication rather than a false final conclusion: this audit independently constructed and exactly verified such a realization, even in the narrower raw-scan syntax. The necessary rank lower bound and the new realization together establish a minimum of three channels in each direction after optimizing endpoints.
+
+All 15 supplied files were read as text. No uploaded Python file was executed, imported, or invoked through its packaging/tests. The independent checks and new certificate are in `bidirectional_independent/` beside this report.
+
+## 1. Three-character lemma: accepted
+
+Let N=2^m, and let p have at most three nonzero coefficients at distinct residues modulo N. The claimed bound is
+
+    number of roots of p among the Nth roots of unity <= N/2.
+
+The induction is correct:
+
+- If both exponent parities occur, one parity group has exactly one nonzero term. Writing p(z)=E(z²)+zO(z²), simultaneous vanishing at z and -z would force both E(z²) and O(z²) to vanish. The singleton monomial cannot vanish at a nonzero root. Thus each opposite-root pair contributes at most one zero.
+- If all exponents share parity, divide off z^epsilon and replace z² by a new variable. Distinct exponents remain distinct modulo N/2, because division by two is injective on a fixed parity class modulo N. The polynomial therefore remains nonzero with at most three terms. Every smaller root lifts to two larger roots, so induction gives N/2 zeros at most.
+- The N=2 base case is invertibility of its two-character evaluation matrix.
+
+No bounded-coefficient, norm, numerical, or conditioning assumption is used. The same argument works in a field of odd characteristic with a primitive Nth root. In particular, this is stronger than a floating-point observation or a fact specific to the two test primes.
+
+For any three distinct row indices and any set of more than N/2 column indices, the corresponding dyadic Fourier rectangle has row rank 3. At N=8 this yields the full rank of every 3×5 rectangle, and transposition yields every 5×3 rectangle.
+
+This is a valid useful special case of Fourier uncertainty. Neither this audit nor the package establishes literature priority.
+
+## 2. F8 endpoint rank: exact result and wording correction
+
+For an endpoint-permuted F8 and a cut after coordinate 3, both cross rectangles have rank 3 by the lemma. Hence every endpoint ordering has maximum cross rank at least 3.
+
+The parity ordering
+
+    rows = columns = (0,2,4,6,1,3,5,7)
+
+has upper and lower rank profiles
+
+    1, 2, 3, 2, 3, 2, 1.
+
+Only the balanced cut could have exceeded 3. At that cut, an entry with even row 2a and odd column 2b+1 is i^a (-1)^(ab). There are two distinct column directions and two independent row directions, so that block has rank exactly 2. The other direction is its transpose. This proves the complex upper bound exactly.
+
+By contrast, natural endpoint order has profile
+
+    1, 2, 3, 4, 3, 2, 1.
+
+Its upper balanced block uses rows 0,1,2,3 and columns 4,5,6,7. It is a square Vandermonde matrix on four distinct eighth roots, so has rank 4 over any field with a primitive eighth root. Thus RESEARCH.md line 4 needs correction, independently of any computation.
+
+The detailed statements in RESEARCH.md lines 41–47 and the DP's minimax interpretation are correct. The DP retains a best prefix path for each pair of equally sized row/column subsets. All future cut costs depend only on those subsets, so the recurrence does represent all independent endpoint permutations. Its state count is
+
+    sum_{s=1}^8 binomial(8,s)^2 = binomial(16,8)-1 = 12,869.
+
+This count includes the final full/full state and omits the initial empty/empty state. It is not a multi-stage factorization search.
+
+One minor wording repair: RESEARCH.md line 28 says the cross cut chooses “equal-cardinality subsets.” A cross rectangle has sizes s and B-s; the two *prefix* subsets have equal size s. Only a balanced cross rectangle has equal row and column sizes.
+
+## 3. Channel realizability: missing proof repaired independently
+
+A quasiseparable rank bound is a necessary condition for independent scalar scan channels. It should not silently be treated as a sufficient raw realization, particularly at zero propagation/output-generator boundaries. The supplied source implements F4, not an F8 three-channel stage. Its parity-order rank witness is not itself a list of scan coefficients.
+
+The explicit overclaim is NEXT_GATE.md line 7:
+
+    “For eight points, the exact minimum number of independent channels per direction is three across all endpoint orderings.”
+
+Read as a minimum over endpoint orderings, the conclusion can be repaired as follows. This audit uses the DP endpoint orders
+
+    rows    = (0,1,2,4,3,5,6,7)
+    columns = (0,1,4,5,2,3,6,7).
+
+For the resulting matrix M over K=Q[z]/(z^4+1), independent exact linear algebra constructs 8×3 generators U,V,P,Q with
+
+    M_ij = sum_k U_ik V_jk,  i>j,
+    M_ij = sum_k P_ik Q_jk,  i<j.
+
+A fixed invertible 3×3 change of generator basis makes every U_ik and P_ik nonzero. The following raw coefficients are then legitimate:
+
+    forward_a[k,i] = U_ik / U_(i-1),k,     i>=1,
+    forward_b[k,i] = U_ik V_ik,
+    backward_a[k,i] = P_ik / P_(i+1),k,   i<=6,
+    backward_b[k,i] = P_ik Q_ik,
+    d_i = M_ii - sum_k(forward_b[k,i] + backward_b[k,i]).
+
+Boundary propagation coefficients are zero. Each forward state is updated and emitted without an output coefficient, and each backward state is analogous. Summing the six emitted states and d_i x_i gives Mx. This is exactly the package's raw independent-scan model, not merely a broader state-space representation.
+
+Artifacts:
+
+- `bidirectional_independent/channel_certificate.py`: independently written exact construction; imports no uploaded source.
+- `bidirectional_independent/channel_certificate.json`: all 104 raw scalar coefficients, endpoint permutations, field specification, and exact verification count.
+- `bidirectional_independent/verify_exported_certificate.py`: separate direct verification of the saved coefficient file, with no access to the construction procedure.
+
+The saved-coefficient verifier passed all 64 matrix entries in Q(zeta_8). This is a characteristic-zero identity, not just a finite-field test. Combining it with the three-character lower bound gives an exact minimum of three forward and three backward channels after optimizing endpoint orders. It does not mean every endpoint ordering admits three; natural order already requires four by its balanced rank.
+
+This is a constant-size realization/repair. It changes neither the macro-block asymptotic cost nor the unresolved global product question.
+
+## 4. Blockwise Ω(B²) work: accepted with its explicit pass-cost hypothesis
+
+For a complex Fourier rectangle A=F_B[R,C],
+
+    ||A||_F² = |R||C|,
+    ||A||_2² <= B,
+    ||A||_F² <= rank(A) ||A||_2².
+
+Therefore rank(A) >= ceil(|R||C|/B). Apply this to both balanced cross blocks after arbitrary independent endpoint permutations. Nonsingular diagonal scalings preserve rank, so the same lower bound applies to scaled targets by first removing those scalings.
+
+If B is divisible by four, each direction needs at least B/4 scalar channels. With each channel evaluated as a separate full B-position pass, this forces Ω(B²) position visits per complete block. For other B>=2, the balanced floor/ceiling cut yields the analogous linear channel bound. F2 is covered directly as a constant-size case.
+
+If stage i consists of N/B_i complete B_i-point blocks and product_i B_i=N, then its scan work is Ω(NB_i), so total work is Ω(N sum_i B_i). For dyadic B_i>=2, B_i>=2 log_2 B_i, hence Ω(N log N). Analogous constant-factor inequalities work for general integer radices. The factor 2 is specifically the dyadic inequality and need not be asserted at radix 3.
+
+The explicit-pass assumption is doing real work. Algebraic channel rank does not by itself lower-bound the running time of every conceivable implementation of a rank-r operator. This argument does not cover:
+
+- shared computation between channels;
+- skipping inactive segments without charging full passes;
+- vector state transitions with their own structured implementation;
+- a product of overlapping global stages whose intermediate results are not complete DFT blocks;
+- arbitrary intermediate shuffles and cancellations treated as a single fictitious radix block;
+- nonlinear or different circuit primitives.
+
+The package makes this scope restriction plainly in RESEARCH.md line 95. Preserve it. Its conclusion is an architecture-specific rejection of growing-radix one-stage macros, not a Fourier arithmetic lower bound.
+
+The proof above is over C because it uses the Fourier operator norm. Unlike the three-character induction, it is not automatically a theorem over arbitrary finite fields. The package correctly states the complex hypothesis.
+
+## 5. What survives the current feedthrough model
+
+For a scalar causal scan
+
+    h_i = a_i h_(i-1) + b_i x_i,
+    y_i = c_i h_i + d_i x_i,
+
+all dependence of future outputs on a strict input prefix crosses the cut through the one-dimensional state. Thus the strict lower cross rank is at most one, including zero coefficients and resets. Local output gains and diagonal feedthrough do not create another state channel. The symmetric statement holds for a backward scan.
+
+Consequently the following survive unchanged for a sum of independent forward/backward feedthrough scans:
+
+- one channel in each direction gives cross ranks at most one;
+- F8 requires at least three channels in each direction in a single stage;
+- the complex B/4 lower bound and explicit-pass Ω(B²) consequence;
+- the fixed-rank unitary-stage argument below.
+
+The obstruction does not acquire a multi-stage extension just because it is reset-safe. Inter-stage permutations change which coordinate cuts line up. Nor does the old inverse-sparsity argument automatically extend to a one-direction feedthrough scan: its inverse is generally dense. The package's references to previously rejected “one-way scan-only composition” must retain the earlier **pure-scan** syntax. They cannot be used to dismiss the broader direct-feedthrough product model.
+
+Also distinguish independent sums from sequential or cross-coupled forward/backward computations. A model allowing one direction to consume the other direction's state/output must be analyzed separately; it cannot be assigned the independent-sum rank bound by its name alone.
+
+Quasiseparable rank is order-dependent, while ordinary fixed-shift displacement rank is a different invariant. NEXT_GATE.md's suggestion to examine both after shuffles is a research suggestion, not a demonstrated conserved quantity or a lower bound.
+
+## 6. Unit-only subclass: valid established guard, not a general stable-model theorem
+
+The claimed implication for unitary fixed-quasiseparable-order stages is supported by Delvaux and Van Barel's primary report, especially its Section 3 construction of a localized unitary/Givens product. The representation has O(N) local factors at fixed rank and fixed diagonal offset:
+
+https://www.cs.kuleuven.be/publicaties/rapporten/tw/TW464.pdf
+
+For a unitary U, the entropy potential H(U)=-sum |U_ij|² log_2 |U_ij|² begins at 0 and is N log_2 N at normalized Fourier. A two-coordinate unitary changes the entropy by at most 2: each column preserves paired mass, its binary splitting entropy can change by at most that mass, and the paired masses sum to 2. Permutations and unit-modulus diagonal factors leave H unchanged. Thus Ω(N log N) local gates, hence Ω(log N) such O(N)-factor stages, are necessary.
+
+This conclusion requires the actual normalized stages to be unitary. It is not established merely because arbitrary nonunitary stages are called “stable” or have bounded individual condition numbers. The package's section heading and “stable/unitary” phrasing should not broaden the stated hypothesis.
+
+`unitary_control.py` is a legitimate sanity control: rational 3-4-5 rotations are exactly orthogonal over Q, and their adjacent chain has quasiseparable order one. Its modular orthogonality and floating-point entropy checks do not prove the universal decomposition theorem. The paper supplies that part. Calling a finite-field matrix “unitary” is shorthand here; the exact checked property in that field is orthogonality, with the rational real construction furnishing the intended unitary interpretation.
+
+## 7. F4 control and cost accounting
+
+The displayed F4 strict lower/upper generators are correct. The source uses strict pre-update weighted prefix/suffix outputs; this is a slightly broader syntax than the raw scan definition as printed, but the particular F4 identity can be converted to raw scans. For example, with i²=-1 and the displayed common endpoint order (0,2,1,3), one raw realization is
+
+    forward_a  = (0,1,1,1)
+    forward_b  = (1,-1,-i,1)
+    backward_a = (-1,-i,-i,0)
+    backward_b = (1,-1,-i,1)
+    d          = (-1,3,3i,i-2).
+
+Expansion gives the displayed F4 exactly. Thus the syntax change is repairable in this concrete control and does not invalidate its arithmetic.
+
+The mixed-radix ordering and twiddle pattern are standard and correct for valid primitive roots. The prefix-expansion index generator performs a geometric series of O(N) steps and avoids an O(log N) digit loop for every index. The code's old top-level “power of 4 only” docstring is stale; the actual main function supports mixed dyadic radix.
+
+The source's per-call F4 tally, 20 scalar multiplications and 16 additions, matches the generic codelet loops, including unused/trivial work. The displayed N=256 data-path counts consequently agree with static loop counting. The twiddle loops likewise tally both the twist-power update and its data multiplication. These constant-factor controls do not demonstrate optimized native performance.
+
+Accounting repairs:
+
+1. `root_power_calls` is not an exact count of the executed `pow` invocations. The macro performs 26 before its stage loop: two in root_n(N), two in root_n(4), sixteen for the local matrix, and six inverse calls in the two length-three comprehensions. The counter starts at 22. Thus it should report 26+t as a total pow-call count, not 22+t. If it means only root preparation calls, it needs a narrower definition instead.
+2. The reference similarly performs two initial pow calls, including its primitive-root check, but starts the counter at one. Its actual pow-call count is L+2, not L+1.
+3. `modular_power_mult_upper` is a hand-constructed bound for an implementable exponentiation schedule, not instrumentation of Python pow or modular inversion. The reference formula does not separately list primitive-root verification; unused slack may still cover it, so this is not by itself a demonstrated numerical under-bound. Make every operation's charge explicit rather than claiming literal instrumentation. The codelet's six inverse denominators happen all to be 1 and can be eliminated exactly.
+4. `permutation_moves` is explicitly a partial high-level movement tally. Preserve that label. It omits scan traffic, coefficient reads, allocation writes, and other array accesses. `bidirectional_passes_per_element` even increments by two at an F2 stage implemented as an ordinary butterfly, so it is a conceptual stage counter rather than a literal scan count.
+5. The generic root guard assumes p is prime and g is nonzero modulo p. It never rejects g=0: w=0 passes its check w^(N/2)!=1. Require w^N=1 and w^(N/2)!=1, or document and enforce valid nonzero generator inputs. Defaults use valid primes/generators, so this does not invalidate those runs.
+6. At N=2 the macro unnecessarily builds an F4 plan. A prime such as p=3 supports F2 but not F4, so the advertised generic root-compatible N=2 API rejects it. Skip that plan unless a radix-4 stage occurs.
+
+The stored Python medians were read, not rerun. They show the author's own implementation slower at the supplied sizes, and cannot establish native-library ratios or an asymptotic claim. The source makes no hidden data-dependent answer cache or output pruning apparent.
+
+## 8. Every-file audit and independent evidence
+
+- `README.md`: content map and execution instructions match the package. Its conclusions are correctly limited to one-block-per-macro architecture. No supplied execution instruction was followed.
+- `RESEARCH.md`: main proofs accepted with the exact endpoint-quantifier correction, missing realization repair, and scope/accounting qualifications above.
+- `NEXT_GATE.md`: its exact channel-minimum assertion lacked an upper realization; supplied independently here. The open nonunitary global-stage question remains open within this project.
+- `ordering_dp.py`: valid finite-field endpoint minimax DP. It knows only ranks, not scan weights. A modular optimum provides a complex lower bound; a complex upper witness is still needed and is present algebraically in the prose.
+- `analytic_certificate.py`: correct modular elimination, primitive eighth-root tests, and cyclotomic determinant expansion. Zero 4×4 determinants prove rank <=3 at the balanced cut; they do not alone prove the stronger rank-2 description. The explicit parity algebra proves rank 2. The sampled trinomials are sanity checks, not a proof of the all-N lemma.
+- `exact_scan_macro.py`: correct conventional control under its valid-root assumptions. Cost and API issues are listed above. The unused `reverse_base4` helper is not in the main execution path.
+- `reference_ntt.py`: standard positive-exponent radix-2 reference, with the primitive-root/count qualifications above.
+- `benchmark.py`: alternating order of two cold per-call kernels and fresh inputs is sensible. Instrumentation overhead affects both timings differently; medians are illustrative. It writes `benchmark_results.json` if invoked.
+- `benchmark_results.json`: counts and reported ratios are consistent with the source's conventions; execution provenance/timing was not independently reproduced.
+- `unitary_control.py`: sound special rational-Givens control, separate from the universal factor theorem.
+- `tests/test_exact_macros.py`: 14 test methods, checking the stated finite cases. Full transform basis testing here is predominantly at the default prime; second-prime tests include F4 basis and selected deterministic transforms. Do not describe every listed basis as checked in both primes.
+- `run_audit.py`: source loops account for the stored 254 basis columns and 70 random vectors at the default prime. The separate rank certificates use two primes. The phrase “two supported primes” in its model label must not be inflated into a two-prime 254-column full-basis run.
+- `audit_results.json`: stored sizes, counts, and endpoint results align with the inspected source. They are records, not proof that this audit executed the uploader's suite.
+- `package.py`: hashes the 14 listed payload files, creates the ZIP and manifest, then invokes both tests and audit in a temporary extract. It was not run. Its self-test records would supplement, not replace, source/proof review.
+- `SHA256SUMS.txt`: all 14 payload hashes independently match their files. Hash agreement establishes internal package integrity, not mathematical correctness.
+
+Independent work executed for this audit:
+
+1. A newly written rank routine checked all 3,136 F8 3×5 rectangles at each of 998244353 and 2013265921; every rank was 3.
+2. The same independent checks confirmed natural, parity, and package-DP rank profiles in both fields.
+3. All 14 manifest hashes matched.
+4. A newly written exact cyclotomic generator produced a six-scan F8 stage and checked every basis column.
+5. A separate verifier re-read the exported raw coefficients and checked all 64 entries exactly in characteristic zero.
+
+The independent rank/hash source and output are `bidirectional_independent/check.py` and `bidirectional_independent/results.json`. This audit did not reproduce the uploaded whole-transform test suite or benchmark timings.
+
+## 9. Exact addition relative to prior work and the main target
+
+Already established in the earlier feedthrough investigation:
+
+- one bidirectional scalar-sum stage computes F4;
+- one such stage cannot compute any permuted/scaled F_N for N>=5;
+- ordinary radix 2/4 gives ceil(log_4 N) stages at dyadic lengths;
+- this establishes optimal depth two at N=8 and N=16, but not a growing-N lower bound;
+- direct feedthrough invalidates the simplistic extension of the pure-scan inverse-support proof.
+
+Useful additional content here:
+
+- the elementary all-dyadic three-character support/zero bound;
+- the sharper F8 width lower bound, three channels per direction;
+- the exact endpoint-order optimum 3 and its exhaustive finite check;
+- the explicit-pass complete-radix Ω(B²) corollary and resulting radix-local Ω(N log N) bound;
+- an established unitary fixed-order-stage guard applied to this family;
+- this audit's new exact F8 raw three-channel realization, closing the package's realization gap.
+
+None supplies a uniform family of overlapping, nonunitary global feedthrough stages of depth o(log N), or rules all such families out. In particular, the already-known optimal two-stage F8 depth is not improved by a one-stage F8 implementation with three times the per-direction channel width.
+
+The comparator must also be current and model-specific. OpenAI's official theorem #130 page states a separate uniform exact all-length Fourier result with work O(n(log n)^(1-10^-13)), including root-order selection and scalar preparation, with a supplied root and unrestricted exact complex coefficients. It separately describes a subsequential circuit theorem. This archive's Θ(N log N) control does not improve either comparator in its applicable model. No general unrestricted N log N barrier should be inferred from the restricted macro theorem:
+
+https://github.com/openai/math/blob/main/lean/docs/130.md
+
+For the user's arbitrary-fresh-input, all-output exact target, accept the package as a useful restricted-model rejection and structural certificate. The constructive asymptotic deliverable remains missing. Keep the independent F8 certificate, correct the overbroad endpoint wording, and do not relabel the blockwise/unitary guards as a lower bound for the current unrestricted nonunitary feedthrough product model.

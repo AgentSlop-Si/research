@@ -1,0 +1,27 @@
+import itertools
+from fractions import Fraction
+
+
+def check(h):
+    triples=list(itertools.combinations(range(h),3)); idx={t:i for i,t in enumerate(triples)}; v=len(triples)
+    # RG coefficient is (|S∩T|-1)/2.
+    # JV adds -(same coefficient) exactly for distinct even intersections (0 or 2).
+    # Check that sum is I entrywise.
+    for S in triples:
+        s=set(S)
+        for T in triples:
+            r=len(s.intersection(T))
+            rg=Fraction(r-1,2)
+            neighbor=(S!=T and r%2==0)
+            jv=-rg if neighbor else Fraction(0)
+            z=rg+jv
+            want=Fraction(1 if S==T else 0)
+            if z!=want:
+                return False,(S,T,r,rg,jv,z,want)
+    return True,None
+
+for h in range(4,13):
+    ok,bad=check(h)
+    print(h,ok,bad)
+    assert ok
+print('general scalar identity checked for h=4..12')

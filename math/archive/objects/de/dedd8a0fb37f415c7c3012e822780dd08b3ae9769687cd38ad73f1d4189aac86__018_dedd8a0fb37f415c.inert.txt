@@ -1,0 +1,127 @@
+# Fresh FFT research: Galois-orbit sharing and the adaptive/nonlinear escape gates
+
+**Date:** 2026-10-09. **Status:** exact identities, verified implementations and negative reductions. **No new full, explicit, exact O(N) DFT algorithm.**
+
+## Research objective and previous-work guard
+
+The target is a **fresh arbitrary complex** length-N DFT with **all N numerical outputs**, total charged sequential work asymptotically O(N), no trusted precomputed transform, unbounded oracle lookup, input repetition or parallel threads. Source guard: `FFT_RESEARCH_CANONICAL_CHECKPOINT_2026-10-09.md`, `fft_global_linearization_gate/NEXT_RESEARCH_GATE.md` and `fft_chirp_global_reuse_audit/RESEARCH.md`. Previous collision, input orbit, finite WHT tabulation, bounded-degree filters, rank-one displacement, normalized two-coordinate lower bound, chirp recurrence, and division-free tangent linearization are not claimed anew.
+
+This pass tests **two different previously unresolved edges** of that program:
+
+1. Can *number-theoretic Galois symmetry among outputs* yield substantially more sharing than identical-value FFT subtrees? How much of the alleged output work remains in turning representations into ordinary numerical values?
+2. Can selecting input-dependent branches (including rational expressions) evade the prior division-free linearization gate? What changes when the inputs are **binary only**?
+
+## Result A: Exact O(N) *symbolic* Fourier spectrum descriptors for rational inputs
+
+Let N=2^L>=2 and choose primitive roots omega_m=exp(2πi/m). Input values may be **arbitrary complex** for the formal summation identity below, but the interpretation as **Galois conjugacy** is valid when input coefficients lie in a field fixed by the cyclotomic automorphisms, e.g. Q or Z. In particular, integer/binary input is covered.
+
+Initialize a^(0)=[x_0,...,x_(N-1)]. For s=0,...,L-1, write m=N/2^s and define half-length arrays
+
+    r^(s)_j = a^(s)_j - a^(s)_(j+m/2)       (0 <= j < m/2)
+    a^(s+1)_j = a^(s)_j + a^(s)_(j+m/2)     (0 <= j < m/2).
+
+These use exactly `m/2` subtractions and `m/2` additions per level, totalling
+
+    sum_s m = 2N - 2.
+
+The retained arrays r^(s) have lengths N/2,N/4,...,1, totalling N-1 coefficients; one final element `a^(L)_0=sum_j x_j` is the DC value. **Total retained numeric coefficients = N.** Every frequency k is represented by an **implicit descriptor**, without individually materializing its value:
+
+* k=0: `X_k=a^(L)_0`.
+* k>0: let s=v_2(k), m=N/2^s, u=k/2^s (odd). Then
+
+    X_k = sum_(j=0)^(m/2-1) r^(s)_j omega_m^(u j).        (1)
+
+Proof: folding `a^(s)` collects all input entries with the same residue modulo m. Hence `X_k=sum_(j=0)^(m-1) a^(s)_j omega_m^(uj)`. Since omega_m^(u*m/2)=-1 for odd u, combine opposite halves to obtain (1).
+
+For **rational input**, coefficients belong to Q and the action sigma_u: omega_m -> omega_m^u is a genuine automorphism of Q(omega_m). Thus the phi(m)=m/2 frequencies with v2(k)=s are algebraic conjugates of the representative X_(2^s). The minimal power basis of Q(omega_m) has dimension phi(m)=m/2 since Phi_m(z)=z^(m/2)+1.
+
+Since odd u permutes residues modulo m up to a sign, applying sigma_u to the **power-basis coefficient vector** is merely a **signed permutation of phi(m) rational coefficients**. The descriptors (m,u,s) share the N stored values r^(s) and DC. A descriptor's existence is NOT a unit-cost numerical evaluation of an arbitrary complex scalar.
+
+For binary input x_i in {0,1}, the s-th level values have magnitude at most 2^s, and storing a signed entry takes O(s+1) bits. Thus full arrays cost `sum_s O((N/2^(s+1))(s+2))=O(N)` bits, and the folding additions can also be carried out in O(N) ordinary bit operations with a straightforward bit-cost accounting. This is *representation preparation*, not conversion to an explicit vector of exact complex values. Simply retaining the original binary inputs is also an O(N)-bit symbolic representation, so this is a specialized view rather than a stand-alone speedup over full DFT.
+
+### Why explicitly expanding the descriptors is costly
+
+If each X_k must be returned as an independent **cyclotomic power-basis coefficient array**, the requested output itself contains
+
+    1+sum_(m=2,4,...,N) phi(m)^2 = 1+(N^2-1)/3 = (N^2+2)/3
+
+scalar coefficient entries. That is Omega(N^2) output size **for this explicit encoding**. It is NOT a lower bound for returning N arbitrary exact complex registers, N implicit views, or an alternative compressed symbolic format.
+
+### The decisive barrier: expanding one conjugate orbit is another FFT
+
+For m=2d and odd frequency u=2t+1,
+
+    X_(2^s(2t+1)) = sum_(j=0)^(d-1) r^(s)_j omega_m^((2t+1)j)
+                       = sum_j [r^(s)_j omega_m^j] omega_d^(tj).
+
+Therefore the d primitive-frequency outputs of that orbit are **exactly the length-d DFT** of the modulated r^(s) vector. In particular the largest orbit (d=N/2) requires precisely a length-N/2 transform to expand by this construction. For every possible r vector, choose x with its first N/2 entries r and the last N/2 entries 0; no restricted-r loophole exists. Treating sigma_u as a unit-cost oracle would hide that work.
+
+This is an exact restatement of Cooley--Tukey's odd-frequency split. It falsifies the proposal that Galois conjugacy alone gives an O(N) explicit FFT.
+
+### Positive but different output problem
+
+To get the log_2(N)+1 special frequencies `{0,1,2,4,...,N/2}`, evaluate each representative using the already prepared r^(s) in `O(phi(m))` scalar operations; the sum over levels is `sum phi(m)=N-1`, so **O(N) arithmetic overall** for these particular O(log N) frequency bins and **fresh arbitrary complex inputs**. The code tests this using an exact modular model. This is a special-output, standard Fourier-factorization result, not all N outputs.
+
+## Result B: Adaptive branching does not create a new escape on generic exact complex inputs
+
+**Proposition (nonuniform straight-line reduction).** Suppose a deterministic algebraic computation tree has finite worst-case depth s=s(N); its primitive operations are +,-,*,/, multiplication by input-independent field constants, and branches testing polynomial/rational signs or equality on real (or realified complex) inputs. Suppose every input is handled and the tree returns the complete linear transform F_N x exactly.
+
+Then at least one root-to-leaf path is selected on a nonempty Euclidean-open region. On this path every output is a rational function of x and equals the corresponding linear form on that region. By the rational identity principle, that fixed path calculates F_N x as a rational identity wherever defined. Pick any regular point a of the region, evaluate all path intermediates at a, and propagate tangent variables dx:
+
+    d(u+v) = du+dv,
+    d(uv)  = u(a) dv + v(a) du,
+    d(u/v) = du/v(a) - u(a) dv/v(a)^2.
+
+A multiplication or division gate produces at most three linear gates (scalar multiples and addition/subtraction); other original arithmetic gates use at most one. The resulting nonuniform linear circuit computes `F_N dx` **on every dx** in at most 3s linear arithmetic gates. The branch choice and values at a become prepared constants.
+
+**Important scope:** This is a **nonuniform circuit-size** implication. It does **not** automatically provide an efficiently printable uniform circuit with all scalar preparation charged, or preserve bounds on coefficient magnitude and condition numbers. It assumes a finite algebraic decision tree with rational branch formulas, an infinite field/open-cell topology, and exact correctness at all inputs. It is not a general statement about arbitrary black-box operations, floor/bit extraction, infinite input-domain tests or arbitrary programs with nonalgebraic primitives.
+
+A previously analyzed input-dependent rewrite `F(x - k(x)e_i)+k(x)F(e_i)` is a concrete case: its complete derivative is F(dx), including for rational k and branch-specific k. This was proved for division-free circuits in the previous linearization checkpoint; the present extension checks **rational gates and genuinely branch-selected fixed paths**.
+
+## Result C: Boolean-only nonlinear arithmetic has a different boundary
+
+For an arbitrary function f on {0,1}^N, there is a **unique multilinear polynomial** matching its values (classical Boolean-cube multilinear interpolation). If a polynomial circuit has multilinear outputs and computes F_N x correctly for every binary x, it therefore computes F_N x **as a polynomial identity for all complex x**. Thus its degree-one tangent at 0 is exactly F_N and the constant-overhead linearization applies. In particular this applies to **syntactically multilinear circuits**, where multiplication gate input-variable supports are disjoint.
+
+A Boolean-specific escape cannot rely on products that remain globally multilinear. It needs intermediate/output identities that hold only modulo `x_i^2-x_i`, a different allowed primitive (bit extraction, lookup, branching), or some other departure. An elementary exact counterexample is
+
+    f(x) = F_N (x_0^2, ..., x_(N-1)^2).
+
+On binary input, `x_i^2=x_i`, so f(x)=F_N x. But the first derivative at x=0 is the zero map, not F_N. Therefore the generic complex linearization cannot simply be applied to binary-only algorithms.
+
+### Naive multilinearization blows up
+
+Let S=sum_(i=1)^N x_i. The circuit S^N uses N-1 additions and **O(log N) multiplication gates** (binary exponentiation). In the Boolean quotient ring x_i^2=x_i, the coefficient of a monomial supported on r distinct variables is
+
+    r! StirlingSecondKind(N,r) = sum_(j=0)^r (-1)^(r-j) binom(r,j) j^N > 0
+
+for 1<=r<=N, over the integers. Consequently S^N has exactly `2^N-1` nonzero multilinear monomials, despite its compact circuit. At N=12, four nonlinear multiplications correspond to **4,095 expanded terms** (in addition to 11 input-summing operations).
+
+This rules out **explicit monomial expansion as a general cheap way** to exploit Boolean-idempotent algebra. It does not rule out a compact circuit in the quotient ring or imply any lower bound on arbitrary binary-only FFT circuits. The tests include an exhaustive positive check at small N and an exact coefficient formula.
+
+## Verification and controls
+
+All scripts are Python 3 standard library except the optional `symbolic_check.py` requiring SymPy. Over prime p=998244353, independent direct NTT/DFT references test:
+
+- **18 adaptive-k arithmetic branch circuits** for lengths 2,4,8,16,32,64; **378 exact basis vectors and 16,380 Fourier-matrix entries** verified after differentiation. In the 64-point cases, the selected original examples have 706--710 modeled gates and linearized examples 644--651. These are *comparison of constructed example DAGs*, not an optimized FFT speedup.
+- All **20 project regression tests** pass, covering those identities, singular-pole fallback, exhaustive Boolean N=8 cube, independent subset-Möbius recovery of the multilinear coefficients, Stirling monomial counts, and cyclotomic orbit construction.
+- The `orbit_audit.py` code checks **every output** for one exact input at each N=2,4,...,128: **254 scalar results** in that audit. The test suite separately checks hundreds of new random inputs at all those lengths. It independently checks the reduction of each odd-frequency orbit to a smaller FFT.
+- Exact symbolic SymPy test at N=4 verifies four nonlinear-k alternatives have all 4 output differences and 16 Jacobian entries equal to zero in characteristic zero, not just finite-field samples.
+- Numerical complex sanity tests confirm the folding identity on arbitrary complex inputs, but not Galois conjugacy unless the coefficients are rational (or lie in an appropriate fixed coefficient field).
+
+**Finite-field warning:** A nonzero polynomial can vanish on all F_p inputs (`x^p-x`), so the modular experiments alone cannot prove a generic complex theorem; the open-cell argument and characteristic-zero SymPy checks are logically separate.
+
+## Research novelty and implications
+
+The number-theoretic facts, cyclotomic Galois conjugacy, Cooley--Tukey decomposition, tangent/automatic differentiation, rational identity principle, Boolean multilinear uniqueness, and Stirling-number coefficient formula are **established** mathematics. This research pass connects them as *explicit falsification gates* for the user's hoped-for O(N) FFT, with implementable source and exact checks. It makes **no literature-wide novelty claim**.
+
+The genuine open target remains a uniform, fully charged **O(N)** exact evaluator on arbitrary fresh complex input and N numerical outputs, not a lazy symbolic descriptor or an algebraic branch that hides a linear circuit. The next candidate has to produce an independently justified all-output linear-computation saving (or declare a different input/output model), and it must be compared with the existing OpenAI #130 unrestricted exact-complex theorem in the same computational model.
+
+## Sources / prior art
+
+- Primitive power-of-two cyclotomic polynomials: https://en.wikipedia.org/wiki/Cyclotomic_polynomial
+- Fourier transform/Galois symmetry for rational-valued functions: https://www.researchgate.net/publication/390247392_Reconstructing_Gridded_Data_from_Higher_Autocorrelations
+- Multilinear interpolation on Boolean cube: https://microsoft.github.io/vega-prover/appendix/mle-primer.html
+- Raz, *Separation of Multilinear Circuit and Formula Size* (2006): https://zesty2.cs.uchicago.edu/articles/v002a006/
+- Baur/Strassen differentiation and Sergeev's rational gradient complexity: https://www.researchgate.net/publication/226427451_On_the_complexity_of_the_gradient_of_a_rational_function
+- OpenAI #130 exact Fourier theorem: https://github.com/openai/math/blob/main/lean/docs/130.md
+- Internal existing files: `FFT_RESEARCH_CANONICAL_CHECKPOINT_2026-10-09.md`, `fft_global_linearization_gate/RESEARCH.md` and `fft_chirp_global_reuse_audit/RESEARCH.md`.

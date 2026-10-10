@@ -1,0 +1,21 @@
+0001 import sys
+0002 from pathlib import Path
+0003 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+0004 import unittest
+0005 import numpy as np
+0006 from prepared_update import PreparedPointEdit
+0007 
+0008 class TestPrepared(unittest.TestCase):
+0009     def test_streaming_point_updates(self):
+0010         rng=np.random.default_rng(37)
+0011         for n in [16,64,1024,4096]:
+0012             x=rng.standard_normal(n)
+0013             loc=n//3
+0014             cache=np.fft.rfft(x)
+0015             updater=PreparedPointEdit(n,loc)
+0016             for d in rng.standard_normal(30):
+0017                 x[loc]+=d
+0018                 cache=updater.update(cache,d)
+0019                 self.assertTrue(np.allclose(cache,np.fft.rfft(x),atol=5e-10))
+0020 
+0021 if __name__=='__main__':unittest.main()

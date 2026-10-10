@@ -1,0 +1,58 @@
+"""Exact elimination of h6 via two small Sylvester determinants.
+
+Because selected 9x9 minor factors -DB*DH, it suffices to compute
+Res_{h6}(W, DB) and Res_{h6}(W, DH) separately. Both are *honest*
+polynomials in h0,h1,h2 over Z[z]/(z^4+1). Modular certificate
+Res(W,Dhat) != 0 at h=(1,0,0) therefore proves nonzero over C.
+"""
+from __future__ import annotations
+import json,hashlib,time,sys
+from pathlib import Path
+ROOT=Path(__file__).parent
+sys.path.insert(0,str(ROOT))
+import _bootstrap
+from exact_polynomial_gate import build,det_sparse,add,sub,pmul,p1,pzero
+from inverse_quartic import poly_eval,padd,pscale
+from dual_support import primitive_root
+
+def coeff_x(P,degree):
+ P0={}
+ for mon,co in P.items():
+  power=sum(k==3 for k in mon)
+  if power==degree:
+   base=tuple(k for k in mon if k!=3)
+   P0[base]=co
+ return P0
+
+def sylvester_resultant(f,g):
+ m=max([sum(k==3 for k in mon) for mon in f]or[0]);n=max([sum(k==3 for k in mon) for mon in g]or[0]);N=m+n
+ fc=[coeff_x(f,i) for i in range(m,-1,-1)]
+ gc=[coeff_x(g,i) for i in range(n,-1,-1)]
+ rows=[]
+ for j in range(n):rows.append([pzero]*j+fc+[pzero]*(n-j-1))
+ for j in range(m):rows.append([pzero]*j+gc+[pzero]*(m-j-1))
+ assert len(rows)==N and all(len(row)==N for row in rows)
+ t=time.monotonic();res=det_sparse(rows)
+ print('resultant of degrees',m,n,'terms',len(res),'max degree',max([len(k) for k in res]or[0]),'elapsed',round(time.monotonic()-t,3),flush=True)
+ return res
+
+def serialize(P):
+ return dict(term_count=len(P),degree=max([len(m) for m in P]or[0]),
+  terms=[[list(m),list(v)] for m,v in sorted(P.items(),key=lambda kv:(len(kv[0]),kv[0]))])
+
+def run():
+ D=build()
+ RDB=sylvester_resultant(D['W'],D['DB'])
+ RDH=sylvester_resultant(D['W'],D['DH'])
+ print('res mod17 at [1,0,0]',poly_eval(RDB,[1,0,0],17,9),poly_eval(RDH,[1,0,0],17,9),flush=True)
+ assert poly_eval(RDB,[1,0,0],17,9)==16
+ assert poly_eval(RDH,[1,0,0],17,9)==11
+ assert poly_eval(RDB,[1,0,0],17,9)*poly_eval(RDH,[1,0,0],17,9)%17==6
+ out=dict(base_variables=['h0','h1','h2'],eliminated_variable='h6',coefficient_field='Z[z]/(z^4+1)',
+      theorem='Any candidate in the regular chart must satisfy Res_h6(W,DB)*Res_h6(W,DH)=0. Both nonzero polynomials in characteristic zero. On h=(1,0,0), neither vanishes at z^8=1, z^4=-1, as certified mod (17,z-9).',
+      RDB=serialize(RDB),RDH=serialize(RDH),
+      witness=dict(prime=17,zeta=9,h=[1,0,0],res_DB=16,res_DH=11,res_product=6))
+ fp=ROOT/'exact_nonzero_resultants.json';fp.write_text(json.dumps(out,indent=2)+'\n')
+ print('sha256',hashlib.sha256(fp.read_bytes()).hexdigest(),'size',fp.stat().st_size,flush=True)
+ return out
+if __name__=='__main__':run()

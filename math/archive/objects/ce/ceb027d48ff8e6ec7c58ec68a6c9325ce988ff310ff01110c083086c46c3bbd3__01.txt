@@ -1,0 +1,116 @@
+   1 #!/usr/bin/env python3
+   2 """Independent exact checks derived from the Phase7 mathematical statements."""
+   3 import pathlib,json,math,random
+   4 ROOT=pathlib.Path(__file__).resolve().parent;rng=random.Random(202610092312)
+   5 def prime(p):return p>=2 and all(p%d for d in range(2,math.isqrt(p)+1))
+   6 def field_root(n):
+   7  k=1
+   8  while not prime(k*n+1):k+=1
+   9  p=k*n+1
+  10  factors=[q for q in range(2,n+1) if n%q==0 and prime(q)]
+  11  for a in range(2,p):
+  12   w=pow(a,k,p)
+  13   if pow(w,n,p)==1 and all(pow(w,n//q,p)!=1 for q in factors):return p,w
+  14  raise AssertionError('root not found')
+  15 def rank(a,p):
+  16  a=[r[:] for r in a];rr=0
+  17  for j in range(len(a[0])):
+  18   k=next((k for k in range(rr,len(a)) if a[k][j]%p),None)
+  19   if k is None:continue
+  20   a[k],a[rr]=a[rr],a[k];iv=pow(a[rr][j],-1,p);a[rr]=[v*iv%p for v in a[rr]]
+  21   for k in range(rr+1,len(a)):
+  22    c=a[k][j]
+  23    if c:a[k]=[(x-c*y)%p for x,y in zip(a[k],a[rr])]
+  24   rr+=1
+  25   if rr==len(a):break
+  26  return rr
+  27 
+  28 rect=[]
+  29 for n in range(2,9):
+  30  p,w=field_root(n);f=[[pow(w,(-i*j)%n,p) for j in range(n)] for i in range(n)]
+  31  sets=[[i for i in range(n) if mask>>i&1] for mask in range(1,1<<n)]
+  32  best=min(d+n//d for d in range(1,n+1) if n%d==0);total=one=0
+  33  for I in sets:
+  34   for J in sets:
+  35    total+=1
+  36    criterion=all(((i-I[0])*(j-J[0]))%n==0 for i in I for j in J)
+  37    actual=rank([[f[i][j] for j in J] for i in I],p)==1
+  38    assert criterion==actual
+  39    if actual:
+  40     one+=1;g=n
+  41     for i in I:g=math.gcd(g,i-I[0])
+  42     d=n//g
+  43     assert len(I)<=d and len(J)<=n//d
+  44     assert all((j-J[0])%d==0 for j in J)
+  45     assert len(I)*len(J)<=n
+  46     assert n*(len(I)+len(J))>=len(I)*len(J)*best
+  47  rect.append({'N':n,'field':p,'root':w,'rectangles_checked':total,'rank_one_rectangles':one,'exact_tiling_incidence_optimum':n*best})
+  48 
+  49 tilings=[];gauge_checks=0
+  50 for n in range(2,65):
+  51  p,w=field_root(n);table=[pow(w,-j,p) for j in range(n)];x=[rng.randrange(p) for _ in range(n)]
+  52  target=[sum(x[j]*table[k*j%n] for j in range(n))%p for k in range(n)]
+  53  for d in range(1,n+1):
+  54   if n%d:continue
+  55   q=n//d;covered=set();y=[0]*n;mult=add=0
+  56   for r in range(q):
+  57    for c in range(d):
+  58     I=[r+q*v for v in range(d)];J=[c+d*z for z in range(q)]
+  59     values=[x[j]*table[(r*d*z)%n]%p for z,j in enumerate(J)]
+  60     mult+=q;acc=values[0]
+  61     for value in values[1:]:acc=(acc+value)%p;add+=1
+  62     for v,k in enumerate(I):
+  63      y[k]=(y[k]+table[(k*c)%n]*acc)%p;mult+=1;add+=1
+  64      for j in J:
+  65       assert (k,j) not in covered;covered.add((k,j))
+  66       z=(j-c)//d
+  67       assert table[(k*j)%n]==table[(r*c+r*d*z+q*v*c)%n]
+  68   assert len(covered)==n*n and y==target
+  69   assert mult==n*(d+q) and add==n*(d+q-1)
+  70   tilings.append({'N':n,'d':d,'q':q,'tile_count':n,'incidence':n*(d+q),'projection_fanout_multiplications':mult,'additions':add,'root_table_multiplications':n-1,'output_writes':n})
+  71  # Exact diagonal-gauge invariance, sampling nonzero entries in the field.
+  72  ar=[rng.randrange(1,p) for _ in range(n)];bc=[rng.randrange(1,p) for _ in range(n)]
+  73  for _ in range(20):
+  74   i,k,j,l=[rng.randrange(n) for _ in range(4)]
+  75   a=lambda r,c:table[(r*c)%n]
+  76   b=lambda r,c:ar[r]*a(r,c)*bc[c]%p
+  77   lhs=a(i,j)*a(k,l)*pow(a(i,l)*a(k,j)%p,-1,p)%p
+  78   rhs=b(i,j)*b(k,l)*pow(b(i,l)*b(k,j)%p,-1,p)%p
+  79   assert lhs==rhs==table[((i-k)*(j-l))%n];gauge_checks+=1
+  80 
+  81 # A source-model counter-control: unrestricted row mixing removes all curvature.
+  82 n=4;p,w=field_root(n);f=[[pow(w,-i*j,p) for j in range(n)] for i in range(n)]
+  83 finv=[[pow(n,-1,p)*pow(w,i*j,p)%p for j in range(n)] for i in range(n)]
+  84 assert [[sum(finv[i][k]*f[k][j] for k in range(n))%p for j in range(n)] for i in range(n)]==[[int(i==j) for j in range(n)] for i in range(n)]
+  85 
+  86 def fft(seq,table,p):
+  87  n=len(seq);N=len(table);bits=n.bit_length()-1
+  88  data=[seq[int(format(i,f'0{bits}b')[::-1],2)] for i in range(n)] if n>1 else list(seq)
+  89  butterflies=0;length=2
+  90  while length<=n:
+  91   for start in range(0,n,length):
+  92    for j in range(length//2):
+  93     a=data[start+j];b=data[start+j+length//2]*table[j*(N//length)]%p
+  94     data[start+j]=(a+b)%p;data[start+j+length//2]=(a-b)%p;butterflies+=1
+  95   length*=2
+  96  return data,butterflies
+  97 shared=[]
+  98 for exponent in range(2,11):
+  99  n=1<<exponent;d=1<<(exponent//2);q=n//d;p,w=field_root(n)
+ 100  table=[pow(w,-j,p) for j in range(n)];x=[rng.randrange(p) for _ in range(n)]
+ 101  target=[sum(x[j]*table[k*j%n] for j in range(n))%p for k in range(n)]
+ 102  first=[];B=0
+ 103  for c in range(d):
+ 104   v,b=fft([x[c+d*j] for j in range(q)],table,p);first.append(v);B+=b
+ 105  y=[0]*n
+ 106  for r in range(q):
+ 107   row,b=fft([first[c][r]*table[r*c%n]%p for c in range(d)],table,p);B+=b
+ 108   for v in range(d):y[r+q*v]=row[v]
+ 109  assert y==target and B==n*exponent//2
+ 110  shared.append({'N':n,'field':p,'d':d,'q':q,'butterflies':B,'scalar_multiplications_excluding_root_table':B+n,'scalar_additions':2*B,'root_table_multiplications':n-1,'output_writes':n})
+ 111 
+ 112 out={'exhaustive_rectangle_cases':rect,'constructive_tiling_cases':tilings,'diagonal_plaquette_invariance_checks':gauge_checks,
+ 113  'shared_Cooley_Tukey_controls':shared,
+ 114  'general_GL_mixing_changes_rank_one_tiling_geometry':True,
+ 115  'reported_source_test_suite_executed':False,'independent_checker_imports_source_modules':False,'uploaded_code_executed':False}
+ 116 (ROOT/'INDEPENDENT_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))

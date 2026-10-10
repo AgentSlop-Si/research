@@ -1,0 +1,291 @@
+===== SOURCE 85 fft_phase10_aot/tests/test_compiled_kernels.py SHA256 447e5104598f9f9a8148edbadc1bad083707adda7e93d49d5587262fdf626a04 =====
+   1 """Correctness tests: independent SciPy and direct exact modular convolution."""
+   2 import sys
+   3 from pathlib import Path
+   4 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+   5 import unittest
+   6 from types import SimpleNamespace
+   7 import numpy as np
+   8 from scipy import fft
+   9 from algebra_fft import AlgebraFFT
+  10 from compiled_kernels import compile_expression, compile_prepared
+  11 
+  12 
+  13 class CompiledKernelTests(unittest.TestCase):
+  14     def setUp(self):
+  15         self.rng=np.random.default_rng(9001)
+  16 
+  17     def make(self,n,degree):
+  18         engine=AlgebraFFT(n)
+  19         arrays=[self.rng.standard_normal(n)/np.sqrt(n) for _ in range(4)]
+  20         a,b,c,d=[engine.signal(v) for v in arrays]
+  21         if degree==0:
+  22             root=engine.add(engine.mul(b,c),d)
+  23         elif degree==1:
+  24             root=engine.add(engine.mul(a,b),engine.mul(c,d))
+  25         elif degree==2:
+  26             root=engine.add(engine.mul(a,a),engine.mul(b,c))
+  27         elif degree==3:
+  28             root=engine.add(engine.mul(a,a,a),engine.scale(engine.mul(a,b),2),engine.mul(c,d))
+  29         elif degree==4:
+  30             root=engine.add(engine.mul(a,a,a,a),engine.mul(b,c))
+  31         else:
+  32             raise ValueError(degree)
+  33         return engine, root, a, arrays
+  34 
+  35     def test_python_backend_all_degrees(self):
+  36         for n in (16,35,128):
+  37             for degree in range(5):
+  38                 with self.subTest(n=n,degree=degree):
+  39                     eng,root,leaf,arrays=self.make(n,degree)
+  40                     pre=eng.prepare(root,leaf,max_degree=4)
+  41                     jit=compile_prepared(pre,backend='python',max_degree=4)
+  42                     for pos,delta in ((0,.13),(n-1,-.07),(n//2,.12)):
+  43                         expected=arrays[0].copy();expected[pos]+=delta
+  44                         a,b,c,d=expected,arrays[1],arrays[2],arrays[3]
+  45                         A,B,C,D=[fft.rfft(v) for v in (a,b,c,d)]
+  46                         if degree==0: spectrum=B*C+D
+  47                         elif degree==1:spectrum=A*B+C*D
+  48                         elif degree==2:spectrum=A*A+B*C
+  49                         elif degree==3:spectrum=A*A*A+2*A*B+C*D
+  50                         else:spectrum=A**4+B*C
+  51                         desired=fft.irfft(spectrum,n=n)
+  52                         np.testing.assert_allclose(jit.single(pos,delta),desired,rtol=2e-9,atol=2e-9)
+  53                         inds=np.array([0,1,n//2,n-1])
+  54                         np.testing.assert_allclose(jit.single(pos,delta,inds),desired[inds],atol=2e-9)
+  55                     self.assertLess(len(jit.generated_source),20000)
+  56 
+  57     def test_numba_backend_quadratic_cubic_sparse(self):
+  58         for degree in (1,2,3,4):
+  59             eng,root,leaf,arrays=self.make(128,degree)
+  60             plan=compile_expression(eng,root,leaf,backend='numba',max_degree=4)
+  61             orig=eng.prepare(root,leaf,max_degree=4)
+  62             self.assertEqual(plan.backend,'numba')
+  63             self.assertGreater(len(plan._full.signatures),0)
+  64             for pos,delta in ((0,.01),(5,-.003),(127,.2)):
+  65                 np.testing.assert_allclose(plan.single(pos,delta),orig.single(pos,delta),atol=1e-9,rtol=1e-9)
+  66                 idx=np.array([0,12,127,5,5])
+  67                 np.testing.assert_allclose(plan.single(pos,delta,idx),orig.single(pos,delta,indices=idx),atol=1e-9)
+  68 
+  69     def test_partial_empty_and_errors(self):
+  70         eng,root,leaf,_=self.make(64,3)
+  71         plan=compile_expression(eng,root,leaf)
+  72         self.assertEqual(plan.single(0,0.0,indices=[]).size,0)
+  73         with self.assertRaises(IndexError):plan.single(-1,0.1)
+  74         with self.assertRaises(IndexError):plan.single(64,0.1)
+  75         with self.assertRaises(ValueError):plan.single(0,float('nan'))
+  76         with self.assertRaises(IndexError):plan.single(0,.1,[64])
+  77         with self.assertRaises(TypeError):plan.single(0,.1,[0.2])
+  78         self.assertEqual(plan.data_bytes,plan.base.nbytes+plan.dense.nbytes+plan.sparse_positions.nbytes+plan.sparse_amplitudes.nbytes)
+  79 
+  80     def test_compilation_bound(self):
+  81         eng,root,leaf,_=self.make(32,4)
+  82         with self.assertRaises(ValueError):compile_expression(eng,root,leaf,max_degree=3)
+  83 
+  84 
+  85 def circular_mod(a,b,p):
+  86     n=len(a)
+  87     out=[0]*n
+  88     for i,x in enumerate(a):
+  89         for j,y in enumerate(b):
+  90             out[(i+j)%n]=(out[(i+j)%n]+x*y)%p
+  91     return out
+  92 
+  93 class ExactModularAudit(unittest.TestCase):
+  94     def test_exact_jet_kernel_120_trials(self):
+  95         rng=np.random.default_rng(700)
+  96         for prime in (17,97,257):
+  97             for trial in range(40):
+  98                 n=11 if trial%2 else 16
+  99                 a=rng.integers(0,prime,size=n).tolist()
+ 100                 b=rng.integers(0,prime,size=n).tolist()
+ 101                 c=rng.integers(0,prime,size=n).tolist()
+ 102                 pos=int(rng.integers(0,n)); d=int(rng.integers(-5,6))
+ 103                 # F(a)=a*a*a+2a*b+c.  Independent schoolbook modular oracle.
+ 104                 aa=circular_mod(a,a,prime)
+ 105                 aaa=circular_mod(aa,a,prime)
+ 106                 ab=circular_mod(a,b,prime)
+ 107                 k0=[(aaa[i]+2*ab[i]+c[i])%prime for i in range(n)]
+ 108                 k1=[(3*aa[i]+2*b[i])%prime for i in range(n)]
+ 109                 k2=[(3*a[i])%prime for i in range(n)]
+ 110                 src=SimpleNamespace(n=n,degree=3,kernels=(np.array(k0,dtype=np.float64),np.array(k1,dtype=np.float64),np.array(k2,dtype=np.float64),None),sparse_coefficients=(None,None,None,{0:1.0}))
+ 111                 plan=compile_prepared(src,backend='python',max_degree=3)
+ 112                 got=np.rint(plan.single(pos,d)).astype(np.int64)%prime
+ 113                 changed=list(a); changed[pos]=(changed[pos]+d)%prime
+ 114                 bb=circular_mod(changed,changed,prime)
+ 115                 bbb=circular_mod(bb,changed,prime)
+ 116                 cb=circular_mod(changed,b,prime)
+ 117                 wanted=np.array([(bbb[i]+2*cb[i]+c[i])%prime for i in range(n)],dtype=np.int64)
+ 118                 np.testing.assert_array_equal(got,wanted)
+ 119 
+ 120 if __name__=='__main__':unittest.main()
+===== END SOURCE 85; 5868 bytes; 120 lines =====
+===== SOURCE 86 fft_phase10_aot/tests/test_two_edit.py SHA256 1adb3a7d77cdbec8adaee7fd150304e6e463b2b2bd6dceec8c13a8bcfecf84cf =====
+   1 """Numerical & exact modular independent checks for Phase 10."""
+   2 import ctypes
+   3 import sys
+   4 import unittest
+   5 from pathlib import Path
+   6 from unittest.mock import patch
+   7 
+   8 import numpy as np
+   9 from scipy import fft
+  10 
+  11 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+  12 from algebra_fft import AlgebraFFT, DegreeExceeded
+  13 from two_edit_engine import prepare_two
+  14 
+  15 
+  16 def circular_mod(a,b,p):
+  17     n=len(a)
+  18     out=[0]*n
+  19     for i,x in enumerate(a):
+  20         for j,y in enumerate(b):
+  21             out[(i+j)%n]=(out[(i+j)%n]+int(x)*int(y))%p
+  22     return out
+  23 
+  24 
+  25 def slow_expression(a,b,c,d,p):
+  26     aa=circular_mod(a,a,p)
+  27     aab=circular_mod(aa,b,p)
+  28     ab=circular_mod(a,b,p)
+  29     bb=circular_mod(b,b,p)
+  30     cd=circular_mod(c,d,p)
+  31     return np.array([(aab[i]+ab[i]+bb[i]+cd[i])%p for i in range(len(a))], dtype=np.int64)
+  32 
+  33 
+  34 def experiment(n,seed=22):
+  35     rng=np.random.default_rng(seed)
+  36     arrays=[rng.normal(size=n)/np.sqrt(n) for _ in range(4)]
+  37     eng=AlgebraFFT(n)
+  38     a,b,c,d=[eng.signal(arr) for arr in arrays]
+  39     root=eng.add(eng.mul(a,a,b),eng.mul(a,b),eng.mul(b,b),eng.mul(c,d))
+  40     return eng,root,a,b,arrays
+  41 
+  42 
+  43 class TestTwoEdit(unittest.TestCase):
+  44     def test_native_available_and_no_runtime_jit(self):
+  45         eng,root,a,b,_=experiment(16)
+  46         p=prepare_two(eng,root,a,b)
+  47         self.assertTrue(p.shape_available)
+  48         self.assertTrue(p.native_available,'AOT compilation missing from packaged distribution')
+  49         self.assertEqual(p.total_degree,5)
+  50         self.assertEqual(p.dense.shape[1],16)
+  51         self.assertEqual(set(p.symbolic_terms),
+  52             {(0,0),(0,1),(0,2),(1,0),(1,1),(2,0),(2,1)})
+  53         self.assertTrue(all(v.flags.c_contiguous for v in [p.base,p.dense,p.dense_a,p.sparse_a]))
+  54         self.assertFalse(p.base.flags.writeable)
+  55 
+  56     def test_both_edits_same_or_different_locations(self):
+  57         for n in (11,16,32,127,1024):
+  58             eng,root,a,b,arrays=experiment(n)
+  59             plan=prepare_two(eng,root,a,b)
+  60             for pos_a,pos_b in ((0,0),(1,n-1),(n//2,n//2),(n-1,0)):
+  61                 for da,db in ((.12,.03),(-.04,.01),(0.,-.06),(.07,0.),(0.,0.)):
+  62                     a2=arrays[0].copy();b2=arrays[1].copy()
+  63                     a2[pos_a]+=da;b2[pos_b]+=db
+  64                     fa,fb,fc,fd=[fft.rfft(x) for x in (a2,b2,arrays[2],arrays[3])]
+  65                     ref=fft.irfft(fa*fa*fb+fa*fb+fb*fb+fc*fd,n=n)
+  66                     for backend in ('native','numpy','auto','aot_shape'):
+  67                         got=plan.update(pos_a,da,pos_b,db,backend=backend)
+  68                         np.testing.assert_allclose(got,ref,atol=8e-11,rtol=5e-10)
+  69                         qs=np.array([0,n-1,0,n//2],dtype=np.int64)
+  70                         part=plan.update(pos_a,da,pos_b,db,indices=qs,backend=backend)
+  71                         np.testing.assert_allclose(part,ref[qs],atol=8e-11,rtol=5e-10)
+  72             self.assertGreater(plan.number_symbolic_nodes,0)
+  73 
+  74     def test_exact_modular_independent_schoolbook(self):
+  75         rng=np.random.default_rng(144)
+  76         count=0
+  77         for n in (7,12,17):
+  78             for p in (7,17,101,257):
+  79                 for _ in range(32):
+  80                     arrays=[rng.integers(0,6,size=n).tolist() for j in range(4)]
+  81                     eng=AlgebraFFT(n)
+  82                     a,b,c,d=[eng.signal(x) for x in arrays]
+  83                     root=eng.add(eng.mul(a,a,b),eng.mul(a,b),eng.mul(b,b),eng.mul(c,d))
+  84                     plan=prepare_two(eng,root,a,b)
+  85                     sa=int(rng.integers(0,n));sb=int(rng.integers(0,n))
+  86                     da=int(rng.integers(-4,5));db=int(rng.integers(-4,5))
+  87                     edited_a=list(arrays[0]);edited_b=list(arrays[1])
+  88                     edited_a[sa]+=da;edited_b[sb]+=db
+  89                     expected=slow_expression(edited_a,edited_b,*arrays[2:],p)
+  90                     for backend in ('numpy','native','aot_shape'):
+  91                         got=np.rint(plan.update(sa,da,sb,db,backend=backend)).astype(np.int64)%p
+  92                         np.testing.assert_array_equal(got,expected)
+  93                     count+=1
+  94         self.assertEqual(count,384)
+  95 
+  96     def test_other_dag_structures_and_shared_inputs(self):
+  97         rng=np.random.default_rng(91)
+  98         n=87
+  99         v=[rng.normal(size=n)/np.sqrt(n) for _ in range(3)]
+ 100         eng=AlgebraFFT(n)
+ 101         a,b,c=[eng.signal(x) for x in v]
+ 102         roots=[eng.add(eng.mul(a,b),eng.mul(a,b)),
+ 103                eng.mul(eng.add(a,b),eng.add(a,b)),
+ 104                eng.add(eng.mul(a,a,a),eng.mul(b,b,b)),
+ 105                eng.add(eng.mul(a,c),eng.mul(b,c)),
+ 106                eng.mul(c,c)]
+ 107         for root in roots:
+ 108             plan=prepare_two(eng,root,a,b,max_total_degree=6)
+ 109             for pa,pb,da,db in ((3,19,.1,-.07),(5,5,.1,.2)):
+ 110                 aa=v[0].copy();bb=v[1].copy();aa[pa]+=da;bb[pb]+=db
+ 111                 x=eng.signal(aa);y=eng.signal(bb)
+ 112                 edited=eng.replace(root,a,x)
+ 113                 edited=eng.replace(edited,b,y)
+ 114                 ref=eng.evaluate_time(edited)
+ 115                 np.testing.assert_allclose(plan.update(pa,da,pb,db),ref,atol=2e-10,rtol=1e-9)
+ 116 
+ 117     def test_mixed_terms_not_independent_single_edits(self):
+ 118         eng,root,a,b,_=experiment(91)
+ 119         plan=prepare_two(eng,root,a,b)
+ 120         self.assertEqual(plan.linear_direct_coefficients,2)
+ 121         aa=plan.update(11,.3,23,0,backend='aot_shape')
+ 122         bb=plan.update(11,0,23,.5,backend='aot_shape')
+ 123         both=plan.update(11,.3,23,.5,backend='aot_shape')
+ 124         base=plan.update(11,0,23,0,backend='aot_shape')
+ 125         # Mixed degree (1,1) and (2,1) are genuine, not optional.
+ 126         self.assertGreater(float(np.linalg.norm(both-aa-bb+base)),1e-4)
+ 127 
+ 128     def test_offline_source_rejects_unbounded_code_generation(self):
+ 129         from offline_codegen import generate_source, DEFAULT_SHAPE
+ 130         good=generate_source(DEFAULT_SHAPE)
+ 131         self.assertIn('fft10_shape_eval',good)
+ 132         self.assertNotIn('exec(',good)
+ 133         with self.assertRaises(ValueError):
+ 134             generate_source({'dense':[[0,1],[0,1]],'sparse':[]})
+ 135         with self.assertRaises(ValueError):
+ 136             generate_source({'dense':[[99,0]],'sparse':[]})
+ 137         eng,root,a,b,_=experiment(27)
+ 138         mismatched=eng.mul(a,b)
+ 139         plan=prepare_two(eng,mismatched,a,b)
+ 140         self.assertFalse(plan.shape_available)
+ 141         with self.assertRaises(RuntimeError):
+ 142             plan.update(0,.1,0,.2,backend='aot_shape')
+ 143         # Auto must fall back without a runtime compiler.
+ 144         np.testing.assert_allclose(plan.update(0,.1,0,.2,backend='auto'),
+ 145                                    plan.update(0,.1,0,.2,backend='numpy'))
+ 146 
+ 147     def test_error_paths(self):
+ 148         eng,root,a,b,_=experiment(19)
+ 149         plan=prepare_two(eng,root,a,b)
+ 150         with self.assertRaises(ValueError):prepare_two(eng,root,a,a)
+ 151         with self.assertRaises(DegreeExceeded):prepare_two(eng,root,a,b,max_total_degree=2)
+ 152         with self.assertRaises(MemoryError):prepare_two(eng,root,a,b,max_kernel_bytes=10)
+ 153         with self.assertRaises(IndexError):plan.update(-1,1,1,1)
+ 154         with self.assertRaises(IndexError):plan.update(2,1,19,1)
+ 155         with self.assertRaises(ValueError):plan.update(1,float('nan'),1,1)
+ 156         with self.assertRaises(TypeError):plan.update(1,1,1,1,indices=[2.1])
+ 157         with self.assertRaises(IndexError):plan.update(1,1,1,1,indices=[19])
+ 158         with self.assertRaises(ValueError):plan.update(1,1,1,1,backend='broken')
+ 159         self.assertEqual(plan.update(1,0,1,0,indices=[]).size,0)
+ 160         from two_edit_engine import _native_path
+ 161         with patch('two_edit_engine._native_path',return_value=None), patch('two_edit_engine._matching_shape',return_value=None):
+ 162             with self.assertRaises(RuntimeError):plan.update(1,.1,1,.1,backend='native')
+ 163             got=plan.update(1,.1,1,.1,backend='auto')
+ 164             self.assertTrue(np.all(np.isfinite(got)))
+ 165 
+ 166 if __name__=='__main__':
+ 167     unittest.main()
+===== END SOURCE 86; 7832 bytes; 167 lines =====

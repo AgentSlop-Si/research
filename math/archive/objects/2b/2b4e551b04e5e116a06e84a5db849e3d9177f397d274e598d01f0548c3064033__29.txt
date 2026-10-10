@@ -1,0 +1,157 @@
+   1 #!/usr/bin/env python3
+   2 """Independent finite permutation and exact-rational audit of the common D8 gate."""
+   3 import itertools,json,random
+   4 from fractions import Fraction
+   5 from pathlib import Path
+   6 BASE=Path(__file__).parent
+   7 LABELS=[(axis,c,s) for axis in ('H','V') for c in (0,1) for s in (-1,1)]
+   8 ID=tuple(range(4));ROT=(1,2,3,0);SWAPX=(2,3,0,1)
+   9 def compose(a,b):return tuple(a[b[i]] for i in range(len(a)))
+  10 def inverse(p):
+  11     out=[0]*len(p)
+  12     for i,j in enumerate(p):out[j]=i
+  13     return tuple(out)
+  14 def cycles(p):
+  15     seen=set();out=[]
+  16     for v in range(len(p)):
+  17         if v in seen:continue
+  18         c=[];w=v
+  19         while w not in seen:seen.add(w);c.append(w);w=p[w]
+  20         assert w==v;out.append(c)
+  21     return out
+  22 
+  23 def closure(gens):
+  24     group={ID};todo=[ID]
+  25     while todo:
+  26         p=todo.pop()
+  27         for g in gens:
+  28             q=compose(g,p)
+  29             if q not in group:group.add(q);todo.append(q)
+  30     return group
+  31 D8={p for p in itertools.permutations(range(4)) if {frozenset((p[0],p[2])),frozenset((p[1],p[3]))}=={frozenset((0,2)),frozenset((1,3))}}
+  32 assert len(D8)==8
+  33 
+  34 def dimensions(n):
+  35     k=n.bit_length()-1;assert n==1<<k
+  36     b=1<<(k//2);a=n//b;return a,b
+  37 
+  38 def cover(a,b,label):
+  39     axis,c,s=label
+  40     return [((x+s*(2*y+c))%a)*b+y if axis=='H' else x*b+(y+s*(2*x+c))%b for x in range(a) for y in range(b)]
+  41 def splice(p,tails):
+  42     q=p[:]
+  43     for j,t in enumerate(tails):q[t]=p[tails[(j+1)%len(tails)]]
+  44     return q
+  45 
+  46 def init(a,b):return [splice(p,[min(c) for c in cycles(p)]) for p in (cover(a,b,label) for label in LABELS)]
+  47 def physical(a,b,v,e):
+  48     x,y=divmod(v,b);return (x+a*(e//2))*2*b+y+b*(e%2)
+  49 def sheet(a,b,v):
+  50     x,y=divmod(v,2*b);return 2*(x//a)+y//b
+  51 
+  52 def make_lift(a,b,small,label,require_even=True):
+  53     n=a*b;ts=cover(a,b,label);tl=cover(2*a,2*b,label);eta=[0]*n
+  54     for v in range(n):eta[ts[v]]=small[v]
+  55     pre=[]
+  56     for v in tl:
+  57         x,y=divmod(v,2*b);xx,yy=divmod(eta[(x%a)*b+y%b],b)
+  58         pre.append((xx+a*(x//a))*2*b+yy+b*(y//b))
+  59     proj=lambda v:((v//(2*b))%a)*b+(v%(2*b))%b
+  60     assert all(proj(pre[v])==small[proj(v)] for v in range(4*n))
+  61     maps=[tuple(sheet(a,b,pre[physical(a,b,v,e)]) for e in range(4)) for v in range(n)]
+  62     axis,c,sgn=label;total=0
+  63     for x in range(a):
+  64         for y in range(b):
+  65             carry=(x+sgn*(2*y+c))//a if axis=='H' else (y+sgn*(2*x+c))//b
+  66             total+=carry
+  67             expected=tuple(2*((e//2+carry+(2*b//a)*(e%2))%2)+e%2 if axis=='H' else 2*(e//2)+(e%2+carry)%2 for e in range(4))
+  68             assert maps[b*x+y]==expected and maps[b*x+y] in D8
+  69     assert total==sgn*(b*(b-1+c) if axis=='H' else a*(a-1+c))
+  70     monodromy=ID
+  71     for v in cycles(small)[0]:monodromy=compose(maps[v],monodromy)
+  72     cc=cycles(pre)
+  73     if require_even:
+  74         assert monodromy==ID and len(cc)==4 and all(len(c)==n for c in cc)
+  75         tails=sorted(next(v for v in c if proj(v)==0) for c in cc)
+  76         assert tails==[physical(a,b,0,e) for e in range(4)]
+  77     else:tails=sorted(min(v for v in c if proj(v)==0) for c in cc)
+  78     lifted=splice(pre,tails);assert len(cycles(lifted))==1
+  79     post=[tuple(sheet(a,b,lifted[physical(a,b,v,e)]) for e in range(4)) for v in range(n)]
+  80     final=ID
+  81     for v in cycles(small)[0]:final=compose(post[v],final)
+  82     if require_even:assert final==ROT and post[0]==compose(maps[0],ROT)
+  83     if require_even:
+  84         assert all(p in D8 and compose(p,SWAPX)==compose(SWAPX,p) for p in post)
+  85         assert all(lifted[(v+2*n)%(4*n)]==(lifted[v]+2*n)%(4*n) for v in range(4*n))
+  86     return lifted,post,{'carry_sum':total,'premerge_monodromy':monodromy,'premerge_cycle_lengths':list(map(len,cc)),'postmerge_monodromy':final,'all_postmerge_maps_in_D8':all(p in D8 for p in post)}
+  87 
+  88 def bank_holonomy(a,b,small,expected=None):
+  89     large=[];edge=[];route_records=[]
+  90     for p,label in zip(small,LABELS):
+  91         q,maps,rec=make_lift(a,b,p,label);large.append(q);edge.append(maps);route_records.append(rec)
+  92     n=a*b;transport=[None]*n;transport[0]=ID
+  93     for v in cycles(small[0])[0][:-1]:transport[small[0][v]]=compose(edge[0][v],transport[v])
+  94     assert all(t is not None for t in transport)
+  95     hol={}
+  96     for j in range(8):
+  97         for v in range(n):hol[(j,v)]=compose(inverse(transport[small[j][v]]),compose(edge[j][v],transport[v]))
+  98     group=closure(set(hol.values()));assert group==D8
+  99     if expected:
+ 100         assert sorted(group)==sorted(tuple(g) for g in expected['group_elements'])
+ 101         w=expected['noncommuting_witness'];ga=hol[tuple(w['edge_a'])];gb=hol[tuple(w['edge_b'])]
+ 102         assert list(ga)==w['holonomy_a'] and list(gb)==w['holonomy_b']
+ 103         assert list(compose(ga,gb))==w['ab'] and list(compose(gb,ga))==w['ba'] and compose(ga,gb)!=compose(gb,ga)
+ 104     witnesses=next((g,h) for g in sorted(set(hol.values())) for h in sorted(set(hol.values())) if compose(g,h)!=compose(h,g))
+ 105     return large,{'N':n,'group_order':len(group),'group_elements':sorted(group),'noncommuting_pair':witnesses,'eight_route_controls':route_records}
+ 106 
+ 107 def finite_instances():
+ 108     source=json.loads((BASE/'sources/JOINT_HOLONOMY_CONTROLS.json').read_text());out=[]
+ 109     for record in source['one_level_instances']:
+ 110         a,b=dimensions(record['N']);_,result=bank_holonomy(a,b,init(a,b),record);out.append(result)
+ 111     for seed in (4,8,16):
+ 112         a,b=dimensions(seed);small=init(a,b)
+ 113         for level in range(3):
+ 114             expected=next(r for r in source['hierarchical_chain_instances'] if r['seed_N']==seed and r['level']==level)
+ 115             small,result=bank_holonomy(a,b,small,expected);result.update({'seed_N':seed,'level':level});out.append(result);a,b=2*a,2*b
+ 116     assert len(out)==17
+ 117     extra=[];rng=random.Random(850034)
+ 118     for b in (2,4,6,10):
+ 119         for a in (b,2*b):
+ 120             for label in LABELS:
+ 121                 order=rng.sample(range(a*b),a*b);small=[0]*(a*b)
+ 122                 for j,v in enumerate(order):small[v]=order[(j+1)%len(order)]
+ 123                 _,_,rec=make_lift(a,b,small,label);extra.append({'a':a,'b':b,'label':label,**rec})
+ 124     _,_,odd=make_lift(2,1,[1,0],('H',1,1),False);assert odd['premerge_monodromy']==SWAPX and odd['premerge_cycle_lengths']==[4,4]
+ 125     assert closure([ROT])=={ID,ROT,compose(ROT,ROT),inverse(ROT)}
+ 126     return {'source_instances':out,'arbitrary_small_order_even_grid_controls':extra,'b_one_boundary':odd,'positive_cyclic_group_order':len(closure([ROT]))}
+ 127 
+ 128 def masks_and_banks():
+ 129     W=[[(-1)**((c&e).bit_count()%2) for e in range(4)] for c in range(4)];groups=[0,1,2,2];out=[]
+ 130     for mask in itertools.product((0,1),repeat=4):
+ 131         mat=[[Fraction(sum(W[c][e]*mask[e]*W[d][e] for e in range(4)),4) for d in range(4)] for c in range(4)]
+ 132         fine=all(not mat[c][d] for c in range(4) for d in range(4) if groups[c]!=groups[d])
+ 133         coarse=all(not mat[c][d] for c in range(4) for d in range(4) if (c//2)!=(d//2))
+ 134         assert fine==(len(set(mask))==1);assert coarse==(mask[0]==mask[2] and mask[1]==mask[3])
+ 135         out.append({'mask':mask,'preserves_1_1_2':fine,'preserves_2_2':coarse})
+ 136     p=998244353;banks=[]
+ 137     for n in (4,8,16,32,64):
+ 138         a,b=dimensions(n);length=4*n;w=pow(3,(p-1)//length,p);rho=pow(3,(p-1)//(2*b),p)
+ 139         active=set(range(a//2))
+ 140         def entry(i,j):
+ 141             x,y=divmod(i,2*b);xx,z=divmod(j,2*b)
+ 142             if x!=xx:return 0
+ 143             return pow(rho,y*z,p) if x%a in active else int(y==z)
+ 144         assert all(entry(i,j)==entry((i+2*n)%length,(j+2*n)%length) for i in range(length) for j in range(length))
+ 145         assert pow(w,0,p)==1 and pow(w,2*n*(2*n+1),p)==p-1
+ 146         banks.append({'small_N':n,'entries':length*length,'Fourier_counterexample':[1,p-1]})
+ 147     # The independently certified N16 seed bank is not this pulled-back bank.
+ 148     def seed_bank(i,j):
+ 149         if i//4!=j//4:return 0
+ 150         return pow(pow(3,(p-1)//4,p),(i%4)*(j%4),p) if i//4<2 else int(i==j)
+ 151     assert seed_bank(0,1)==1 and seed_bank(8,9)==0
+ 152     return {'binary_mask_controls':out,'pulled_back_bank_controls':banks,'N16_seed_bank_high_x_commutation_counterexample':[1,0]}
+ 153 
+ 154 if __name__=='__main__':
+ 155     result={'status':'PASS','finite_holonomy':finite_instances(),'mask_and_bank':masks_and_banks(),'scope':'All-size D8 containment and mask/symmetry proof; joint D8 equality only for the enumerated instances'}
+ 156     (BASE/'VERIFIED_RESULTS.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 157     print('PASS: 17 complete source holonomy instances, 64 arbitrary-order even-grid lifts, all mask and bank controls')

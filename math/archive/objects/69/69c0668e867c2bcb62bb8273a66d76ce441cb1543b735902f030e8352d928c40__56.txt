@@ -1,0 +1,80 @@
+   1 """Numerical full-state check for sequential fibers with one shared scratch.
+   2 
+   3 The local primitive is synthetic: it has an ill-conditioned invertible prefix
+   4 on (two B-banks + scratch) and then exactly cancels it before a unitary bank
+   5 exchange.  The purpose is to validate the block-diagonal/shared-scratch
+   6 condition-reset argument, not to model the #130 circuit itself.
+   7 """
+   8 import json
+   9 import math
+  10 from pathlib import Path
+  11 import numpy as np
+  12 
+  13 
+  14 def dft(n):
+  15     j=np.arange(n)[:,None]; k=np.arange(n)[None,:]
+  16     return np.exp(-2j*np.pi*j*k/n)/math.sqrt(n)
+  17 
+  18 
+  19 def swap_block(B):
+  20     U=dft(B); Z=np.zeros((B,B),complex)
+  21     return np.block([[Z,-U.conj().T],[U,Z]])
+  22 
+  23 
+  24 def local_prefixes(B, scratch, K):
+  25     d=2*B+scratch
+  26     scales=np.geomspace(1.0,K,d)
+  27     D=np.diag(scales.astype(complex))
+  28     Di=np.diag((1/scales).astype(complex))
+  29     W=np.block([
+  30         [swap_block(B), np.zeros((2*B,scratch),complex)],
+  31         [np.zeros((scratch,2*B),complex), np.eye(scratch,dtype=complex)]
+  32     ])
+  33     # cumulative prefixes: D, then Di@D=I, then W
+  34     return [D, Di@D, W], W
+  35 
+  36 
+  37 def embed_current(prefix, N, B, scratch, fiber):
+  38     # Full coordinates: bank A N, bank B N, shared scratch s.
+  39     total=2*N+scratch
+  40     idx=list(range(fiber*B,(fiber+1)*B))
+  41     idx += list(range(N+fiber*B,N+(fiber+1)*B))
+  42     idx += list(range(2*N,2*N+scratch))
+  43     M=np.eye(total,dtype=complex)
+  44     M[np.ix_(idx,idx)] = prefix
+  45     return M
+  46 
+  47 
+  48 def embed_completed(W, N, B, scratch, fiber):
+  49     return embed_current(W,N,B,scratch,fiber)
+  50 
+  51 
+  52 def run(N=12,B=3,scratch=4,K=1e5):
+  53     assert N%B==0
+  54     prefixes,W=local_prefixes(B,scratch,K)
+  55     Q=np.eye(2*N+scratch,dtype=complex)
+  56     rows=[]; maxc=1.0
+  57     for f in range(N//B):
+  58         base=Q.copy()
+  59         for t,P in enumerate(prefixes,1):
+  60             M=embed_current(P,N,B,scratch,f)@base
+  61             c=float(np.linalg.cond(M)); maxc=max(maxc,c)
+  62             rows.append({'fiber':f,'prefix':t,'condition':c})
+  63         Q=embed_completed(W,N,B,scratch,f)@base
+  64         # scratch is restored at fiber boundary; completed block is unitary
+  65         c=float(np.linalg.cond(Q)); maxc=max(maxc,c)
+  66         rows.append({'fiber':f,'prefix':'completed','condition':c})
+  67     return {'N':N,'B':B,'scratch':scratch,'K':K,
+  68             'max_condition':maxc,'final_condition':float(np.linalg.cond(Q)),
+  69             'rows':rows}
+  70 
+  71 
+  72 def main():
+  73     out=[run(K=K) for K in (1e2,1e4,1e6)]
+  74     p=Path(__file__).with_name('full_state_shared_scratch_results.json')
+  75     p.write_text(json.dumps(out,indent=2))
+  76     for x in out:
+  77         print('K=',x['K'],'max=',x['max_condition'],'final=',x['final_condition'])
+  78     print('wrote',p)
+  79 
+  80 if __name__=='__main__': main()

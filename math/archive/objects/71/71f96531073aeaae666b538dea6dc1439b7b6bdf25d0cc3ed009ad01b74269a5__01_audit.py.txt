@@ -1,0 +1,58 @@
+"""Reproduce finite checks for Phase 24 (exact ranks, distribution, Green update)."""
+import json,random,math
+from collections import Counter
+from phase24_ordering import *
+from phase23_resolvent import RealGreenFourier
+
+
+def main():
+    exhaustive=[]
+    for n in range(2,17):
+        counter=Counter()
+        for t in range(1<<n):
+            bits=[(t>>j)&1 for j in range(n)]
+            rank=cycle_rank_difference(successor_of_order(stable_binary_order(bits)))
+            assert rank==predicted_binary_rank(bits),(n,bits,rank)
+            counter[rank]+=1
+        for r,v in counter.items():
+            p,q=binary_rank_probability(n,r)
+            assert v*q == (1<<n)*p
+        exhaustive.append({'n':n,'sequences':1<<n,'rank_distribution':dict(sorted(counter.items()))})
+    rng=random.Random(20261009)
+    sampled=[]
+    for n,samples in ((64,24),(256,12),(1024,4),(4096,2)):
+        ranks=[];mins=[]
+        for _ in range(samples):
+            bits=[rng.randrange(2) for _ in range(n)]
+            W=successor_of_order(stable_binary_order(bits))
+            ranks.append(cycle_rank_difference(W))
+            minr=min(cycle_rank_difference(W,a) for a in range(1,n))
+            mins.append(minr)
+        sampled.append({'n':n,'samples':samples,'mean_rank_stride_1':sum(ranks)/samples,
+                        'min_rank_over_every_stride_and_sample':min(mins),
+                        'explicit_joint_probability_lower_bound':
+                            all_stride_rank_lower_bound_probability(n)})
+    eng=RealGreenFourier.create(64)
+    order=list(range(64))
+    order[5],order[37]=order[37],order[5]
+    succ=successor_of_order(order)
+    mismatch=sum(succ[j]!=(j+1)%64 for j in range(64))
+    got=permuted_geometric_via_green_woodbury(order,13,eng)
+    ref=direct_permuted_geometric_reference(order,13,eng)
+    assert got==ref
+    result={'exhaustive':exhaustive,'random_all_stride_audit':sampled,
+            'woodbury_test':{'n':64,'swap_positions':[5,37],
+                             'changed_successor_edges':mismatch,
+                             'exact_match':True},
+            'limitations':['fixed-field work only, no complex conditioning guarantee',
+                           'not a worst-case FFT speedup',
+                           'joint probability bound may be vacuous at small N']}
+    with open('audit.json','w') as f:json.dump(result,f,indent=2)
+    print('Exhaustive binary rank/distribution through N=16: PASS')
+    for item in sampled:
+        print('N=%-5d samples=%-3d mean rank=%-7.2f min all-stride rank=%-5d joint theorem lower P=%.7f' %
+              (item['n'],item['samples'],item['mean_rank_stride_1'],
+               item['min_rank_over_every_stride_and_sample'],item['explicit_joint_probability_lower_bound']))
+    print('Exact finite-field Green Woodbury validation N=64: PASS, changed edges=',mismatch)
+
+if __name__=='__main__':main()

@@ -1,0 +1,195 @@
+   1 """Fresh exact modular checks for the twisted-displacement obstruction.
+   2 
+   3 Written independently for this review; no supplied code is imported/executed.
+   4 Run: python independent_checks.py > results.json
+   5 """
+   6 import itertools
+   7 import json
+   8 import math
+   9 import random
+  10 
+  11 P = 2521  # prime, and N | P-1 for all tested lengths
+  12 
+  13 def mat(n, diagonal=0):
+  14     return [[diagonal if i == j else 0 for j in range(n)] for i in range(n)]
+  15 
+  16 def add(a, b, scale=1):
+  17     return [[(x + scale*y) % P for x, y in zip(r, s)] for r, s in zip(a, b)]
+  18 
+  19 def mul(a, b):
+  20     n = len(a)
+  21     return [[sum(a[i][k]*b[k][j] for k in range(n)) % P for j in range(n)] for i in range(n)]
+  22 
+  23 def scale(a, c):
+  24     return [[c*x % P for x in row] for row in a]
+  25 
+  26 def power(a, k):
+  27     out = mat(len(a), 1)
+  28     while k:
+  29         if k & 1:
+  30             out = mul(out, a)
+  31         a = mul(a, a)
+  32         k >>= 1
+  33     return out
+  34 
+  35 def rank(a):
+  36     a = [row[:] for row in a]
+  37     n = len(a)
+  38     r = 0
+  39     for j in range(n):
+  40         pivot = next((i for i in range(r, n) if a[i][j] % P), None)
+  41         if pivot is None:
+  42             continue
+  43         a[r], a[pivot] = a[pivot], a[r]
+  44         z = pow(a[r][j], -1, P)
+  45         a[r] = [x*z % P for x in a[r]]
+  46         for i in range(r+1, n):
+  47             c = a[i][j]
+  48             a[i] = [(x-c*y) % P for x, y in zip(a[i], a[r])]
+  49         r += 1
+  50     return r
+  51 
+  52 def inv(a):
+  53     n = len(a)
+  54     a = [row[:] + [int(i == j) for j in range(n)] for i, row in enumerate(a)]
+  55     for j in range(n):
+  56         pivot = next((i for i in range(j, n) if a[i][j] % P), None)
+  57         if pivot is None:
+  58             raise ValueError('singular')
+  59         a[j], a[pivot] = a[pivot], a[j]
+  60         z = pow(a[j][j], -1, P)
+  61         a[j] = [x*z % P for x in a[j]]
+  62         for i in range(n):
+  63             if i == j:
+  64                 continue
+  65             c = a[i][j]
+  66             a[i] = [(x-c*y) % P for x, y in zip(a[i], a[j])]
+  67     return [row[n:] for row in a]
+  68 
+  69 def primitive(n):
+  70     for w in range(1, P):
+  71         if pow(w, n, P) == 1 and all(pow(w, k, P) != 1 for k in range(1, n)):
+  72             return w
+  73     raise ValueError(n)
+  74 
+  75 def shift(n):
+  76     z = mat(n)
+  77     for j in range(n):
+  78         z[(j+1) % n][j] = 1
+  79     return z
+  80 
+  81 def twist(a):
+  82     n = len(a)
+  83     return [[a[(i+1) % n][(j+1) % n] for j in range(n)] for i in range(n)]
+  84 
+  85 def affine_conjugate(a, u, v):
+  86     n = len(a)
+  87     out = mat(n)
+  88     for i in range(n):
+  89         for j in range(n):
+  90             out[(u*i+v) % n][(u*j+v) % n] = a[i][j]
+  91     return out
+  92 
+  93 def path(n, a, b, c):
+  94     out = mat(n, a)
+  95     for i in range(n-1):
+  96         out[i+1][i] = b
+  97         out[i][i+1] = c
+  98     return out
+  99 
+ 100 def poly_from_roots(roots):
+ 101     coeffs = [1]
+ 102     for root in roots:
+ 103         out = [0]*(len(coeffs)+1)
+ 104         for k, c in enumerate(coeffs):
+ 105             out[k] = (out[k] - root*c) % P
+ 106             out[k+1] = (out[k+1] + c) % P
+ 107         coeffs = out
+ 108     return coeffs
+ 109 
+ 110 def apply_poly(coeffs, a, op):
+ 111     out = mat(len(a))
+ 112     term = a
+ 113     for c in coeffs:
+ 114         out = add(out, term, c)
+ 115         term = op(term)
+ 116     return out
+ 117 
+ 118 def check(n):
+ 119     w = primitive(n)
+ 120     z = shift(n)
+ 121     d = [[pow(w, i, P) if i == j else 0 for j in range(n)] for i in range(n)]
+ 122     f = [[pow(w, i*j, P) for j in range(n)] for i in range(n)]
+ 123     weyl = mul(power(z, n-1), d)
+ 124     assert rank(f) == n
+ 125     tf = f
+ 126     for k in range(n+2):
+ 127         assert tf == scale(mul(power(weyl, k), f), pow(w, k*(k-1)//2, P))
+ 128         tf = twist(tf)
+ 129     assert power(weyl, n) == mat(n, pow(w, -n*(n-1)//2, P))
+ 130     polys = 0
+ 131     root_subsets = itertools.chain.from_iterable(itertools.combinations(range(n), s) for s in range(n+1)) if n <= 8 else [tuple(range(s)) for s in range(n+1)]
+ 132     for exponents in root_subsets:
+ 133         coeffs = poly_from_roots([pow(w, a, P) for a in exponents])
+ 134         assert rank(apply_poly(coeffs, f, twist)) >= n-len(exponents)
+ 135         polys += 1
+ 136     denom = path(n, 4, 2, 3)
+ 137     while rank(denom) != n:
+ 138         denom = add(denom, mat(n, 1))
+ 139     green = inv(denom)
+ 140     assert rank(add(twist(denom), denom, -1)) <= 2
+ 141     assert rank(add(twist(green), green, -1)) <= 2
+ 142     affine_ranks = []
+ 143     for u in range(1, n):
+ 144         if math.gcd(u, n) != 1:
+ 145             continue
+ 146         for v in range(n):
+ 147             g = affine_conjugate(green, u, v)
+ 148             r = rank(add(twist(g), g, -1))
+ 149             assert r <= 4
+ 150             affine_ranks.append(r)
+ 151     rng = random.Random(1000+n)
+ 152     # Products of 3 two-term stage sums, 8 expanded branches.
+ 153     stages = []
+ 154     units = [u for u in range(1, n) if math.gcd(u, n) == 1]
+ 155     for j in range(3):
+ 156         terms = []
+ 157         for ell in range(2):
+ 158             a = rng.randrange(n)
+ 159             g = affine_conjugate(green, rng.choice(units), rng.randrange(n))
+ 160             terms.append((mul(power(d, a), g), pow(w, a, P)))
+ 161         stages.append(terms)
+ 162     branches = []
+ 163     for choice in itertools.product(range(2), repeat=3):
+ 164         b, lam = mat(n, 1), 1
+ 165         for j, ell in enumerate(choice):
+ 166             term, eig = stages[j][ell]
+ 167             b, lam = mul(b, term), lam*eig % P
+ 168         assert rank(add(twist(b), b, -lam)) <= 12
+ 169         branches.append((b, lam))
+ 170     target = mat(n, 1)
+ 171     for terms in stages:
+ 172         target = mul(target, add(terms[0][0], terms[1][0]))
+ 173     assert target == sum_matrices([b for b, _ in branches])
+ 174     roots = sorted(set(lam for _, lam in branches))
+ 175     coeffs = poly_from_roots(roots)
+ 176     assert rank(apply_poly(coeffs, target, twist)) <= len(roots)*8*12
+ 177     return {'N': n, 'fourier_phase_checks': n+2, 'polynomials_checked': polys, 'affine_paths_checked': len(affine_ranks), 'max_affine_displacement_rank': max(affine_ranks), 'branch_count': 8, 'distinct_phase_classes': len(roots)}
+ 178 
+ 179 def sum_matrices(matrices):
+ 180     out = mat(len(matrices[0]))
+ 181     for a in matrices:
+ 182         out = add(out, a)
+ 183     return out
+ 184 
+ 185 def scope_counterexample(n=9, u=2):
+ 186     # A bare affine multiplier is not a low-displacement conjugated path.
+ 187     perm = mat(n)
+ 188     for j in range(n):
+ 189         perm[(u*j) % n][j] = 1
+ 190     return {'N': n, 'multiplier': u, 'bare_affine_permutation_displacement_rank': rank(add(twist(perm), perm, -1))}
+ 191 
+ 192 if __name__ == '__main__':
+ 193     assert all(P % k for k in range(2, math.isqrt(P)+1))
+ 194     records = [check(n) for n in [2,3,4,5,6,7,8,9,10,12,14,18,20]]
+ 195     print(json.dumps({'field_prime': P, 'all_checks_passed': True, 'checks': records, 'scope_counterexample': scope_counterexample()}, indent=2))

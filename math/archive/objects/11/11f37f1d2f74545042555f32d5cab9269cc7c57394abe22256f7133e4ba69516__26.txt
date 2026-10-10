@@ -1,0 +1,213 @@
+1: """Exact sparse-grading decimation of the full finite q-exponential operator.
+2: 
+3: No Fourier backend is used. The hybrid direct-filter / direct-circulant
+4: implementation is subquadratic, but slower asymptotically than ordinary FFT.
+5: See README.md for the family closure, three-call recursion and complete costs.
+6: """
+7: from collections import Counter
+8: from dataclasses import dataclass
+9: from fixed_kernel import Counted, prepare
+10: 
+11: 
+12: def factor(field, values, phase, sign):
+13:     """(I + phase J_sign) x, where J_sign is the cyclic upper shift."""
+14:     edge = phase if sign == 1 else field.neg(phase)
+15:     return [field.add(values[i], field.mul(phase, values[i+1]))
+16:             for i in range(len(values)-1)] + [
+17:                 field.add(values[-1], field.mul(edge, values[0]))]
+18: 
+19: 
+20: def inverse_factor(field, values, phase, sign, inverse_denominator):
+21:     """Two exact backward scans; denominator = 1-sign*(-phase)^len(values)."""
+22:     h = len(values)
+23:     acc = values[-1]
+24:     for i in range(h-2, -1, -1):
+25:         acc = field.sub(values[i], field.mul(phase, acc))
+26:     first = field.mul(inverse_denominator, acc)
+27:     if h == 1:
+28:         return [first]
+29:     edge = phase if sign == 1 else field.neg(phase)
+30:     result = [field.zero] * h
+31:     result[0] = first
+32:     result[-1] = field.sub(values[-1], field.mul(edge, first))
+33:     for i in range(h-2, 0, -1):
+34:         result[i] = field.sub(values[i], field.mul(phase, result[i+1]))
+35:     return result
+36: 
+37: 
+38: def polynomial_from_first_column(field, column, sign):
+39:     return [column[0]] + [column[-k] if sign == 1 else field.neg(column[-k])
+40:                           for k in range(1, len(column))]
+41: 
+42: 
+43: def direct_cyclic(field, coefficients, values, sign):
+44:     """Direct polynomial in J_sign, with every scalar gate charged."""
+45:     h = len(values)
+46:     out = []
+47:     for i in range(h):
+48:         acc = field.zero
+49:         for k, coefficient in enumerate(coefficients):
+50:             term = field.mul(coefficient, values[(i+k) % h])
+51:             acc = (field.sub(acc, term) if sign == -1 and i+k >= h
+52:                    else field.add(acc, term))
+53:         out.append(acc)
+54:     return out
+55: 
+56: 
+57: @dataclass
+58: class Level:
+59:     n: int
+60:     r: int
+61:     diagonal: list
+62:     inverse_diagonal: list
+63:     phases: list
+64:     minus_inverse_denominators: list
+65:     cyclic_kernel: list
+66:     minus_kernel: list
+67:     minus_inverse_kernel: list
+68: 
+69: 
+70: @dataclass
+71: class DecimationPlan:
+72:     n: int
+73:     q: object
+74:     powers: list
+75:     half: object
+76:     sigma: list
+77:     sigma_inverse: list
+78:     kernel: list
+79:     levels: list
+80:     preparation: dict
+81: 
+82: 
+83: def prepare_decimation(field, n, q):
+84:     base = prepare(field, n, q)
+85:     c = Counted(field)
+86:     powers = [field.one]
+87:     for _ in range(1, n):
+88:         powers.append(c.mul(powers[-1], q))
+89:     half = c.inv(field.integer(2))
+90:     sigma, sigma_inverse = [], []
+91:     for j in range(n):
+92:         a = c.mul(powers[(-j) % n], base.kernel[j])
+93:         b = c.mul(powers[j], base.factorial[j])
+94:         sigma.append(c.neg(a) if j % 2 else a)
+95:         sigma_inverse.append(c.neg(b) if j % 2 else b)
+96:     levels = []
+97:     size, r = n, 1
+98:     while size >= 2:
+99:         phases = powers[:r]
+100:         diagonal = [powers[(-r*i) % n] for i in range(size)]
+101:         inverse_diagonal = [powers[(r*i) % n] for i in range(size)]
+102:         # Dense kernels are prepared only where they beat r factor passes.
+103:         cyclic_kernel = []
+104:         if r > size:
+105:             column = [field.one] + [field.zero]*(size-1)
+106:             for phase in phases:
+107:                 column = factor(c, column, phase, 1)
+108:             cyclic_kernel = polynomial_from_first_column(c, column, 1)
+109:         inverse_denominators, minus_kernel, minus_inverse_kernel = [], [], []
+110:         if size > 2:
+111:             h = size//2  # even, so denominator is 1+q^(a*h)
+112:             for a in range(r):
+113:                 inverse_denominators.append(c.inv(c.add(field.one, powers[(a*h) % n])))
+114:             if r > h:
+115:                 column = [field.one] + [field.zero]*(h-1)
+116:                 inverse_column = list(column)
+117:                 for a, phase in enumerate(phases):
+118:                     column = factor(c, column, phase, -1)
+119:                     inverse_column = inverse_factor(c, inverse_column, phase,
+120:                                                     -1, inverse_denominators[a])
+121:                 minus_kernel = polynomial_from_first_column(c, column, -1)
+122:                 minus_inverse_kernel = polynomial_from_first_column(c, inverse_column, -1)
+123:         levels.append(Level(size, r, diagonal, inverse_diagonal, phases,
+124:                             inverse_denominators, cyclic_kernel,
+125:                             minus_kernel, minus_inverse_kernel))
+126:         size //= 2
+127:         r *= 2
+128:     return DecimationPlan(n, q, powers, half, sigma, sigma_inverse,
+129:                            base.kernel, levels,
+130:                            dict(q_factorial=base.preparation, decimation=dict(c.count)))
+131: 
+132: 
+133: def apply_family(field, level, values):
+134:     """D_r = p_r(J_n) diag(q^(-r*i)), p_r(z)=prod_(a<r)(1+q^a z)."""
+135:     v = [field.mul(a, b) for a, b in zip(level.diagonal, values)]
+136:     if level.cyclic_kernel:
+137:         return direct_cyclic(field, level.cyclic_kernel, v, 1)
+138:     for phase in level.phases:
+139:         v = factor(field, v, phase, 1)
+140:     return v
+141: 
+142: 
+143: def apply_minus(field, level, values, inverse=False):
+144:     """Apply M_- or its inverse, without an uncharged dense matrix."""
+145:     h = len(values)
+146:     if inverse:
+147:         v = list(values)
+148:         if level.minus_inverse_kernel:
+149:             v = direct_cyclic(field, level.minus_inverse_kernel, v, -1)
+150:         else:
+151:             for phase, denominator in zip(level.phases, level.minus_inverse_denominators):
+152:                 v = inverse_factor(field, v, phase, -1, denominator)
+153:         return [field.mul(level.inverse_diagonal[i], v[i]) for i in range(h)]
+154:     v = [field.mul(level.diagonal[i], values[i]) for i in range(h)]
+155:     if level.minus_kernel:
+156:         return direct_cyclic(field, level.minus_kernel, v, -1)
+157:     for phase in level.phases:
+158:         v = factor(field, v, phase, -1)
+159:     return v
+160: 
+161: 
+162: def split_coordinates(field, plan, level_index, values):
+163:     level = plan.levels[level_index]
+164:     h = level.n//2
+165:     s = [field.mul(plan.half, field.add(values[i], values[i+h])) for i in range(h)]
+166:     a = [field.mul(plan.half, field.sub(values[i], values[i+h])) for i in range(h)]
+167:     return s, apply_minus(field, level, a, inverse=True)
+168: 
+169: 
+170: def merge_coordinates(field, plan, level_index, first, second):
+171:     a = apply_minus(field, plan.levels[level_index], second)
+172:     return ([field.add(x, y) for x, y in zip(first, a)] +
+173:             [field.sub(x, y) for x, y in zip(first, a)])
+174: 
+175: 
+176: def _recursive_polynomial(field, plan, index, coefficients, values, nodes):
+177:     level = plan.levels[index]
+178:     n = level.n
+179:     nodes[index] += 1
+180:     if len(coefficients) != n or len(values) != n:
+181:         raise ValueError("This evaluator pads the polynomial to the node dimension")
+182:     if n == 2:
+183:         dx = apply_family(field, level, values)
+184:         return [field.add(field.mul(coefficients[0], values[i]),
+185:                           field.mul(coefficients[1], dx[i])) for i in range(n)]
+186:     x, y = split_coordinates(field, plan, index, values)
+187:     even, odd = coefficients[::2], coefficients[1::2]
+188:     summed_coefficients = [field.add(a, b) for a, b in zip(even, odd)]
+189:     summed_values = [field.add(a, b) for a, b in zip(x, y)]
+190:     a = _recursive_polynomial(field, plan, index+1, even, x, nodes)
+191:     b = _recursive_polynomial(field, plan, index+1, odd, y, nodes)
+192:     c = _recursive_polynomial(field, plan, index+1, summed_coefficients, summed_values, nodes)
+193:     db = apply_family(field, plan.levels[index+1], b)
+194:     upper = [field.add(u, v) for u, v in zip(a, db)]
+195:     lower = [field.sub(field.sub(cj, aj), bj) for cj, aj, bj in zip(c, a, b)]
+196:     return merge_coordinates(field, plan, index, upper, lower)
+197: 
+198: 
+199: def apply_polynomial(field, plan, coefficients, values):
+200:     """Exact p(C)x with all coefficient-dependent work charged online."""
+201:     c = Counted(field)
+202:     nodes = Counter()
+203:     gauged = [c.mul(a, b) for a, b in zip(plan.sigma_inverse, values)]
+204:     result = _recursive_polynomial(c, plan, 0, coefficients, gauged, nodes)
+205:     result = [c.mul(a, b) for a, b in zip(plan.sigma, result)]
+206:     return result, dict(field_operations=dict(c.count),
+207:                         recursive_nodes_by_depth=dict(nodes),
+208:                         full_output_coordinates=plan.n,
+209:                         ordinary_fft_calls=0)
+210: 
+211: 
+212: def apply_full_h(field, plan, values):
+213:     return apply_polynomial(field, plan, plan.kernel, values)

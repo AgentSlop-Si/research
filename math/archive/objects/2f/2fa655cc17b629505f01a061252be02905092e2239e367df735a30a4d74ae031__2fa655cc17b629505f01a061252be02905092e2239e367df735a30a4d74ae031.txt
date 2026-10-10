@@ -1,0 +1,173 @@
+"""Hero #17 -- exact sparse Newton-difference graph Fourier executor.
+
+Generalizes delta_graph (d=1) and second_difference_graph (d=2) to ANY
+fixed order d. Every one of the first d polyphase rows may be an arbitrary
+dense length-M vector. Every later d-th backward difference must have
+M-point Fourier support, across ALL later rows, of size at most R=O(Q).
+The structure is discovered from the raw N-vector, not supplied.
+
+On a balanced N=Q*M and fixed d, charge O_d(N+d*M^2+M*R+Q*R),
+including input recognition, dense baseline short DFTs, root table,
+batch inverses, and the explicit all-N output. Unsupported inputs
+return None, no universal arbitrary-input DFT claim.
+
+Kernel: F_{a,L}(z) = sum_{v=0}^{L-1} binom(v+a-1,a-1) z^v
+ = (1-z^L sum_{j=0}^{a-1} binom(L+j-1,j)(1-z)^j)/(1-z)^a.
+At z=1, F_{a,L}(1)=binom(L+a-1,a).
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+from math import comb
+from typing import Optional,Sequence
+import phase_union_general as phase
+from delta_graph import balanced_q,direct_row_dft,batch_inverse_nonzero_phase_differences
+from delta_graph_budget import modes_with_budget
+
+
+@dataclass(frozen=True)
+class NewtonEvent:
+    t:int
+    h:int
+    c:int
+
+
+@dataclass(frozen=True)
+class NewtonCertificate:
+    n:int
+    q:int
+    m:int
+    p:int
+    omega:int
+    order:int
+    baseline_spectra:tuple[tuple[int,...],...]
+    events:tuple[NewtonEvent,...]
+    budget:int
+
+
+def recognize(x:Sequence[int],p:int,omega:int,order:int=3,
+              total_modes:Optional[int]=None,q:Optional[int]=None,
+              balance_bound:int=4):
+    n=len(x)
+    if n<2 or order<1 or balance_bound<1:raise ValueError('bad n/order/balance')
+    q=balanced_q(n,balance_bound) if q is None else q
+    if q is None:return None
+    if n%q or q<order:raise ValueError('Need Q>=order dividing N')
+    m=n//q
+    if q*q>balance_bound*n or m*m>balance_bound*n:
+        raise ValueError('unbalanced factors')
+    budget=q if total_modes is None else total_modes
+    if budget<0:raise ValueError('total_modes>=0 required')
+    roots=phase.phase_table(n,p,omega)
+    subroots=phase.phase_table(m,p,roots[q%n])
+    xx=list(z%p for z in x)
+    history=[tuple(xx[t+q*u] for u in range(m)) for t in range(order)]
+    bases=tuple(direct_row_dft(row,p,subroots) for row in history)
+    events=[]; spent=0
+    for t in range(order,q):
+        row=tuple(xx[t+q*u] for u in range(m))
+        diff=[0]*m
+        for j in range(order+1):
+            source=row if j==0 else history[-j]
+            coefficient=(-1)**j*comb(order,j)
+            for u in range(m):diff[u]=(diff[u]+coefficient*source[u])%p
+        modes=modes_with_budget(diff,subroots,p,budget-spent)
+        if modes is None:return None
+        for h,c in modes:events.append(NewtonEvent(t,h,c))
+        spent+=len(modes)
+        history.pop(0)
+        history.append(row)
+    assert spent<=budget
+    return NewtonCertificate(n,q,m,p,omega,order,bases,tuple(events),budget)
+
+
+def truncated_binomial_geometric(z:int,L:int,a:int,p:int,inv_one_minus_z:int,
+                                  z_to_L:int):
+    if L<0 or a<1:raise ValueError('require L>=0,a>=1')
+    if not L:return 0
+    if z%p==1:
+        return comb(L+a-1,a)%p
+    # numerator = 1 - z^L * [sum_{j=0}^{a-1}
+    #                        binom(L+j-1,j)*(1-z)^j].
+    denom_complement=(1-z)%p
+    poly=0
+    power=1
+    for j in range(a):
+        poly=(poly+comb(L+j-1,j)*power)%p
+        power=power*denom_complement%p
+    # z^L MUST be supplied from the charged global length-N phase table.
+    # Computing pow(z,L,p) here would hide a per-output log(N) factor!
+    numerator=(1-z_to_L*poly)%p
+    reciprocal_power=1
+    for _ in range(a):
+        reciprocal_power=reciprocal_power*inv_one_minus_z%p
+    return numerator*reciprocal_power%p
+
+
+def transform_certified(cert:NewtonCertificate,with_counters=False):
+    n,q,m,p,d=cert.n,cert.q,cert.m,cert.p,cert.order
+    powers=phase.phase_table(n,p,cert.omega)
+    inv=batch_inverse_nonzero_phase_differences(powers,p)
+    # Newton forward differences for initial d raw spectra.
+    difference=[]
+    for j in range(d):
+        difference.append([sum((-1)**(j-i)*comb(j,i)*cert.baseline_spectra[i][h]
+                              for i in range(j+1))%p for h in range(m)])
+    output=[0]*n
+    basesteps=0;eventsteps=0
+    for h in range(m):
+        for s in range(q):
+            k=h+m*s
+            z=powers[-k%n]
+            value=0
+            for j in range(d):
+                dcoef=difference[j][h]
+                # Sum_{t=j}^{Q-1} binom(t,j) z^t
+                if dcoef:
+                    truncated=truncated_binomial_geometric(
+                        z,q-j,j+1,p,inv[k],powers[(-k*(q-j))%n])
+                    value+=dcoef*powers[(-k*j)%n]*truncated
+                basesteps+=1
+            output[k]=value%p
+    for e in cert.events:
+        L=q-e.t
+        for s in range(q):
+            k=e.h+m*s
+            z=powers[-k%n]
+            tr=truncated_binomial_geometric(z,L,d,p,inv[k],powers[(-k*L)%n])
+            output[k]=(output[k]+m*e.c*powers[(-k*e.t)%n]*tr)%p
+            eventsteps+=1
+    if with_counters:
+        return output,dict(n=n,q=q,m=m,order=d,events=len(cert.events),
+                           initial_dft_ops=d*m*m,baseline_terms=basesteps,
+                           event_terms=eventsteps,charged_preparation='O(N)')
+    return output
+
+
+def transform_if_recognized(x,p,omega,order:int=3,total_modes=None,q=None,
+                            balance_bound:int=4):
+    cert=recognize(x,p,omega,order,total_modes,q,balance_bound)
+    return (None,None) if cert is None else (transform_certified(cert),cert)
+
+
+def build_newton_signal(n:int,p:int,omega:int,q:int,order:int,
+                       initial_rows:Sequence[Sequence[int]],
+                       difference_modes:Sequence[Sequence[tuple[int,int]]]):
+    """TEST ONLY; production recognizer is given only the constructed raw x."""
+    if n%q or len(initial_rows)!=order or len(difference_modes)!=q or q<order:
+        raise ValueError('bad factor/order')
+    m=n//q
+    roots=phase.phase_table(m,p,pow(omega,q,p))
+    rows=[[z%p for z in row] for row in initial_rows]
+    if any(len(row)!=m for row in rows):raise ValueError('row width')
+    for t in range(order,q):
+        row=[]
+        for u in range(m):
+            acceler=sum(c*roots[(h*u)%m] for h,c in difference_modes[t])
+            past=sum((-1)**(j+1)*comb(order,j)*rows[t-j][u]
+                     for j in range(1,order+1))
+            row.append((acceler+past)%p)
+        rows.append(row)
+    x=[0]*n
+    for t,row in enumerate(rows):
+        for u,val in enumerate(row):x[t+q*u]=val
+    return x

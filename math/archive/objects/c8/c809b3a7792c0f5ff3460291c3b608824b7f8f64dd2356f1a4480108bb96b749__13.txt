@@ -1,0 +1,88 @@
+   1 """Deterministic head + energy-pruned tail at eps*||x||_1/sqrt(N).
+   2 
+   3 Ideal-arithmetic proof is in README. complex128 is a numerical prototype,
+   4 not a floating-point error certificate. Classical sparse-head decomposition.
+   5 """
+   6 import heapq
+   7 import math
+   8 import numpy as np
+   9 from prior_energy_pruned import energy_pruned_fft
+  10 
+  11 
+  12 def sparse_head_fft(n, entries):
+  13     """All outputs; h-sparse input, O(N[1+log(h+1)]) classical arithmetic."""
+  14     h = len(entries)
+  15     if h == 0:
+  16         return np.zeros(n, dtype=complex), {'head_support': 0,
+  17             'head_radix': 1, 'head_fft_butterflies': 0, 'head_phase_terms': 0}
+  18     b = 1 << (h-1).bit_length()
+  19     m = n//b
+  20     values = np.zeros((m,b), dtype=complex)
+  21     q = np.arange(m)
+  22     residues = set()
+  23     for j, value in entries:
+  24         r, t = j % b, j//b
+  25         values[:,r] += value*np.exp((-2j*np.pi*t/m)*q)
+  26         residues.add(r)
+  27     for r in residues:
+  28         values[:,r] *= np.exp((-2j*np.pi*r/n)*q)
+  29     result = np.fft.fft(values, axis=1).T.reshape(n)/math.sqrt(n)
+  30     return result, {'head_support': h, 'head_radix': b,
+  31         'head_fft_butterflies': n*(b.bit_length()-1)//2,
+  32         'head_phase_terms': m*h, 'head_twiddle_terms': m*len(residues),
+  33         'head_dense_initialization_writes': n, 'head_output_writes': n}
+  34 
+  35 
+  36 def head_energy_fft(values, epsilon, head_size=0):
+  37     x = np.asarray(values, dtype=complex)
+  38     n = len(x)
+  39     if x.ndim != 1 or n < 1 or n & (n-1):
+  40         raise ValueError('need power-of-two one-dimensional input')
+  41     if not np.all(np.isfinite(x)) or not math.isfinite(epsilon) or epsilon <= 0:
+  42         raise ValueError('need finite input and positive finite epsilon')
+  43     if not isinstance(head_size, int) or not 0 <= head_size <= n:
+  44         raise ValueError('head_size must be an integer in [0,N]')
+  45     magnitudes = np.abs(x)
+  46     norm_one = float(np.sum(magnitudes))
+  47     # Deterministic heap selection; O(N log(h+2)), no full sort of N values.
+  48     indices = heapq.nlargest(head_size, range(n), key=lambda j: (magnitudes[j],-j))
+  49     entries = [(j,x[j]) for j in indices if x[j] != 0]
+  50     tail = x.copy()
+  51     tail[indices] = 0
+  52     threshold = epsilon*norm_one/math.sqrt(n)
+  53     norm_tail = float(np.linalg.norm(tail))
+  54     head_out, stats = sparse_head_fft(n, entries)
+  55     if norm_tail == 0:
+  56         tail_out = np.zeros(n, dtype=complex)
+  57         tail_stats = {'split_value_volume':0, 'butterflies':0, 'zero_tail':True}
+  58     else:
+  59         tail_out, tail_stats = energy_pruned_fft(tail, threshold/norm_tail)
+  60     stats.update({'n':n, 'head_requested':head_size, 'input_scan_values':n,
+  61                   'tail_copy_values':n, 'head_selection_method':'deterministic heap',
+  62                   'norm_one':norm_one, 'tail_energy':norm_tail**2,
+  63                   'requested_threshold':threshold, 'output_additions':n,
+  64                   'tail':tail_stats,
+  65                   'total_butterflies':stats['head_fft_butterflies']+
+  66                       tail_stats.get('butterflies',0)})
+  67     return head_out+tail_out, stats
+  68 
+  69 
+  70 def adversary_prefix_certificate(m, h, eps_numerator=1, eps_denominator=4):
+  71     """Exact integer cost certificate for N=4^m, support [0,2^m).
+  72 
+  73     Counts head backend butterflies and tail butterflies forced in the first
+  74     m levels. No numerical transform or floating norm comparison is used.
+  75     """
+  76     n, s = 4**m, 2**m
+  77     if not 0 <= h <= s:
+  78         raise ValueError('head size outside nonzero support')
+  79     b = 1 << (max(1,h)-1).bit_length()
+  80     head = n*(b.bit_length()-1)//2
+  81     tail_levels = sum((s-h)*eps_denominator**2 >
+  82                       eps_numerator**2*(2**d) for d in range(m))
+  83     tail = n*tail_levels//2
+  84     return {'m':m, 'n':n, 'support':s, 'head':h,
+  85             'head_butterflies':head, 'forced_tail_prefix_levels':tail_levels,
+  86             'forced_tail_butterflies':tail,
+  87             'certified_total_lower_bound':head+tail,
+  88             'universal_hybrid_lower_bound':n*m//2}

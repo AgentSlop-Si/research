@@ -1,0 +1,67 @@
+"""Fresh-input single-threaded exact arithmetic benchmark, not a result about
+unrestricted complex-arithmetic #130. This file writes benchmark_results.json.
+"""
+import argparse
+import json
+import random
+import statistics
+import time
+from pathlib import Path
+from dense_algebra import schoolbook,karatsuba,interpolation_product,operation_counts
+from signed_digit import naf,shift_multiply
+
+HERE=Path(__file__).resolve().parent
+
+def median_run(fn,repeats):
+    timings=[]; result=None
+    for _ in range(repeats):
+        start=time.perf_counter_ns(); result=fn(); timings.append((time.perf_counter_ns()-start)*1e-6)
+    return round(statistics.median(timings),6),result
+
+def main(sizes,repeats):
+    rng=random.Random(20261009)
+    try:
+        from fresh_factor import ntt_convolution
+    except ImportError:
+        raise SystemExit('Phase11 NTT baseline missing: use bundled ntt_baseline.py')
+    data=[]
+    for n in sizes:
+        a=[rng.randrange(998244353) for _ in range(n)]
+        b=[rng.randrange(998244353) for _ in range(n)]
+        expected=ntt_convolution(a,b)
+        funcs={'schoolbook':lambda:schoolbook(a,b).coeffs,
+               'karatsuba':lambda:karatsuba(a,b).coeffs,
+               'interpolation':lambda:interpolation_product(a,b).coeffs,
+               'ntt':lambda:tuple(ntt_convolution(a,b))}
+        row={'n':n,'counts':operation_counts(n),'ms':{}}
+        for name,func in funcs.items():
+            t,out=median_run(func,repeats)
+            assert tuple(out)==tuple(expected),(n,name)
+            row['ms'][name]=t
+        data.append(row)
+        print(f'n={n:<4} counts={row["counts"]} ms={row["ms"]}',flush=True)
+    extra=[]
+    for bits in (256,1024,4096):
+        aa=rng.getrandbits(bits);bb=rng.getrandbits(bits)
+        na=naf(aa); z=shift_multiply(aa,bb)
+        assert z.product==aa*bb
+        naive_shift_adds=aa.bit_count()
+        t_na, _=median_run(lambda:shift_multiply(aa,bb),repeats)
+        t_builtin,_=median_run(lambda:aa*bb,repeats)
+        extra.append({'bits':bits,'binary_nonzero':naive_shift_adds,
+                      'naf_nonzero':z.shift_adds,'naf_ms':t_na,
+                      'builtin_ms':t_builtin})
+    report={'modulus':998244353,'repetitions':repeats,'input_type':'fresh independently sampled dense Fp',
+            'metric':'ms for complete output, single thread, local Python timings',
+            'rows':data,'signed_digit':extra,
+            'qualifications':['interpolation counts nonscalar bilinear products only; total adds/scalar multiplies remain quadratic',
+                             'NTT is Phase11 plain Python reference, not native FFTW or OpenAI #130',
+                             'timings exclude one-time Python import, count all per-call preparation',
+                             'no caching and no related-input advantage']}
+    (HERE/'benchmark_results.json').write_text(json.dumps(report,indent=2)+'\n')
+    print('SIGNED_DIGIT',json.dumps(extra))
+
+if __name__=='__main__':
+    p=argparse.ArgumentParser();p.add_argument('--sizes',nargs='+',type=int,default=[4,8,16,32,64,128,256]);p.add_argument('--repeats',type=int,default=5)
+    args=p.parse_args()
+    main(args.sizes,args.repeats)

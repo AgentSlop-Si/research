@@ -1,0 +1,120 @@
+# A reset-safe discrepancy screen for two bidirectional scan stages
+
+This is an exact necessary condition, not a sufficient factorization test. No literature novelty is asserted. It applies to the complex Fourier matrix, and hence to its rank pattern over characteristic-zero extensions containing the required root. No finite-characteristic extension of the norm proof is asserted here.
+
+## Model and Fourier rectangle bound
+
+Let H1 and H2 be any matrices whose strict prefix/suffix cross blocks have rank at most one. Every raw bidirectional scan stage has this property, including stages with zero propagation weights, zero injections, or arbitrary diagonal feedthrough. In particular no nonzero-e hypothesis and no tridiagonal normal form is needed.
+
+Suppose M = H2 P H1, where P[p(j),j]=1. Suppose also that M is F_N up to arbitrary independent endpoint row and column permutations and nonsingular endpoint diagonal scalings.
+
+For any Fourier rectangle F_N[I,J] with a=|I|, b=|J| and rank r, its squared Frobenius norm is ab and its operator norm is at most sqrt(N). Thus ab <= rN, or r >= ceil(ab/N). Arbitrary endpoint permutations simply choose different I,J. Nonsingular diagonal scalings preserve the rank; apply the norm argument to the unscaled Fourier rectangle, not the scaled one.
+
+## Product-quadrant bound
+
+Choose any prefix or suffix A at the output cut k, and any prefix or suffix B at the input cut l. Complements are denoted Ac,Bc. Expanding only across these two cuts gives
+
+M[A,B] = H2[A,A] P[A,B] H1[B,B]
+       + H2[A,A] P[A,Bc] H1[Bc,B]
+       + H2[A,Ac] (P[Ac,B] H1[B,B] + P[Ac,Bc] H1[Bc,B]).
+
+The three displayed summands have ranks at most q(A,B), 1, and 1, respectively, where q(A,B) is the number of permutation ones in P[A,B]. The first bound uses the exact rank of a submatrix of a permutation matrix. Therefore
+
+    rank M[A,B] <= q(A,B)+2.
+
+This proves the +2 constant without dividing by a scan coefficient. It remains valid when a cross block vanishes or has smaller rank. Empty cuts can be treated separately and cause no difficulty.
+
+Set q(k,l)=#{0<=j<l : p(j)<k}. The prefix/prefix rectangle implies
+
+    q(k,l) >= kl/N - 2.
+
+The prefix/suffix rectangle has q=k-q(k,l) and area k(N-l), so it implies
+
+    q(k,l) <= kl/N + 2.
+
+Consequently every two-stage Fourier factorization must satisfy
+
+    max_{0<=k,l<=N} |q(k,l)-kl/N| <= 2.
+
+The script checks the equivalent exact integer test |Nq-kl| <= 2N. A violation excludes every choice of raw scan weights and every choice of outer endpoint permutations and nonsingular diagonal scalings for that prescribed internal P. It does not exclude another internal permutation.
+
+## Concrete F64 bit-reversal witness
+
+For six-bit reversal, k=l=21 gives q=9, so q-kl/64 = 135/64 > 2. Equivalently, take 21 output-prefix coordinates and 43 input-suffix coordinates. The internal permutation has 21-9=12 ones in that quadrant, so the product block has rank at most 14. The corresponding Fourier rectangle has rank at least ceil(21*43/64)=15. This is an exact contradiction.
+
+## Complete coordinate-bit family
+
+For m=log2(N), the bounded family consists of all m! permutations
+
+    p_sigma(j) = sum_{t=0}^{m-1} bit_{sigma(t)}(j) 2^t.
+
+All tuples sigma are exhaustively enumerated and all maxima use only integer arithmetic. A separately computed direct count verifies each saved worst-cut witness.
+
+- N=32: 115 of 120 are excluded. The five survivors are sigma=(3,4,2,1,0), (4,2,3,1,0), (4,3,1,2,0), (4,3,2,0,1), and (4,3,2,1,0). Their maximum discrepancies are respectively 31/16, 61/32, 61/32, 31/16, and 57/32.
+- N=64: all 720 are excluded. The smallest maximum discrepancy is 135/64, uniquely attained within this family by six-bit reversal sigma=(5,4,3,2,1,0).
+
+This is a finite exhaustive family certificate. It does not address arbitrary permutations of 32 or 64 coordinates.
+
+## Other explicitly bounded families
+
+Indices are modulo N where indicated. The code additionally checks cyclic translations p(j)=j+t, cyclic reflections p(j)=t-j, all nontrivial cyclic rotations of the binary digits (perfect shuffles), reversal R, output-XOR variants p(j)=R(j) XOR a, output translations p(j)=R(j)+t, and input translations p(j)=R(j+t). Input-XOR variants are the same family because R(j XOR a)=R(j) XOR R(a).
+
+At both N=32 and N=64 every cyclic translation, every cyclic reflection, and every nontrivial bit rotation is excluded.
+
+At N=32 all reversal-XOR variants and all reversal-translation variants on either side pass this necessary screen.
+
+At N=64 the reversal-XOR variants pass exactly for a=1,...,62. The reversal-translation variants on either side pass for all t except {0,19,21,27,37,43,45}.
+
+Every tested candidate's rational maximum and a witnessing (k,l,q) are in discrepancy_results.json. The one-parameter families are enumerated separately; arbitrary combinations of independent XOR and translation constants have not been bundled into that claim.
+
+## Possible sharpening, not a proved exclusion
+
+For N32 bit reversal, the k=21,l=11 witness has q=9 and discrepancy 57/32. Its prefix/suffix product rectangle is 21 by 21 and has rank at most 14. Complementary nullity for the invertible Fourier matrix says this would require a complementary 11 by 11 Fourier rectangle of rank at most 4. A universal lower bound of 5 for those 11 by 11 rectangles would eliminate this candidate, but that stronger bound has not been proved here. Numerical failure or a floating-point rank estimate would not prove it.
+
+## Additional interval-cut screen
+
+For a contiguous coordinate interval A, let b(A) be its number of boundaries with its complement: 0 for the whole array, 1 for a proper prefix or suffix, and 2 for a strict interior interval. The scan rank conditions give rank H[A,Ac] <= b(A) and rank H[Ac,A] <= b(A). The same three-summand expansion therefore gives rank M[A,B] <= q(A,B)+b(A)+b(B). Applying the Fourier area/rank bound to (A,B), and to (A,Bc) for the opposite sign, yields
+
+    |q(A,B)-|A||B|/N| <= b(A)+b(B).
+
+The separate exact-integer script discrepancy_interval_screen.py checks all contiguous A,B. It found no additional exclusions among the distinct survivors of the families above, including the five N32 coordinate-bit survivors: 96 distinct N32 candidates and 174 distinct N64 candidates all survive this stronger interval screen. This negative result is not evidence of an existing factorization. Witnesses maximizing the signed margin are recorded in discrepancy_interval_results.json.
+
+## A self-contained, extremely loose universal size bound for two stages
+
+The following standard dyadic-Haar discrepancy argument is included in full rather than relying on a literature constant. Its role is only to show that an unbounded family of exact two-stage Fourier factorizations cannot exist. It is not a lower bound for more than two shuffled stages, nor a logarithmic-stage or arithmetic-complexity lower bound.
+
+Associate the internal permutation with the N points
+
+    z_j = ((p(j)+1/2)/N, (j+1/2)/N)
+
+in the unit square, and define the unnormalized continuous star discrepancy
+
+    D(x,y) = #{j : z_j lies in [0,x) times [0,y)} - Nxy.
+
+For each x,y let k,l be the numbers of row and column midpoint positions below x,y. Then |k-Nx| <= 1/2, |l-Ny| <= 1/2, and the point count is q(k,l). In addition,
+
+    |kl/N - Nxy| <= |k-Nx| l/N + x |l-Ny| <= 1.
+
+The necessary grid discrepancy bound thus implies ||D||_infinity <= 3.
+
+Set m=ceil(log2(2N)). For each r=0,...,m, partition the unit square into dyadic rectangles of side lengths 2^(-r) and 2^(-(m-r)). There are 2^m rectangles of each shape, all of area 2^(-m). At most N contain a point, so at least 2^m-N >= 2^(m-1) are empty. Use a half-open partition to assign boundary points; points on a rectangle boundary do not affect the Haar coefficient below anyway.
+
+For a dyadic interval I let h_I be +1 on its left half, -1 on its right half, and 0 outside. For R=I times J set h_R(x,y)=h_I(x)h_J(y). Then
+
+    ||h_R||_2^2 = |R| = 2^(-m),
+    |integral x h_I(x) dx| = |I|^2/4.
+
+A point's counting-function term has zero inner product with h_R unless both point coordinates are strictly inside R. Hence for every empty R,
+
+    |<D,h_R>| = N |R|^2/16 = N 2^(-2m)/16.
+
+All the distinct tensor-Haar functions used across every shape r=0,...,m are mutually orthogonal: distinct one-dimensional dyadic Haar functions are orthogonal, and the tensor inner product factors. Bessel's inequality over only the empty rectangles therefore gives
+
+    ||D||_2^2
+      >= (m+1) 2^(m-1) [N^2 2^(-4m)/256] / 2^(-m)
+       = (m+1) N^2 2^(-2m)/512
+       > (m+1)/8192,
+
+where the strict inequality uses 2^m < 4N. Since the unit square has area one, the upper bound ||D||_infinity <= 3 also gives ||D||_2^2 <= 9. These inequalities are incompatible once m+1 >= 73728. In particular the deliberately conservative condition N >= 2^73727 guarantees a contradiction.
+
+Consequently no complex F_N with N >= 2^73727 can be represented as two raw bidirectional scan stages with one arbitrary internal permutation, even with arbitrary independent endpoint permutations and nonsingular endpoint diagonal scalings. The enormous threshold is only an explicit finiteness certificate. It does not settle arbitrary internal permutations at N32 or N64.

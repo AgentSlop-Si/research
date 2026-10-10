@@ -1,0 +1,663 @@
+#!/usr/bin/env python3
+"""Unit-step binomial-chirp Fourier sketch (v9 research prototype).
+
+The phase a*binom(t,2) has first difference a*t.  Relative to the previous
+quadratic phase a*t^2, this changes the exact output recurrence step from 2*a
+to a.  Choosing a uniformly from the units modulo a prime-power length N=p^L
+therefore gives one output cycle for every row.
+
+For N=K*M with K and M powers of the same prime and K>=M, the one-row error
+covariance of every Fourier output is exactly (M/N) times an orthogonal
+projector of rank N-K.  In particular its operator norm is M/N.
+
+This is a reproducible theorem-candidate prototype, not a production FFT.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable
+
+import numpy as np
+import numpy.typing as npt
+
+ComplexArray = npt.NDArray[np.complex128]
+
+
+def prime_power(n: int) -> tuple[int, int]:
+    """Return (p,L) when n=p**L for a prime p; raise otherwise."""
+    if n < 2:
+        raise ValueError("n must be at least 2")
+    p = None
+    q = 2
+    while q * q <= n:
+        if n % q == 0:
+            p = q
+            break
+        q += 1
+    if p is None:
+        return n, 1
+    # p is the least divisor and therefore prime.
+    m = n
+    e = 0
+    while m % p == 0:
+        m //= p
+        e += 1
+    if m != 1:
+        raise ValueError(f"{n} is not a prime power")
+    return p, e
+
+
+def is_power_of(n: int, p: int) -> bool:
+    if n < 1 or p < 2:
+        return False
+    while n % p == 0:
+        n //= p
+    return n == 1
+
+
+def tri_int(t: int) -> int:
+    return t * (t - 1) // 2
+
+
+def unitary_fft(x: npt.ArrayLike) -> ComplexArray:
+    arr = np.asarray(x, dtype=np.complex128)
+    return np.fft.fft(arr) / math.sqrt(arr.size)
+
+
+@dataclass(frozen=True)
+class ChirpState:
+    a: int
+    beta: int
+
+    def validate(self, n: int) -> None:
+        if not (0 < self.a < n) or math.gcd(self.a, n) != 1:
+            raise ValueError("a must be a unit modulo n")
+        if not (0 <= self.beta < n):
+            raise ValueError("beta must lie in Z_n")
+
+
+def draw_state(n: int, rng: np.random.Generator) -> ChirpState:
+    prime_power(n)
+    # Rejection sampling is exact for the uniform distribution on Z_n^*.
+    while True:
+        a = int(rng.integers(1, n))
+        if math.gcd(a, n) == 1:
+            break
+    return ChirpState(a=a, beta=int(rng.integers(0, n)))
+
+
+def validate_dimensions(n: int, m: int) -> tuple[int, int, int]:
+    p, _ = prime_power(n)
+    if n % m != 0 or not is_power_of(m, p):
+        raise ValueError("m must be a power of the same prime and divide n")
+    k = n // m
+    if not is_power_of(k, p):
+        raise ValueError("k=n/m must be a power of the same prime")
+    if k < m:
+        raise ValueError("the theorem regime requires K>=M")
+    return p, k, m
+
+
+def _tri_array_mod(t: np.ndarray, n: int) -> np.ndarray:
+    """Compute binom(t,2) modulo n for moderate validation sizes."""
+    # The saved experiments keep t small enough for int64 products.  A native
+    # implementation should use unsigned __int128 or modular multiplication.
+    return ((t * (t - 1)) // 2) % n
+
+
+def local_phase_matrix(n: int, m: int, state: ChirpState) -> ComplexArray:
+    """Parity-twisted unit-step phase.
+
+    Let eta=exp(pi*i/N), zeta=eta**2, and h=N mod 2.  Then
+
+        S[r,t] = zeta^(a*C(t,2)+(a*M*r+beta)t) * eta^(h*t).
+
+    The deterministic eta term is absent for even N and is a half-step linear
+    phase for odd N.  It leaves the covariance unchanged but makes the cycle
+    monodromy A_N=-1 for every prime-power length, so no direct seed is needed.
+    """
+    _, k, _ = validate_dimensions(n, m)
+    state.validate(n)
+    r = np.arange(k, dtype=np.int64)[:, None]
+    t = np.arange(m, dtype=np.int64)[None, :]
+    c = ((((state.a * m) % n) * r) + state.beta) % n
+    phase_n = ((state.a % n) * _tri_array_mod(t, n) + (c * t) % n) % n
+    phase_2n = (2 * phase_n + (n & 1) * t) % (2 * n)
+    return np.exp(1j * np.pi * phase_2n.astype(np.float64) / n)
+
+
+def compress_blocks(x: npt.ArrayLike, m: int, state: ChirpState) -> ComplexArray:
+    arr = np.asarray(x, dtype=np.complex128)
+    n = int(arr.size)
+    _, k, _ = validate_dimensions(n, m)
+    s = local_phase_matrix(n, m, state)
+    return np.sum(s * arr.reshape(k, m), axis=1)
+
+
+def materialize_projected_signal(
+    x: npt.ArrayLike, m: int, state: ChirpState
+) -> ComplexArray:
+    arr = np.asarray(x, dtype=np.complex128)
+    n = int(arr.size)
+    _, k, _ = validate_dimensions(n, m)
+    s = local_phase_matrix(n, m, state)
+    d = np.sum(s * arr.reshape(k, m), axis=1)
+    return (np.conj(s) * d[:, None]).reshape(n)
+
+
+def direct_row_estimate(x: npt.ArrayLike, m: int, state: ChirpState) -> ComplexArray:
+    return unitary_fft(materialize_projected_signal(x, m, state))
+
+
+def pairwise_sum(values: npt.ArrayLike, dtype: Any = np.complex128) -> complex:
+    x = np.asarray(values, dtype=dtype).reshape(-1)
+    if x.size == 0:
+        return 0.0 + 0.0j
+    size = 1 << (x.size - 1).bit_length()
+    work = np.zeros(size, dtype=dtype)
+    work[: x.size] = x
+    width = size
+    while width > 1:
+        work[: width // 2] = work[:width:2] + work[1:width:2]
+        width //= 2
+    return complex(work[0])
+
+
+def pairwise_sum_axis1(values: npt.ArrayLike, dtype: Any = np.complex128) -> np.ndarray:
+    x = np.asarray(values, dtype=dtype)
+    if x.ndim != 2:
+        raise ValueError("values must be two-dimensional")
+    cols = x.shape[1]
+    size = 1 << (cols - 1).bit_length()
+    work = np.zeros((x.shape[0], size), dtype=dtype)
+    work[:, :cols] = x
+    width = size
+    while width > 1:
+        work[:, : width // 2] = work[:, :width:2] + work[:, 1:width:2]
+        width //= 2
+    return work[:, 0].copy()
+
+
+def balanced_exclusive_scan(values: npt.ArrayLike, dtype: Any = np.complex128) -> np.ndarray:
+    x = np.asarray(values, dtype=dtype).reshape(-1)
+    n = int(x.size)
+    if n == 0:
+        return np.empty(0, dtype=dtype)
+    size = 1 << (n - 1).bit_length()
+    work = np.zeros(size, dtype=dtype)
+    work[:n] = x
+    stride = 2
+    while stride <= size:
+        right = np.arange(stride - 1, size, stride)
+        left = right - stride // 2
+        work[right] = work[left] + work[right]
+        stride *= 2
+    work[-1] = 0.0 + 0.0j
+    stride = size
+    while stride >= 2:
+        right = np.arange(stride - 1, size, stride)
+        left = right - stride // 2
+        tmp = work[left].copy()
+        work[left] = work[right]
+        work[right] = work[right] + tmp
+        stride //= 2
+    return work[:n].copy()
+
+
+def seed_value(
+    d: npt.ArrayLike,
+    n: int,
+    m: int,
+    state: ChirpState,
+    dtype: Any = np.complex128,
+) -> complex:
+    """Directly compute the unique recurrence seed Y_0 in O(N) work."""
+    _, k, _ = validate_dimensions(n, m)
+    d_arr = np.asarray(d, dtype=dtype)
+    r = np.arange(k, dtype=np.int64)[:, None]
+    t = np.arange(m, dtype=np.int64)[None, :]
+    c = ((((state.a * m) % n) * r) + state.beta) % n
+    phase_n = ((state.a % n) * _tri_array_mod(t, n) + (c * t) % n) % n
+    phase_2n = (2 * phase_n + (n & 1) * t) % (2 * n)
+    local = np.exp(-1j * np.pi * phase_2n.astype(np.float64) / n).astype(dtype)
+    pvals = pairwise_sum_axis1(local, dtype)
+    return pairwise_sum(d_arr * pvals, dtype) / math.sqrt(n)
+
+
+def _cycle_arrays(
+    d_fft: np.ndarray,
+    n: int,
+    m: int,
+    state: ChirpState,
+    dtype: Any = np.complex128,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Indices, gauge A_j, and gauged forcing for the unique cycle."""
+    _, k, _ = validate_dimensions(n, m)
+    j = np.arange(n, dtype=np.int64)
+    idx = (state.a * j) % n
+    tri_j = _tri_array_mod(j, n)
+    phase_n = ((state.a % n) * tri_j + (state.beta * j) % n) % n
+    phase_2n = (2 * phase_n + (n & 1) * j) % (2 * n)
+    gauge = np.exp(1j * np.pi * phase_2n.astype(np.float64) / n).astype(dtype)
+
+    boundary_n = (
+        (m * ((idx + state.beta) % n))
+        + (state.a * (tri_int(m) % n))
+    ) % n
+    boundary_2n = (2 * boundary_n + (n & 1) * m) % (2 * n)
+    boundary = np.exp(-1j * np.pi * boundary_2n.astype(np.float64) / n).astype(dtype)
+    forcing = (
+        d_fft[idx % k] - boundary * d_fft[(idx + state.a * m) % k]
+    ) / math.sqrt(n)
+    return idx, gauge, (forcing / gauge).astype(dtype)
+
+
+def decode_balanced_scan(
+    d: npt.ArrayLike,
+    n: int,
+    m: int,
+    state: ChirpState,
+    dtype: Any = np.complex128,
+) -> np.ndarray:
+    """One K-FFT and one balanced N-term scan; the scan total supplies the seed."""
+    _, k, _ = validate_dimensions(n, m)
+    state.validate(n)
+    d_arr = np.asarray(d, dtype=dtype)
+    if d_arr.shape != (k,):
+        raise ValueError("d must have shape (K,)")
+    # NumPy evaluates the FFT in double precision; cast models decoder storage.
+    d_fft = np.asarray(np.fft.fft(d_arr.astype(np.complex128)), dtype=dtype)
+    idx, gauge, terms = _cycle_arrays(d_fft, n, m, state, dtype)
+    # The parity twist makes A_N=-1 for every prime-power N.  Cycle
+    # closure gives Y_0=(1/2)*sum_j terms[j], so no direct seed is needed.
+    seed = np.asarray(pairwise_sum(terms, dtype) / 2.0, dtype=dtype).item()
+    prefix = balanced_exclusive_scan(terms, dtype)
+    out = np.empty(n, dtype=dtype)
+    out[idx] = gauge * (seed - prefix)
+    return out
+
+
+def decode_sequential(
+    d: npt.ArrayLike,
+    n: int,
+    m: int,
+    state: ChirpState,
+    dtype: Any = np.complex128,
+) -> np.ndarray:
+    _, k, _ = validate_dimensions(n, m)
+    d_arr = np.asarray(d, dtype=dtype)
+    d_fft = np.asarray(np.fft.fft(d_arr.astype(np.complex128)), dtype=dtype)
+    out = np.empty(n, dtype=dtype)
+    out[0] = np.asarray(seed_value(d_arr, n, m, state, dtype), dtype=dtype).item()
+    current = 0
+    while True:
+        nxt = (current + state.a) % n
+        if nxt == 0:
+            break
+        boundary_n = (
+            m * ((current + state.beta) % n)
+            + state.a * (tri_int(m) % n)
+        ) % n
+        boundary_2n = (2 * boundary_n + (n & 1) * m) % (2 * n)
+        boundary = np.asarray(
+            np.exp(-1j * np.pi * boundary_2n / n), dtype=dtype
+        ).item()
+        forcing = np.asarray(
+            (d_fft[current % k] - boundary * d_fft[(current + state.a * m) % k])
+            / math.sqrt(n),
+            dtype=dtype,
+        ).item()
+        alpha_2n = (2 * ((current + state.beta) % n) + (n & 1)) % (2 * n)
+        alpha = np.asarray(
+            np.exp(1j * np.pi * alpha_2n / n), dtype=dtype
+        ).item()
+        out[nxt] = np.asarray(alpha * (out[current] - forcing), dtype=dtype).item()
+        current = nxt
+    return out
+
+
+def one_row_estimate(
+    x: npt.ArrayLike,
+    m: int,
+    state: ChirpState,
+    dtype: Any = np.complex128,
+) -> np.ndarray:
+    arr = np.asarray(x, dtype=np.complex128)
+    return decode_balanced_scan(compress_blocks(arr, m, state), arr.size, m, state, dtype)
+
+
+def unit_character_mean_prime_power(n: int, c: int) -> float:
+    p, _ = prime_power(n)
+    c %= n
+    if c == 0:
+        return 1.0
+    if c % (n // p) == 0:
+        return -1.0 / (p - 1)
+    return 0.0
+
+
+def covariance_matrix_formula(n: int, m: int, output: int = 0) -> ComplexArray:
+    """Exact one-output covariance from the normalized Ramanujan sum."""
+    validate_dimensions(n, m)
+    zeta = np.exp(2j * np.pi / n)
+    q = np.zeros((n, n), dtype=np.complex128)
+    displacements = [
+        {u - t for t in range(m) if t != u}
+        for u in range(m)
+    ]
+    for i in range(n):
+        u = i % m
+        for j in range(n):
+            up = j % m
+            total = 0.0
+            for d in displacements[u].intersection(displacements[up]):
+                total += unit_character_mean_prime_power(n, d * (j - i))
+            q[i, j] = (zeta ** (output * (i - j))) * total / n
+    return q
+
+
+def covariance_projector_spectrum(n: int, m: int) -> tuple[int, int, float]:
+    """Return (zero multiplicity, nonzero multiplicity, nonzero eigenvalue)."""
+    _, k, _ = validate_dimensions(n, m)
+    return k, n - k, m / n
+
+
+def covariance_operator_norm(n: int, m: int, output: int = 0) -> float:
+    q = covariance_matrix_formula(n, m, output)
+    return float(np.linalg.eigvalsh(q)[-1])
+
+
+def worst_case_signal(n: int, m: int, output: int = 0) -> ComplexArray:
+    """A unit vector in an active projector mode (u=0, block mode ell=1)."""
+    _, k, _ = validate_dimensions(n, m)
+    r = np.arange(k)
+    x = np.zeros((k, m), dtype=np.complex128)
+    x[:, 0] = np.exp(2j * np.pi * r / k) / math.sqrt(k)
+    vec = x.reshape(n)
+    if output:
+        vec = vec * np.exp(2j * np.pi * output * np.arange(n) / n)
+    return vec
+
+
+@dataclass
+class MajorityGridState:
+    candidate: np.ndarray
+    count: np.ndarray
+
+    @classmethod
+    def zeros(cls, n: int) -> "MajorityGridState":
+        return cls(
+            candidate=np.zeros((3, n), dtype=np.int64),
+            count=np.zeros((3, n), dtype=np.int32),
+        )
+
+
+def _grid_offsets(tau: float) -> tuple[float, np.ndarray]:
+    if not math.isfinite(tau) or tau <= 0:
+        raise ValueError("tau must be positive and finite")
+    width = 7.0 * tau
+    return width, np.array([0.0, width / 3.0, 2.0 * width / 3.0])
+
+
+def majority_grid_update(state: MajorityGridState, values: npt.ArrayLike, tau: float) -> None:
+    vals = np.asarray(values, dtype=np.float64)
+    width, offsets = _grid_offsets(tau)
+    for g in range(3):
+        ids = np.floor((vals - offsets[g]) / width).astype(np.int64)
+        zero = state.count[g] == 0
+        state.candidate[g, zero] = ids[zero]
+        state.count[g, zero] = 1
+        nonzero = ~zero
+        same = nonzero & (state.candidate[g] == ids)
+        diff = nonzero & ~same
+        state.count[g, same] += 1
+        state.count[g, diff] -= 1
+
+
+def majority_grid_finalize(state: MajorityGridState, tau: float) -> np.ndarray:
+    width, offsets = _grid_offsets(tau)
+    centers = (state.candidate.astype(np.float64) + 0.5) * width + offsets[:, None]
+    return np.median(centers, axis=0)
+
+
+def streaming_majority_fft(
+    x: npt.ArrayLike,
+    m: int,
+    rows: int,
+    g: float,
+    rng: np.random.Generator,
+    dtype: Any = np.complex128,
+) -> ComplexArray:
+    arr = np.asarray(x, dtype=np.complex128)
+    n = int(arr.size)
+    validate_dimensions(n, m)
+    if rows <= 0 or rows % 2 != 1:
+        raise ValueError("rows must be positive and odd")
+    norm = float(np.linalg.norm(arr))
+    if norm == 0.0:
+        return np.zeros(n, dtype=np.complex128)
+    tau = g * math.sqrt(m / n) * norm
+    real_state = MajorityGridState.zeros(n)
+    imag_state = MajorityGridState.zeros(n)
+    for _ in range(rows):
+        row = one_row_estimate(arr, m, draw_state(n, rng), dtype).astype(np.complex128)
+        majority_grid_update(real_state, row.real, tau)
+        majority_grid_update(imag_state, row.imag, tau)
+    return majority_grid_finalize(real_state, tau) + 1j * majority_grid_finalize(imag_state, tau)
+
+
+def bernoulli_half_kl(p: float) -> float:
+    if not (0.0 < p < 0.5):
+        raise ValueError("p must lie in (0,1/2)")
+    return 0.5 * math.log(1.0 / (4.0 * p * (1.0 - p)))
+
+
+def majority_failure_bound(n: int, rows: int, g: float) -> float:
+    return min(1.0, 2.0 * n * math.exp(-rows * bernoulli_half_kl(1.0 / (g * g))))
+
+
+def required_rows(n: int, g: float, delta: float) -> int:
+    rows = math.ceil(math.log(2.0 * n / delta) / bernoulli_half_kl(1.0 / (g * g)))
+    if rows % 2 == 0:
+        rows += 1
+    return rows
+
+
+def exact_arithmetic_uniform_bound(x: npt.ArrayLike, m: int, g: float) -> float:
+    arr = np.asarray(x, dtype=np.complex128)
+    # Three-grid scalar radius 5*tau/2 and Euclidean real/imag combination.
+    return (5.0 / math.sqrt(2.0)) * g * math.sqrt(m / arr.size) * float(np.linalg.norm(arr))
+
+
+def finite_precision_row_bound(
+    x: npt.ArrayLike,
+    m: int,
+    unit_roundoff: float,
+    c_fp: float = 64.0,
+) -> float:
+    """Conservative theorem-model row perturbation C*u*log2(N)*sqrt(MN)||x||2.
+
+    This bound assumes exact modular phase indices, root values with O(u)
+    absolute error, pairwise summary/seed reductions, a normwise stable K-FFT,
+    and the balanced gauged scan.  c_fp absorbs complex-operation and FFT
+    implementation constants.
+    """
+    arr = np.asarray(x, dtype=np.complex128)
+    n = arr.size
+    return c_fp * unit_roundoff * max(1.0, math.log2(n)) * math.sqrt(m * n) * float(np.linalg.norm(arr))
+
+
+def finite_precision_uniform_bound(
+    x: npt.ArrayLike,
+    m: int,
+    g: float,
+    unit_roundoff: float,
+    c_fp: float = 64.0,
+) -> float:
+    arr = np.asarray(x, dtype=np.complex128)
+    sigma = math.sqrt(m / arr.size) * float(np.linalg.norm(arr))
+    eta = finite_precision_row_bound(arr, m, unit_roundoff, c_fp)
+    return 2.5 * math.sqrt(2.0) * (g * sigma + eta)
+
+
+def sufficient_mantissa_bits(n: int, g: float, c_fp: float = 64.0, theta: float = 1.0) -> int:
+    """Bits sufficient for eta_fp <= theta*g*sqrt(M/N)||x||, independent of M."""
+    if theta <= 0 or g <= 0:
+        raise ValueError("theta and g must be positive")
+    # C*u*log2(N)*N <= theta*g, with u approximately 2^-b.
+    rhs = c_fp * n * max(1.0, math.log2(n)) / (theta * g)
+    return max(2, math.ceil(math.log2(rhs)))
+
+
+def row_work_proxy(n: int, m: int) -> float:
+    k = n // m
+    return n + k * math.log2(max(2, k))
+
+
+def make_cases(n: int, rng: np.random.Generator) -> dict[str, ComplexArray]:
+    idx = np.arange(n)
+    spike = np.zeros(n, dtype=np.complex128)
+    spike[int(rng.integers(n))] = 1.0
+    return {
+        "flat": np.ones(n, dtype=np.complex128),
+        "gaussian": rng.normal(size=n) + 1j * rng.normal(size=n),
+        "random_phase": np.exp(2j * np.pi * rng.random(n)),
+        "spike": spike,
+        "chirp": np.exp(2j * np.pi * (3 * idx * (idx - 1) // 2 + 5 * idx) / n),
+    }
+
+
+def empirical_variance(
+    x: ComplexArray,
+    m: int,
+    output: int,
+    trials: int,
+    rng: np.random.Generator,
+) -> float:
+    target = unitary_fft(x)[output]
+    errors = np.empty(trials, dtype=np.complex128)
+    for j in range(trials):
+        errors[j] = one_row_estimate(x, m, draw_state(x.size, rng))[output] - target
+    return float(np.mean(np.abs(errors) ** 2))
+
+
+def run_experiments(seed: int = 20261009) -> dict[str, Any]:
+    rng = np.random.default_rng(seed)
+    out: dict[str, Any] = {}
+
+    recurrence = []
+    for n, m in [(64, 4), (81, 3), (125, 5), (256, 8), (729, 9)]:
+        for rep in range(3):
+            x = rng.normal(size=n) + 1j * rng.normal(size=n)
+            state = draw_state(n, rng)
+            d = compress_blocks(x, m, state)
+            ref = direct_row_estimate(x, m, state)
+            seq = decode_sequential(d, n, m, state)
+            bal = decode_balanced_scan(d, n, m, state)
+            recurrence.append({
+                "N": n,
+                "M": m,
+                "rep": rep,
+                "sequential_max_error": float(np.max(np.abs(seq - ref))),
+                "balanced_max_error": float(np.max(np.abs(bal - ref))),
+                "balanced_vs_sequential": float(np.max(np.abs(bal - seq))),
+            })
+    out["recurrence_equivalence"] = recurrence
+
+    spectra = []
+    for n, m in [(16, 2), (16, 4), (27, 3), (81, 3), (81, 9), (125, 5)]:
+        q = covariance_matrix_formula(n, m)
+        eig = np.linalg.eigvalsh(q)
+        k = n // m
+        spectra.append({
+            "N": n,
+            "M": m,
+            "operator_norm": float(eig[-1]),
+            "theory_norm": m / n,
+            "trace": float(np.trace(q).real),
+            "theory_trace": float(m - 1),
+            "zero_eigenvalues": int(np.sum(np.abs(eig) < 1e-10)),
+            "theory_zero_eigenvalues": k,
+            "nonzero_spread": float(np.max(np.abs(eig[k:] - m / n))) if n > k else 0.0,
+        })
+    out["covariance_spectra"] = spectra
+
+    worst = []
+    for n, m in [(256, 8), (729, 9), (1024, 16)]:
+        x = worst_case_signal(n, m)
+        measured = empirical_variance(x, m, 0, 5000, rng)
+        worst.append({
+            "N": n,
+            "M": m,
+            "measured_variance": measured,
+            "theory_variance": m / n,
+            "ratio": measured / (m / n),
+        })
+    out["worst_case_variance"] = worst
+
+    fp = []
+    for n, m in [(1024, 16), (4096, 16), (16384, 32), (65536, 64)]:
+        x = rng.normal(size=n) + 1j * rng.normal(size=n)
+        state = draw_state(n, rng)
+        d = compress_blocks(x, m, state)
+        ref = direct_row_estimate(x, m, state)
+        seq32 = decode_sequential(d.astype(np.complex64), n, m, state, np.complex64).astype(np.complex128)
+        bal32 = decode_balanced_scan(d.astype(np.complex64), n, m, state, np.complex64).astype(np.complex128)
+        u = float(np.finfo(np.float32).eps / 2)
+        proxy = finite_precision_row_bound(x, m, u)
+        fp.append({
+            "N": n,
+            "M": m,
+            "sequential32_max_error": float(np.max(np.abs(seq32 - ref))),
+            "balanced32_max_error": float(np.max(np.abs(bal32 - ref))),
+            "conservative_fp_proxy": proxy,
+            "balanced_over_proxy": float(np.max(np.abs(bal32 - ref))) / proxy,
+        })
+    out["finite_precision_stress"] = fp
+
+    robust = []
+    n, m = 4096, 16
+    for name, x in make_cases(n, rng).items():
+        ref = unitary_fft(x)
+        for rows, g in [(5, 8.0), (9, 5.0), (17, 3.0)]:
+            est = streaming_majority_fft(x, m, rows, g, rng)
+            robust.append({
+                "case": name,
+                "rows": rows,
+                "g": g,
+                "max_error": float(np.max(np.abs(est - ref))),
+                "theorem_radius": exact_arithmetic_uniform_bound(x, m, g),
+            })
+    out["streaming_majority"] = robust
+
+    out["summary"] = {
+        "max_recurrence_error": max(r["balanced_max_error"] for r in recurrence),
+        "max_covariance_norm_relative_error": max(
+            abs(r["operator_norm"] / r["theory_norm"] - 1.0) for r in spectra
+        ),
+        "max_nonzero_eigenvalue_spread": max(r["nonzero_spread"] for r in spectra),
+        "worst_variance_ratio_range": [
+            min(r["ratio"] for r in worst), max(r["ratio"] for r in worst)
+        ],
+        "max_robust_error_over_radius": max(r["max_error"] / r["theorem_radius"] for r in robust),
+    }
+    return out
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, default=Path("results.json"))
+    parser.add_argument("--seed", type=int, default=20261009)
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    results = run_experiments(args.seed)
+    args.output.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    print(json.dumps(results["summary"], indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,71 @@
+"""Phase 17 exact Bluestein chirp/Hankel and common-order Green barriers."""
+from __future__ import annotations
+import json
+from green_sum_cert import field_for_root,rank_mod,green_submatrix,make_tridiagonal,add_matrices
+import random
+
+
+def chirp_hankel_certificate(n: int):
+    assert n>=2 and n%2==0
+    ell, xi = field_for_root(2*n,100000)
+    omega=xi*xi%ell
+    assert pow(xi,2*n,ell)==1 and pow(xi,n,ell)==ell-1
+    m=n//2
+    H=[[pow(xi, (-(a+b)*(a+b))%(2*n),ell) for b in range(m)] for a in range(m)]
+    # Exact Vandermonde factorization over finite field:
+    V=[[pow(omega,(-a*b)%n,ell) for b in range(m)] for a in range(m)]
+    for a in range(m):
+        for b in range(m):
+            expected=pow(xi,(-a*a-b*b)%(2*n),ell)*V[a][b]%ell
+            assert H[a][b]==expected
+    rank=rank_mod(H,ell)
+    assert rank==m
+    # Bluestein identity for every Fourier matrix entry, exact in a field.
+    for j in range(n):
+        for k in range(n):
+            left=pow(omega,(j*k)%n,ell)
+            right=pow(xi,(j*j + k*k - (j-k)*(j-k))%(2*n),ell)
+            assert left==right
+    return {'n':n,'root_order':2*n,'field_prime':ell,'hankel_dimension':m,
+            'chirp_hankel_rank':rank,
+            'cyclic_first_order_green_resolvents_needed_at_least':m,
+            'bluestein_all_entries_verified':n*n}
+
+
+def common_order_green_fourier_certificate(n:int,q:int,seed=2718):
+    assert n>2 and n%2==0 and q<n//2
+    rng=random.Random(seed+n)
+    ell,omega=field_for_root(n)
+    m=n//2
+    # For rows m..n-1 and cols 0..m-1, every path-tridiagonal
+    # inverse with the SAME path order has rank <=1.
+    rows=list(range(m,n)); cols=list(range(m))
+    total=[[0]*m for _ in range(m)]
+    component_ranks=[]
+    for _ in range(q):
+        diag,lower,upper=make_tridiagonal(n,ell,rng)
+        left=[rng.randrange(1,ell) for _ in range(n)]
+        right=[rng.randrange(1,ell) for _ in range(n)]
+        comp=green_submatrix(list(range(n)),diag,lower,upper,rows,cols,ell,left,right)
+        component_ranks.append(rank_mod(comp,ell))
+        total=add_matrices(total,comp,ell)
+    # Consecutive row and column Fourier minor is Vandermonde over
+    # *any* field containing a primitive n-th root (ell != char dividing n).
+    F=[[pow(omega,(a*b)%n,ell) for b in cols] for a in rows]
+    f_rank=rank_mod(F,ell)
+    assert max(component_ranks)<=1
+    assert rank_mod(total,ell)<=q
+    assert f_rank==m
+    return {'n':n,'green_terms':q,'field_prime':ell,'component_ranks':component_ranks,
+            'green_sum_crosscut_rank':rank_mod(total,ell),'fourier_crosscut_rank':f_rank,
+            'common_order_lower_bound_on_green_terms':m}
+
+
+def demo():
+    a=[chirp_hankel_certificate(n) for n in (8,16,32,64,128)]
+    b=[common_order_green_fourier_certificate(n,2) for n in (16,32,64)]
+    print(json.dumps({'chirp':a,'common_order':b},indent=2))
+    return {'chirp':a,'common_order':b}
+
+if __name__=='__main__':
+    demo()

@@ -1,0 +1,155 @@
+   1	import sys
+   2	import unittest
+   3	from pathlib import Path
+   4	from unittest.mock import patch
+   5	
+   6	import numpy as np
+   7	from scipy import fft
+   8	
+   9	sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+  10	import cost_aware_fft as m
+  11	
+  12	
+  13	class SpectrumOnlyTests(unittest.TestCase):
+  14	    def test_auto_preserves_reference_for_native_recommendation_shapes(self):
+  15	        for n, k in [(7, 1), (8, 1), (16384, 3), (65536, 4)]:
+  16	            with self.subTest(n=n, k=k):
+  17	                x = np.arange(n, dtype=float) / n
+  18	                changes = [(j, .25 * (j + 1)) for j in range(k)]
+  19	                edited = x.copy()
+  20	                for p, d in changes:
+  21	                    edited[p] += d
+  22	                got = m.sparse_from_known_changes(fft.rfft(x), n, changes, 'auto')
+  23	                np.testing.assert_allclose(got, fft.rfft(edited), rtol=3e-11, atol=1e-9)
+  24	
+  25	    def test_original_dc_regression(self):
+  26	        got = m.sparse_from_known_changes(fft.rfft(np.arange(8.)), 8,
+  27	                                          [(1, 2.)], 'auto')
+  28	        self.assertEqual(got[0], 30)
+  29	
+  30	    def test_no_forward_or_inverse_reconstruction(self):
+  31	        z = fft.rfft(np.arange(8.))
+  32	        with patch.object(m._fft, 'rfft', side_effect=AssertionError('hidden forward FFT')):
+  33	            with patch.object(m._fft, 'irfft', side_effect=AssertionError('hidden inverse FFT')):
+  34	                self.assertEqual(m.sparse_from_known_changes(z, 8, [(1, 2)], 'auto')[0], 30)
+  35	        with self.assertRaises(ValueError):
+  36	            m.sparse_from_known_changes(z, 8, [(1, 2)], 'native')
+  37	
+  38	    def test_zero_and_cancelled_edits(self):
+  39	        z = fft.rfft(np.arange(8.))
+  40	        for changes in [[], [(1, 2), (1, -2)]]:
+  41	            np.testing.assert_array_equal(m.sparse_from_known_changes(z, 8, changes, 'auto'), z)
+  42	
+  43	
+  44	class BudgetTests(unittest.TestCase):
+  45	    def test_calibration_skips_overbudget_pruned(self):
+  46	        e = m.RelationFFT(max_temp_bytes=256)
+  47	        state = e.register(np.arange(16.)).edit(3, 1.)
+  48	        prof = e.calibrate(state, repeats=2)
+  49	        self.assertNotIn('pruned', prof.median_seconds)
+  50	        self.assertIn(prof.best_method, ('native', 'direct'))
+  51	
+  52	    def test_calibration_skips_backend_allocation_failure(self):
+  53	        e = m.RelationFFT()
+  54	        state = e.register(np.arange(16.)).edit(3, 1.)
+  55	        with patch.object(e, '_pruned_spectrum', side_effect=MemoryError('backend workspace')):
+  56	            prof = e.calibrate(state, repeats=2)
+  57	        self.assertNotIn('pruned', prof.median_seconds)
+  58	        self.assertEqual(e.stats['calibration_pruned_memory_skips'], 1)
+  59	
+  60	    def test_calibration_does_not_hide_nonmemory_errors(self):
+  61	        e = m.RelationFFT()
+  62	        state = e.register(np.arange(16.)).edit(3, 1.)
+  63	        with patch.object(e, '_pruned_spectrum', side_effect=ValueError('invalid transform')):
+  64	            with self.assertRaises(ValueError):
+  65	                e.calibrate(state, repeats=2)
+  66	
+  67	    def test_admission_and_execution_share_estimate(self):
+  68	        e = m.RelationFFT()
+  69	        state = e.register(np.arange(16.)).edit(3, 1.)
+  70	        needed = e._pruned_required_bytes(state)
+  71	        e.max_temp_bytes = needed - 1
+  72	        with self.assertRaises(MemoryError):
+  73	            state.spectrum('pruned')
+  74	        prof = e.calibrate(state, repeats=2)
+  75	        self.assertNotIn('pruned', prof.median_seconds)
+  76	        e.max_temp_bytes = needed
+  77	        prof = e.calibrate(state, repeats=2)
+  78	        self.assertIn('pruned', prof.median_seconds)
+  79	
+  80	    def test_old_incomplete_pruned_budget_is_rejected(self):
+  81	        n, k = 65536, 8
+  82	        e = m.RelationFFT(max_temp_bytes=16*n + 8*(n//k))
+  83	        s = e.register(np.zeros(n))
+  84	        for p in range(k):
+  85	            s.edit(p+1, p+.25)
+  86	        with self.assertRaises(MemoryError):
+  87	            s.spectrum('pruned')
+  88	
+  89	    def test_phase_backing_storage_not_visible_slice_is_charged(self):
+  90	        n, count = 4096, 2049
+  91	        e = m.RelationFFT(max_phase_bytes=count*16)
+  92	        phase = e._phase_vector(n, 7, count)
+  93	        self.assertEqual(phase.nbytes, 32784)
+  94	        self.assertEqual(m._retained_array_bytes(phase), 49152)
+  95	        self.assertEqual(e.memory_report()['internal_phase_cache_bytes'], 0)
+  96	        self.assertEqual(len(e._phase), 0)
+  97	
+  98	    def test_phase_lru_charges_real_bytes_on_insert_and_evict(self):
+  99	        e = m.RelationFFT(max_phase_bytes=49152)
+ 100	        for p in [7, 9, 11, 7]:
+ 101	            phase = e._phase_vector(4096, p, 2049)
+ 102	            self.assertEqual(len(e._phase), 1)
+ 103	            actual = sum(m._retained_array_bytes(a) for a in e._phase.values())
+ 104	            self.assertEqual(actual, e.memory_report()['internal_phase_cache_bytes'])
+ 105	            self.assertLessEqual(actual, e.max_phase_bytes)
+ 106	            self.assertFalse(phase.flags.writeable)
+ 107	
+ 108	
+ 109	class NormalStateTests(unittest.TestCase):
+ 110	    def test_shift_combine_edits_queries_forks_and_subscriptions(self):
+ 111	        self.max_abs_error = 0.
+ 112	        for n in [1, 2, 3, 7, 8, 16, 31, 64, 128, 1024, 4096, 16384, 65536]:
+ 113	            with self.subTest(n=n):
+ 114	                rng = np.random.default_rng(532+n)
+ 115	                e = m.RelationFFT()
+ 116	                a, b = rng.normal(size=n), rng.normal(size=n)
+ 117	                sa, sb = e.register(a), e.register(b)
+ 118	                sx, ax = sa.fork(), a.copy()
+ 119	                for _ in range(min(7, n)):
+ 120	                    p, d = int(rng.integers(n)), float(rng.normal())
+ 121	                    sx.edit(p, d)
+ 122	                    ax[p] += d
+ 123	                shift = int(rng.integers(n))
+ 124	                sy = e.combine([sx.shift(shift), sb], [1.25, -.75])
+ 125	                ref = fft.rfft(1.25*np.roll(ax, shift)-.75*b)
+ 126	                methods = ['direct', 'native', 'auto'] + (['pruned'] if n & (n-1) == 0 else [])
+ 127	                for method in methods:
+ 128	                    got = sy.spectrum(method)
+ 129	                    np.testing.assert_allclose(got, ref, rtol=3e-11, atol=1e-9)
+ 130	                    self.max_abs_error = max(self.max_abs_error, float(np.max(np.abs(got-ref))))
+ 131	                qs = sorted(set([0, n//2, min(3, n//2)]))
+ 132	                np.testing.assert_allclose(sy.bins(qs), ref[qs], rtol=3e-11, atol=1e-9)
+ 133	                for q in qs:
+ 134	                    np.testing.assert_allclose(sy.bin(q), ref[q], rtol=3e-11, atol=1e-9)
+ 135	                cached = sy.spectrum(cache_output=True)
+ 136	                cached[:] = 0
+ 137	                np.testing.assert_allclose(sy.spectrum(), ref, rtol=3e-11, atol=1e-9)
+ 138	                sibling = sy.fork()
+ 139	                sy.edit(0, .125)
+ 140	                np.testing.assert_allclose(sy.spectrum(), ref+.125, rtol=3e-11, atol=1e-9)
+ 141	                np.testing.assert_allclose(sibling.spectrum(), ref, rtol=3e-11, atol=1e-9)
+ 142	                tracked, xt = m.subscribe(sx, qs), ax.copy()
+ 143	                for _ in range(30):
+ 144	                    p, d = int(rng.integers(n)), float(rng.normal())
+ 145	                    tracked.edit(p, d)
+ 146	                    xt[p] += d
+ 147	                    np.testing.assert_allclose(tracked.values(), fft.rfft(xt)[qs], rtol=3e-11, atol=1e-9)
+ 148	                tracked.state.edit(0, 1)
+ 149	                with self.assertRaises(RuntimeError):
+ 150	                    tracked.values()
+ 151	        print('\nNormal-state maximum absolute error:', self.max_abs_error)
+ 152	
+ 153	
+ 154	if __name__ == '__main__':
+ 155	    unittest.main()

@@ -1,0 +1,127 @@
+0001 #!/usr/bin/env python3
+0002 """Reconstruct the data certificate; never execute or import the producer's code."""
+0003 from pathlib import Path
+0004 from itertools import combinations, permutations
+0005 from math import comb
+0006 from collections import Counter
+0007 import hashlib, json
+0008 import sympy as sp
+0009 HERE=Path(__file__).resolve().parent
+0010 SRC=HERE.parent/'joint_orbit'/'iteration_5_shifted_grid'/'TWO_ROW_CERTIFICATES.json'
+0011 z,x=sp.symbols('z x'); phi=sp.Poly(z**8+1,z,domain=sp.ZZ)
+0012 def residue(expr):
+0013     return sp.Poly(expr,z,domain=sp.ZZ).rem(phi).as_expr()
+0014 def power(j):
+0015     return residue(z**(j%16))
+0016 def decode(vec):
+0017     assert len(vec)==8 and all(isinstance(a,int) for a in vec)
+0018     return sum(a*z**i for i,a in enumerate(vec))
+0019 def encode(expr):
+0020     p=sp.Poly(residue(expr),z); return [int(p.nth(i)) for i in range(8)]
+0021 def sign(p):
+0022     return (-1)**sum(p[i]>p[j] for i in range(len(p)) for j in range(i+1,len(p)))
+0023 def ring_determinant(A):
+0024     n=len(A); out=0
+0025     for p in permutations(range(n)):
+0026         term=sign(p)
+0027         for i,j in enumerate(p): term=residue(term*A[i][j])
+0028         out=residue(out+term)
+0029     return out
+0030 
+0031 def sylvester_resultant(P,Q):
+0032     # Build a Sylvester matrix, independent of the producer's quadratic formula.
+0033     while P and P[-1]==0:P=P[:-1]
+0034     while Q and Q[-1]==0:Q=Q[:-1]
+0035     assert P and Q
+0036     m,n=len(P)-1,len(Q)-1
+0037     A=[]
+0038     for k in range(n): A.append([0]*k+P[::-1]+[0]*(n-1-k))
+0039     for k in range(m): A.append([0]*k+Q[::-1]+[0]*(m-1-k))
+0040     return ring_determinant(A)
+0041 
+0042 def reverse(j,bits):
+0043     out=0
+0044     for _ in range(bits):out=2*out+(j&1);j//=2
+0045     return out
+0046 
+0047 def green(M,a,b):
+0048     N=M*M
+0049     def entry(i,j):
+0050         dt=i//M-j//M;du=i%M-j%M
+0051         return comb(dt+du,dt)*a**dt*b**du if min(dt,du)>=0 else 0
+0052     return [[entry(i,j) for j in range(N)] for i in range(N)]
+0053 G=green(4,2,3);J0=green(4,5,7)
+0054 route=[(reverse(j,4)+1)%16 for j in range(16)]
+0055 inv=[route.index(i) for i in range(16)]
+0056 J=[[J0[inv[i]][inv[j]] for j in range(16)] for i in range(16)]
+0057 f=[power(-j) for j in range(16)]
+0058 def minor(rows,cols):
+0059     r,s=rows
+0060     A=sp.Matrix([[G[r][j]+x*J[r][j] for j in cols],
+0061                  [G[s][j]+x*J[s][j] for j in cols],
+0062                  [f[j] for j in cols]])
+0063     p=sp.Poly(sp.expand(A.det()),x)
+0064     return [residue(p.nth(k)) for k in range(3)]
+0065 def compare_polynomial(P,stored):
+0066     assert [encode(c) for c in P]==stored
+0067 
+0068 # Direct arithmetic controls, in addition to checking every stored resultant.
+0069 assert residue(power(7)*power(7))==power(14)
+0070 assert sylvester_resultant([-z,1],[-z**2,0,1])==0
+0071 assert sylvester_resultant([-z,1],[-z**2,1])!=0
+0072 assert sylvester_resultant([2],[3,1])==2
+0073 assert sylvester_resultant([-1,0,1],[-4,0,1])==9
+0074 assert sp.Poly(phi.as_expr(),z).is_irreducible
+0075 cert=json.loads(SRC.read_text()); assert cert['route']==route
+0076 seen=set(); kinds=Counter(); finite_kinds=Counter(); records=[]
+0077 for c in cert['certificates']:
+0078     pair=tuple(c['rows']);assert pair in set(combinations(range(16),2)) and pair not in seen
+0079     seen.add(pair);kinds[c['kind']]+=1
+0080     if c['kind']=='missing_coordinate':
+0081         j=c['column'];assert all(A[r][j]==0 for A in (G,J) for r in pair)
+0082         assert f[j]!=0
+0083         records.append({'rows':pair,'kind':c['kind'],'verified':True});continue
+0084     assert c['kind']=='algebraic_certificate'
+0085     v=c['finite'];finite_kinds[v['kind']]+=1
+0086     if v['kind']=='nonzero_constant_minor':
+0087         P=minor(pair,v['columns']);compare_polynomial(P,v['polynomial'])
+0088         assert P[0]!=0 and P[1]==P[2]==0
+0089     else:
+0090         assert v['kind']=='nonzero_resultant'
+0091         P=minor(pair,v['columns1']);Q=minor(pair,v['columns2'])
+0092         compare_polynomial(P,v['polynomial1']);compare_polynomial(Q,v['polynomial2'])
+0093         res=sylvester_resultant(P,Q)
+0094         assert encode(res)==v['resultant'] and res!=0
+0095     inf=c['infinity'];P=minor(pair,inf['columns'])
+0096     assert encode(P[2])==inf['minor_value'] and P[2]!=0
+0097     # A separately formed determinant must match the leading coefficient.
+0098     rows=[[J[pair[0]][j] for j in inf['columns']],
+0099           [J[pair[1]][j] for j in inf['columns']],
+0100           [f[j] for j in inf['columns']]]
+0101     assert ring_determinant(rows)==P[2]
+0102     records.append({'rows':pair,'kind':c['kind'],'finite_kind':v['kind'],'verified':True})
+0103 assert seen==set(combinations(range(16),2))
+0104 assert G[1]==[3,1]+[0]*14 and J[1]==[0,1]+[0]*14
+0105 # Structural support is completely dense after two stages, yet the span gate excludes F.
+0106 H=[[G[i][j]+J[i][j] for j in range(16)] for i in range(16)]
+0107 assert all(sum(H[i][k]*H[k][j] for k in range(16))>0 for i in range(16) for j in range(16))
+0108 # Verify inherited seal without executing its verification program.
+0109 old=HERE.parent/'review_orbits_iteration3'
+0110 seal=json.loads((old/'SEAL.json').read_text())
+0111 seal_verified=[]
+0112 for c in seal['files']:
+0113     data=(old/c['path']).read_bytes()
+0114     assert len(data)==c['bytes'] and hashlib.sha256(data).hexdigest()==c['sha256']
+0115     seal_verified.append(c['path'])
+0116 result={'source':str(SRC),'source_sha256':hashlib.sha256(SRC.read_bytes()).hexdigest(),
+0117         'field':'Q[z]/(z^8+1), independently verified irreducible',
+0118         'matrix_reconstruction':'Closed binomial path formula, bitwise permutation',
+0119         'resultant_reconstruction':'Full Sylvester determinant, reduced modulo z^8+1',
+0120         'N':16,'route':route,'all_row_pairs_verified':len(seen),
+0121         'certificate_kinds':dict(kinds),'finite_certificate_kinds':dict(finite_kinds),
+0122         'projective_infinity_certificates_verified':kinds['algebraic_certificate'],
+0123         'left_row_1':'3 alpha e_0 + (alpha+beta) e_1',
+0124         'positive_H_squared_full_support':True,'prior_sealed_files_verified':seal_verified,
+0125         'records':records}
+0126 (HERE/'CERTIFICATE_AUDIT_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+0127 print(json.dumps({k:v for k,v in result.items() if k!='records'},indent=2))

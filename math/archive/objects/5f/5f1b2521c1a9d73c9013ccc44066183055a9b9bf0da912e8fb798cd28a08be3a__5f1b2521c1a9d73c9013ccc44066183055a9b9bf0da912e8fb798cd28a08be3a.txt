@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Exact union-bound formula for all possible chirp slopes, shifts and <=r supports.
+A symbolic/floating exponent report, NOT an empirical probability measurement."""
+import json,math
+from phase6_exact import P
+
+def totient(q):
+    n=q;answer=q;d=2
+    while d*d<=n:
+        if n%d==0:
+            answer=answer//d*(d-1)
+            while n%d==0:n//=d
+        d+=1
+    if n>1:answer=answer//n*(n-1)
+    return answer
+
+def log10_union_upper(q,m,r,p=P):
+    k=q//m
+    logs=[math.log10(q)+math.log10(totient(q))+math.log10(math.comb(m,j))-(q-k*j)*math.log10(p) for j in range(r+1)]
+    mx=max(logs)
+    return mx+math.log10(sum(10**(v-mx) for v in logs))
+
+if __name__=='__main__':
+    rows=[]
+    for q,m,r in [(64,8,1),(64,8,2),(256,16,1),(256,16,2),(512,16,3),(1024,16,3)]:
+        value=log10_union_upper(q,m,r)
+        rows.append({'q':q,'m':m,'k':q//m,'r':r,'field_size':P,'log10_probability_upper':round(value,2)})
+    print(json.dumps(rows,indent=2))
+    open('coverage_bound.json','w').write(json.dumps(rows,indent=2))

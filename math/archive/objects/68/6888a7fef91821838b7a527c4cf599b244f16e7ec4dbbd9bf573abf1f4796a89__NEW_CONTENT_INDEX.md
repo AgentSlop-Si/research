@@ -1,0 +1,96 @@
+# New unique source contents
+
+528 baseline canonical text contents plus recorded baseline Library-file hashes; all member and top-level archive hashes in 14:50 and 15:20 addition inventories. Source-byte identity, not novelty of mathematical claims.
+
+New means unseen byte content in the stated comparison set; repeated proofs with changed wording are not mathematical novelty. Nested archives and compiled files are labeled separately.
+
+- 0723d00535af3f16 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/PROOF_CERTIFICATE.md
+- 43150ed89d5785f7 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/README.md
+- ac942abfacaca412 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/REGRESSION_LOG.txt
+- 21fd655c82d648e0 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/RESEARCH.md
+- 6f9f59d84fe4f65f · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/SESSION_HANDOFF.md
+- 5b953759d8248a24 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/SHA256SUMS.txt
+- de3b799ca16b8f26 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/build_archive.py
+- 742de8e54efd8f49 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/dual_sparse_polynomials.py
+- 1cdf5a04892959a4 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/dual_sparse_results.json
+- 224a73e7c2e6444e · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/dual_support.py
+- f2841feb4fab445b · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/dual_support_results.json
+- 54ebeee0c41301db · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/dual_twenty_equations.json
+- 08386d0fe5820673 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/exception_s1.py
+- 250b7a97e7c7403c · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/exception_s1_witness.json
+- eeee961e201c782e · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/export_onion_spec.py
+- 474b84028eb1e98a · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/general_onion.py
+- c727c733dd1d960e · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/general_onion_results.json
+- c6f89b8ad6d44015 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/onion_peel.py
+- 60ce5f6b4f91b028 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/onion_results.json
+- bd0ed9dc8be39810 · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/onion_twelve_system_spec.json
+- cfdf5dfd37287aeb · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/run_all.py
+- 2ef0b122738fb76c · text/data · fft_dual_support_onion_gate_2026-10-09(1).zip!/fft_dual_support_gate_2026-10-09/test_dual_gate.py
+- 1ec6e2545ff0e738 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/FFT_RESEARCH_START_HERE_PHASE18.md
+- bc725840d103879e · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/CHECKPOINT.md
+- 86197021afca9951 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/README.md
+- 4d0c8be3d6d47189 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/RUN.md
+- b5398edb5dfd3800 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/SHA256SUMS.txt
+- 0e8b143e730ccb7a · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/THEOREM.md
+- b6e4f687a2509962 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/commutant_dimension.py
+- 6081ebc91be2534d · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/commutant_dimension_audit.json
+- 95c62d0ecf364452 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/dual_intertwiner.py
+- 691d0d3258d66b79 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/dual_intertwiner_audit.json
+- bf82d3d17c434aa2 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/harper_audit.json
+- 952e9e216072f647 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/harper_certificate.py
+- 9e1b339f240e444f · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/inherited_phase12.log
+- 2f6ad9f37eafef8b · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/inherited_phase13.log
+- 536da9ef3a9940c7 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/inherited_phase14.log
+- 9a4d59b6688ed315 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/inherited_phase15.log
+- 15ef38ad5aab842f · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/inherited_phase16.log
+- e7e237bceb42bf66 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/inherited_phase17.log
+- 70b60b3168f5eb1f · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/spectral_basis_audit.json
+- 7cd1c7eb1c5e74b0 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/spectral_basis_control.py
+- ec9895e4c4b83fb2 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/tests/test_phase18.py
+- d54ccef13645f36d · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/validation.log
+- 523d2507b244f16a · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/weyl_audit.json
+- 201fd3bda04dba26 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/fft_green_phase18_harper_covariance/weyl_gate.py
+- c2b8a120991e2aca · nested archive · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip
+- 08fefa35b476b770 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/FFT_RESEARCH_START_HERE_PHASE17.md
+- f8de8fde4253aa50 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/CHECKPOINT.md
+- 1b9c788d6740e7a4 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/README.md
+- 1c759d3f6891706a · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/RUN.md
+- ac73bbb5be6d0182 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/SHA256SUMS.txt
+- ee18a8ad8d113e9a · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/THEOREM.md
+- 9a17b1410f33df64 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/adversarial_interleaving_audit.json
+- 608ef72d254244ad · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/approximation_gap.py
+- a4fcd71c76d7cc05 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/approximation_gap_audit.json
+- 3a012b3fb638a118 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/balanced_rank_and_error_certificates.json
+- fd51c3cd6595e3b6 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/chirp_and_common_order_audit.json
+- 46bd6abfd6449d1a · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/chirp_hankel.py
+- 592e401535263b58 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/fft_green_phase12_unitary_escape_regression.log
+- 604d90f7c3a9ee42 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/fft_green_phase14_galois_coherence_regression.log
+- f35ed2bab444032c · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/fft_green_phase15_folding_regression.log
+- 5b15bf4bc1f590a6 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/fft_green_phase16_entropy_fusion_regression.log
+- db1833cc385e9b1f · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/fft_green_phase17_nonunitary_sum_regression.log
+- 8b563a799107469d · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/green_prime_audit.json
+- 8137aead5088f288 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/green_sum_cert.py
+- cadeffafd33b6773 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/package.py
+- b0e00e392402d03f · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/phase17_exact_certificates.json
+- 388287d279baa227 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/product_escape_audit.json
+- b30bfc991abe8116 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/product_escape_probe.py
+- a7ab2b7d75f2f8a9 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/tests/test_phase17.py
+- 12b14b2616623f06 · text/data · fft_green_research_phase18_2026-10-09(1).zip!/previous_full_phase17_checkpoint.zip!/fft_green_phase17_nonunitary_sum/validation_summary.json
+- 271da4b3b9be9e22 · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/CHAIN_CHECKPOINT_2026-10-09_v9.md
+- 12af170e38a4a116 · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/COMPOSITE_MODULUS_AUDIT.md
+- c7ef76df18e83159 · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/MANIFEST.sha256
+- 23d9847975d4f80b · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/PROJECTOR_CERTIFICATE.md
+- 9f8bb4ee385a4098 · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/README.md
+- 448b22df7910554a · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/RESEARCH.md
+- 6ed08c7d719c02bf · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/build_native.sh
+- 502f4578bc6373fc · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/composite_modulus_audit.py
+- 9f18257e353e92d7 · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/composite_modulus_results.json
+- 4d10278f2cf7421c · binary (not executed) · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/native_benchmark
+- 175f24d4c644db74 · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/native_benchmark.cpp
+- 0c23ef34d77ca083 · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/native_benchmark_results.csv
+- 502f2f88f41ebb9c · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/projector_certificate.py
+- e65bf12189f2ef6b · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/projector_certificate_results.json
+- 6a95e865e6489abd · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/prototype.py
+- dd49ea085196ae94 · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/results.json
+- df23b888166ce13c · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/test_checkpoint.py
+- 93e2152e7f46a6ed · text/data · fft_unit_step_chirp_v9(1).zip!/fft_unit_step_chirp_v9/test_run.log

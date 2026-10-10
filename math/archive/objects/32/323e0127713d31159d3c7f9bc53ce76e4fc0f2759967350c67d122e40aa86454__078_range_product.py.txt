@@ -1,0 +1,183 @@
+"""Division-free projected replacement queries on a frozen factor chain.
+
+A classical disjoint sparse table stores interval products. For p replaced
+factors, <=p+1 unchanged intervals and p new rows cost O(q*(p+1)) numeric work
+after O(m*q*log m) preprocessing/storage. This is a static-base tradeoff, not
+the O(m*q) storage of a segment tree and not a new range-query theorem.
+"""
+from dataclasses import dataclass
+import numpy as np
+from projected_circuit import integer, indices, scalar
+
+
+class FrozenProductIndex:
+    def __init__(self, n, bins, factor_projection, *, max_table_bytes=256*1024**2):
+        self.n = integer(n)
+        if not 1 <= self.n < 2**31:
+            raise ValueError('require 1 <= n < 2**31')
+        self.bins = indices(bins, self.n, unique=True)
+        a = np.array(factor_projection, dtype=np.complex128, copy=True)
+        if a.ndim != 2 or not a.shape[0] or a.shape[1] != len(self.bins) or not np.all(np.isfinite(a)):
+            raise ValueError('finite (m,q) projection required')
+        self.m, self.q = a.shape
+        self.levels = (self.m-1).bit_length()
+        self.padded = 1 << self.levels
+        budget = integer(max_table_bytes)
+        needed = self.levels*self.padded*self.q*16
+        if budget < 0 or needed > budget:
+            raise MemoryError(f'interval table requires {needed} numeric bytes')
+        a.flags.writeable = False
+        self.values = a
+        padded = np.ones((self.padded,self.q),dtype=np.complex128)
+        padded[:self.m] = a
+        self.table = np.empty((self.levels,self.padded,self.q),dtype=np.complex128)
+        with np.errstate(over='raise',invalid='raise'):
+            for h in range(self.levels):
+                half = 1 << h
+                blocks = padded.reshape(-1,2*half,self.q)
+                out = self.table[h].reshape(-1,2*half,self.q)
+                out[:,:half] = np.multiply.accumulate(blocks[:,:half, :][:,::-1,:],axis=1)[:,::-1,:]
+                out[:,half:] = np.multiply.accumulate(blocks[:,half:,:],axis=1)
+            self.base = np.prod(a,axis=0)
+        if not np.all(np.isfinite(self.table)) or not np.all(np.isfinite(self.base)):
+            raise FloatingPointError('nonfinite interval product')
+        self.base.flags.writeable = self.table.flags.writeable = False
+
+    @classmethod
+    def from_circuit(cls, version, **kwargs):
+        e = version.engine
+        values = e.query_many([version.factor(i) for i in range(version.tree.size)])
+        return cls(e.n, e.bins, values, **kwargs)
+
+    def interval(self, start, stop):
+        """Half-open factor interval; empty interval is multiplicative one."""
+        start, stop = integer(start), integer(stop)
+        if not 0 <= start <= stop <= self.m:
+            raise IndexError('bad factor interval')
+        if start == stop:
+            return np.ones(self.q,dtype=np.complex128)
+        if stop-start == 1:
+            return self.values[start].copy()
+        h = (start ^ (stop-1)).bit_length()-1
+        return self.table[h,start]*self.table[h,stop-1]
+
+    def branch(self):
+        return IndexedVersion(self, ())
+
+    def memory_report(self):
+        return {'factor_projection_bytes':self.values.nbytes,
+                'interval_table_bytes':self.table.nbytes,'base_product_bytes':self.base.nbytes,
+                'bin_bytes':self.bins.nbytes,
+                'total_numeric_bytes':self.values.nbytes+self.table.nbytes+self.base.nbytes+self.bins.nbytes,
+                'excludes_objects_versions_outputs_and_build_workspace':True}
+
+
+class SegmentProductIndex(FrozenProductIndex):
+    """Same persistent fork API, O(mq) storage, O(q log m) interval queries.
+
+    This smaller classical tree is the preferred indexed route in the measured
+    workloads. The disjoint table remains an explicit experimental option.
+    """
+    def __init__(self, n, bins, factor_projection, *, max_table_bytes=256*1024**2):
+        self.n = integer(n)
+        if not 1 <= self.n < 2**31:
+            raise ValueError('require 1 <= n < 2**31')
+        self.bins = indices(bins, self.n, unique=True)
+        a = np.array(factor_projection,dtype=np.complex128,copy=True)
+        if a.ndim != 2 or not a.shape[0] or a.shape[1] != len(self.bins) or not np.all(np.isfinite(a)):
+            raise ValueError('finite (m,q) projection required')
+        self.m,self.q = a.shape
+        self.levels = (self.m-1).bit_length()
+        self.padded = 1 << self.levels
+        needed = 2*self.padded*self.q*16
+        if needed > integer(max_table_bytes):
+            raise MemoryError(f'segment table requires {needed} numeric bytes')
+        a.flags.writeable = False
+        self.values = a
+        self.table = np.ones((2*self.padded,self.q),dtype=np.complex128)
+        self.table[self.padded:self.padded+self.m] = a
+        with np.errstate(over='raise',invalid='raise'):
+            width = self.padded
+            while width > 1:
+                lo = width//2
+                self.table[lo:width] = self.table[width:2*width:2]*self.table[width+1:2*width:2]
+                width = lo
+        if not np.all(np.isfinite(self.table)):
+            raise FloatingPointError('nonfinite interval product')
+        self.base = self.table[1].copy()
+        self.base.flags.writeable = self.table.flags.writeable = False
+
+    def interval(self,start,stop):
+        start,stop = integer(start),integer(stop)
+        if not 0 <= start <= stop <= self.m:
+            raise IndexError('bad factor interval')
+        out = np.ones(self.q,dtype=np.complex128)
+        start += self.padded
+        stop += self.padded
+        while start < stop:
+            if start & 1:
+                out *= self.table[start]
+                start += 1
+            if stop & 1:
+                stop -= 1
+                out *= self.table[stop]
+            start //= 2
+            stop //= 2
+        return out
+
+
+@dataclass(frozen=True)
+class IndexedVersion:
+    index: FrozenProductIndex
+    replacements: tuple
+
+    def edit_many(self, events):
+        """Persistent fork: old row arrays stay unchanged, only edited rows copy."""
+        changed = dict(self.replacements)
+        touched = set()
+        for at, pos, delta in events:
+            at, pos, d = integer(at), integer(pos), scalar(delta)
+            if not 0 <= at < self.index.m or not 0 <= pos < self.index.n:
+                raise IndexError('factor or point out of range')
+            if d == 0:
+                continue
+            if at not in touched:
+                changed[at] = (changed[at] if at in changed else self.index.values[at]).copy()
+                touched.add(at)
+            phase = np.exp((-2j*np.pi/self.index.n)*((self.index.bins*pos) % self.index.n))
+            with np.errstate(over='raise',invalid='raise'):
+                changed[at] += d*phase
+        for at in touched:
+            if not np.all(np.isfinite(changed[at])):
+                raise FloatingPointError('nonfinite edited row')
+            changed[at].flags.writeable = False
+        return IndexedVersion(self.index,tuple(sorted(changed.items())))
+
+    def query(self, method='auto'):
+        if method not in ('auto','range','vector'):
+            raise ValueError('method must be auto, range, or vector')
+        p = len(self.replacements)
+        if not p:
+            return self.index.base.copy()
+        # Fixed conservative heuristic, not an empirical optimality guarantee.
+        if method == 'auto':
+            method = 'range' if self.index.m >= 256 and 16*p < self.index.m else 'vector'
+        with np.errstate(over='raise',invalid='raise'):
+            if method == 'vector':
+                a = self.index.values.copy()
+                for at,row in self.replacements:
+                    a[at] = row
+                out = np.prod(a,axis=0)
+            else:
+                out = np.ones(self.index.q,dtype=np.complex128)
+                start = 0
+                for at,row in self.replacements:
+                    if start < at:
+                        out *= self.index.interval(start,at)
+                    out *= row
+                    start = at+1
+                if start < self.index.m:
+                    out *= self.index.interval(start,self.index.m)
+        if not np.all(np.isfinite(out)):
+            raise FloatingPointError('nonfinite product')
+        return out

@@ -1,0 +1,216 @@
+1: """Random input sparsification followed by a classical input-pruned full DFT.
+2: 
+3: Research target
+4: ---------------
+5: For a fresh arbitrary dense vector x in C^N (N a power of two), construct a
+6: k-sparse unbiased surrogate y, then compute *all* N Fourier coefficients of y
+7: with the existing sparse DFT decomposition.
+8: 
+9: The theorem is for the unitary DFT U_N = F_N / sqrt(N):
+10: 
+11:     P[ ||U_N y - U_N x||_inf > eps ||x||_2 ] <= delta
+12: 
+13: provided
+14: 
+15:     k >= 4*tau2(x)/eps^2 * log(4N/delta),
+16:     tau2(x) = ||x||_1^2 / (N ||x||_2^2) <= 1.
+17: 
+18: The proof is coordinatewise Hoeffding + a union bound.  The sparsification
+19: lemma is a standard Maurey/importance-sampling phenomenon; the research
+20: question is the algorithmic composition with the input-pruned full-output DFT.
+21: """
+22: from __future__ import annotations
+23: 
+24: from dataclasses import dataclass
+25: import math
+26: from typing import Sequence
+27: import numpy as np
+28: 
+29: from hybrid_sparse import sparse_dft
+30: 
+31: 
+32: @dataclass(frozen=True)
+33: class SurrogatePlan:
+34:     n: int
+35:     epsilon: float
+36:     delta: float
+37:     l1: float
+38:     l2: float
+39:     tau2: float
+40:     requested_samples: int
+41:     actual_draws: int
+42:     support_size: int
+43:     sparse_b: int | None
+44:     method: str
+45: 
+46: 
+47: def _as_complex_vector(x: Sequence[complex]) -> np.ndarray:
+48:     a = np.asarray(x, dtype=np.complex128)
+49:     if a.ndim != 1 or a.size < 1:
+50:         raise ValueError("x must be a nonempty 1-D vector")
+51:     if not np.all(np.isfinite(a.real)) or not np.all(np.isfinite(a.imag)):
+52:         raise ValueError("x must be finite")
+53:     n = int(a.size)
+54:     if n & (n - 1):
+55:         raise ValueError("current sparse DFT backend requires power-of-two length")
+56:     return a
+57: 
+58: 
+59: def flatness_tau2(x: Sequence[complex]) -> float:
+60:     a = _as_complex_vector(x)
+61:     l1 = float(np.sum(np.abs(a)))
+62:     l2 = float(np.linalg.norm(a))
+63:     if l2 == 0.0:
+64:         return 0.0
+65:     return (l1 * l1) / (a.size * l2 * l2)
+66: 
+67: 
+68: def universal_sample_count(n: int, epsilon: float, delta: float) -> int:
+69:     """Samples for error <= epsilon * ||x||_1/sqrt(N), independent of x."""
+70:     n=int(n); eps=float(epsilon); d=float(delta)
+71:     if n<1: raise ValueError("n must be positive")
+72:     if not (0.0 < eps < 1.0): raise ValueError("epsilon must lie in (0,1)")
+73:     if not (0.0 < d < 1.0): raise ValueError("delta must lie in (0,1)")
+74:     return max(1, math.ceil((4.0/(eps*eps))*math.log(4.0*n/d)))
+75: 
+76: 
+77: def sufficient_sample_count(x: Sequence[complex], epsilon: float, delta: float) -> int:
+78:     """Samples for the weaker adaptive error <= epsilon * ||x||_2."""
+79:     a = _as_complex_vector(x)
+80:     eps = float(epsilon); d = float(delta)
+81:     if not (0.0 < eps < 1.0):
+82:         raise ValueError("epsilon must lie in (0,1)")
+83:     if not (0.0 < d < 1.0):
+84:         raise ValueError("delta must lie in (0,1)")
+85:     l2 = float(np.linalg.norm(a))
+86:     if l2 == 0.0:
+87:         return 0
+88:     t2 = flatness_tau2(a)
+89:     return max(1, math.ceil((4.0 * t2 / (eps * eps)) * math.log(4.0 * a.size / d)))
+90: 
+91: 
+92: def _draw_importance_indices(weights: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
+93:     """Draw iid indices proportional to nonnegative weights.
+94: 
+95:     Uses one cumulative scan plus binary searches.  The theoretical algorithm
+96:     can equivalently sort k uniforms and merge them with the cumulative scan in
+97:     O(N + k log k) time.
+98:     """
+99:     if k <= 0:
+100:         return np.empty(0, dtype=np.intp)
+101:     total = float(weights.sum())
+102:     if total <= 0.0:
+103:         return np.empty(0, dtype=np.intp)
+104:     cdf = np.cumsum(weights, dtype=np.float64)
+105:     # Guard the final endpoint against accumulated roundoff.
+106:     cdf[-1] = total
+107:     u = rng.random(k) * total
+108:     return np.searchsorted(cdf, u, side="right").astype(np.intp, copy=False)
+109: 
+110: 
+111: def sparsify_input(
+112:     x: Sequence[complex],
+113:     epsilon: float,
+114:     delta: float,
+115:     *,
+116:     rng: np.random.Generator | None = None,
+117:     samples: int | None = None,
+118: ) -> tuple[dict[int, complex], SurrogatePlan]:
+119:     """Return the sampled k-sparse surrogate as an index->value dictionary."""
+120:     a = _as_complex_vector(x)
+121:     eps = float(epsilon); d = float(delta)
+122:     if rng is None:
+123:         rng = np.random.default_rng()
+124:     l1 = float(np.sum(np.abs(a)))
+125:     l2 = float(np.linalg.norm(a))
+126:     if l2 == 0.0:
+127:         plan = SurrogatePlan(a.size, eps, d, 0.0, 0.0, 0.0, 0, 0, 0, None, "zero")
+128:         return {}, plan
+129:     tau2 = (l1*l1)/(a.size*l2*l2)
+130:     k = sufficient_sample_count(a, eps, d) if samples is None else int(samples)
+131:     if k < 1:
+132:         raise ValueError("samples must be positive for nonzero input")
+133: 
+134:     weights = np.abs(a)
+135:     draws = _draw_importance_indices(weights, k, rng)
+136:     idx, counts = np.unique(draws, return_counts=True)
+137:     values: dict[int, complex] = {}
+138:     scale = l1 / k
+139:     for j, count in zip(idx.tolist(), counts.tolist()):
+140:         z = a[j]
+141:         # j cannot have zero weight if it was sampled.
+142:         phase = z / abs(z)
+143:         values[int(j)] = complex(count * scale * phase)
+144: 
+145:     plan = SurrogatePlan(
+146:         n=a.size, epsilon=eps, delta=d, l1=l1, l2=l2, tau2=tau2,
+147:         requested_samples=k, actual_draws=k, support_size=len(values),
+148:         sparse_b=None, method="importance-with-replacement",
+149:     )
+150:     return values, plan
+151: 
+152: 
+153: def approximate_dft_all(
+154:     x: Sequence[complex],
+155:     epsilon: float,
+156:     delta: float,
+157:     *,
+158:     rng: np.random.Generator | None = None,
+159:     samples: int | None = None,
+160:     backend: str = "scipy",
+161:     scale: str = "l2",
+162:     exact_sparse_bypass: bool = True,
+163:     fallback_dense_if_k_ge_n: bool = True,
+164:     return_plan: bool = False,
+165: ):
+166:     """Approximate every unitary DFT coefficient of a fresh dense input.
+167: 
+168:     If the sufficient number of draws reaches N, the default implementation
+169:     falls back to a complete numerical FFT.  This does not affect the fixed-
+170:     epsilon asymptotic result, for which k=O(log N).
+171:     """
+172:     a = _as_complex_vector(x)
+173:     if scale not in ("l2","l1_ceiling"):
+174:         raise ValueError("scale must be 'l2' or 'l1_ceiling'")
+175:     requested = samples
+176:     if requested is None and scale == "l1_ceiling":
+177:         requested = universal_sample_count(a.size, epsilon, delta)
+178: 
+179:     # The O(N) scan needed for norms also reveals exact support.  If that
+180:     # support is already smaller than the Monte-Carlo budget, do no sampling.
+181:     nz = np.flatnonzero(a != 0)
+182:     budget = sufficient_sample_count(a,epsilon,delta) if requested is None else int(requested)
+183:     if exact_sparse_bypass and 0 < nz.size <= budget:
+184:         exact = {int(j):complex(a[j]) for j in nz}
+185:         raw,spl = sparse_dft(a.size, exact.items(), backend=backend, return_plan=True)
+186:         l1=float(np.sum(np.abs(a))); l2=float(np.linalg.norm(a)); tau2=(l1*l1)/(a.size*l2*l2) if l2 else 0.0
+187:         plan=SurrogatePlan(a.size,float(epsilon),float(delta),l1,l2,tau2,budget,0,int(nz.size),spl.b,"exact-sparse-bypass")
+188:         out=raw/math.sqrt(a.size)
+189:         return (out,plan) if return_plan else out
+190: 
+191:     sparse, plan0 = sparsify_input(a, epsilon, delta, rng=rng, samples=requested)
+192:     k = plan0.requested_samples
+193:     if plan0.method == "zero":
+194:         out = np.zeros(a.size, dtype=np.complex128)
+195:         return (out, plan0) if return_plan else out
+196: 
+197:     if fallback_dense_if_k_ge_n and k >= a.size:
+198:         try:
+199:             from scipy import fft as sp_fft
+200:             out = sp_fft.fft(a, norm="ortho")
+201:         except Exception:
+202:             out = np.fft.fft(a, norm="ortho")
+203:         plan = SurrogatePlan(**{**plan0.__dict__, "method":"dense-fallback"})
+204:         return (out, plan) if return_plan else out
+205: 
+206:     raw, spl = sparse_dft(a.size, sparse.items(), backend=backend, return_plan=True)
+207:     out = raw / math.sqrt(a.size)
+208:     plan = SurrogatePlan(**{**plan0.__dict__, "sparse_b":spl.b, "method":"sparse-pruned"})
+209:     return (out, plan) if return_plan else out
+210: 
+211: 
+212: def theorem_failure_bound(n: int, epsilon: float, tau2: float, k: int) -> float:
+213:     """The explicit union-bound upper bound 4N exp(-k eps^2/(4 tau^2))."""
+214:     if tau2 <= 0.0:
+215:         return 0.0
+216:     return min(1.0, 4.0*n*math.exp(-k*epsilon*epsilon/(4.0*tau2)))

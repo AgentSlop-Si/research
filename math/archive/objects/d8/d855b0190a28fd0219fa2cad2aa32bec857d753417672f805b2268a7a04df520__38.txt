@@ -1,0 +1,174 @@
+   1 import unittest,random,math
+   2 from itertools import combinations
+   3 from research_gate import *
+   4 
+   5 def bareiss_det(A):
+   6     n=len(A)
+   7     if not n:return 1
+   8     B=[list(map(int,row)) for row in A]
+   9     s=1;prev=1
+  10     for k in range(n-1):
+  11         if not B[k][k]:
+  12             r=next((i for i in range(k+1,n) if B[i][k]),None)
+  13             if r is None:return 0
+  14             B[k],B[r]=B[r],B[k];s=-s
+  15         z=B[k][k]
+  16         for i in range(k+1,n):
+  17             for j in range(k+1,n):
+  18                 num=B[i][j]*z-B[i][k]*B[k][j]
+  19                 assert num%prev==0
+  20                 B[i][j]=num//prev
+  21         for i in range(k+1,n):B[i][k]=0
+  22         prev=z
+  23     return s*B[-1][-1]
+  24 
+  25 class StructuralResearch(unittest.TestCase):
+  26     def test_parity_permutation_theorem(self):
+  27         p=65537
+  28         for n in (4,8,16,32,64):
+  29             s=scalar_stage(n)
+  30             for perm in (bitrev(n),parity_perm(n,n+471)):
+  31                 q=perm_conjugate(s,perm)
+  32                 for k in range(1,n):
+  33                     want=min(k,n-k)
+  34                     up=rank_mod([row[k:] for row in q[:k]],p)
+  35                     down=rank_mod([row[:k] for row in q[k:]],p)
+  36                     self.assertEqual((up,down),(want,want),(n,k,perm))
+  37                     if k<=n//2:
+  38                         evens=sorted(perm[:k]);odds=[r+1 for r in evens]
+  39                     else:
+  40                         odds=sorted(perm[k:]);evens=[r-1 for r in odds]
+  41                     U=[[s[i][j] for j in odds] for i in evens]
+  42                     V=[[s[i][j] for j in evens] for i in odds]
+  43                     self.assertEqual(det_mod(U,p),2%p)
+  44                     self.assertEqual(det_mod(V,p),(-1)**(want-1)%p)
+  45 
+  46     def test_scalar_scan_det_and_executor(self):
+  47         p=65537; rng=random.Random(303)
+  48         for n in (2,4,8,16,32,64):
+  49             s=scalar_stage(n)
+  50             self.assertEqual(det_mod(s,p),(2**(n+1)-1)%p)
+  51             a=[1]*n;b=[1]*n;c=[2]*n;e=[1]*n;d=[3]*n
+  52             for _ in range(3):
+  53                 x=[rng.randrange(p) for _ in range(n)]
+  54                 self.assertEqual(matvec(s,x,p),apply_scan(a,b,c,e,d,x,p))
+  55 
+  56     def test_sparse_augmentation_exact(self):
+  57         p=12289; rng=random.Random(42)
+  58         for n in (2,3,4,7,8,12):
+  59             for _ in range(3):
+  60                 a,b,c,e,d=([rng.randrange(-3,4) for _ in range(n)] for _ in range(5))
+  61                 S=matrix_stage(a,b,c,e,d,p)
+  62                 K=augmented_stage_matrix(a,b,c,e,d,p)
+  63                 self.assertEqual(det_mod(S,p),det_mod(K,p))
+  64                 if n<=8:
+  65                     Si=[[a[i]*b[j] if i>j else c[i]*e[j] if i<j else d[i] for j in range(n)] for i in range(n)]
+  66                     D=bareiss_det(Si)
+  67                     B=3
+  68                     self.assertLessEqual(D*D,3**(3*n)*B**(4*n))
+  69 
+  70     def test_fourier_two_by_two_formula(self):
+  71         p=65537
+  72         for n in (4,8,16,32):
+  73             w=root(n,p)
+  74             F=fft(n,w,p)
+  75             rng=random.Random(n)
+  76             for _ in range(150):
+  77                 r1,r2=sorted(rng.sample(range(n),2))
+  78                 c1,c2=sorted(rng.sample(range(n),2))
+  79                 self.assertEqual(minor2(F,r1,r2,c1,c2,p),fourier_minor_formula(n,w,p,r1,r2,c1,c2))
+  80             self.assertEqual(zero_minor_count_bruteforce(n),zero_minor_count_formula(n))
+  81 
+  82     def test_quasiseparable_minor_characterization_and_zero_case(self):
+  83         p=12289
+  84         for n in (8,16):
+  85             for S in (block2_stage(n,p,39+n),scalar_stage(n)):
+  86                 self.assertFalse(all_qs_minor_violations(S,p,limit=1))
+  87                 inv=inverse_mod(S,p)
+  88                 self.assertFalse(all_qs_minor_violations(inv,p,limit=1))
+  89             bad=fft(n,root(n,p),p)
+  90             self.assertTrue(all_qs_minor_violations(bad,p,limit=1))
+  91 
+  92     def test_inverse_stage_quotient_identity(self):
+  93         p=12289
+  94         for n in (8,16):
+  95             perm=bitrev(n)
+  96             candidates=(
+  97                 [block2_stage(n,p,n+i*101) for i in range(3)],
+  98                 [scalar_stage(n,1,2,3),block2_stage(n,p,n+51),scalar_stage(n,1,3,4)]
+  99             )
+ 100             for S1,S2,S3 in candidates:
+ 101                 target=triple_stage_product_simple(S1,S2,S3,perm,p)
+ 102                 A=inverse_mod(S1,p);C=inverse_mod(S3,p)
+ 103                 self.assertFalse(all_qs_minor_violations(A,p,limit=1))
+ 104                 self.assertFalse(all_qs_minor_violations(C,p,limit=1))
+ 105                 M=inverse_stage_middle(A,C,target,perm,p)
+ 106                 self.assertEqual(M,[[z%p for z in row] for row in S2])
+ 107                 self.assertFalse(all_qs_minor_violations(M,p,limit=1))
+ 108                 self.assertEqual(det_mod(target,p),det_mod(S1,p)*det_mod(S2,p)*det_mod(S3,p)%p)
+ 109             # Actual Fourier fails the identity choice A=C=I, but this DOES NOT
+ 110             # exclude other inverses A,C.
+ 111             ident=[[int(i==j) for j in range(n)] for i in range(n)]
+ 112             F=fft(n,root(n,p),p)
+ 113             self.assertTrue(all_qs_minor_violations(inverse_stage_middle(ident,ident,F,perm,p),p,limit=1))
+ 114 
+ 115     def test_exterior_square_cauchy_binet(self):
+ 116         p=12289; rng=random.Random(39)
+ 117         for n in (4,8,16):
+ 118             F=fft(n,root(n,p),p)
+ 119             for it in range(4):
+ 120                 A=[[rng.randrange(p) for _ in range(n)] for _ in range(n)]
+ 121                 C=[[rng.randrange(p) for _ in range(n)] for _ in range(n)]
+ 122                 triple=matmul(matmul(A,F,p),C,p)
+ 123                 rows=tuple(sorted(rng.sample(range(n),2)))
+ 124                 cols=tuple(sorted(rng.sample(range(n),2)))
+ 125                 direct=compound_entry(triple,p,rows,cols)
+ 126                 by_compound=exterior_cauchy_binet(A,F,C,rows,cols,p)
+ 127                 self.assertEqual(direct,by_compound)
+ 128 
+ 129 
+ 130 class ThreeStageAllLengthObstruction(unittest.TestCase):
+ 131     def test_uniform_boolean_cut_across_eight_scales(self):
+ 132         from uniform_cut import test_cut
+ 133         for n in (32,64,128,256,512,1024,2048,4096,8192):
+ 134             obj=test_cut(n)
+ 135             self.assertEqual(obj['removed_scalar_channels'],12*(n//32)+1)
+ 136             self.assertEqual(obj['rank_deficit'],n//32-1)
+ 137 
+ 138     def test_independent_dependency_dag(self):
+ 139         from verify_uniform_cut_independent import verify
+ 140         for n in (32,64,128,256,512):
+ 141             self.assertTrue(verify(n)['disconnected'])
+ 142 
+ 143     def test_uniform_wire_count_and_binary_sets(self):
+ 144         from uniform_cut import cut_sets,wire_list,BASE_INPUT_RESIDUES,FINAL_HIGH_BLOCKS
+ 145         for n in (32,64,128,256,512):
+ 146             P=bitrev(n);m=n//32;a=cut_sets(n)
+ 147             self.assertEqual({P[x]%32 for x in a['sources']},set(BASE_INPUT_RESIDUES))
+ 148             self.assertEqual(len(wire_list(n)),12*m+1)
+ 149             self.assertEqual(len(a['x2']),7*m)
+ 150             self.assertEqual({int(f'{s:05b}'[::-1],2) for s in range(21) if int(f'{s:05b}'[::-1],2)>=19},set(FINAL_HIGH_BLOCKS))
+ 151 
+ 152     def test_uniform_fourier_vandermonde_mod_two_primes(self):
+ 153         for n in (32,64,128):
+ 154             m=n//32;R=range(19*m,n);C=range(13*m)
+ 155             for p in (12289,65537):
+ 156                 w=root(n,p)
+ 157                 M=[[pow(w,i*j,p) for j in C] for i in R]
+ 158                 self.assertNotEqual(det_mod(M,p),0,(n,p))
+ 159                 self.assertEqual(rank_mod(M,p),13*m)
+ 160 
+ 161     def test_network_certificates_both_fields(self):
+ 162         import json
+ 163         from pathlib import Path
+ 164         here=Path(__file__).resolve().parent
+ 165         for n in (64,128):
+ 166             obj=json.loads((here/f'NETWORK_CERTIFICATE_N{n}.json').read_text())
+ 167             self.assertLess(obj['rank_upper_bound'],len(obj['rows']))
+ 168             for proof in obj['primes']:
+ 169                 p=proof['prime'];w=root(n,p)
+ 170                 self.assertEqual(w,proof['primitive_root'])
+ 171                 M=[[pow(w,i*j,p) for j in obj['columns']] for i in obj['rows']]
+ 172                 self.assertEqual(det_mod(M,p),proof['determinant'])
+ 173 
+ 174 if __name__=='__main__':unittest.main(verbosity=2)

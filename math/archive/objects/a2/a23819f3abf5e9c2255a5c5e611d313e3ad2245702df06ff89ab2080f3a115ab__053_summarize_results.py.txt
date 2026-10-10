@@ -1,0 +1,59 @@
+"""Generate the human-readable measurement tables from raw JSON."""
+from pathlib import Path
+import json
+
+HERE=Path(__file__).resolve().parent
+bench=json.loads((HERE/'results'/'benchmark_graph.json').read_text())
+history=json.loads((HERE/'results'/'benchmark_history.json').read_text())
+memory=json.loads((HERE/'results'/'memory_results.json').read_text())
+verification=json.loads((HERE/'results'/'verification.json').read_text())
+names={'chain':'Cumulative edit chain','interleaved_clusters':'Interleaved clusters',
+       'coset64':'64-position coset','independent_patches':'Independent sparse patches',
+       'unrelated_dense':'Unrelated dense signals'}
+lines=['# Measured results for Fourier graph reuse','',
+    f"{bench['repeats']} runs per case; medians in milliseconds. Python {bench['python'].split()[0]}, NumPy {bench['numpy']}, SciPy {bench['scipy']}.",
+    '', '## Cold dense batches','',
+    'Every method writes and retains every requested rFFT bin. The graph figures include calibration, metadata, planning, seed FFTs and output writes.',
+    'The ratio uses the fastest median among SciPy, the Phase 4 default, and Phase 5 auto; values below 1 mean the graph route is slower.', '',
+    '| Workload | N | Versions | SciPy ms | Phase 4 ms | Phase 5 ms | Graph cold ms | Best baseline / graph |',
+    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |']
+for c in bench['cases']:
+    m=c['methods']; f=m['scipy_fresh']['median_ms']; p4=m['phase4_default']['median_ms']; p5=m['phase5_auto']['median_ms']; g=m['graph_sparse_cold']['median_ms']
+    lines.append(f"| {names[c['case']]} | {c['n']:,} | {c['versions']} | {f:.3f} | {p4:.3f} | {p5:.3f} | {g:.3f} | {min(f,p4,p5)/g:.2f}x |")
+lines += ['', 'Synthetic known-related workloads; these ratios do not describe arbitrary fresh FFT inputs. For unrelated dense signals, even the sparse-delta interface itself is a poor choice.',
+    '', '## Graph discovery and lineage ablations','',
+    'These methods use the same correction kernels and reusable measured cost profile. Profile setup is excluded here and separately reported in the JSON; it is included in the cold table above.', '',
+    '| Workload | N | Same-kernel star ms | Known/chronological lineage ms | Sparse graph ms | All-pairs graph ms |',
+    '| --- | ---: | ---: | ---: | ---: | ---: |']
+for c in bench['cases']:
+    if c['case'] not in ('chain','interleaved_clusters','coset64'):continue
+    m=c['methods']
+    vals=[m[k]['median_ms'] for k in ['same_kernels_star_profiled','same_kernels_lineage_profiled','graph_sparse_profiled','graph_complete_profiled']]
+    lines.append(f"| {names[c['case']]} | {c['n']:,} | "+' | '.join(f'{v:.3f}' for v in vals)+' |')
+lines += ['', 'For the chain, lineage is supplied in the best order and usually wins. Cluster lineage follows chronological requests that alternate families; the graph can select within-family reuse instead. The star and coset ablations separate kernel gains from graph-planning gains.',
+    '', '## One correction with an existing base spectrum','',
+    'N=262,144, k=64. This separate experiment excludes base-spectrum preparation. Quotient setup, its short FFT, phase construction and dense output are included.', '',
+    '| Support | Reduced length L | Native rFFT ms | 64 direct corrections ms | Quotient correction ms |',
+    '| --- | ---: | ---: | ---: | ---: |']
+for row in bench['geometry']:
+    m=row['methods']
+    lines.append(f"| {row['support']} | {row['reduced_length']:,} | {m['scipy_fresh']['median_ms']:.3f} | {m['direct_no_phase_cache']['median_ms']:.3f} | {m['quotient']['median_ms']:.3f} |")
+lines += ['', 'The quotient helps the evenly spaced support. For contiguous and random supports it has L=N and loses to native rFFT.',
+    '', '## Retained event history','',
+    '300 one-update-plus-query calls, q=8. Old-history construction and initial setup are excluded from this hot-path table and reported per method in `benchmark_history.json`. The manual-compaction baseline is essential: the large ratios are a bug fix, not a general Fourier speedup.', '',
+    '| Old retained events | Original uncompacted ms | Original with compaction ms | Fixed tail replay ms |',
+    '| ---: | ---: | ---: | ---: |']
+for row in history['rows']:
+    m=row['methods']
+    lines.append(f"| {row['old_retained_events']:,} | {m['original_no_compaction']['median_ms']:.3f} | {m['original_manual_compaction']['median_ms']:.3f} | {m['fixed_tail_replay']['median_ms']:.3f} |")
+lines += ['', '## Observed memory and verification','',
+    'Separate processes, 65-version chain, N=262,144. Output payload alone is 130.001 MiB. RSS includes Python, libraries, inputs, metadata and scratch; it is not an exact per-allocation decomposition.', '',
+    '| Method | Peak process RSS MiB |', '| --- | ---: |']
+for row in memory['rows']:
+    lines.append(f"| {row['method']} | {row['peak_rss_bytes']/2**20:.2f} |")
+err=max(method['max_absolute_error'] for c in bench['cases'] for method in c['methods'].values())
+lines += ['', f"Largest absolute discrepancy across dense benchmark methods: {err:.3g}.",
+    f"All {verification['total_tests']} tests passed. These include {verification['suites'][0]['tests']} new tests, 7 Phase 4 tests, and 20 tests from the latest relation-view upload.",
+    '', 'Raw timings include every run, minima/maxima, per-stage graph time, kernel choices, output bytes and environment metadata. Exact small-case algebra and operation-visit tests are independent of those wall times.', '']
+(HERE/'RESULTS.md').write_text('\n'.join(lines))
+print('Wrote RESULTS.md')

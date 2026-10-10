@@ -1,0 +1,83 @@
+"""Exact Weyl atom automorphism gate over finite fields.
+
+S x[k]=x[k-1], D x[k]=omega^k*x[k]. For every integer a,b:
+    S^a D^b F = F D^{-a} S^b.
+This extends to arbitrary linear combinations of q noncommuting Weyl atoms.
+The forcing B=LF is an FFT of an O(qN) preconditioned input. This is an
+ALGEBRAIC IDENTITY, not an FFT circuit lower bound.
+"""
+import json
+from pathlib import Path
+from weyl_green import P,root_for_n
+
+
+def atoms():
+    # Several global crossings; includes negative exponents and noncommuting
+    # shift / diagonal modulation words.
+    return [(7,0,0),(2,1,0),(1,0,1),(3,-2,3),(5,4,-3),(6,-1,-2)]
+
+
+def apply_left(x,root,terms,p=P):
+    n=len(x)
+    w=[pow(root,k,p) for k in range(n)]
+    y=[0]*n
+    for c,a,b in terms:
+        for k in range(n):
+            idx=(k-a)%n
+            y[k]=(y[k]+c*pow(w[idx],b,p)*x[idx])%p
+    return y
+
+
+def apply_right(x,root,terms,p=P):
+    n=len(x)
+    w=[pow(root,k,p) for k in range(n)]
+    y=[0]*n
+    for c,a,b in terms:
+        for j in range(n):
+            y[j]=(y[j]+c*pow(w[j],-a,p)*x[(j-b)%n])%p
+    return y
+
+
+def apply_left_to_dft_column(j,n,root,terms,p=P):
+    w=[pow(root,k,p) for k in range(n)]
+    return [sum(c*pow(w[(k-a)%n],b,p)*pow(root,((k-a)*j)%n,p)
+            for c,a,b in terms)%p for k in range(n)]
+
+
+def apply_right_to_dft_column(j,n,root,terms,p=P):
+    # Algebraically independent indexing: each right atom D^-a S^b maps
+    # e_j to e_(j+b), coefficient root^-a(j+b).
+    w=[pow(root,k,p) for k in range(n)]
+    return [sum(c*pow(w[(j+b)%n],-a,p)*pow(root,(k*(j+b))%n,p)
+            for c,a,b in terms)%p for k in range(n)]
+
+
+def audit():
+    sizes=[4,8,16,24,32,48,64,96,128,192,384]
+    report=[]
+    total=0
+    ts=atoms()
+    for n in sizes:
+        root=root_for_n(n)
+        rows=0
+        for j in range(n):
+            left=apply_left_to_dft_column(j,n,root,ts)
+            right=apply_right_to_dft_column(j,n,root,ts)
+            if left!=right:
+                raise AssertionError(('Weyl automorphism mismatch',n,j))
+            rows+=n
+        # Test general x without invoking any Fourier in these two apps.
+        x=[(3*k*k+k+1)%P for k in range(n)]
+        y=apply_left(x,root,ts)
+        z=apply_right(x,root,ts)
+        assert len(y)==n and len(z)==n
+        assert apply_left(x,root,[(1,1,0),(1,0,1)])!=apply_left(x,root,[(1,0,1),(1,1,0),(1,2,2)])
+        total+=rows
+        report.append({'n':n,'full_basis_entries':rows,'terms':len(ts)})
+    out={'theorem':'(sum c_ab S^a D^b) F = F (sum c_ab D^-a S^b)',
+         'field':P,'sizes':report,'full_basis_entries':total,'atoms':ts,
+         'scope':'q Weyl atoms => O(qN) sparse preprocessing; not a lower bound'}
+    (Path(__file__).parent/'WEYL_ATOM_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+    print(json.dumps(out,indent=2))
+
+if __name__=='__main__':audit()

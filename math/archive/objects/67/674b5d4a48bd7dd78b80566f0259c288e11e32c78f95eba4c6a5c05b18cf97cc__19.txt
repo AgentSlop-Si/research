@@ -1,0 +1,61 @@
+0001 """Additional audit-authored controls. No uploaded module imports."""
+0002 from pathlib import Path
+0003 import importlib.util,json,sys,random,math
+0004 sys.dont_write_bytecode=True
+0005 here=Path(__file__).resolve().parent
+0006 spec=importlib.util.spec_from_file_location('audit_helpers',here/'independent_checks.py')
+0007 a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
+0008 rng=random.Random(83180)
+0009 cas=0;root_evaluations=0
+0010 for n,p in [(8,17),(12,97),(16,97),(18,109),(32,193)]:
+0011  w0=a.root(n,p)
+0012  for s,w in [(1,3),(2,4),(3,4),(3,5),(4,6)]:
+0013   for rep in range(5):
+0014    while True:
+0015     Y=[[rng.randrange(p) for _ in range(w)] for _ in range(s)]
+0016     if a.rk(Y,p)==s:break
+0017    lo=s*(s-1)//2;coeff=[0]*(s*(w-s)+1)
+0018    from itertools import combinations
+0019    for K in combinations(range(w),s):
+0020     v=a.det([[row[k] for k in K] for row in Y],p)*a.det([[pow(w0,k*h,p) for h in range(s)] for k in K],p)
+0021     coeff[sum(K)-lo]=(coeff[sum(K)-lo]+v)%p
+0022    assert any(coeff)
+0023    bad=0
+0024    for j in range(n):
+0025     z=pow(w0,j,p)
+0026     M=[[sum(Y[t][i]*pow(z*pow(w0,h,p)%p,i,p) for i in range(w))%p for h in range(s)] for t in range(s)]
+0027     d=a.det(M,p); assert d==pow(z,lo,p)*a.peval(coeff,z,p)%p
+0028     bad+=d==0;root_evaluations+=1
+0029    assert bad<=s*(w-s)
+0030    cas+=1
+0031 cov=0
+0032 for n in [4,8,16,32]:
+0033  p=998244353
+0034  for rep in range(4):
+0035   M=[[rng.randrange(1,p) for _ in range(n)] for _ in range(n)]
+0036   rows=list(range(n));cols=list(range(n));rng.shuffle(rows);rng.shuffle(cols)
+0037   left=[rng.randrange(1,p) for _ in range(n)];right=[rng.randrange(1,p) for _ in range(n)]
+0038   N=[[left[i]*M[rows[i]][cols[j]]*right[j]%p for j in range(n)] for i in range(n)]
+0039   assert a.moments(M)==a.moments(N);cov+=1
+0040 # Verify the recurrence from separately solved sparse systems, at multiple sizes.
+0041 rec=0
+0042 for n in [4,8,16,32,64]:
+0043  for seed in range(3):
+0044   terms=a.params(n,100+seed);x=[rng.randrange(a.P) for _ in range(n)]
+0045   for t in terms:
+0046    alpha=pow(t['denominator'],-1,a.P);w=pow(3,-((a.P-1)//n),a.P)
+0047    z=[x[i]*pow(w,t['right_exponents'][i],a.P)%a.P for i in range(n)]
+0048    h=0
+0049    for j in t['order']:h=(alpha*h+z[j])%a.P
+0050    h=h*pow(1-pow(alpha,n,a.P),-1,a.P)%a.P
+0051    y=[0]*n
+0052    for j in t['order']:h=(alpha*h+z[j])%a.P;y[j]=h*pow(w,t['left_exponents'][j],a.P)%a.P
+0053    assert y==a.mv(a.component(n,t),x,a.P);rec+=1
+0054 # The source interface support branch uses raw x==0 rather than x%P==0.
+0055 p=a.P;target=[[p,1],[1,1]];middle=[[0,1],[1,1]]
+0056 assert [[x%p for x in r] for r in target]==middle
+0057 counter={'prime':p,'target':target,'middle':middle,'same_matrix_mod_p':True,'source_raw_zero_counts':[sum(x==0 for r in target for x in r),sum(x==0 for r in middle for x in r)],'source_branch_result':'excluded','qualified_fix':'Normalize modulo p before support counting, or require canonical residues.'}
+0058 result={'casoratian_spaces':cas,'casoratian_root_evaluations':root_evaluations,'two_sided_moment_covariance_controls':cov,'cyclic_recurrence_controls':rec,'noncanonical_residue_interface_counterexample':counter,'prime_998244353_trial_division_check':all(p%d for d in range(2,math.isqrt(p)+1)),'all_passed':True}
+0059 assert result['prime_998244353_trial_division_check']
+0060 output=Path(sys.argv[1]) if len(sys.argv)>1 else here/'EXTRA_RESULTS.json'
+0061 output.write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))

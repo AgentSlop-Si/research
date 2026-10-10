@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Complex-number prototype of the Phase-6 adaptive GLOBAL sparse-phase engine.
+
+Successful path: all N outputs computed using <=r Green-cycle decoders;
+no N-point FFT. Membership certificates are tolerance-based in complex128:
+exact algebraic guarantee is in phase6_exact.py over F_p.
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+from math import gcd
+import numpy as np
+from composite_cycle_core import ChirpState,local_phase_matrix,decode_balanced_scan
+
+@dataclass
+class Phase6Result:
+    y:np.ndarray|None
+    modes:list[int]
+    accepted:bool
+    blocks_verified:int
+    expensive_blocks:int
+    green_rows:int
+
+
+def dense_chirp_mode_example(q:int,m:int,support:list[int],seed:int=20261010,a:int=1,beta:int=0)->np.ndarray:
+    assert q%m==0 and q//m>=m and gcd(a,q)==1
+    k=q//m
+    rng=np.random.default_rng(seed)
+    d=np.zeros((k,m),dtype=np.complex128)
+    d[:,support]=rng.normal(size=(k,len(support)))+1j*rng.normal(size=(k,len(support)))
+    t=np.arange(m)
+    r=np.arange(m)
+    zeta=np.exp(-2j*np.pi*np.outer(r,t)/m)
+    v=(d@zeta)/m
+    s=local_phase_matrix(q,m,ChirpState(a,beta))
+    return (v*np.conj(s)).reshape(q)
+
+
+def sparse_phase_fft(x:np.ndarray,m:int,max_modes:int,a:int=1,beta:int=0,
+                     atol:float=1e-9)->Phase6Result:
+    x=np.asarray(x,dtype=np.complex128)
+    q=x.size
+    if q%m or q//m<m or gcd(a,q)!=1 or not 0<=max_modes<=m:
+        raise ValueError('require Q=KM, K>=M, gcd(a,Q)=1, 0<=max_modes<=M')
+    k=q//m
+    phase=local_phase_matrix(q,m,ChirpState(a,beta))
+    reshaped=x.reshape((k,m))
+    t=np.arange(m)
+    plus=np.exp(2j*np.pi*np.outer(np.arange(m),t)/m)
+    minus=np.conj(plus)
+    indices=[]
+    D={}
+    scale=1+np.max(abs(x))
+    costly=0
+    blocks=0
+    for b in range(k):
+        v=phase[b]*reshaped[b]
+        if indices:
+            d=plus[indices]@v
+            approx=d@minus[indices]/m
+        else:
+            d=np.empty(0,dtype=np.complex128)
+            approx=np.zeros(m,dtype=np.complex128)
+        blocks+=1
+        if np.max(abs(approx-v))>atol*scale:
+            costly+=1
+            complete=np.fft.ifft(v)*m  # one short M-FFT ONLY on discovery
+            new=[r for r in range(m) if abs(complete[r])>atol*scale and r not in indices]
+            if len(indices)+len(new)>max_modes:
+                return Phase6Result(None,indices+new,False,blocks,costly,0)
+            for r in new:D[r]=np.zeros(k,dtype=np.complex128)
+            indices.extend(new)
+            for r in indices:D[r][b]=complete[r]
+        else:
+            for r,dr in zip(indices,d):D[r][b]=dr
+    y=np.zeros(q,dtype=np.complex128)
+    for r in indices:
+        row=decode_balanced_scan(D[r],q,m,ChirpState(a,(beta+r*k)%q))
+        y+=row/m
+    return Phase6Result(y,indices,True,blocks,costly,len(indices))
+
+if __name__=='__main__':
+    for q,m in [(256,8),(1024,16),(4096,16)]:
+        x=dense_chirp_mode_example(q,m,[1,3],seed=q)
+        z=sparse_phase_fft(x,m,2)
+        print(q,m,'accepted',z.accepted,'modes',z.modes,'max_error',float(max(abs(z.y-np.fft.fft(x)/np.sqrt(q)))))

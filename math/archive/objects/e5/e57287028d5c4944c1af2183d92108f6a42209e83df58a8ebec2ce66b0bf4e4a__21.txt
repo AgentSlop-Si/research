@@ -1,0 +1,65 @@
+   1 import json,time
+   2 import numpy as np
+   3 try:
+   4  from scipy.fft import fft
+   5 except ImportError:
+   6  from numpy.fft import fft
+   7 from lazy_spectrum import LazySpectrum,PreparedBinView,BufferedSpectrum,direct_sparse_correction
+   8 rng=np.random.default_rng(202610093)
+   9 
+  10 def med(fn,reps=3):
+  11  ts=[];out=None
+  12  for _ in range(reps):
+  13   t=time.perf_counter_ns();out=fn();ts.append((time.perf_counter_ns()-t)/1e6)
+  14  return float(np.median(ts)),out
+  15 rows=[]
+  16 # Prepared selective view
+  17 n=262144;U=500;k=32;q=64
+  18 x0=rng.standard_normal(n)+1j*rng.standard_normal(n);support=rng.choice(n,k,replace=False);bins=np.sort(rng.choice(n,q,replace=False));slots=rng.integers(0,k,U);deltas=rng.normal(scale=.05,size=U)+1j*rng.normal(scale=.05,size=U)
+  19 def fresh():
+  20  x=x0.copy();_=fft(x);out=None
+  21  for s,d in zip(slots,deltas):x[support[s]]+=d;out=fft(x)[bins]
+  22  return out
+  23 def eager():
+  24  cached=fft(x0);ph=np.exp((-2j*np.pi/n)*np.multiply.outer(support.astype(float),np.arange(n,dtype=float)));out=None
+  25  for s,d in zip(slots,deltas):cached += d*ph[s];out=cached[bins]
+  26  return out,ph.nbytes
+  27 def prep():
+  28  v=PreparedBinView(fft(x0),support.tolist(),bins.tolist());out=None
+  29  for s,d in zip(slots,deltas):v.add_edit(int(support[s]),d);out=v.values()
+  30  return out,v.phase_bytes
+  31 Tf,Of=med(fresh);Te,Oe=med(eager);Tp,Op=med(prep)
+  32 x=x0.copy()
+  33 for s,d in zip(slots,deltas):x[support[s]]+=d
+  34 truth=fft(x)[bins]
+  35 for z in [Of,Oe[0],Op[0]]:assert np.allclose(z,truth,rtol=1e-9,atol=1e-7)
+  36 rows.append(dict(case='prepared_bin_view',n=n,updates=U,support=k,bins=q,fresh_ms=Tf,eager_ms=Te,prepared_ms=Tp,speedup_vs_fresh=Tf/Tp,speedup_vs_eager=Te/Tp,phase_bytes=Op[1],full_phase_bytes=Oe[1],memory_reduction=Oe[1]/Op[1]))
+  37 # Buffered mixed workload
+  38 U=512;H=4;q=64
+  39 x0=rng.standard_normal(n)+1j*rng.standard_normal(n);locs=rng.choice(n,U,replace=False);vals=rng.normal(scale=.05,size=U)+1j*rng.normal(scale=.05,size=U);bins=np.sort(rng.choice(n,q,replace=False))
+  40 def f2():
+  41  x=x0.copy();_=fft(x);out=None
+  42  for i,(j,d) in enumerate(zip(locs,vals),1):x[j]+=d;out=fft(x)[bins] if i%H==0 else out
+  43  return out
+  44 def never():
+  45  s=LazySpectrum.from_spectrum(fft(x0));out=None
+  46  for i,(j,d) in enumerate(zip(locs,vals),1):s.add_edit(int(j),d);out=s.bins(bins) if i%H==0 else out
+  47  return out
+  48 def buf():
+  49  s=BufferedSpectrum.from_spectrum(fft(x0),flush_threshold=128,flush_method='native');out=None
+  50  for i,(j,d) in enumerate(zip(locs,vals),1):s.add_edit(int(j),d);out=s.bins(bins) if i%H==0 else out
+  51  return out,s.flush_count
+  52 Tf,Of=med(f2);Tn,On=med(never);Tb,Ob=med(buf)
+  53 x=x0.copy();x[locs]+=vals;truth=fft(x)[bins]
+  54 for z in [Of,On,Ob[0]]:assert np.allclose(z,truth,rtol=1e-9,atol=1e-7)
+  55 rows.append(dict(case='buffered_mixed',n=n,updates=U,bins=q,updates_per_query=H,threshold=128,fresh_ms=Tf,never_flush_ms=Tn,buffered_ms=Tb,speedup_vs_fresh=Tf/Tb,speedup_vs_never=Tn/Tb,flushes=Ob[1]))
+  56 # Low-rank partial
+  57 r=4;k=64;q=64
+  58 basis_t=rng.standard_normal((r,n));basis=fft(basis_t,axis=1);coef=rng.normal(size=r);loc=rng.choice(n,k,replace=False);val=rng.normal(size=k);ed=list(zip(loc.tolist(),val.tolist()));bins=np.sort(rng.choice(n,q,replace=False))
+  59 def eg():
+  60  dense=np.einsum('r,rn->n',coef,basis);corr=direct_sparse_correction(n,{int(j):complex(v) for j,v in ed});return (dense+corr)[bins]
+  61 def lz():return LazySpectrum.from_basis(basis,coef,edits=ed).bins(bins)
+  62 Te,Oe=med(eg);Tl,Ol=med(lz);assert np.allclose(Oe,Ol,rtol=1e-9,atol=1e-7)
+  63 rows.append(dict(case='low_rank_sparse_partial',n=n,r=r,k=k,bins=q,eager_ms=Te,lazy_ms=Tl,speedup=Te/Tl))
+  64 print(json.dumps(rows,indent=2))
+  65 open('benchmark_key_results.json','w').write(json.dumps(rows,indent=2))

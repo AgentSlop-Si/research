@@ -1,0 +1,159 @@
+"""A new exact necessary 11x9 matrix-rank obstruction for two
+separated-generator rank-one stages, including zero output columns.
+
+Let Q be any invertible matrix, D=Q C P^{-1} a separated-generator
+matrix, where C[i,j]=U[i]*W[j] for i<j, C[i,j]=L[i]*V[j]
+for i>j, with arbitrary diagonals. For P=[7,0,6,3,4,1,2,5],
+consider D columns 5,6,7 in rows 0..4, and column4 rows0..3.
+The 11x9 gate built from C's generators U,L and Q has rank <=8.
+If columns 5,6,7 project to a zero vector, one of Y_j blocks
+has a nontrivial kernel; otherwise they share an upper direction
+and the fourth-column compatibility supplies the 11th equation.
+
+Therefore any 9x9 nonzero minor of the gate excludes that factorization
+without assuming corners, diagonals, or column anchors nonzero.
+"""
+from __future__ import annotations
+import sys,itertools,json,time,collections,random
+from pathlib import Path
+ROOT=Path(__file__).parent
+sys.path.insert(0,str(ROOT))
+import _bootstrap
+from triple_gate import build_UL,modrank
+from adjacent_tail import equations
+from dual_support import primitive_root,P8
+from inverse_quartic import poly_eval
+
+def det(A,p):
+ M=[[int(v)%p for v in row] for row in A]
+ n=len(M)
+ if n==0:return 1
+ assert len(M[0])==n
+ x=1
+ for j in range(n):
+  pivot=next((i for i in range(j,n) if M[i][j]),None)
+  if pivot is None:return 0
+  if pivot!=j:
+   M[j],M[pivot]=M[pivot],M[j];x=-x
+  q=M[j][j];x=x*q%p;inv=pow(q,-1,p)
+  for i in range(j+1,n):
+   fac=M[i][j]*inv%p
+   if fac:
+    for k in range(j+1,n):M[i][k]=(M[i][k]-fac*M[j][k])%p
+   M[i][j]=0
+ return x%p
+
+def gate(p,Q,U,L):
+ '''Works for arbitrary 8x8 Q. U,L are 8-vectors.'''
+ T={}
+ for j in (1,2,5,4):
+  e=[int(k==j) for k in range(8)]
+  upper=[U[k] if k<j else 0 for k in range(8)]
+  lower=[L[k] if k>j else 0 for k in range(8)]
+  nrows=4 if j==4 else 5
+  T[j]=[[sum(Q[i][k]*b[k] for k in range(8))%p for b in (e,upper,lower)] for i in range(nrows)]
+ A,B,C=T[1],T[2],T[5]
+ rows=[]
+ for i in range(5):rows.append([*A[i],*[-x%p for x in B[i]],0,0,0])
+ for i in range(5):rows.append([*A[i],0,0,0,*[-x%p for x in C[i]]])
+ # left-nullvector n of T[4], so n.q = det([q,T4]); holds even if T4 deficient
+ TT=T[4]
+ coeff=[(-1)**i*det([TT[k] for k in range(4) if k!=i],p)%p for i in range(4)]
+ ell=[sum(coeff[i]*A[i][j] for i in range(4))%p for j in range(3)]
+ rows.append(ell+[0]*6)
+ return rows
+
+def independent_rows(M,p):
+ sel=[]
+ r=0
+ for i,row in enumerate(M):
+  new=modrank([M[j] for j in sel]+[row],p)
+  if new>r:
+   sel.append(i);r=new
+ return sel
+
+def audit_GF17(p=17):
+ z=primitive_root(p,8)
+ Q=[[pow(z,i*j,p) for j in range(8)] for i in range(8)]
+ eq,W,E3,E4,Qcoeff=equations()
+ ct=collections.Counter(); witnesses=[]; firstgood=None
+ start=time.monotonic()
+ for h in itertools.product(range(p),repeat=4):
+  if not h[0]:continue
+  vec=[0]+list(h)+[0]
+  a,b,c=[poly_eval(K,vec,p,z) for K in E3]
+  d,e,f=[poly_eval(K,vec,p,z) for K in E4]
+  D=(a*e-b*d)%p
+  if D==0:continue
+  t=(-c*e+b*f)*pow(D,-1,p)%p
+  beta=(-a*f+c*d)*pow(D,-1,p)%p
+  if not t or poly_eval(eq[2],[t]+list(h)+[beta],p,z):continue
+  ct['prior_Q_tail_survivors']+=1
+  U,L=build_UL(p,z,h,t,beta)
+  K=gate(p,Q,U,L)
+  rank=modrank(K,p)
+  ct['rank_'+str(rank)]+=1
+  if rank==9:
+   ct['NEW_GATE_REJECTED']+=1
+   if len(witnesses)<3:
+    sel=independent_rows(K,p)
+    assert len(sel)==9
+    minor=det([K[j] for j in sel],p)
+    assert minor
+    witnesses.append(dict(h=list(h),t=t,beta=beta,E3=0,E4=0,Q=0,selected_rows=sel,minor_mod_p=minor,rank=9,tail_pivot=D))
+  else:
+   ct['new_gate_admitted']+=1
+   if firstgood is None:firstgood=dict(h=list(h),t=t,beta=beta,rank=rank)
+ out=dict(prime=p,z=z,stats=dict(ct),certificate=witnesses,first_survivor=firstgood,
+   scope='Exact GF(p) enumeration on nonzero tail-pivot/t/h0 chart; universal 11x9 rank gate itself is valid without zero-column exclusions.')
+ print('GF17 audit',out,'elapsed_seconds',round(time.monotonic()-start,2),flush=True)
+ return out
+
+def inv_mod(A,p):
+ n=len(A);M=[[int(A[i][j])%p for j in range(n)]+[int(i==j) for j in range(n)] for i in range(n)]
+ for j in range(n):
+  k=next((i for i in range(j,n) if M[i][j]),None)
+  if k is None:raise ZeroDivisionError
+  M[k],M[j]=M[j],M[k]
+  q=pow(M[j][j],-1,p);M[j]=[x*q%p for x in M[j]]
+  for i in range(n):
+   if i!=j and M[i][j]:
+    s=M[i][j];M[i]=[(x-s*y)%p for x,y in zip(M[i],M[j])]
+ return [row[n:] for row in M]
+
+def mul(A,B,p):
+ return [[sum(A[i][k]*B[k][j] for k in range(len(B)))%p for j in range(len(B[0]))] for i in range(len(A))]
+
+def random_sep(p,rng,zero_upper_cols=()):
+ U=[rng.randrange(p) for _ in range(8)];L=[rng.randrange(p) for _ in range(8)]
+ W=[rng.randrange(p) for _ in range(8)];V=[rng.randrange(p) for _ in range(8)]
+ for j in zero_upper_cols: W[j]=0
+ diag=[rng.randrange(p) for _ in range(8)]
+ C=[[diag[i] if i==j else U[i]*W[j]%p if i<j else L[i]*V[j]%p for j in range(8)] for i in range(8)]
+ return C,U,L
+
+def positive_controls(repeats=100):
+ rng=random.Random(202610092145)
+ results=[]
+ for p in (12289,65537):
+  ct=collections.Counter()
+  while ct['success']<repeats:
+   mode=ct['success']%5
+   zero=(() if mode==0 else (5,) if mode==1 else (6,) if mode==2 else (7,) if mode==3 else (5,6,7))
+   C,U,L=random_sep(p,rng);B,_,_=random_sep(p,rng,zero_upper_cols=zero)
+   try:Ci=inv_mod(C,p);Bi=inv_mod(B,p)
+   except ZeroDivisionError:continue
+   # D = Q C P^-1 -> Q = D P C^-1
+   P=[[int(P8[j]==k) for j in range(8)] for k in range(8)]
+   Q=mul(mul(B,[list(row) for row in zip(*P)],p),Ci,p)
+   K=gate(p,Q,U,L)
+   rank=modrank(K,p)
+   assert rank<=8,('false obstruction',p,rank)
+   ct['success']+=1;ct['rank_'+str(rank)]+=1;ct['zero_mode_'+str(mode)]+=1
+  results.append(dict(prime=p,**dict(ct)))
+ print('positive_controls',results,flush=True)
+ return results
+
+if __name__=='__main__':
+ data=dict(audit_GF17=audit_GF17(),positive_controls=positive_controls(100))
+ (ROOT/'universal_gate_results.json').write_text(json.dumps(data,indent=2)+'\n')

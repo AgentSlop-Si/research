@@ -1,0 +1,40 @@
+"""Regression checks for forced strategy reporting (audit patch, 2026-10-08)."""
+import random
+import unittest
+from unittest.mock import patch
+import fresh_factor as ff
+
+P=998244353
+
+class TestPlanReporting(unittest.TestCase):
+    def test_forced_ntt_reports_ntt(self):
+        rng=random.Random(814)
+        a=[7]*400
+        b=[rng.randrange(P) for _ in range(400)]
+        self.assertEqual(ff.choose_plan(a,b,mod=P).method,'structured')
+        with patch.object(ff,'ntt_convolution',wraps=ff.ntt_convolution) as ntt:
+            result,plan=ff.convolve(a,b,mod=P,mode='ntt')
+        self.assertEqual(plan.method,'ntt')
+        ntt.assert_called_once()
+        self.assertEqual(result,ff.naive(a,b,P))
+
+    def test_forced_structured_reports_structured(self):
+        rng=random.Random(815)
+        a=[rng.randrange(P) for _ in range(400)]
+        b=[rng.randrange(P) for _ in range(400)]
+        self.assertEqual(ff.choose_plan(a,b,mod=P).method,'ntt')
+        with patch.object(ff,'sparse_product_and_recover',wraps=ff.sparse_product_and_recover) as structured:
+            result,plan=ff.convolve(a,b,mod=P,mode='structured')
+        self.assertEqual(plan.method,'structured')
+        structured.assert_called_once()
+        self.assertEqual(result,ff.naive(a,b,P))
+
+    def test_auto_reports_selected_strategy(self):
+        rng=random.Random(816)
+        dense=[rng.randrange(P) for _ in range(400)]
+        for a in ([7]*400,dense):
+            _,plan=ff.convolve(a,dense,mod=P)
+            self.assertEqual(plan.method,ff.choose_plan(a,dense,mod=P).method)
+
+if __name__=='__main__':
+    unittest.main()

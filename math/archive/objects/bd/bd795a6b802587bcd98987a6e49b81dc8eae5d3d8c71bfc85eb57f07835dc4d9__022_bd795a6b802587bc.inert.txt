@@ -1,0 +1,105 @@
+# Independent audit: global Green stages and rank-one FFT gauges
+
+## Verdict
+
+The package supplies valid restricted obstructions and a useful exact negative control. It does **not** supply a faster Fourier transform, a universal FFT lower bound, or an exact new two-/three-stage construction. These materials do not achieve the user’s arbitrary-complex, fresh-input, exact all-output sub-NlogN target; this is not a claim that the target is open across every computational model in the literature.
+
+The useful advance within this research sequence is separating three things that can look similar: dense cheap mixing, genuinely restrictive factor families, and ordinary FFT stages disguised by changes of coordinates. This is progress in eliminating candidates, not an algorithmic speedup. The norm inequality itself is elementary standard mathematics, as the package acknowledges.
+
+No uploaded Python was imported, compiled, or executed. All uploaded files were read as data. The accompanying independent checkers are auditor-written, use the standard library, and can run without the original archive.
+
+## Results independently established
+
+1. All 19 files in the supplied SHA-256 manifest matched.
+2. For N=2,4,8,16,32, independent continuant formulas and exact rational matrix multiplication verified the Green identities, entry signs, and every reported exact rational norm/condition number.
+3. At N=4,8,16,32 over F_998244353, independent inversion verified that S and its inverse are fully dense and have upper/lower cut order 2.
+4. Independent construction verified 14 fully dense gauge-dressed stages, recovered the rank-one gauge, and established four complete Fourier matrix identities. Forty-eight additional random-vector comparisons passed. These confirm the mathematics reconstructed from the specification; they are not a claim to have executed the uploaded implementation or its 54 reported vector tests.
+5. All seven rows of both stage-bound tables were independently verified with integer arithmetic.
+6. The inherited one-stage rank-2 obstruction at F8 was independently verified for arbitrary independent row and column endpoint orders. At cut size 3, all 3,136 pairs of row/column prefix sets fail the simultaneous required rank-at-most-2 conditions. The finite-field certificate excludes a complex factorization because a zero cyclotomic minor over C would also reduce to zero under the map sending the eighth root of unity to the chosen modular root.
+7. Analytic eigenvalue formulas reproduce the five reported spectral condition numbers to floating-point rounding accuracy. Tiny inverse corner entries become progressively less reliable numerically: at N=128 the reported minimum magnitude differs from the exact formula by about 0.019%. This is unsurprising and does not affect the analytic sign/density proof.
+
+## Mathematical claims and their precise scope
+
+### Single Green stage
+
+For a product of t inverse-tridiagonal matrices, interleaved with arbitrary permutations and invertible diagonal matrices, the inverse product has at most 3^t nonzeros in each row. Since the Fourier inverse has N nonzeros per row, t >= ceil(log_3 N). This is correct over suitable fields, including C. It does not require bounded coefficients.
+
+The resulting work obstruction assumes the specified algorithm actually executes each whole-array solve as a separate Theta(N)-work pass. A statement that a stage has an O(N) upper bound alone is not enough to infer an operation lower bound.
+
+### Sum of two Green operators
+
+With T=tridiag(-1,3,-1), U=T+I, and S=T^-1+U^-1, the formula
+
+S^-1 = U(T+U)^-1 T = T/2 + I/4 - (2T+I)^-1/4
+
+is correct. Both directions have linear-arithmetic implementations after preparation. Positivity of the Green kernel makes S dense; the displayed inverse formula makes every off-diagonal entry negative and every diagonal positive, so its inverse is dense too. Thus S genuinely defeats the earlier inverse-support argument. Its off-diagonal cut ranks remain at most 2, which is a different invariant.
+
+The eigenvalues of T lie between 1 and 5, and those of S are s(lambda)=1/lambda+1/(lambda+1). Therefore kappa_2(S) <= 45/11 is valid uniformly in N. This is a well-conditioned example, not an instability trick.
+
+### Column norm and condition budget
+
+For normalized Fourier U_N, ||U_N||_1=sqrt(N) and kappa_1(U_N)=N. Submultiplicativity gives
+
+product ||S_i||_1 >= sqrt(N), and product kappa_1(S_i) >= N.
+
+Both inequalities are correct. Permutations and unit-modulus diagonal phases have norm and condition number 1. An arbitrary nonzero global scalar has condition number 1, so it cannot evade the second budget. An arbitrary coordinate-dependent diagonal has condition number max|d_i|/min|d_i| and must be included; it cannot be silently treated as a free phase.
+
+The stated bounds ||S||_1 <= 3/2, ||S^-1||_1 <= 17/6, and kappa_1(S) <= 17/4 are valid. Consequently t >= ceil(log_(17/4) N) holds for products of the fixed S with permutations, unit phases, and arbitrary global scalars. This is the useful nonvacuous statement that survives normalization. It also applies to scalar multiples or phase/permutation dressings of S with the same condition bound.
+
+This does not cover all two-channel quasiseparable matrices, arbitrary coordinatewise gain diagonals with uncontrolled condition numbers, or unrestricted nonunitary primitives. A growing kappa_1 does not itself imply floating-point instability: Fourier has kappa_2=1 but kappa_1=N.
+
+### Stronger determinant obstruction for the no-gain variant
+
+For this particular fixed S, phase/permutation-only products cannot equal a normalized Fourier matrix for **any positive stage count**, a stronger statement than the published forward-norm lower bound.
+
+Here is a direct all-N proof. The spectrum of T is paired as lambda and 6-lambda, with 1<lambda<5. Put q=lambda(6-lambda), so 5<q<=9. Then
+
+s(lambda)s(6-lambda) = (4q+13)/(q(q+7)) <= 11/20 < 1.
+
+The rational function decreases for q>=5. For odd N the unpaired eigenvalue is lambda=3, with s(3)=7/12. Hence
+
+0 < det S <= (11/20)^floor(N/2) (7/12)^(N mod 2) < 1.
+
+A product of t>=1 copies of S, arbitrary permutations, and unit-modulus diagonal phases has determinant magnitude (det S)^t<1, whereas a normalized Fourier matrix has determinant magnitude 1. The conclusion still holds if the product of the magnitudes of all inserted global scalars is at most 1. It does **not** apply when compensating amplifying global scalars are allowed, when arbitrary coordinate-dependent gain diagonals can compensate the determinant, when S^-1 is also allowed as a primitive, or to arbitrary different parameterized Green-sum stages. The scale-invariant condition budget remains valid in its stated model.
+
+This refinement does not invalidate the package's weaker necessary bound; it shows that its no-gain stage-count examples are not potential constructions for this fixed S.
+
+## The exact factorization is FFT gauge camouflage
+
+The factors G_0=HB_0, G_i=HB_iH^-1, and G_last=B_last H^-1 telescope exactly. The full transform, including the input bit reversal, is precisely the ordinary radix-2 Fourier transform. The 2(log_2 N-1) extra gauge applications do not reduce the number of levels or operations. The detector correctly verifies this particular fixed, rank-one, known-baseline gauge.
+
+Passing that detector is not a certificate of algorithmic novelty: changing gauges at every level, higher-rank gauges, different ordinary-FFT decompositions, or other coordinate changes are outside its scope. More generally, arbitrary equivalent factorizations admit intermediate changes of basis; any meaningful anti-camouflage criterion must charge the complexity of those changes rather than merely prohibit all abstract gauges.
+
+The real/complex lift of the specific numerical gauge is not uniformly well-conditioned. Its exceptional eigenvalue is 1+7 v^T u = 1+7N(N+1)(2N-1)/2, while the others are 1. Thus kappa_2(H) is at least that eigenvalue ratio and grows on the order of N^3. This does not compromise the exact modular negative control. It means the good conditioning of the Green-sum example should not be attributed to the separate gauge-FFT example.
+
+## Limitations and small corrections
+
+- The benchmark is a warm, instrumented Python comparison against the package's own NTT. The recorded roughly 2x slowdown is plausible, but timings were not rerun in this audit. Each repetition reuses the same five generated input vectors; the source shows no answer cache. The table is not an optimized native-kernel benchmark.
+- Literal accounting is incomplete. In gauge_fft.py lines 63-69, the loop performs N additions into a zero-initialized dot accumulator plus N broadcast additions, but reports 2N-1. The reported convention is defensible as arithmetic after eliminating the trivial initial addition, not as the exact number of executed additions. Reads/writes omit coefficient loads, list copying, allocations, and scalar/interpreter traffic. Preparation statistics do not enumerate every exponentiation, reduction, coefficient-generation operation, or bit operation. These omissions do not rescue the method: they only add cost. Use “selected arithmetic/array-access counts,” not “fully charged literal machine accounting.”
+- norm_budget.py line 78 uses “assert first_condition, second_condition”; Python treats the second condition as the failure message. It does not directly assert the kappa bound. The unit test checks that bound correctly, and the two independent component bounds also imply it. This is a minor test-quality bug, not a false mathematical result.
+- RESEARCH.md says eight tests, while the supplied suite has eleven test methods, matching RESULTS_SUMMARY.md. No runtime test log is supplied, so “eleven tests pass” remains the author's execution claim; this audit verifies independent mathematics instead.
+- The numerical synthesis saves residuals but not the optimized parameters. The 1.4e-8 F8 residual is neither an exact factorization nor a reusable certificate. The implementation returns final-iterate residuals; a “best” variable tracking iterations is unused. The summary's “best” should be understood as best final residual among the listed runs. Failure to converge proves nothing about exact existence.
+- Fixed-channel triangular separable-generator matrices are a useful quasiseparable subclass; the simple p_i q_j / u_i v_j parameterization should not be equated without qualification with every degenerate quasiseparable matrix. For example, a lower triangle having only entries (2,1) and (4,3) nonzero has every strict lower cut rank at most 1, but a single p_i q_j representation would incorrectly force entry (4,1) nonzero. The stated Green kernels lie in the tested class.
+- A fixed finite field supports only finitely many Fourier lengths. Exact field-operation identities and rational proofs do not supply a bit-complexity theorem for arbitrary complex input, a precision budget, or controlled rounding error for the synthesis family.
+
+## Prior art and novelty
+
+The package's broad positioning is reasonable. Quasiseparable low-cut-rank representations and their efficient operations are established subject matter; Pernet's paper explicitly discusses inverses of band matrices and structured matrix-vector application. [Computing with quasiseparable matrices](https://arxiv.org/abs/1602.01246)
+
+Fourier factorizations using tridiagonal and permutation matrices already appear in Gader's 1988 work. This archive should not claim invention of that idea. [Tridiagonal factorizations of Fourier matrices](https://www.sciencedirect.com/science/article/pii/0024379588903254)
+
+The cited Li et al. paper concerns data-sparse approximate factorizations for complementary-low-rank matrices, with O(log N) sparse factors and O(N log N) application. It is relevant structural background, but not a source for a new exact radix-2 FFT claim. [Butterfly Factorization](https://arxiv.org/abs/1502.01379)
+
+The defensible claim is a new scoped checkpoint in the supplied research sequence: a concrete dense-inverse counterexample to one obstruction, a different obstruction blocking that fixed family, and an exact anti-camouflage control. This audit does not establish literature-wide novelty.
+
+## Reproduce this audit
+
+Run the following standard-library checkers from this directory:
+
+- python check_green_independent.py
+- python check_f8_endpoint_order.py
+- python check_spectral_condition.py
+
+Optionally, to recheck original-file hashes and exact numbers in the original result files, run check_green_independent.py with --source-dir pointing to the extracted fft_global_green_gauge directory. This optional mode reads files only and never imports uploaded Python. The saved independent_check_results.json was produced with that optional comparison enabled. Rerunning the default mode replaces it with a self-contained mathematical check report without original-file provenance checks.
+
+The next useful research step is an exact invariant or scalable exact construction for general low-channel stages with arbitrary interstage permutations and fully accounted coefficient/precision growth. Another small numerical fit or plot of dense entries would not change the present conclusion.

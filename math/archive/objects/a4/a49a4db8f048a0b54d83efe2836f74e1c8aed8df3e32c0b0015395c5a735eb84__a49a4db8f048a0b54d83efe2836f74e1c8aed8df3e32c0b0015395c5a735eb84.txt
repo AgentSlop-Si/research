@@ -1,0 +1,118 @@
+"""Derive the exact characteristic-zero new 9x9 gate-minor polynomial.
+
+Uses sparse Z[zeta8] multivariate polynomial arithmetic and two small
+determinants (3x3 + 6x6), avoiding symbolic high-degree rational
+expansions. Variables h0,h1,h2,h6 have indices 0..3.
+"""
+from __future__ import annotations
+import sys,json,hashlib,time,functools
+from pathlib import Path
+ROOT=Path(__file__).parent
+import _bootstrap
+from adjacent_tail import equations
+from inverse_quartic import (ONE,ZERO,poly_constant,poly_var,padd,pmul,pscale,cpowroot,cmul,cadd,poly_eval)
+from dual_support import primitive_root
+from polynomial_resultant import evaluate_minor
+
+p1=poly_constant();pzero={};h0,h1,h2,hl=[poly_var(i) for i in range(4)]
+
+def sub(a,b):return padd(a,b,-1)
+def smul(a,b):return pmul(a,b)
+def smulc(a,c):return pscale(a,c)
+def add(*a):
+ x={}
+ for v in a:x=padd(x,v)
+ return x
+
+def remap(f):
+ assert all(set(m)<=set([1,2,3,4]) for m in f)
+ return {tuple(j-1 for j in mon):v for mon,v in f.items()}
+
+def det_sparse(rows):
+ # Dynamic-programming determinant O(n*2^n) polynomial products
+ n=len(rows)
+ assert all(len(row)==n for row in rows)
+ @functools.lru_cache(None)
+ def calc(cols):
+  r=len(cols)
+  if r==0:return p1
+  out={}
+  for j,c in enumerate(cols):
+   term=pmul(rows[r-1][c],calc(cols[:j]+cols[j+1:]))
+   out=padd(out,term,(-1)**(r-1+j))
+  return out
+ return calc(tuple(range(n)))
+
+def build():
+ eq,W,E3,E4,Q=equations()
+ aa,bb,cc=[remap(x) for x in E3]
+ dd,ee,ff=[remap(x) for x in E4]
+ Delta=sub(pmul(aa,ee),pmul(bb,dd))
+ T=sub(pmul(bb,ff),pmul(cc,ee))
+ V=sub(pmul(cc,dd),pmul(aa,ff))
+ zm1=cadd(cpowroot(1),(-1,0,0,0))
+ M=pscale(T,zm1)
+ xi1=cpowroot(-1)
+ s1=cadd(cadd(ONE,xi1),cpowroot(-2))
+ s2=cadd(cadd(cpowroot(-1),cpowroot(-2)),cpowroot(-3))
+ s3=cpowroot(-3)
+ H=[h0,h1,h2]
+ for k in range(3):
+  H.append(add(sub(pscale(H[k+2],s1),pscale(H[k+1],s2)),pscale(H[k],s3)))
+ H.append(hl)
+ Uhat=H+[pzero]
+ Lhat=[pzero]
+ for k in range(1,7):
+  cur=add(pscale(add(Delta,pmul(V,sub(H[k],h0))),zm1),
+          pscale(add(sub(T,Delta),pmul(V,sub(h0,p1))),cadd(cpowroot(-k),(-1,0,0,0))))
+  Lhat.append(cur)
+ Lhat.append(M)
+ Y={}
+ for j in [1,2,4,5]:
+  Y[j]=[]
+  for i in range(4 if j==4 else 5):
+   # Column projection F[0:r, :] times (e_j, Uhat_head, Lhat_tail)
+   A=poly_constant(cpowroot(i*j))
+   B=add(*[pscale(Uhat[k],cpowroot(i*k)) for k in range(j)])
+   C=add(*[pscale(Lhat[k],cpowroot(i*k)) for k in range(j+1,8)])
+   Y[j].append([A,B,C])
+ TT=Y[4]
+ # cofactor functional ell on q: det([q,T4])
+ cof=[pscale(det_sparse([TT[r] for r in range(4) if r!=i]),((-1)**i,0,0,0)) for i in range(4)]
+ ell=[add(*[pmul(cof[i],Y[1][i][j]) for i in range(4)]) for j in range(3)]
+ B3=Y[2][:3]
+ H6=[[*(Y[1][i]),*(Y[5][i])] for i in range(5)] + [ell+[pzero,pzero,pzero]]
+ assert len(H6)==6 and all(len(r)==6 for r in H6)
+ t0=time.monotonic();DB=det_sparse(B3); print('detB3',len(DB),'degree',max(map(len,DB)), 'elapsed',round(time.monotonic()-t0,2),flush=True)
+ t0=time.monotonic();DH=det_sparse(H6);print('detH6',len(DH),'degree',max(map(len,DH)),'elapsed',round(time.monotonic()-t0,2),flush=True)
+ t0=time.monotonic();Dhat=pscale(pmul(DB,DH),(-1,0,0,0));print('gate minor',len(Dhat),'degree',max(map(len,Dhat)),'elapsed',round(time.monotonic()-t0,2),flush=True)
+ return dict(Delta=Delta,T=T,V=V,M=M,W=remap(W),Uhat=Uhat,Lhat=Lhat,DB=DB,DH=DH,Dhat=Dhat)
+
+def verify_and_save():
+ obj=build()
+ from random import Random
+ rng=Random(2026100921)
+ checks=[]
+ for p in (17,12289,65537):
+  z=primitive_root(p,8)
+  for k in range(12):
+   h=[rng.randrange(p) for _ in range(4)]
+   val,rank,_=evaluate_minor(p,z,h)
+   actual=poly_eval(obj['Dhat'],h,p,z)
+   assert val==actual,(p,z,h,val,actual)
+  checks.append({'prime':p,'root':z,'checks':12})
+ for x,want in [(2,3),(12,2)]:
+  assert poly_eval(obj['W'],[1,0,0,x],17,9)==0
+  assert poly_eval(obj['Dhat'],[1,0,0,x],17,9)==want
+ export={key:{'term_count':len(obj[key]),'degree':max([len(m) for m in obj[key]]or[0]),
+    'terms':[[list(m),list(v)] for m,v in sorted(obj[key].items(),key=lambda kv:(len(kv[0]),kv[0]))]}
+    for key in ('Delta','T','V','M','W','DB','DH','Dhat')}
+ export['variables']=['h0','h1','h2','h6']
+ export['coefficients']='Z[z]/(z^4+1), root z=exp(2*pi*i/8)'
+ export['theorem']='For a regular two-stage fixed-P8 Fourier factorization, W=0 and Dhat=0. The Dhat minor is obtained from the polynomial 11x9 gate by rows [0,1,2,5,6,7,8,9,10].'
+ export['modular_checks']=checks
+ fp=ROOT/'exact_polynomial_gate.json'
+ fp.write_text(json.dumps(export,indent=2)+'\n')
+ print('SHA256',hashlib.sha256(fp.read_bytes()).hexdigest(),'file size',fp.stat().st_size,flush=True)
+ return export
+if __name__=='__main__':verify_and_save()

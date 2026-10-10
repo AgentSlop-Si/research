@@ -1,0 +1,74 @@
+"""Exact Fourier-specific elimination of 5 constraints and 5 net variables.
+
+On the regular patch t=C[7,0] !=0 and B[7,0]!=0, rank-one strictly
+lower B forces Fourier-column proportionality for columns 1 and 0
+at frequencies 2..7. This parametrizes C's six lower row generators
+L[1..6] using one new scalar beta. Therefore the 30 equations in 26
+variables reduce to 25 equations in 21 variables on this patch.
+
+This is an exact equivalence restricted to the lower-column-1 equations,
+not a proof that the remaining 25 have no solution.
+"""
+import json
+from pathlib import Path
+import numpy as np
+from inverse_quartic import (N, SHUFFLE, root8, fftmod, char_stage,
+       identities, invert_mod)
+
+
+def reduced_C(y,p,w):
+    assert len(y)==21
+    t=int(y[0])%p
+    assert t!=0
+    V=[t]+[int(q)%p for q in y[1:7]]+[0]
+    U=[1]+[int(q)%p for q in y[7:13]]+[0]
+    W=[0]+[int(q)%p for q in y[13:20]]
+    beta=int(y[20])%p
+    s=W[7]
+    xi=pow(w,-1,p)
+    # v=C[:,0]-beta*C[:,7] has Fourier support at 0 and 1.
+    # v_k = a+b*xi^k, where v0=1-beta*s and v7=t-beta.
+    b=(t-1+beta*(s-1))*pow((w-1)%p,-1,p)%p
+    a=(1-beta*s-b)%p
+    L=[0]+[(a+b*pow(xi,i,p)+beta*s*U[i])*pow(t,-1,p)%p for i in range(1,7)]+[1]
+    z=L[1:7]+V[:7]+U[1:7]+W[1:8]
+    assert len(z)==26
+    C=char_stage(z,p)
+    target_v=np.array([(a+b*pow(xi,i,p))%p for i in range(8)],dtype=np.int64)
+    assert np.array_equal((C[:,0]-beta*C[:,7])%p,target_v)
+    F=fftmod(p,w)
+    B=F@C[:,np.array(SHUFFLE)]%p
+    assert all((int(B[i,1])-beta*int(B[i,0]))%p==0 for i in range(2,8))
+    assert all((int(B[i,1])*int(B[7,0])-int(B[i,0])*int(B[7,1]))%p==0 for i in range(2,7))
+    return C,B,{'t':t,'s':s,'beta':beta,'a':a,'b':b,'full_chart':list(map(int,z))}
+
+
+def run():
+    checks={}
+    for p in (12289,65537):
+        for choice in (0,1):
+            w=root8(p,choice)
+            rng=np.random.default_rng(20261009+p+100*choice)
+            passed=0;regular=0;remaining_fail=0
+            for _ in range(30):
+                y=rng.integers(1,p,size=21,dtype=np.int64)
+                C,B,info=reduced_C(y,p,w)
+                passed+=1
+                if int(B[7,0])!=0 and int(B[0,7])!=0:
+                    regular+=1
+                remaining_fail+=any(identities(B,p))
+            checks[str((p,choice))]={'primitive_eighth_root':w,
+               'exact_fourier_support_constructions':passed,
+               'satisfying_5_lower_j1_identities':passed,
+               'regular_B_corners':regular,
+               'failing_at_least_one_remaining_equation':remaining_fail}
+    return {'transformation':'eliminate L_1..L_6; introduce beta=B[7,1]/B[7,0]',
+      'original':'30 equations in 26 variables of degree <=4',
+      'new':'25 remaining equations in 21 variables, with explicit rational substitutions; degree may increase after clearing denominators',
+      'scope':'exact on t=C[7,0] != 0 and B[7,0]!=0; denominator zeta8-1 nonzero',
+      'tests':checks}
+
+if __name__=='__main__':
+    report=run()
+    Path(__file__).with_name('support_results.json').write_text(json.dumps(report,indent=2)+'\n')
+    print(json.dumps(report,indent=2))

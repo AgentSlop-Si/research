@@ -1,0 +1,133 @@
+"""An exact gauge-dressed, globally overlapping FFT with NO asymptotic speedup.
+
+G_l = H B_l H^-1 on interior, with dense H=I + alpha*u*v^T.
+Their telescoping product is B_last ... B_first, exactly the ordinary FFT.
+The purpose is an adversarial negative control for fake global-sharing claims.
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+from green_stages import P, basis_matrix
+
+
+def bitreverse(j,bits):
+    out=0
+    for _ in range(bits):out=(out<<1)|(j&1);j>>=1
+    return out
+
+@dataclass(frozen=True)
+class Stage:
+    n:int
+    span:int
+    twiddles:tuple[int,...]
+    p:int=P
+
+    def apply(self,values,stats=None):
+        if len(values)!=self.n:raise ValueError('length mismatch')
+        y=list(values); half=self.span//2
+        for base in range(0,self.n,self.span):
+            for j,w in enumerate(self.twiddles):
+                a=y[base+j]
+                b=y[base+j+half]*w%self.p
+                y[base+j]=(a+b)%self.p
+                y[base+j+half]=(a-b)%self.p
+                if stats is not None:
+                    stats['add']+=2
+                    stats['mul']+=1
+                    stats['reads']+=2
+                    stats['writes']+=2
+        return y
+
+@dataclass(frozen=True)
+class Gauge:
+    n:int
+    u:tuple[int,...]
+    v:tuple[int,...]
+    alpha:int
+    neg_beta:int
+    p:int=P
+
+    @classmethod
+    def make(cls,n,p=P):
+        u=tuple(1+i for i in range(n))
+        v=tuple(1+3*i for i in range(n))
+        alpha=7
+        s=sum(a*b for a,b in zip(u,v))%p
+        den=(1+alpha*s)%p
+        if not den:raise ValueError('gauge singular')
+        neg_beta=(-alpha*pow(den,p-2,p))%p
+        return cls(n,u,v,alpha,neg_beta,p)
+
+    def action(self,values,inverse=False,stats=None):
+        if len(values)!=self.n:raise ValueError('length mismatch')
+        p=self.p
+        dot=0
+        for a,x in zip(self.v,values):dot=(dot+a*x)%p
+        scale=(self.neg_beta if inverse else self.alpha)*dot%p
+        y=[(x+scale*a)%p for x,a in zip(values,self.u)]
+        if stats is not None:
+            stats['mul']+=2*self.n+1
+            stats['add']+=2*self.n-1
+            stats['reads']+=2*self.n
+            stats['writes']+=self.n
+            stats['gauge_calls']+=1
+        return y
+
+
+class GaugeFFT:
+    def __init__(self,n,p=P,g=3):
+        if n<2 or n&(n-1) or (p-1)%n:raise ValueError('n must be supported power of two')
+        self.n=n;self.p=p
+        bits=n.bit_length()-1
+        self.perm=tuple(bitreverse(j,bits) for j in range(n))
+        root=pow(g,(p-1)//n,p)
+        if pow(root,n//2,p)!=p-1:raise ValueError('root not primitive')
+        stages=[];prep=0
+        for b in range(bits):
+            span=2<<(b)
+            r=pow(root,n//span,p)
+            tw=[1]
+            for _ in range(span//2-1):tw.append(tw[-1]*r%p);prep+=1
+            stages.append(Stage(n,span,tuple(tw),p))
+        self.stages=tuple(stages)
+        self.gauge=Gauge.make(n,p)
+        self.prepare_counts={'twiddle_multiplications':prep,
+             'gauge_coefficients':2*n+2,'gauge_dot_multiplications':n,
+             'gauge_dot_additions':n-1,'gauge_inverse_field_calls':1,
+             'permutation_index_operations_upper':n*bits}
+
+    def permuted_input(self,x):
+        if len(x)!=self.n:raise ValueError('length mismatch')
+        return [x[j]%self.p for j in self.perm]
+
+    def apply(self,x,dressed=True):
+        """Evaluate all N outputs and count executed field scalar gates + traffic."""
+        arr=self.permuted_input(x)
+        stats=dict(add=0,mul=0,reads=0,writes=0,gauge_calls=0,
+                   permutation_moves=self.n,stage_count=len(self.stages),
+                   dress=bool(dressed))
+        for i,st in enumerate(self.stages):
+            if dressed and i>0:
+                arr=self.gauge.action(arr,inverse=True,stats=stats)
+            arr=st.apply(arr,stats=stats)
+            if dressed and i<len(self.stages)-1:
+                arr=self.gauge.action(arr,inverse=False,stats=stats)
+        return arr,stats
+
+    def physical_stage(self,index,x,dressed=True):
+        """Single stage matrix in the intermediate (not bitreverse) layout."""
+        if index<0 or index>=len(self.stages):raise IndexError(index)
+        a=x
+        if dressed and index>0:a=self.gauge.action(a,inverse=True)
+        a=self.stages[index].apply(a)
+        if dressed and index<len(self.stages)-1:a=self.gauge.action(a,inverse=False)
+        return a
+
+    def physical_matrix(self,index,dressed=True):
+        return basis_matrix(lambda x:self.physical_stage(index,x,dressed),self.n,self.p)
+
+
+def direct_dft(x,p=P,g=3):
+    n=len(x)
+    if n<2 or (p-1)%n:raise ValueError('bad length')
+    w=pow(g,(p-1)//n,p)
+    return [sum(v*pow(w,(j*k)%n,p) for j,v in enumerate(x))%p for k in range(n)]

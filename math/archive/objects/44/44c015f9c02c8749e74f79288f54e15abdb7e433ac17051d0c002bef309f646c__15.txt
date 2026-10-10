@@ -1,0 +1,44 @@
+1: """Reproducible release package with whole-extract verification."""
+2: from __future__ import annotations
+3: import hashlib,zipfile,tempfile,subprocess,os,sys
+4: from pathlib import Path
+5: ROOT=Path(__file__).resolve().parent
+6: ZIP=ROOT.parent/'fft_bidirectional_macro_shuffle_research_2026-10-09.zip'
+7: CONTENTS=[
+8:  'README.md','RESEARCH.md','NEXT_GATE.md',
+9:  'exact_scan_macro.py','ordering_dp.py','analytic_certificate.py',
+10:  'reference_ntt.py','unitary_control.py','benchmark.py',
+11:  'run_audit.py','package.py','tests/test_exact_macros.py',
+12:  'benchmark_results.json','audit_results.json',
+13: ]
+14: 
+15: def main():
+16:     hashes={name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in CONTENTS}
+17:     manifest=''.join(f'{sha}  {name}\n' for name,sha in hashes.items())
+18:     (ROOT/'SHA256SUMS.txt').write_text(manifest)
+19:     with zipfile.ZipFile(ZIP,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as archive:
+20:         for name in CONTENTS+['SHA256SUMS.txt']:
+21:             archive.write(ROOT/name,arcname='fft_bidirectional_macro_research/'+name)
+22:     with zipfile.ZipFile(ZIP) as archive:
+23:         assert archive.testzip() is None
+24:         with tempfile.TemporaryDirectory(prefix='scan-fft-fresh-') as where:
+25:             archive.extractall(where)
+26:             folder=Path(where)/'fft_bidirectional_macro_research'
+27:             checks=[]
+28:             for name,sha in hashes.items():
+29:                 assert hashlib.sha256((folder/name).read_bytes()).hexdigest()==sha,name
+30:                 checks.append(name)
+31:             env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'}
+32:             tests=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'],cwd=folder,env=env,check=True,capture_output=True,text=True)
+33:             audit=subprocess.run([sys.executable,'run_audit.py'],cwd=folder,env=env,check=True,capture_output=True,text=True)
+34:             assert 'Ran 14 tests' in (tests.stdout+tests.stderr)
+35:             assert 'EXACT_AUDIT_OK' in audit.stdout
+36:             print('archive',ZIP)
+37:             print('bytes',ZIP.stat().st_size)
+38:             print('sha256',hashlib.sha256(ZIP.read_bytes()).hexdigest())
+39:             print('zip_crc', 'PASS')
+40:             print('source_sha256', f'{len(checks)}/{len(hashes)} PASS')
+41:             print('fresh_unittest', '14/14 PASS')
+42:             print('fresh_exact_audit', audit.stdout.strip().replace('\n','; '))
+43: 
+44: if __name__=='__main__':main()

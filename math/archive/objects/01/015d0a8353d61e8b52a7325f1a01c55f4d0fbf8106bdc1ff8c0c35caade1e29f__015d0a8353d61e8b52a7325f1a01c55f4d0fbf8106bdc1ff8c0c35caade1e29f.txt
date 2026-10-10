@@ -1,0 +1,41 @@
+"""Extract nested checkpoints and rerun all Phase12–19 unit tests in isolated temp dirs.
+
+Usage: python verify_full_lineage.py /absolute/path/to/fft_green_research_phase19_2026-10-09.zip
+"""
+from __future__ import annotations
+import os,sys,tempfile,subprocess,zipfile,pathlib
+
+
+def run_lineage(archive):
+    names=[]
+    with tempfile.TemporaryDirectory(prefix='fft_phase19_lineage_') as tmp:
+        temp=pathlib.Path(tmp);phase_archive=pathlib.Path(archive)
+        for phase in range(19,11,-1):
+            target=temp/f'phase{phase}'
+            target.mkdir()
+            with zipfile.ZipFile(phase_archive) as z:
+                if z.testzip() is not None:raise RuntimeError('ZIP corrupt')
+                z.extractall(target)
+            roots=list(target.glob(f'fft_green_phase{phase}_*'))
+            roots=[r for r in roots if r.is_dir() and (r/'tests').is_dir()]
+            if phase==12 and (target/'phase12'/'tests').is_dir(): roots=[target/'phase12']
+            if len(roots)!=1:raise RuntimeError(f'exactly one phase {phase} root needed: {roots}')
+            root=roots[0]
+            env=os.environ.copy();env['OPENBLAS_NUM_THREADS']='1';env['PYTHONPATH']=str(root)
+            p=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'],cwd=root,env=env,
+                             capture_output=True,text=True,timeout=240)
+            print(f'PHASE {phase} TESTS: status={p.returncode}; tail=')
+            print('\n'.join((p.stdout+p.stderr).splitlines()[-4:]))
+            if p.returncode:raise RuntimeError(f'phase {phase} tests failed')
+            names.append(phase)
+            if phase>12:
+                candidates=(root/f'previous_full_phase{phase-1}_checkpoint.zip',
+                            target/f'previous_full_phase{phase-1}_checkpoint.zip')
+                phase_archive=next((c for c in candidates if c.is_file()),None)
+                if phase_archive is None:raise RuntimeError(f'missing previous archive for Phase {phase-1}')
+    print('VERIFIED PHASES:',','.join(map(str,sorted(names))))
+
+
+if __name__=='__main__':
+    if len(sys.argv)!=2:raise SystemExit('Usage: python verify_full_lineage.py archive.zip')
+    run_lineage(sys.argv[1])

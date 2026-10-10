@@ -1,0 +1,215 @@
+   1 """Independent exact checks for four-leg Fourier tensor cut ranks and basis costs."""
+   2 import itertools
+   3 import random
+   4 import unittest
+   5 
+   6 import numpy as np
+   7 
+   8 from phase6 import (
+   9     field_for_length, fourier_tensor, flatten, rank_mod, cut_ranks,
+  10     endpoint_sparse_core, endpoint_gauges, transform_legs, random_invertible,
+  11     matmul, nnz, dft_matrix, invert_mod, exact_dft,
+  12     charged_two_axis_fft, unitary_cut_singular_values,
+  13     crossed_partial_fourier, identity,
+  14 )
+  15 
+  16 
+  17 def count_tensor(T):
+  18     return sum(z!=0 for a in T for b in a for c in b for z in c)
+  19 
+  20 
+  21 class TestPhase6(unittest.TestCase):
+  22     def test_raw_polyphase_factor_matches_raw_dft_matrix(self):
+  23         for q,m in ((2,2),(3,4),(4,3),(4,4),(6,4),(8,8)):
+  24             p,w=field_for_length(q*m)
+  25             T=fourier_tensor(q,m,p,w)
+  26             for s in range(q):
+  27                 for h in range(m):
+  28                     for t in range(q):
+  29                         for u in range(m):
+  30                             self.assertEqual(T[s][h][t][u],pow(w,(-((h+m*s)*(t+q*u)))%(q*m),p))
+  31 
+  32     def test_all_three_exact_balanced_cut_ranks(self):
+  33         for q,m in ((2,2),(2,3),(3,2),(3,4),(4,3),(4,4),(4,6),(6,4),(8,8)):
+  34             p,w=field_for_length(q*m)
+  35             self.assertEqual(cut_ranks(q,m,p,w),{
+  36                 'output_input':q*m,'crossed':min(q,m),'alternating':q*m})
+  37 
+  38     def test_explicit_optimal_cp_rank_n_decomposition(self):
+  39         # The full Fourier 4-tensor has CP rank exactly N: flattening gives
+  40         # lower bound N, the expansion below gives N separable four-leg atoms.
+  41         for q,m in ((2,3),(3,4),(4,4)):
+  42             n=q*m;p,w=field_for_length(n)
+  43             xi=pow(w,m,p);eta=pow(w,q,p)
+  44             T=fourier_tensor(q,m,p,w)
+  45             self.assertEqual(rank_mod(flatten(T,'output_input'),p),n)
+  46             for s in range(q):
+  47                 for h in range(m):
+  48                     for t in range(q):
+  49                         for u in range(m):
+  50                             total=0
+  51                             for a in range(q):
+  52                                 for b in range(m):
+  53                                     total+= (pow(xi,(-s*a)%q,p)*
+  54                                              pow(w,(-h*a)%n,p)*
+  55                                              pow(eta,(-h*b)%m,p)*
+  56                                              int(a==t)*int(b==u))
+  57                             self.assertEqual(total%p,T[s][h][t][u])
+  58 
+  59     def test_partial_fourier_has_minimum_rank(self):
+  60         for q,m in ((2,5),(4,3),(3,7),(6,6),(7,4)):
+  61             p,w=field_for_length(q*m)
+  62             self.assertEqual(rank_mod(crossed_partial_fourier(q,m,p,w),p),min(q,m))
+  63 
+  64     def test_cut_ranks_survive_all_four_independent_bases(self):
+  65         rng=random.Random(61513)
+  66         for q,m in ((2,3),(3,4),(4,3),(4,4)):
+  67             p,w=field_for_length(q*m)
+  68             original=fourier_tensor(q,m,p,w)
+  69             for _ in range(5):
+  70                 transforms={dim:random_invertible(size,p,rng)
+  71                             for dim,size in [('s',q),('h',m),('t',q),('u',m)]}
+  72                 T=transform_legs(original,transforms,p)
+  73                 rank_profile={key:rank_mod(flatten(T,key),p)
+  74                               for key in ('output_input','crossed','alternating')}
+  75                 self.assertEqual(rank_profile,cut_ranks(q,m,p,w))
+  76 
+  77     def test_sparse_core_is_exact_and_has_n_nonzeros(self):
+  78         for q,m in ((2,2),(2,3),(3,4),(4,3),(4,4),(6,4),(8,8)):
+  79             p,w=field_for_length(q*m)
+  80             T=fourier_tensor(q,m,p,w)
+  81             A,B,expected=endpoint_sparse_core(q,m,p,w)
+  82             observed=transform_legs(T,{'s':A,'u':B},p)
+  83             self.assertEqual(expected,observed)
+  84             self.assertEqual(count_tensor(observed),q*m)
+  85             for a in range(q):
+  86                 for h in range(m):
+  87                     for t in range(q):
+  88                         for b in range(m):
+  89                             self.assertEqual(observed[a][h][t][b],
+  90                                              pow(w,(-h*t)%(q*m),p) if a==t and b==h else 0)
+  91 
+  92     def test_endpoint_support_product_and_minimum(self):
+  93         rng=random.Random(1729)
+  94         for q,m in ((2,3),(3,4),(4,4),(5,3)):
+  95             p,w=field_for_length(q*m)
+  96             T=fourier_tensor(q,m,p,w)
+  97             for _ in range(20):
+  98                 A=random_invertible(q,p,rng)
+  99                 B=random_invertible(m,p,rng)
+ 100                 core,P,R=endpoint_gauges(q,m,p,w,A,B)
+ 101                 self.assertEqual(count_tensor(core),nnz(P)*nnz(R))
+ 102                 self.assertEqual(core,transform_legs(T,{'s':A,'u':B},p))
+ 103                 self.assertGreaterEqual(nnz(P)*nnz(R),q*m)
+ 104 
+ 105     def test_endpoint_minimum_rigidity_both_directions(self):
+ 106         rng=random.Random(2034)
+ 107         for q,m in ((2,2),(3,4),(4,5),(6,4)):
+ 108             p,w=field_for_length(q*m)
+ 109             A0,B0,_=endpoint_sparse_core(q,m,p,w)
+ 110             for _ in range(15):
+ 111                 perma=list(range(q)); permb=list(range(m))
+ 112                 rng.shuffle(perma);rng.shuffle(permb)
+ 113                 scalara=[rng.randrange(1,p) for _ in range(q)]
+ 114                 scalarb=[rng.randrange(1,p) for _ in range(m)]
+ 115                 Pa=[[scalara[a] if t==perma[a] else 0 for t in range(q)] for a in range(q)]
+ 116                 Pb=[[scalarb[h] if b==permb[h] else 0 for b in range(m)] for h in range(m)]
+ 117                 A=matmul(Pa,A0,p)
+ 118                 B=matmul([[Pb[j][i] for j in range(m)] for i in range(m)],B0,p)
+ 119                 T,P,R=endpoint_gauges(q,m,p,w,A,B)
+ 120                 self.assertEqual(P,Pa)
+ 121                 self.assertEqual(R,Pb)
+ 122                 self.assertEqual(count_tensor(T),q*m)
+ 123                 self.assertEqual(nnz(P),q)
+ 124                 self.assertEqual(nnz(R),m)
+ 125                 # Conversely extracting transformed factors reconstructs the sole minimizer form.
+ 126                 self.assertEqual(A,matmul(P,A0,p))
+ 127 
+ 128     def test_alternating_pair_is_unitary_complex(self):
+ 129         for q,m in ((2,3),(3,4),(4,4),(4,8),(8,8)):
+ 130             r=unitary_cut_singular_values(q,m)
+ 131             self.assertLess(np.max(abs(r['direct']-1)),1e-12)
+ 132             self.assertLess(np.max(abs(r['alternative']-1)),1e-12)
+ 133 
+ 134     def test_crossed_singular_values_equal_partial_vandermonde(self):
+ 135         for q,m in ((2,3),(3,4),(4,4),(4,8),(8,8)):
+ 136             r=unitary_cut_singular_values(q,m)
+ 137             k=min(q,m)
+ 138             self.assertLess(np.max(abs(r['crossed'][:k]-r['partial'])),1e-11)
+ 139             self.assertLess(np.max(abs(r['crossed'][k:])),1e-11)
+ 140 
+ 141     def test_unitary_leg_changes_preserve_all_singular_values(self):
+ 142         rng=np.random.default_rng(12)
+ 143         q,m=3,4
+ 144         r=unitary_cut_singular_values(q,m)
+ 145         n=q*m
+ 146         s=np.arange(q).reshape(q,1,1,1)
+ 147         h=np.arange(m).reshape(1,m,1,1)
+ 148         t=np.arange(q).reshape(1,1,q,1)
+ 149         u=np.arange(m).reshape(1,1,1,m)
+ 150         T=np.exp(-2j*np.pi*(h*t/n+h*u/m+s*t/q))/np.sqrt(n)
+ 151         for axis,dim in enumerate((q,m,q,m)):
+ 152             Z=rng.normal(size=(dim,dim))+1j*rng.normal(size=(dim,dim))
+ 153             unitary,_=np.linalg.qr(Z)
+ 154             T=np.moveaxis(T,axis,0)
+ 155             T=np.tensordot(unitary,T,axes=(1,0))
+ 156             T=np.moveaxis(T,0,axis)
+ 157         spectra=(
+ 158             np.linalg.svd(T.reshape(n,n),compute_uv=False),
+ 159             np.linalg.svd(np.transpose(T,(0,3,1,2)).reshape(n,n),compute_uv=False),
+ 160             np.linalg.svd(np.transpose(T,(0,2,1,3)).reshape(q*q,m*m),compute_uv=False),
+ 161         )
+ 162         for actual,reference in zip(spectra,(r['direct'],r['alternative'],r['crossed'])):
+ 163             self.assertLess(np.max(abs(actual-reference)),1e-11)
+ 164 
+ 165     def test_charged_two_axis_fft_is_exact(self):
+ 166         rng=random.Random(25)
+ 167         for q,m in ((2,2),(2,4),(4,4),(4,8),(8,8),(16,8),(16,16)):
+ 168             n=q*m;p,w=field_for_length(n)
+ 169             for _ in range(4):
+ 170                 x=[rng.randrange(p) for _ in range(n)]
+ 171                 result,count=charged_two_axis_fft(x,q,m,p,w)
+ 172                 self.assertEqual(result,exact_dft(x,p,w))
+ 173                 self.assertEqual(count['butterflies'],(n//2)*(q.bit_length()+m.bit_length()-2))
+ 174                 self.assertEqual(count['cross_twiddle_multiplies'],n)
+ 175                 self.assertEqual(count['root_table_multiplies'],n-1)
+ 176                 self.assertEqual(count['scalar_arithmetic_total'],3*count['butterflies']+2*n-1)
+ 177 
+ 178     def test_sparse_core_without_basis_cost_is_not_a_fast_algorithm(self):
+ 179         # This test explicitly checks the count of the two charged Fourier stages.
+ 180         for k in range(2,9):
+ 181             n=2**k
+ 182             q=2**(k//2)
+ 183             m=n//q
+ 184             p,w=field_for_length(n)
+ 185             _,count=charged_two_axis_fft(list(range(n)),q,m,p,w)
+ 186             self.assertEqual(count['butterflies'],n*k//2)
+ 187             self.assertEqual(count['cross_twiddle_multiplies'],n)
+ 188             self.assertEqual(count['root_table_multiplies'],n-1)
+ 189             self.assertEqual(count['scalar_arithmetic_total'],3*count['butterflies']+2*n-1)
+ 190 
+ 191     def test_16_fourier_identity_gauge_table(self):
+ 192         for m in (2,3,4,6,8):
+ 193             q=m;p,w=field_for_length(m*m)
+ 194             eta=pow(w,q,p);xi=pow(w,m,p)
+ 195             i_q=invert_mod(dft_matrix(q,xi,p),p)
+ 196             i_m=invert_mod(dft_matrix(m,eta,p),p)
+ 197             T=fourier_tensor(q,m,p,w)
+ 198             counts={}
+ 199             for bits in itertools.product((0,1),repeat=4):
+ 200                 dims='shtu'
+ 201                 transforms={ax:X for ax,X,k in zip(dims,(i_q,i_m,i_q,i_m),bits) if k}
+ 202                 counts[''.join(ax for ax,k in zip(dims,bits) if k) or 'none']=count_tensor(transform_legs(T,transforms,p))
+ 203             self.assertEqual(counts['none'],m**4)
+ 204             self.assertEqual(counts['su'],m*m)
+ 205             self.assertEqual(counts['s'],m**3)
+ 206             self.assertEqual(counts['u'],m**3)
+ 207             self.assertEqual(counts['sh'],m**3-m*m+m)
+ 208             self.assertEqual(counts['tu'],m**3-m*m+m)
+ 209             self.assertEqual(counts['t'],m**4-m**3+m*m)
+ 210             self.assertEqual(counts['h'],m**4-m**3+m*m)
+ 211             self.assertTrue(all(v>=m*m for v in counts.values()))
+ 212             self.assertEqual([k for k,v in counts.items() if v==m*m],['su'])
+ 213 
+ 214 if __name__=='__main__':
+ 215     unittest.main()

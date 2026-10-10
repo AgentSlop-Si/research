@@ -1,0 +1,228 @@
+1: """Many-consumer relation-aware Fourier store.
+2: 
+3: All consumers share one producer-side relation state
+4: 
+5:     x = sum_i c_i b_i + e,
+6: 
+7: while each consumer owns only a subset of a fixed union of Fourier bins.  A
+8: coefficient or point update is recorded once, O(1).  Consumer v with q_v bins
+9: and lag H_v chooses replay O(q_v H_v) or rebuild O(q_v(r+k)).
+10: 
+11: A bounded global event log prevents dormant consumers from retaining unbounded
+12: history: once their history is gone they rebuild exactly from current state.
+13: """
+14: from __future__ import annotations
+15: from dataclasses import dataclass
+16: from collections import deque
+17: from typing import Mapping, Sequence, Iterable
+18: import numpy as np
+19: from modular_phase import phase_row
+20: 
+21: 
+22: @dataclass
+23: class ViewState:
+24:     name:str
+25:     indices:np.ndarray
+26:     bins:np.ndarray
+27:     cached:np.ndarray
+28:     version:int
+29:     strategy:str='initial'
+30:     backlog:int=0
+31:     query_count:int=0
+32:     basis_cache:np.ndarray|None=None
+33:     phase_cache:np.ndarray|None=None
+34: 
+35: 
+36: def union_frequency_sets(view_bins:Mapping[str,Sequence[int]],n:int):
+37:     if not view_bins: raise ValueError('need at least one view')
+38:     normalized={}
+39:     all_bins=[]
+40:     for name,bins in view_bins.items():
+41:         b=np.asarray(bins,dtype=np.int64)
+42:         if b.ndim!=1 or b.size<1 or np.any(b<0) or np.any(b>=n): raise ValueError(f'bad bins for {name}')
+43:         normalized[str(name)]=b.astype(np.intp,copy=True); all_bins.extend(map(int,b))
+44:     union=np.asarray(sorted(set(all_bins)),dtype=np.intp)
+45:     loc={int(v):i for i,v in enumerate(union)}
+46:     indices={name:np.asarray([loc[int(v)] for v in b],dtype=np.intp) for name,b in normalized.items()}
+47:     return union,normalized,indices
+48: 
+49: 
+50: class SharedProjectedFourierStore:
+51:     def __init__(self,n:int,union_bins:Sequence[int],basis_projection:np.ndarray,
+52:                  view_bins:Mapping[str,Sequence[int]],coefficients=None,
+53:                  sparse_residual:Iterable[tuple[int,complex]]=(),*,
+54:                  prepared_positions:Sequence[int]|None=None,event_capacity:int|None=None,
+55:                  promote_after:int|None=8):
+56:         self.n=int(n)
+57:         if self.n<1:raise ValueError('n must be positive')
+58:         ub=np.asarray(union_bins,dtype=np.int64)
+59:         if ub.ndim!=1 or ub.size<1 or np.any(ub<0) or np.any(ub>=self.n):raise ValueError('bad union bins')
+60:         if len(set(map(int,ub)))!=len(ub):raise ValueError('union bins must be unique')
+61:         self.union_bins=ub.astype(np.intp,copy=True); self.u=len(ub)
+62:         self._union_loc={int(v):i for i,v in enumerate(self.union_bins)}
+63:         proj=np.asarray(basis_projection,dtype=np.complex128)
+64:         if proj.ndim!=2 or proj.shape[1]!=self.u:raise ValueError('basis_projection must be (r,u)')
+65:         self.projection=np.array(proj,dtype=np.complex128,order='C',copy=True); self.r=proj.shape[0]
+66:         if coefficients is None:self.coefficients=np.zeros(self.r,dtype=np.complex128)
+67:         else:
+68:             c=np.asarray(coefficients,dtype=np.complex128)
+69:             if c.shape!=(self.r,):raise ValueError('bad coefficients')
+70:             self.coefficients=c.copy()
+71:         self.sparse={}
+72:         for j,d in sparse_residual:self._point_update(int(j),complex(d),log=False)
+73:         self._prepared_row={}; self._prepared_phase=None
+74:         if prepared_positions is not None:
+75:             pp=list(dict.fromkeys(int(x) for x in prepared_positions))
+76:             if any(j<0 or j>=self.n for j in pp):raise ValueError('bad prepared position')
+77:             self._prepared_row={j:i for i,j in enumerate(pp)}
+78:             self._prepared_phase=(np.stack([phase_row(self.n,j,self.union_bins) for j in pp])
+79:                                   if pp else np.empty((0,self.u),np.complex128))
+80:         self.version=0; self.events=deque(); self.event_capacity=None if event_capacity is None else max(0,int(event_capacity))
+81:         self.promote_after=None if promote_after is None else max(1,int(promote_after))
+82:         self.views={}
+83:         for name,b in view_bins.items():self.add_view(str(name),b)
+84: 
+85:     def _indices_for(self,bins):
+86:         try:return np.asarray([self._union_loc[int(v)] for v in bins],dtype=np.intp)
+87:         except KeyError as e:raise ValueError(f'view bin {e.args[0]} not in registered union')
+88: 
+89:     def _phase_view(self,j:int,idx:np.ndarray):
+90:         row=self._prepared_row.get(j)
+91:         if row is not None and self._prepared_phase is not None:return self._prepared_phase[row,idx]
+92:         return phase_row(self.n,j,self.union_bins[idx])
+93: 
+94:     def _rebuild(self,idx):
+95:         y=np.asarray(self.coefficients@self.projection[:,idx],dtype=np.complex128)
+96:         for j,d in self.sparse.items():y += d*self._phase_view(j,idx)
+97:         return y
+98: 
+99:     def promote_view(self,name:str):
+100:         v=self.views[name]
+101:         if v.basis_cache is None:
+102:             v.basis_cache=np.ascontiguousarray(self.projection[:,v.indices])
+103:             # Keep prepared point phases shared at union scope; duplicating them
+104:             # per hot view can erase the memory advantage of the shared store.
+105: 
+106:     def _maybe_promote(self,v:ViewState):
+107:         if self.promote_after is not None and v.basis_cache is None and v.query_count>=self.promote_after:
+108:             self.promote_view(v.name)
+109: 
+110:     def _phase_for_view(self,j:int,v:ViewState):
+111:         row=self._prepared_row.get(j)
+112:         if row is not None and v.phase_cache is not None:return v.phase_cache[row]
+113:         if row is not None and self._prepared_phase is not None:return self._prepared_phase[row,v.indices]
+114:         return phase_row(self.n,j,v.bins)
+115: 
+116:     def _rebuild_view(self,v:ViewState):
+117:         bp=v.basis_cache if v.basis_cache is not None else self.projection[:,v.indices]
+118:         y=np.asarray(self.coefficients@bp,dtype=np.complex128)
+119:         for j,d in self.sparse.items():y += d*self._phase_for_view(j,v)
+120:         return y
+121: 
+122:     def query_many(self,names):
+123:         """Answer several views, fusing them when a union rebuild is cheaper.
+124: 
+125:         The cost proxy compares independent optimal replay/rebuild work against
+126:         one exact rebuild on the union of all requested bins.  This captures
+127:         cross-consumer overlap without forcing a permanently materialized union
+128:         spectrum.
+129:         """
+130:         names=list(dict.fromkeys(str(x) for x in names))
+131:         if not names:return {}
+132:         if len(names)==1:return {names[0]:self.query(names[0])}
+133:         d=self.r+len(self.sparse)
+134:         indiv=0; stale_names=[]
+135:         for name in names:
+136:             v=self.views[name];H=self.version-v.version
+137:             if H==0:continue
+138:             stale_names.append(name)
+139:             work=min(H,max(1,d)) if self._history_available(v) else max(1,d)
+140:             indiv += len(v.indices)*work
+141:         batch_idx=np.asarray(sorted(set(int(i) for name in stale_names for i in self.views[name].indices)),dtype=np.intp)
+142:         batch_cost=len(batch_idx)*max(1,d)
+143:         # When everyone is already current, simply return caches.
+144:         if indiv==0:return {name:self.views[name].cached.copy() for name in names}
+145:         if batch_cost<=indiv:
+146:             y=self._rebuild(batch_idx)
+147:             pos={int(idx):j for j,idx in enumerate(batch_idx)}
+148:             out={}
+149:             for name in stale_names:
+150:                 v=self.views[name]
+151:                 take=np.asarray([pos[int(i)] for i in v.indices],dtype=np.intp)
+152:                 v.cached=np.ascontiguousarray(y[take]);v.backlog=self.version-v.version;v.version=self.version;v.strategy='batch_rebuild'
+153:                 v.query_count+=1; self._maybe_promote(v)
+154:                 out[name]=v.cached.copy()
+155:             for name in names:
+156:                 if name not in out: out[name]=self.views[name].cached.copy()
+157:             return out
+158:         return {name:self.query(name) for name in names}
+159: 
+160:     def add_view(self,name:str,bins:Sequence[int]):
+161:         if name in self.views:raise ValueError('view already exists')
+162:         b=np.asarray(bins,dtype=np.intp); idx=self._indices_for(b)
+163:         self.views[name]=ViewState(name,idx,b.copy(),self._rebuild(idx),self.version)
+164: 
+165:     def drop_view(self,name:str):
+166:         self.views.pop(name)
+167:         self.compact()
+168: 
+169:     def _append(self,kind,key,delta):
+170:         self.version+=1; self.events.append((self.version,kind,int(key),complex(delta)))
+171:         if self.event_capacity is not None:
+172:             while len(self.events)>self.event_capacity:self.events.popleft()
+173: 
+174:     def add_coefficient(self,i:int,delta:complex):
+175:         z=complex(delta)
+176:         if z==0j:return
+177:         i=int(i); self.coefficients[i]+=z; self._append('c',i,z)
+178: 
+179:     def _point_update(self,j:int,d:complex,*,log=True):
+180:         if not 0<=j<self.n:raise ValueError('point outside signal')
+181:         if d==0j:return
+182:         v=self.sparse.get(j,0j)+d
+183:         if v==0j:self.sparse.pop(j,None)
+184:         else:self.sparse[j]=v
+185:         if log:self._append('p',j,d)
+186: 
+187:     def add_point(self,j:int,delta:complex):self._point_update(int(j),complex(delta),log=True)
+188: 
+189:     def _history_available(self,v:ViewState):
+190:         if v.version==self.version:return True
+191:         return bool(self.events) and self.events[0][0]<=v.version+1
+192: 
+193:     def query(self,name:str):
+194:         v=self.views[name]; v.query_count+=1; self._maybe_promote(v); H=self.version-v.version
+195:         if H==0:
+196:             v.strategy='cached';v.backlog=0;return v.cached.copy()
+197:         d=self.r+len(self.sparse)
+198:         if H>max(1,d) or not self._history_available(v):
+199:             v.cached=self._rebuild_view(v);v.strategy='rebuild';v.backlog=H;v.version=self.version
+200:             return v.cached.copy()
+201:         # Visit only the recent suffix, then restore chronological arithmetic order.
+202:         recent=[]
+203:         for event in reversed(self.events):
+204:             if event[0]<=v.version: break
+205:             recent.append(event)
+206:         for ver,kind,key,delta in reversed(recent):
+207:             if kind=='c':
+208:                 row=v.basis_cache[key] if v.basis_cache is not None else self.projection[key,v.indices]
+209:                 v.cached += delta*row
+210:             else:v.cached += delta*self._phase_for_view(key,v)
+211:         v.strategy='replay';v.backlog=H;v.version=self.version
+212:         return v.cached.copy()
+213: 
+214:     def compact(self):
+215:         if not self.views:self.events.clear();return
+216:         floor=min(v.version for v in self.views.values())
+217:         while self.events and self.events[0][0]<=floor:self.events.popleft()
+218: 
+219:     @property
+220:     def storage_bytes(self):
+221:         phase=0 if self._prepared_phase is None else self._prepared_phase.nbytes
+222:         views=sum(v.indices.nbytes+v.bins.nbytes+v.cached.nbytes +
+223:                   (0 if v.basis_cache is None else v.basis_cache.nbytes) +
+224:                   (0 if v.phase_cache is None else v.phase_cache.nbytes) for v in self.views.values())
+225:         # Numeric payload lower bound, not total Python heap/RSS.
+226:         # Include event version/key/delta/kind payload and union-bin array.
+227:         return int(self.projection.nbytes+self.coefficients.nbytes+self.union_bins.nbytes+
+228:                    phase+views+len(self.sparse)*24+len(self.events)*(8+8+16+1))

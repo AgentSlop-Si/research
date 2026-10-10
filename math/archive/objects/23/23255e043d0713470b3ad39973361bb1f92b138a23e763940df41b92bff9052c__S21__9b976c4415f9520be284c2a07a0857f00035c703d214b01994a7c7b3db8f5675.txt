@@ -1,0 +1,172 @@
+   1 """Phase23: exact short-prefix reciprocal Hankel search, fully certified.
+   2 
+   3 Substantive modification over Phase22: phase21/22 two Hankel pencils use
+   4 T[0..2*s+1], i.e. 2*s+2 frequency probes, not 4*s. We cannot use the old
+   5 uniqueness shortcut which needed 4*s, so every spectral candidate gets its
+   6 own full N-coordinate cyclic convolution certificate, with ordinary DFT
+   7 fallback on failure. All-input exactness comes from that full certificate.
+   8 
+   9 We also stream 2*s+2 Fourier probes in a common loop, sharing the powers
+  10 omega^j and avoiding re-generating the full frequency powers separately.
+  11 No claimed sub-NlogN worst-case result.
+  12 """
+  13 from dataclasses import dataclass
+  14 from annihilator_engine import Work, batch_inverse_nonzero
+  15 from annihilator_engine import sparse_direct_fourier
+  16 from compressed_resultant import compressed_U_from_inverse_probes
+  17 from joint_pencil import shared_res_at
+  18 from trace_subgroup import (trace_subgroup_sieve,
+  19     shifts_from_linear_trace_gcd,shifts_from_trace_gcd_scan)
+  20 from reciprocal_union import (det_pencil_samples,recover_four_terms,
+  21     check_cyclic_certificate,factor_sparse_hypercube)
+  22 from blind_sparse_rational import poly_gcd
+  23 from rational_forcing import bluestein_transform
+  24 
+  25 @dataclass
+  26 class ShortMeta:
+  27     probe_count:int=0
+  28     determinant_samples:int=0
+  29     witness_samples:int=0
+  30     trace_gcd_degree:int=-1
+  31     trace_rejected:bool=False
+  32     trace_linear_extracted:bool=False
+  33     trace_half_scan:bool=False
+  34     candidate_shifts:int=0
+  35     parameter_candidates:int=0
+  36     cyclic_checks:int=0
+  37     cyclic_entries:int=0
+  38     singular_denominators:int=0
+  39     failed_certificates:int=0
+  40     selected:str='fallback'
+  41     reason:str='no-certificate'
+  42 
+  43 
+  44 def prefix_fourier_stream(r,powers,m,p,co=None):
+  45     """Compute [sum_j r_j omega^(kj)]_(k=0..m-1).
+  46 
+  47     Preinitialized table powers[j] = omega^j. Per input j maintain
+  48     v=r[j]*(omega^j)^k. Exactly N*m additions and N*(m-1)
+  49     multiplications; no FFT, no hidden free transforms. All intermediate
+  50     powers are local and input-dependent terms are read once.
+  51     """
+  52     if not 1<=m<=len(powers) or len(r)!=len(powers):
+  53         raise ValueError('bad prefix size')
+  54     out=[0]*m
+  55     for j,val in enumerate(r):
+  56         w=powers[j];u=val
+  57         for k in range(m):
+  58             out[k]=(out[k]+u)%p
+  59             if k+1<m:u=u*w%p
+  60     if co is not None:
+  61         co.multiplies+=len(r)*(m-1)
+  62         co.additions+=len(r)*m
+  63         co.reads+=len(r)+m*len(r)
+  64         co.writes+=m*len(r)
+  65     return out
+  66 
+  67 
+  68 def discover_short_probe(r,engine,co=None,s=4,extra_witness=3,prefix_R=None,residual_loader=None):
+  69     if co is None:co=Work()
+  70     n,p=engine.n,engine.p
+  71     m=2*s+2
+  72     meta=ShortMeta(probe_count=m)
+  73     b=s*(s+1)*(2*s+1)//6
+  74     if not 1<=s<=8 or n<m or p<=4*b+20:
+  75         meta.reason='unsupported-field-or-length'
+  76         return None,meta
+  77     if prefix_R is None:
+  78         R=prefix_fourier_stream(r,engine.powers,m,p,co)
+  79     else:
+  80         if len(prefix_R)!=m:
+  81             raise ValueError('supplied Fourier prefix has wrong length')
+  82         R=list(prefix_R)
+  83     if any(v==0 for v in R):
+  84         meta.reason='zero-Fourier-probe';return None,meta
+  85     T=batch_inverse_nonzero(R,p,co)
+  86     U,details=compressed_U_from_inverse_probes(T,p,s,co,extra_witness,resultant_evaluator=shared_res_at)
+  87     if U is None or not any(U):
+  88         meta.reason='zero-resultant';return None,meta
+  89     meta.determinant_samples=details['samples']
+  90     meta.witness_samples=details['witnesses']
+  91     trace=trace_subgroup_sieve(details['V'],n,p,co)
+  92     meta.trace_gcd_degree=trace.gcd_degree
+  93     if not trace.possible:
+  94         meta.trace_rejected=True;meta.reason='trace-gcd-one';return None,meta
+  95     if trace.gcd_degree==1:
+  96         candidates=shifts_from_linear_trace_gcd(trace,engine,co)
+  97         meta.trace_linear_extracted=True
+  98     else:
+  99         candidates=shifts_from_trace_gcd_scan(trace,engine,co)
+ 100         meta.trace_half_scan=True
+ 101     meta.candidate_shifts=len(candidates)
+ 102     # Nonzero resultant has at most 2*b admissible nonidentity roots.
+ 103     if len(candidates)>2*b:
+ 104         meta.reason='too-many-shift-candidates';return None,meta
+ 105     for delta in candidates:
+ 106         w=engine.powers[delta]
+ 107         P0=det_pencil_samples(T,w,0,p,co,s)
+ 108         P1=det_pencil_samples(T,w,1,p,co,s)
+ 109         g=poly_gcd(P0,P1,p,co)
+ 110         if len(g)!=2:continue
+ 111         alpha=(-g[0])%p
+ 112         if alpha==0:continue
+ 113         meta.parameter_candidates+=1
+ 114         Y=[];wk=1
+ 115         for f in T:
+ 116             Y.append(f*(1-alpha*wk)%p)
+ 117             wk=wk*w%p
+ 118             co.multiplies+=3;co.additions+=1
+ 119         A=recover_four_terms(Y,engine.powers,p,co,s)
+ 120         if not A:continue
+ 121         Ahat=sparse_direct_fourier(A,n,engine.powers,p,co)
+ 122         if any(z==0 for z in Ahat):
+ 123             meta.singular_denominators+=1
+ 124             continue
+ 125         meta.cyclic_checks+=1
+ 126         if r is None:
+ 127             if residual_loader is None:
+ 128                 raise ValueError('residual required for full certificate')
+ 129             r=residual_loader()
+ 130         accepted,checked=check_cyclic_certificate(r,A,delta,alpha,p,co)
+ 131         meta.cyclic_entries+=checked
+ 132         if not accepted:
+ 133             # IMPORTANT: reduced probes do not justify uniqueness of the
+ 134             # represented rational function. Continue checking candidates.
+ 135             meta.failed_certificates+=1
+ 136             continue
+ 137         meta.selected='short-prefix-certified'
+ 138         meta.reason='full-cyclic-certificate'
+ 139         return (A,delta,alpha,Ahat),meta
+ 140     meta.reason='no-certified-model'
+ 141     return None,meta
+ 142 
+ 143 
+ 144 def transform_short_probe(engine,x,s=4):
+ 145     n,p=engine.n,engine.p
+ 146     if len(x)!=n:raise ValueError('wrong input length')
+ 147     co=Work()
+ 148     r=engine.P.apply(x)
+ 149     co.multiplies+=2*n;co.additions+=n;co.reads+=2*n;co.writes+=n
+ 150     found,meta=discover_short_probe(r,engine,co,s)
+ 151     factors=None
+ 152     if found is None:
+ 153         forcing,_=bluestein_transform(r,n,engine.omega,p,engine.primitive_gen,co.sparse)
+ 154         selection='fallback'
+ 155     else:
+ 156         A,delay,alpha,Ahat=found
+ 157         if len(A) in (2,4,8,16):
+ 158             factors=factor_sparse_hypercube(A,delay,alpha,n,p,
+ 159                     (len(A).bit_length()-1),co)
+ 160         wk=1;w=engine.powers[delay]
+ 161         numerator=[]
+ 162         for k in range(n):
+ 163             numerator.append((1-alpha*wk)%p)
+ 164             wk=wk*w%p
+ 165             co.multiplies+=2;co.additions+=1
+ 166         inverse=batch_inverse_nonzero(Ahat,p,co)
+ 167         forcing=[numerator[k]*inverse[k]%p for k in range(n)]
+ 168         co.multiplies+=n;co.writes+=n
+ 169         selection='short-prefix-certified'
+ 170     y=engine.L.solve(forcing)
+ 171     co.multiplies+=3*n+1;co.additions+=2*n;co.reads+=3*n;co.writes+=2*n
+ 172     return y,{'selected':selection,'meta':meta,'work':co,'graph_factors':factors}

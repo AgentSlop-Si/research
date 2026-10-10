@@ -1,0 +1,238 @@
+   1 #!/usr/bin/env python3
+   2 """Independent exact finite-field controls for character-profile compression.
+   3 
+   4 No constructor or uploaded code is imported. All arithmetic is over F_65537.
+   5 """
+   6 import argparse
+   7 import json
+   8 from pathlib import Path
+   9 import random
+  10 
+  11 P = 65537
+  12 GENERATOR = 3
+  13 
+  14 
+  15 def inverse(x):
+  16     assert x % P
+  17     return pow(x, -1, P)
+  18 
+  19 
+  20 def root(n):
+  21     assert (P-1) % n == 0
+  22     w = pow(GENERATOR, (P-1)//n, P)
+  23     assert pow(w, n, P) == 1
+  24     if n > 1:
+  25         assert pow(w, n//2, P) != 1
+  26     return w
+  27 
+  28 
+  29 def rev(i, n):
+  30     value = 0
+  31     for _ in range(n.bit_length()-1):
+  32         value = 2*value+(i & 1)
+  33         i >>= 1
+  34     return value
+  35 
+  36 
+  37 def identity(n):
+  38     return [[int(i == j) for j in range(n)] for i in range(n)]
+  39 
+  40 
+  41 def multiply(a, b):
+  42     bt = list(zip(*b))
+  43     return [[sum(x*y for x, y in zip(row, col)) % P for col in bt] for row in a]
+  44 
+  45 
+  46 def weighted_green(n, s, c):
+  47     assert s % P and c % P != 1
+  48     powers = {d: pow(s, d, P) for d in range(1-n, n)}
+  49     den = inverse(1-c)
+  50     return [[powers[i-j]*den*(1 if i >= j else c) % P
+  51              for j in range(n)] for i in range(n)]
+  52 
+  53 
+  54 def reversed_green(n, r, h):
+  55     t = weighted_green(n, r, h)
+  56     order = [rev(i, n) for i in range(n)]
+  57     return [[t[i][j] for j in order] for i in order]
+  58 
+  59 
+  60 def profiles(k, m):
+  61     omega = root(m)
+  62     x = [[pow(omega, a*rev(i, m), P) for i in range(m)] for a in range(k)]
+  63     y = [[pow(omega, -a*rev(i, m), P)*inverse(m) % P
+  64           for i in range(m)] for a in range(k)]
+  65     return x, y
+  66 
+  67 
+  68 def project(bmat, k, m, x, y):
+  69     # Direct V L B M U expansion; physical blocks remain separate.
+  70     return [[sum(x[a][i]*bmat[a*m+i][b*m+j]*y[b][j]
+  71                  for i in range(m) for j in range(m)) % P
+  72              for b in range(k)] for a in range(k)]
+  73 
+  74 
+  75 def transpose(x):
+  76     return [list(row) for row in zip(*x)]
+  77 
+  78 
+  79 def compressed_reversed_formula(k, m, r, h, x, y):
+  80     e = reversed_green(m, pow(r, k, P), h)
+  81     gram = multiply(x, transpose(y))
+  82     local = multiply(multiply(x, e), transpose(y))
+  83     rho = [rev(a, k) for a in range(k)]
+  84     return [[pow(r, rho[a]-rho[b], P) *
+  85              (local[a][b]-(gram[a][b] if rho[a] < rho[b] else 0)) % P
+  86              for b in range(k)] for a in range(k)]
+  87 
+  88 
+  89 def fourier_conjugate_t(m, v, h):
+  90     w = root(m)
+  91     f = [[pow(w, a*i, P) for i in range(m)] for a in range(m)]
+  92     fi = [[pow(w, -i*a, P)*inverse(m) % P for a in range(m)] for i in range(m)]
+  93     return multiply(multiply(f, weighted_green(m, v, h)), fi)
+  94 
+  95 
+  96 def verify_nonresonant(m, v, h):
+  97     assert pow(v, m, P) != 1
+  98     omega = root(m)
+  99     actual = fourier_conjugate_t(m, v, h)
+ 100     kappa = (h-pow(v, m, P))*inverse(1-h)*inverse(1-pow(v, m, P)) % P
+ 101     left = [sum(pow(omega, a*i, P)*pow(v, i, P) for i in range(m)) % P
+ 102             for a in range(m)]
+ 103     right = [sum(pow(v, -i, P)*pow(omega, -a*i, P) for i in range(m))*inverse(m) % P
+ 104              for a in range(m)]
+ 105     predicted = [[((inverse(1-v*pow(omega, a, P)) if a == b else 0)
+ 106                    + kappa*left[a]*right[b]) % P for b in range(m)] for a in range(m)]
+ 107     assert actual == predicted
+ 108 
+ 109 
+ 110 def verify_resonant(m, v, h):
+ 111     assert pow(v, m, P) == 1 and h % P != 1
+ 112     omega = root(m)
+ 113     z = [pow(omega, a, P) for a in range(m)]
+ 114     d = [(1-v*za) % P for za in z]
+ 115     a0 = d.index(0)
+ 116     assert d.count(0) == 1
+ 117     wrap = h*pow(v, 1-m, P) % P
+ 118     tau = (wrap-v)*inverse(m) % P
+ 119     assert tau
+ 120     columns = []
+ 121     for j in range(m):
+ 122         rhs = [int(a == j) for a in range(m)]
+ 123         sol = [(rhs[a]-rhs[a0])*inverse(d[a]) % P if a != a0 else 0
+ 124                for a in range(m)]
+ 125         sol[a0] = (-rhs[a0]*inverse(tau)-sum(z[a]*sol[a] for a in range(m) if a != a0))*inverse(z[a0]) % P
+ 126         assert all((d[a]*sol[a]-tau*sum(za*xa for za, xa in zip(z, sol))) % P == rhs[a]
+ 127                    for a in range(m))
+ 128         columns.append(sol)
+ 129     assert transpose(columns) == fourier_conjugate_t(m, v, h)
+ 130 
+ 131 
+ 132 def direct_natural_coefficients(m, s):
+ 133     omega = root(m)
+ 134     f = [sum(pow(s, i, P)*pow(omega, a*rev(i, m), P) for i in range(m)) % P
+ 135          for a in range(m)]
+ 136     fi = [sum(pow(s, -i, P)*pow(omega, a*rev(i, m), P) for i in range(m)) % P
+ 137           for a in range(m)]
+ 138     d = [sum(pow(s, i-j, P)*pow(omega, a*(rev(i, m)-rev(j, m)), P)
+ 139              for i in range(m) for j in range(i+1, m)) % P for a in range(m)]
+ 140     return f, fi, d
+ 141 
+ 142 
+ 143 def recurrent_natural_coefficients(m, s):
+ 144     if m == 1:
+ 145         return [1], [1], [0]
+ 146     ell = m//2
+ 147     f, fi, d = recurrent_natural_coefficients(ell, s)
+ 148     omega = root(m)
+ 149     out_f, out_fi, out_d = [0]*m, [0]*m, [0]*m
+ 150     for a in range(ell):
+ 151         z = pow(s, ell, P)*pow(omega, a, P) % P
+ 152         zi = pow(s, -ell, P)*pow(omega, a, P) % P
+ 153         cross = inverse(z)*f[a]*fi[(-a) % ell] % P
+ 154         out_f[a] = (1+z)*f[a] % P
+ 155         out_f[a+ell] = (1-z)*f[a] % P
+ 156         out_fi[a] = (1+zi)*fi[a] % P
+ 157         out_fi[a+ell] = (1-zi)*fi[a] % P
+ 158         out_d[a] = (2*d[a]+cross) % P
+ 159         out_d[a+ell] = (2*d[a]-cross) % P
+ 160     return out_f, out_fi, out_d
+ 161 
+ 162 
+ 163 def main():
+ 164     parser = argparse.ArgumentParser()
+ 165     parser.add_argument('--output', default='VERIFIED_RESULTS.json')
+ 166     args = parser.parse_args()
+ 167     assert pow(GENERATOR, (P-1)//2, P) == P-1
+ 168     rows = []
+ 169     rng = random.Random(581024)
+ 170     for m in (2, 4, 8):
+ 171         for k in (m, 2*m):
+ 172             n = k*m
+ 173             x, y = profiles(k, m)
+ 174             gram = multiply(x, transpose(y))
+ 175             assert gram == [[int(a % m == b % m) for b in range(k)] for a in range(k)]
+ 176             theta_identity = project(identity(n), k, m, x, y)
+ 177             assert theta_identity == identity(k)
+ 178             if k == 2*m:
+ 179                 assert theta_identity != gram
+ 180             custom_x = [[rng.randrange(P) for _ in range(m)] for _ in range(k)]
+ 181             custom_y = [[rng.randrange(P) for _ in range(m)] for _ in range(k)]
+ 182             custom_direct = project(reversed_green(n, 3, 11), k, m, custom_x, custom_y)
+ 183             assert custom_direct == compressed_reversed_formula(k, m, 3, 11, custom_x, custom_y)
+ 184             custom_identity = project(identity(n), k, m, custom_x, custom_y)
+ 185             assert custom_identity == [[(sum(a*b for a, b in zip(custom_x[i], custom_y[i])) % P
+ 186                                           if i == j else 0) for j in range(k)] for i in range(k)]
+ 187             tests = []
+ 188             for name, r, h in [('homogeneous', 3, pow(3, n, P)),
+ 189                                ('nonresonant', 3, 7),
+ 190                                ('zero_wrap_nonzero_edge', 3, 0),
+ 191                                ('resonant', root(n), 7)]:
+ 192                 direct = project(reversed_green(n, r, h), k, m, x, y)
+ 193                 assert direct == compressed_reversed_formula(k, m, r, h, x, y)
+ 194                 v = pow(r, k, P)
+ 195                 if name == 'homogeneous':
+ 196                     omega = root(m)
+ 197                     lambdas = [inverse(1-v*pow(omega, a, P)) for a in range(m)]
+ 198                     expected = [[0]*k for _ in range(k)]
+ 199                     for a in range(m):
+ 200                         expected[a][a] = lambdas[a]
+ 201                         if k == 2*m:
+ 202                             expected[a+m][a+m] = lambdas[a]
+ 203                             expected[a][a+m] = (lambdas[a]-1)*inverse(r) % P
+ 204                             expected[a+m][a] = r*lambdas[a] % P
+ 205                     assert direct == expected
+ 206                 if name == 'resonant':
+ 207                     verify_resonant(m, v, h)
+ 208                 else:
+ 209                     verify_nonresonant(m, v, h)
+ 210                 tests.append(name)
+ 211             for s, c in [(5, 11), (5, 0)]:
+ 212                 actual = project(weighted_green(n, s, c), k, m, x, y)
+ 213                 f, fi, d = direct_natural_coefficients(m, s)
+ 214                 coarse = weighted_green(k, pow(s, m, P), c)
+ 215                 expected = [[(f[a % m]*coarse[a][b]*fi[(-b) % m]*inverse(m)
+ 216                               - (d[a % m]*inverse(m) if a == b else 0)) % P
+ 217                              for b in range(k)] for a in range(k)]
+ 218                 assert actual == expected
+ 219             rows.append({'m':m,'k':k,'N':n,'identity_projection':'I_k',
+ 220                          'identity_differs_from_repeated_Gram':k == 2*m,
+ 221                          'arbitrary_profile_compression_checked':True,
+ 222                          'reversed_cases':tests,'natural_cases':2})
+ 223     recurrence_rows = []
+ 224     for m in (1, 2, 4, 8, 16, 32, 64):
+ 225         for s in (1, 3, 5, P-1):
+ 226             assert direct_natural_coefficients(m, s) == recurrent_natural_coefficients(m, s)
+ 227         recurrence_rows.append({'m':m,'edges_checked':[1,3,5,P-1]})
+ 228     result = {'status':'PASS','field':P,'primitive_generator':GENERATOR,
+ 229               'projection_controls':rows,'recurrence_controls':recurrence_rows,
+ 230               'correction':'Theta(I_N)=I_k for these masks, including k=2m; it is not X Y^T.',
+ 231               'scope':'Projected middle paths and coefficient recurrences only; no full Fourier synthesis.'}
+ 232     Path(args.output).write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 233     print(json.dumps({'status':'PASS','projection_shapes':len(rows),'reversed_cases':sum(len(x['reversed_cases']) for x in rows),
+ 234                       'natural_cases':sum(x['natural_cases'] for x in rows),'recurrence_parameter_pairs':4*len(recurrence_rows)},sort_keys=True))
+ 235 
+ 236 
+ 237 if __name__ == '__main__':
+ 238     main()

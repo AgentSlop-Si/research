@@ -1,0 +1,126 @@
+   1 import random
+   2 import unittest
+   3 from phase8 import (
+   4  fixture, dft_matrix, submat, matrank, matinv, matmul, blockdiag, schur_cut_certificate,
+   5  dense_star, bridge_network, eval_radix2_remainder, eval_generic_remainder, dft_ref,
+   6  exhaustive_root_split, radix2_symbolic_merges, unitary_entropy_audit, lut_gate_bound,
+   7 )
+   8 
+   9 class Phase8Tests(unittest.TestCase):
+  10     def test_cut_rank_all_lengths(self):
+  11         for n in (4,5,6,7,8,9,10,12,15,16,20):
+  12             p,w=fixture(n);F=dft_matrix(n,p,w)
+  13             for m in range(1,n):
+  14                 A=submat(F,range(m),range(m,n))
+  15                 self.assertEqual(matrank(A,p),min(m,n-m))
+  16 
+  17     def test_schur_sharp_even(self):
+  18         for n in (4,6,8,10,16,20):
+  19             p,w=fixture(n)
+  20             got=schur_cut_certificate(n,p,w)
+  21             self.assertEqual(got['bridge_rank'],n//2)
+  22 
+  23     def test_random_multistage_bridge_transport(self):
+  24         for n in (8,10,16):
+  25             p,w=fixture(n)
+  26             for seed in range(6):
+  27                 d=bridge_network(n,p,w,seed=seed,steps=seed+1)
+  28                 self.assertLessEqual(d['offdiag_rank'],d['rank_budget'])
+  29 
+  30     def test_dense_star_invertible_but_not_dft(self):
+  31         for n in (4,8,16,32):
+  32             p,w=fixture(n)
+  33             S,gates=dense_star(n,p)
+  34             F=dft_matrix(n,p,w)
+  35             self.assertEqual(gates,2*n-2)
+  36             self.assertEqual(matrank(S,p),n)
+  37             self.assertTrue(all(all(v!=0 for v in row) for row in S))
+  38             self.assertNotEqual(S,F)
+  39 
+  40     def test_shared_binomial_evaluator_full_random(self):
+  41         rng=random.Random(8037)
+  42         for n in (2,4,8,16,32,64,128):
+  43             p,w=fixture(n)
+  44             for _ in range(5):
+  45                 x=[rng.randrange(p) for _ in range(n)]
+  46                 y,log=eval_radix2_remainder(x,p,w)
+  47                 self.assertEqual(y,dft_ref(x,p,w))
+  48                 self.assertEqual(log.butterflies,n*(n.bit_length()-1)//2)
+  49                 self.assertEqual(log.adds,2*log.butterflies)
+  50                 self.assertEqual(log.muls,log.butterflies)
+  51                 self.assertEqual(log.root_prep_muls,n-1)
+  52                 self.assertEqual(log.writes,n)
+  53 
+  54     def test_generic_root_division_evaluator(self):
+  55         rng=random.Random(991)
+  56         for n in (4,8,16,32):
+  57             p,w=fixture(n)
+  58             for policy in ('subgroup','contiguous','noncoset16'):
+  59                 for _ in range(2):
+  60                     x=[rng.randrange(p) for _ in range(n)]
+  61                     y,log=eval_generic_remainder(x,p,w,policy)
+  62                     self.assertEqual(y,dft_ref(x,p,w))
+  63                     self.assertGreater(log.plan_muls+log.plan_adds,0)
+  64                     self.assertEqual(log.writes,n)
+  65 
+  66     def test_noncoset_partition_has_more_online_work(self):
+  67         n=16;p,w=fixture(n)
+  68         x=[(i*i+3*i+11)%p for i in range(n)]
+  69         baseline,blog=eval_radix2_remainder(x,p,w)
+  70         alternative,alog=eval_generic_remainder(x,p,w,'noncoset16')
+  71         self.assertEqual(baseline,alternative)
+  72         self.assertGreater(alog.muls+alog.adds,blog.muls+blog.adds)
+  73 
+  74     def test_exact_cyclotomic_root_histogram(self):
+  75         d8=exhaustive_root_split(8)
+  76         d16=exhaustive_root_split(16)
+  77         self.assertEqual(d16['subsets'],12870)
+  78         self.assertEqual(d16['complement_pairs'],6435)
+  79         self.assertEqual(d16['support_histogram']['2'],2)
+  80         self.assertEqual(d16['best_split_total_support'],4)
+  81         self.assertEqual(d16['best_nonperiodic_total_support'],15)
+  82         self.assertEqual(d8['support_histogram']['2'],2)
+  83 
+  84     def test_radix2_semantic_organizer_merges_zero(self):
+  85         for n in (4,8,16,32,64):
+  86             p,w=fixture(n)
+  87             a=radix2_symbolic_merges(n,p,w)
+  88             self.assertEqual(a['proportional_merges'],0)
+  89             self.assertEqual(a['total_forms'],a['unique_forms'])
+  90 
+  91     def test_unitary_entropy_gate_bound_is_tight(self):
+  92         for n in (4,8,16,32):
+  93             d=unitary_entropy_audit(n)
+  94             self.assertAlmostEqual(d['max_entropy_increment'],2,places=7)
+  95             self.assertAlmostEqual(d['min_entropy_increment'],2,places=7)
+  96             self.assertEqual(d['gates'],int(d['lower_bound']))
+  97 
+  98     def test_polynomial_sized_truth_tables_limit_gate_width(self):
+  99         for n in (16,64,256):
+ 100             p,w=fixture(n)
+ 101             d=lut_gate_bound(n,p,3)
+ 102             self.assertLessEqual(d['max_complete_block_arity'],3)
+ 103             self.assertGreaterEqual(d['necessary_levels_if_full_width'],(n.bit_length()-1)//2)
+ 104 
+ 105 if __name__=='__main__':unittest.main()
+ 106 
+ 107 class CRTBridgeTests(unittest.TestCase):
+ 108     def test_every_balanced_split_has_full_bridge_rank(self):
+ 109         from phase8 import crt_bridge_certificate
+ 110         for n in (4,8,12,16):
+ 111             p,w=fixture(n);m=n//2
+ 112             candidates=[tuple(range(0,n,2)),tuple(range(m)),tuple(range(1,n,2))]
+ 113             if n==16:candidates.append((0,1,2,3,4,8,10,12))
+ 114             for a in candidates:
+ 115                 d=crt_bridge_certificate(n,p,w,a)
+ 116                 self.assertEqual(d['transfer_rank'],m)
+ 117                 self.assertGreaterEqual(d['combined_support'],n)
+ 118 
+ 119     def test_crt_sparsity_exact_finite_field_search(self):
+ 120         from phase8 import enumerate_crt_transfer_supports
+ 121         p,w=fixture(16)
+ 122         d=enumerate_crt_transfer_supports(16,p,w)
+ 123         self.assertEqual(d['pairs'],6435)
+ 124         self.assertEqual(d['minimum_transfer_nnz'],16)
+ 125         self.assertEqual(d['histogram']['16_periodic'],1)
+ 126         self.assertGreater(d['best_nonperiodic_transfer_nnz'],16)

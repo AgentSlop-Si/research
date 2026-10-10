@@ -1,0 +1,66 @@
+   1 import random
+   2 import unittest
+   3 from phase3_barrier import (
+   4     choose_ntt_prime, ntt_root, direct_ntt, radix2_ntt, inverse_ntt,
+   5     tabulate_butterfly, hadamard_matrix, rank_one_sign_sparse,
+   6     apply_rank_one_sparse
+   7 )
+   8 
+   9 
+  10 class NTTTests(unittest.TestCase):
+  11     def test_roots_exactly_requested_order(self):
+  12         for n in (2,4,8,16,32,64,128):
+  13             q=choose_ntt_prime(n)
+  14             w=ntt_root(n,q)
+  15             self.assertEqual(pow(w,n,q),1)
+  16             self.assertNotEqual(pow(w,n//2,q),1)
+  17             self.assertGreaterEqual(q,n+1)
+  18 
+  19     def test_direct_iterative_and_inverse_random(self):
+  20         random.seed(7)
+  21         for n in (2,4,8,16,32,64):
+  22             q=choose_ntt_prime(n)
+  23             w=ntt_root(n,q)
+  24             for _ in range(3):
+  25                 a=[random.randrange(q) for j in range(n)]
+  26                 X=radix2_ntt(a,q,w)
+  27                 self.assertEqual(X,direct_ntt(a,q,w))
+  28                 self.assertEqual(inverse_ntt(X,q,w),a)
+  29 
+  30     def test_two_point_table(self):
+  31         for q in (3,5,17):
+  32             t=tabulate_butterfly(q)
+  33             self.assertEqual(len(t),q*q)
+  34             for a in range(q):
+  35                 for b in range(q):
+  36                     self.assertEqual(t[a*q+b],((a+b)%q,(a-b)%q))
+  37 
+  38     def test_table_barrier(self):
+  39         for n in (8,16,32,64,128,256,512):
+  40             q=choose_ntt_prime(n)
+  41             self.assertGreater(q*q, n*n)
+  42 
+  43 
+  44 class RankSparseTests(unittest.TestCase):
+  45     def test_rank1_sign_sparse_wht_identity(self):
+  46         random.seed(22)
+  47         for n in (2,4,8):
+  48             cert=rank_one_sign_sparse(n)
+  49             H=hadamard_matrix(n)
+  50             self.assertLess(cert['nonzero'], n*n)
+  51             for _ in range(20):
+  52                 x=[random.randrange(3) for _ in range(n)]
+  53                 expected=[sum(row[j]*x[j] for j in range(n))%3 for row in H]
+  54                 self.assertEqual(apply_rank_one_sparse(cert,x),expected)
+  55 
+  56     def test_input_independent(self):
+  57         cert=rank_one_sign_sparse(8)
+  58         # Decomposition depends only on transform, not on x.
+  59         self.assertEqual(cert['n'],8)
+  60         self.assertEqual(len(cert['u']),8)
+  61         self.assertEqual(len(cert['v']),8)
+  62         self.assertEqual(len(cert['sparse']),cert['nonzero'])
+  63 
+  64 
+  65 if __name__ == '__main__':
+  66     unittest.main()

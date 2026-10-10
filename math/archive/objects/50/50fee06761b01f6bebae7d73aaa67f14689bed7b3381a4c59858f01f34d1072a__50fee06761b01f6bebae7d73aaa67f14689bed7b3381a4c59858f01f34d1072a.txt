@@ -1,0 +1,70 @@
+"""Exact finite-field census of 4x4 minors of Jacobian normal coordinates.
+
+A tempting uniform-output-matroid hypothesis FAILS: many 4-column minors
+of the 4x64 Jacobian normal matrix vanish at the sampled parameter point.
+A vanishing modular determinant at one parameter sample does NOT certify an
+algebraic identity over C; the nonvanishing minors are legitimate witnesses
+of independence over C. The census is a guide to targeted elimination only.
+"""
+import itertools
+import json
+from pathlib import Path
+import numpy as np
+import jacobian_gate as j
+from superconcentrator_gate import SHUFFLE
+P=1000003
+HERE=Path(__file__).resolve().parent
+
+def cross3(Q,i,j,k,p=P):
+    w=[]
+    for omit in range(4):
+        ids=[x for x in range(4) if x!=omit]
+        a,b,c=[[int(Q[t,z]) for z in (i,j,k)] for t in ids]
+        d=(a[0]*(b[1]*c[2]-b[2]*c[1])-a[1]*(b[0]*c[2]-b[2]*c[0])+a[2]*(b[0]*c[1]-b[1]*c[0]))%p
+        w.append(d if (omit+3)%2==0 else (-d)%p)
+    return w
+
+def audit(Q,p=P):
+    Q=np.array(Q,dtype=np.int64)
+    assert Q.shape==(4,64)
+    nonzero=0;zeros=0;product=1;first_zero=None;first_nonzero=None
+    for i,j,k in itertools.combinations(range(64),3):
+        w=cross3(Q,i,j,k,p)
+        for ell in range(k+1,64):
+            det=sum(w[z]*int(Q[z,ell]) for z in range(4))%p
+            if not det:
+                zeros+=1
+                if first_zero is None:first_zero=[i,j,k,ell]
+            else:
+                nonzero+=1
+                product=product*det%p
+                if first_nonzero is None:first_nonzero={'columns':[i,j,k,ell],'determinant':int(det)}
+    assert nonzero+zeros==635376
+    return {'nonzero':nonzero,'vanishing_at_sample':zeros,'product_of_nonzero_determinants_mod_p':product,
+            'first_zero_minor_columns':first_zero,'first_nonzero_minor':first_nonzero}
+
+def generate(seed=1011):
+    j.MOD=P
+    M,J,*_=j.basis(8,1,SHUFFLE,seed)
+    assert j.rank_mod(J)==60
+    Q=np.array(j.basis_null(J.T))
+    assert Q.shape==(4,64) and not np.any((Q@J)%P)
+    z={'n':8,'r':1,'shuffle':SHUFFLE,'field_prime':P,'seed':seed,'jacobian_rank':60,
+       'normal_matrix':Q.tolist(), 'number_4x4_subsets':635376,
+       'interpretation':'zero modular minors at one sample are NOT proofs of universal polynomial identities'}
+    z.update(audit(Q))
+    (HERE/'matroid_census_N8.json').write_text(json.dumps(z,indent=2)+'\n')
+    return z
+
+def verify(z):
+    j.MOD=P
+    M,J,*_=j.basis(8,1,z['shuffle'],z['seed'])
+    Q=np.array(z['normal_matrix'])
+    assert Q.shape==(4,64) and not np.any((Q@J)%P)
+    d=audit(Q)
+    for key,val in d.items():assert z[key]==val,(key,z[key],val)
+    return f"PASS {d['nonzero']} nonzero, {d['vanishing_at_sample']} vanishing at the sampled point; uniform-output-matroid hypothesis rejected"
+
+if __name__=='__main__':
+    z=generate()
+    print(verify(json.loads((HERE/'matroid_census_N8.json').read_text())))

@@ -1,0 +1,425 @@
+
+===== SOURCE 26 8b22d430f4e55134c717b6fc5b3152a76833c350669a97a38926830a8deda269 fft_materials_extension_20261009/fft_recurrence_extension_research/audit.py | 9111 bytes 191 lines =====
+   1 """Exact full-output and operation audit for direct target scans/all shifts."""
+   2 from collections import Counter
+   3 import json
+   4 from pathlib import Path
+   5 from random import Random
+   6 import sys
+   7 
+   8 from extended_recurrence import try_extended_fourier,Counted
+   9 from detected_fourier import try_detected_fourier
+  10 from prior_exact_arithmetic import PrimeField,CyclotomicField,fourier,mv
+  11 
+  12 HERE=Path(__file__).resolve().parent
+  13 
+  14 
+  15 def source_data(field,n,q):
+  16     powers=[field.power(q,j) for j in range(n)]
+  17     diagonal=[field.neg(v) for v in powers]
+  18     upper=[field.neg(field.mul(powers[i],field.sub(powers[i+1],field.one)))
+  19            for i in range(n-1)]
+  20     return diagonal,upper
+  21 
+  22 
+  23 def source_solve(field,diagonal,upper,shift,forcing):
+  24     x=[field.zero]*len(forcing)
+  25     for i in range(len(x)-1,-1,-1):
+  26         value=forcing[i]
+  27         if i+1<len(x):value=field.sub(value,field.mul(upper[i],x[i+1]))
+  28         x[i]=field.mul(value,field.inv(field.sub(diagonal[i],shift)))
+  29     return x
+  30 
+  31 
+  32 def source_eigenvector(field,diagonal,upper,t):
+  33     x=[field.zero]*len(diagonal)
+  34     x[t]=field.one
+  35     for i in range(t-1,-1,-1):
+  36         x[i]=field.mul(field.neg(field.mul(upper[i],x[i+1])),
+  37                        field.inv(field.sub(diagonal[i],diagonal[t])))
+  38     return x
+  39 
+  40 
+  41 def serialize(field,info):
+  42     result=dict(info)
+  43     if 'shift' in result:result['shift']=field.encode(result['shift'])
+  44     return result
+  45 
+  46 
+  47 def checked(field,n,q,x,cap,F,shift=None,supplied=False):
+  48     outer=Counted(field)
+  49     options=dict(max_defects=cap)
+  50     if supplied:options['shift']=shift
+  51     result,info=try_extended_fourier(outer,n,q,x,**options)
+  52     assert dict(outer.count)==info['field_operations']
+  53     stages=Counter()
+  54     for stage in info['stages'].values():stages.update(stage)
+  55     assert dict(stages)==info['field_operations']
+  56     if info['accepted']:
+  57         assert result==mv(field,F,x)
+  58         assert len(result)==info['full_output_writes']==n
+  59     else:
+  60         assert result is None and info['full_output_writes']==0
+  61     return result,info
+  62 
+  63 
+  64 def main():
+  65     configs=[(PrimeField(5),4),(PrimeField(17),4),(PrimeField(17),8)]
+  66     configs += [(PrimeField(p),n) for p in (65537,998244353) for n in (4,8,16,32)]
+  67     configs += [(CyclotomicField(n),n) for n in (4,8)]
+  68     rng=Random(99231)
+  69     rows=[];accepted=declined=0;branches=Counter()
+  70     for field,n in configs:
+  71         q=field.root(n)
+  72         F=fourier(field,n)
+  73         diagonal,upper=source_data(field,n,q)
+  74         forcing=[field.zero]*n;forcing[-1]=field.one
+  75         nonroot=next((field.integer(v) for v in range(2,100)
+  76                      if field.integer(v)!=field.zero and
+  77                         field.power(field.integer(v),n)!=field.one),None)
+  78         fixtures=[]
+  79         for shift,label in ((field.zero,'zero_shift'),(nonroot,'nonroot_shift')):
+  80             if shift is None:continue
+  81             x=source_solve(field,diagonal,upper,shift,forcing)
+  82             assert all(a!=field.zero for a in x)
+  83             fixtures.append((label,x,1,shift))
+  84         for t in range(n):
+  85             x=source_eigenvector(field,diagonal,upper,t)
+  86             fixtures.append((f'root_eigenvector_{t}',x,0,diagonal[t]))
+  87         records=[]
+  88         for name,x,cap,shift in fixtures:
+  89             result,info=checked(field,n,q,x,cap,F)
+  90             assert info['accepted'] and info['shift']==shift
+  91             accepted+=1
+  92             branches[info.get('target',{}).get('branch','sparse_input')]+=1
+  93             # Supplying the same shift bypasses discovery, still paying its
+  94             # complete verification and target solve.
+  95             supplied,supplied_info=checked(field,n,q,x,cap,F,shift=shift,supplied=True)
+  96             assert supplied==result
+  97             accepted+=1
+  98             old,old_info=try_detected_fourier(field,n,q,x,max_defects=cap)
+  99             if name=='nonroot_shift':assert old==result
+ 100             else:assert old is None and not old_info['accepted']
+ 101             records.append(dict(case=name,cap=cap,automatic=serialize(field,info),
+ 102                                 supplied=serialize(field,supplied_info),old_accepted=old_info['accepted']))
+ 103         sparse=[field.zero]*n;sparse[-1]=field.one
+ 104         result,info=checked(field,n,q,sparse,1,F)
+ 105         assert info['path']=='sparse_input'
+ 106         accepted+=1
+ 107         records.append(dict(case='sparse_input',automatic=serialize(field,info)))
+ 108 
+ 109         # Dense unrelated controls decline with their complete discovery cost.
+ 110         for _ in range(100):
+ 111             x=[field.integer(rng.randrange(1,100)) for _ in range(n)]
+ 112             result,info=checked(field,n,q,x,0,F)
+ 113             if not info['accepted']:
+ 114                 declined+=1
+ 115                 records.append(dict(case='unrelated_decline',automatic=serialize(field,info)))
+ 116                 break
+ 117         else:raise AssertionError('missing decline fixture')
+ 118         rows.append(dict(n=n,field=getattr(field,'p',f'Q(zeta_{n})'),records=records))
+ 119     assert branches['zero_shift_scan']>0
+ 120     assert branches['singular_missing_coordinate']>0
+ 121 
+ 122     sys.path.insert(0,str(HERE.parent/'fft_qbasis_research'))
+ 123     from orbit_kernel import fft,fft_plan
+ 124     field=PrimeField(998244353)
+ 125     comparisons=[]
+ 126     for n in (128,512,2048,8192,131072):
+ 127         q=field.root(n)
+ 128         diagonal,upper=source_data(field,n,q)
+ 129         forcing=[field.zero]*n;forcing[-1]=field.one
+ 130         x=source_solve(field,diagonal,upper,field.integer(2),forcing)
+ 131         outer=Counted(field)
+ 132         result,info=try_extended_fourier(outer,n,q,x,max_defects=1)
+ 133         assert info['accepted'] and dict(outer.count)==info['field_operations']
+ 134         assert sum(info['field_operations'].values())==25*n-10
+ 135         c=Counted(field);plan=fft_plan(c,n//2,q)
+ 136         expected=fft(c,plan,x)
+ 137         assert result==expected
+ 138         old,old_info=try_detected_fourier(field,n,q,x,max_defects=1)
+ 139         assert old==result
+ 140         accepted+=1
+ 141         comparisons.append(dict(n=n,input_support=n,defect_support=1,
+ 142             extended_cold_scalar_operations=sum(info['field_operations'].values()),
+ 143             previous_cold_scalar_operations=sum(old_info['field_operations'].values()),
+ 144             ordinary_cold_scalar_operations=sum(c.count.values()),
+ 145             extended=serialize(field,info),ordinary_ledger=dict(c.count),
+ 146             same_input_same_full_output=True,
+ 147             note='Fixture construction is excluded equally; both evaluate the same supplied fresh x. Gate counts, not timings.'))
+ 148     zero_comparisons=[]
+ 149     for n in (128,512,2048,8192):
+ 150         q=field.root(n)
+ 151         diagonal,upper=source_data(field,n,q)
+ 152         forcing=[field.zero]*n;forcing[-1]=field.one
+ 153         x=source_solve(field,diagonal,upper,field.zero,forcing)
+ 154         outer=Counted(field)
+ 155         result,info=try_extended_fourier(outer,n,q,x,max_defects=1)
+ 156         assert info['accepted'] and info['target']['branch']=='zero_shift_scan'
+ 157         assert dict(outer.count)==info['field_operations']
+ 158         assert sum(info['field_operations'].values())==14*n-10
+ 159         c=Counted(field);plan=fft_plan(c,n//2,q)
+ 160         expected=fft(c,plan,x)
+ 161         assert result==expected
+ 162         old,old_info=try_detected_fourier(field,n,q,x,max_defects=1)
+ 163         assert old is None and old_info['reason']=='zero_shift_excluded'
+ 164         accepted+=1
+ 165         zero_comparisons.append(dict(n=n,input_support=n,defect_support=1,
+ 166             extended_cold_scalar_operations=sum(info['field_operations'].values()),
+ 167             ordinary_cold_scalar_operations=sum(c.count.values()),
+ 168             previous_evaluator_declined=True,extended=serialize(field,info),
+ 169             same_input_same_full_output=True,
+ 170             note='Supplied fresh dense x, detected zero shift; fixture construction excluded equally; field gates, not timings.'))
+ 171     invalid=0
+ 172     for kwargs in (dict(n=2,q=1,query=[0,0]),dict(n=4,q=1,query=[0]*3),
+ 173                    dict(n=4,q=1,query=[0]*4,max_defects=-1),
+ 174                    dict(n=4,q=1,query=[0]*4,max_defects=True)):
+ 175         try:try_extended_fourier(field,**kwargs)
+ 176         except ValueError:invalid+=1
+ 177         else:raise AssertionError('invalid call accepted')
+ 178     report=dict(status='PASS',accepted_exact_outputs=accepted,declines=declined,
+ 179         invalid_argument_rejections=invalid,field_size_configurations=len(rows),
+ 180         target_branches=dict(branches),rows=rows,same_target_comparisons=comparisons,
+ 181         zero_shift_comparisons=zero_comparisons,
+ 182         scope='All shifts, paid deterministic discovery, exact full outputs for accepted restricted families; no universal faster FFT.')
+ 183     (HERE/'results.json').write_text(json.dumps(report,indent=2)+'\n')
+ 184     print(json.dumps({k:report[k] for k in ('status','accepted_exact_outputs','declines','invalid_argument_rejections','field_size_configurations','target_branches')},indent=2))
+ 185     for row in comparisons:
+ 186         print(json.dumps({k:row[k] for k in ('n','extended_cold_scalar_operations','previous_cold_scalar_operations','ordinary_cold_scalar_operations')}))
+ 187     for row in zero_comparisons:
+ 188         print(json.dumps(dict(shift='zero',**{k:row[k] for k in ('n','extended_cold_scalar_operations','ordinary_cold_scalar_operations')})))
+ 189 
+ 190 
+ 191 if __name__=='__main__':main()
+
+===== SOURCE 27 8a694f8267578d1858416b504f91c04631bd9896eaf9319fd5c588f91ea659f3 fft_materials_extension_20261009/fft_recurrence_extension_research/extended_recurrence.py | 8015 bytes 187 lines =====
+   1 """Cold exact Fourier evaluation with direct target scans and all shifts.
+   2 
+   3 The accepted class is still verified low-defect (or sparse-input) data.
+   4 No fresh arbitrary-input sub-N-log-N Fourier claim is made.
+   5 """
+   6 from pathlib import Path
+   7 import sys
+   8 
+   9 ROOT=Path(__file__).resolve().parent.parent
+  10 sys.path.insert(0,str(ROOT/'fft_rational_reuse_research'))
+  11 from fourier_rational import Counted
+  12 from detected_fourier import _sparse_fourier, _delta
+  13 
+  14 _AUTO=object()
+  15 
+  16 
+  17 def target_scan(c,powers,shift,forcing,query):
+  18     """Solve (J-shift I)y=forcing, using necessary Fourier input constraints.
+  19 
+  20 Precondition: forcing=F((E-shift I)query), supplied by the calling evaluator.
+  21 No source inverse or dense target matrix is formed. A scalar consistency
+  22 check enforces both cyclic endpoint equations.
+  23 """
+  24     n=len(powers)
+  25     if n<4 or len(forcing)!=n or len(query)!=n:
+  26         raise ValueError('incompatible target dimensions')
+  27     if shift==c.zero:
+  28         # v_i=y_(i+1); the final transition coefficient vanishes at q^N=1.
+  29         current=c.neg(forcing[-1])
+  30         out=[c.zero]*n
+  31         out[1]=current
+  32         for i in range(n-1):
+  33             root=powers[i+1]
+  34             current=c.sub(c.mul(c.sub(c.one,root),current),
+  35                           c.mul(root,forcing[i]))
+  36             out[(i+2)%n]=current
+  37         return out,dict(branch='zero_shift_scan',missing_coordinate=None,
+  38                         cyclic_closure_checks=0)
+  39 
+  40     y0=query[0]
+  41     for value in query[1:]:
+  42         y0=c.add(y0,value)
+  43     # Every generated coordinate is p_i+h_i*y1; y0 is known from the input.
+  44     p=[y0,c.zero]
+  45     h=[c.zero,c.one]
+  46     for i in range(n-1):
+  47         root=powers[i+1]
+  48         a=c.sub(c.one,root)
+  49         b=c.mul(shift,root)
+  50         p.append(c.sub(c.sub(c.mul(a,p[-1]),c.mul(b,p[-2])),
+  51                        c.mul(root,forcing[i])))
+  52         h.append(c.sub(c.mul(a,h[-1]),c.mul(b,h[-2])))
+  53 
+  54     first_coefficient=h[n]
+  55     first_rhs=c.sub(y0,p[n])
+  56     second_coefficient=c.add(c.one,c.mul(shift,h[n-1]))
+  57     second_rhs=c.sub(c.neg(forcing[-1]),c.mul(shift,p[n-1]))
+  58     missing_coordinate=None
+  59     root_comparisons=0
+  60     if first_coefficient!=c.zero:
+  61         seed=c.mul(first_rhs,c.inv(first_coefficient))
+  62         branch='first_cyclic_equation'
+  63     elif second_coefficient!=c.zero:
+  64         seed=c.mul(second_rhs,c.inv(second_coefficient))
+  65         branch='second_cyclic_equation'
+  66     else:
+  67         if first_rhs!=c.zero or second_rhs!=c.zero:
+  68             raise ValueError('inconsistent cyclic target equations')
+  69         # h is a nonzero target null vector. Similarity implies a unique t
+  70         # with shift=-q^t, and its inverse-Fourier t-coordinate is nonzero.
+  71         negative_shift=c.neg(shift)
+  72         for t,root in enumerate(powers):
+  73             root_comparisons+=1
+  74             if root==negative_shift:
+  75                 missing_coordinate=t
+  76                 break
+  77         if missing_coordinate is None:
+  78             raise ValueError('singular target has no permitted source eigenvalue')
+  79         step=powers[(-missing_coordinate)%n]
+  80         phase=c.one
+  81         projected_p=projected_h=c.zero
+  82         for i in range(n):
+  83             projected_p=c.add(projected_p,c.mul(phase,p[i]))
+  84             projected_h=c.add(projected_h,c.mul(phase,h[i]))
+  85             if i+1<n:
+  86                 phase=c.mul(phase,step)
+  87         if projected_h==c.zero:
+  88             raise ValueError('missing-coordinate functional is unexpectedly zero')
+  89         scalar_n=c.one
+  90         for _ in range(n.bit_length()-1):
+  91             scalar_n=c.add(scalar_n,scalar_n)
+  92         required=c.mul(scalar_n,query[missing_coordinate])
+  93         seed=c.mul(c.sub(required,projected_p),c.inv(projected_h))
+  94         branch='singular_missing_coordinate'
+  95 
+  96     if (c.mul(first_coefficient,seed)!=first_rhs
+  97             or c.mul(second_coefficient,seed)!=second_rhs):
+  98         raise ValueError('inconsistent cyclic target closure')
+  99     # The two initial coordinates are already known; all N entries are emitted.
+ 100     out=[y0,seed]
+ 101     for i in range(2,n):
+ 102         out.append(c.add(p[i],c.mul(h[i],seed)))
+ 103     return out,dict(branch=branch,missing_coordinate=missing_coordinate,
+ 104                     root_index_comparisons=root_comparisons,cyclic_closure_checks=2)
+ 105 
+ 106 
+ 107 def try_extended_fourier(field,n,q,query,*,max_defects=8,shift=_AUTO):
+ 108     """Find/verify a low-defect shift, then return every exact Fourier output.
+ 109 
+ 110 Automatic mode accepts sparse inputs or any shift with <=s defects when
+ 111 m>2s, including shift zero and roots of unity. Passing a shift verifies that
+ 112     specific candidate outside the independent sparse-input fallback. Root
+ 113     validity and exact-field representation remain
+ 114 supplied preconditions. Returns (None, ledger) on an ordinary dense decline.
+ 115 """
+ 116     if (not isinstance(n,int) or isinstance(n,bool) or n<4 or n&(n-1)
+ 117             or len(query)!=n):
+ 118         raise ValueError('dyadic N>=4 and exactly N input coordinates required')
+ 119     if (not isinstance(max_defects,int) or isinstance(max_defects,bool)
+ 120             or max_defects<0):
+ 121         raise ValueError('max_defects must be a nonnegative integer')
+ 122     c=Counted(field)
+ 123     entries=[(i,value) for i,value in enumerate(query) if value!=field.zero]
+ 124     stages={}
+ 125     automatic=shift is _AUTO
+ 126     metadata=dict(accepted=False,input_support=len(entries),input_support_comparisons=n,
+ 127         automatic_shift=automatic,full_output_writes=0,ordinary_fft_calls=0,
+ 128         anchor_transform_calls=0,stages=stages)
+ 129     def decline(reason):
+ 130         metadata.update(reason=reason,path='declined',field_operations=dict(c.count))
+ 131         return None,metadata
+ 132     if len(entries)<=2*max_defects:
+ 133         out=_sparse_fourier(c,n,q,entries)
+ 134         stages['sparse_input_evaluation']=dict(c.count)
+ 135         metadata.update(accepted=True,path='sparse_input',field_operations=dict(c.count),
+ 136                         full_output_writes=n)
+ 137         return out,metadata
+ 138 
+ 139     powers=[field.one]
+ 140     for _ in range(1,n):
+ 141         powers.append(c.mul(powers[-1],q))
+ 142     image=[]
+ 143     for i in range(n):
+ 144         value=query[i]
+ 145         if i+1<n:
+ 146             value=c.add(value,c.mul(c.sub(powers[i+1],field.one),query[i+1]))
+ 147         image.append(c.neg(c.mul(powers[i],value)))
+ 148     stages['root_powers_and_E_action']=dict(c.count)
+ 149     if automatic:
+ 150         before=dict(c.count)
+ 151         balance=0
+ 152         numerator=denominator=None
+ 153         comparisons=0
+ 154         for i,value in entries:
+ 155             if balance==0:
+ 156                 numerator,denominator=image[i],value
+ 157                 balance=1
+ 158             else:
+ 159                 equal=c.mul(image[i],denominator)==c.mul(numerator,value)
+ 160                 comparisons+=1
+ 161                 balance+=1 if equal else -1
+ 162         stages['ratio_cancellation']=_delta(before,c.count)
+ 163         metadata.update(ratio_comparisons=comparisons,majority_index_steps=len(entries),
+ 164                         candidate_balance=balance)
+ 165         if balance==0:
+ 166             return decline('no_strict_ratio_majority')
+ 167         before=dict(c.count)
+ 168         shift=field.zero if numerator==field.zero else c.mul(numerator,c.inv(denominator))
+ 169         stages['candidate_formation']=_delta(before,c.count)
+ 170     metadata['shift']=shift
+ 171     before=dict(c.count)
+ 172     defect=(list(image) if shift==field.zero else
+ 173             [c.sub(value,c.mul(shift,x)) for value,x in zip(image,query)])
+ 174     supported=[(i,value) for i,value in enumerate(defect) if value!=field.zero]
+ 175     stages['full_residual_verification']=_delta(before,c.count)
+ 176     metadata.update(defect_support=len(supported),defect_support_comparisons=n)
+ 177     if len(supported)>max_defects:
+ 178         return decline('candidate_defect_too_dense')
+ 179     before=dict(c.count)
+ 180     forcing=_sparse_fourier(c,n,q,supported,roots=powers)
+ 181     stages['sparse_defect_evaluation']=_delta(before,c.count)
+ 182     before=dict(c.count)
+ 183     out,target=target_scan(c,powers,shift,forcing,query)
+ 184     stages['direct_target_scan']=_delta(before,c.count)
+ 185     metadata.update(accepted=True,path='recurrence',target=target,
+ 186                     field_operations=dict(c.count),full_output_writes=n)
+ 187     return out,metadata
+
+===== SOURCE 28 4a4c8e0c7610311a8e30242c9cd107830b1b6e224e5eda69e8ec1efb554133ff fft_materials_extension_20261009/fft_recurrence_extension_research/independent_checks.py | 1749 bytes 41 lines =====
+   1 """Independent exhaustive acceptance/output check, deliberately tiny field."""
+   2 from itertools import product
+   3 from pathlib import Path
+   4 import hashlib,json,sys
+   5 
+   6 ROOT=Path(__file__).resolve().parent
+   7 sys.path.insert(0,str(ROOT.parent/'fft_qlinear_recurrence_research'))
+   8 from exact_fields import PrimeField,fourier,mv
+   9 from extended_recurrence import try_extended_fourier
+  10 
+  11 
+  12 def main():
+  13     f=PrimeField(5);n=4;q=f.root(n);F=fourier(f,n)
+  14     E=[[0]*n for _ in range(n)]
+  15     for i in range(n):
+  16         E[i][i]=f.neg(f.power(q,i))
+  17         if i+1<n:E[i][i+1]=f.neg(f.mul(f.power(q,i),f.sub(f.power(q,i+1),1)))
+  18     accepted=declined=0;paths={}
+  19     for raw in product(range(5),repeat=n):
+  20         x=list(raw);image=mv(f,E,x);expected=mv(f,F,x)
+  21         for cap in (0,1):
+  22             promised=(sum(v!=0 for v in x)<=2*cap or any(
+  23                 sum(f.sub(a,f.mul(shift,b))!=0 for a,b in zip(image,x))<=cap
+  24                 for shift in range(5)))
+  25             y,meta=try_extended_fourier(f,n,q,x,max_defects=cap)
+  26             assert meta['accepted']==promised,(x,cap,meta)
+  27             if promised:
+  28                 assert y==expected,(x,cap,y,expected)
+  29                 accepted+=1
+  30                 branch=meta.get('target',{}).get('branch',meta['path'])
+  31                 paths[branch]=paths.get(branch,0)+1
+  32             else:
+  33                 assert y is None;declined+=1
+  34     result=dict(status='PASS',exhaustive_input_cap_pairs=accepted+declined,
+  35                 accepted=accepted,declined=declined,paths=paths,
+  36                 source_sha256=hashlib.sha256((ROOT/'extended_recurrence.py').read_bytes()).hexdigest())
+  37     (ROOT/'independent_checks.json').write_text(json.dumps(result,indent=2)+'\n')
+  38     print(json.dumps(result,indent=2))
+  39 
+  40 
+  41 if __name__=='__main__':main()

@@ -1,0 +1,317 @@
+Adaptive binary FFT implementation
+
+Runnable implementation and held out validation | 8 October 2026
+
+The implementation now offers a reusable binary FFT plan with a size dependent kernel choice. For one or a few transforms, use the explicit fixed arithmetic plan to avoid calibration. Optional autotuning compares arithmetic and small lookup kernels once, then reuses its decision. It chose the fastest held-out kernel at three of five sizes; its conservative rule skipped smaller gains at the other two.
+
+Use the fast path first
+
+For one-off or short workloads, construct BinaryFFTPlan(n, method="codelet8") and call plan.execute(x), optionally with out= for a caller-owned output buffer. This path performs no calibration. Inputs must be contiguous one-dimensional NumPy uint8 or bool arrays containing only zero and one. Outputs are complex128; new outputs are independent by default.
+
+For heavy repeated use, get_plan(n, dtype) or binary_fft(x) opts into cached autotuning. The first call is expensive. Up to eight plans are cached in process by size and dtype. Repeated execution does not retune; plan.retune() is explicit. The README contains complete runnable examples and close/clear-cache behavior.
+
+What the selector chose
+
+N
+
+Selected kernel
+
+Held out fastest
+
+Choice penalty
+
+Calibration ms
+
+4,096
+
+lookup 8
+
+lookup 8
+
+0.0%
+
+489.1
+
+16,384
+
+arithmetic 8
+
+lookup 8
+
+6.4%
+
+442.5
+
+65,536
+
+arithmetic 8
+
+lookup 8
+
+0.6%
+
+533.5
+
+262,144
+
+arithmetic 8
+
+arithmetic 8
+
+0.0%
+
+807.5
+
+1,048,576
+
+arithmetic 16
+
+arithmetic 16
+
+0.0%
+
+4016.7
+
+Choice penalty compares the same candidate kernels on held-out timing samples, independently of noisy selected-call timing. Autotuning requires at least an 8% lookup advantage and lookup wins in at least 75% of calibration rounds; otherwise it chooses arithmetic. This deliberately rejects marginal wins, but it cannot guarantee the fastest method on future inputs or under changing machine load.
+
+Calibration is worth paying only with enough reuse
+
+Measured default calibration cost was roughly 0.44 to 0.81 seconds through N = 262,144, and 4.02 seconds at N = 1,048,576. At N = 4,096 the observed saving versus fixed arithmetic8 took about 317,000 transforms to repay calibration. At N = 65,536 the selector chose arithmetic8, so there is no demonstrated payback over choosing that kernel directly. Use fixed mode unless the expected repeated workload justifies tuning.
+
+Held-out tests used eight new seeds per size and 13 randomized timing rounds, separate from calibration. All results matched NumPy; worst absolute error was 2.28e-12. Repeated calls kept calibration_count at one, cached plans were reused, and invalid input, output alignment, aliasing, closed-plan and buffer-ownership checks passed. Public API timing includes validation, ctypes dispatch and optional output allocation; raw sample overlap prevents a reliable isolated dispatch-overhead claim.
+
+Selective FFT caching benchmark
+
+Measured on 8 October 2026 | Random binary inputs | Single cloud CPU
+
+A fixed lookup table for small binary FFT leaves reduces bookkeeping and clearly improves the Python prototype. In compiled C, the benefit is size dependent and shrinks against a good arithmetic leaf kernel. At the original size of 65,536, an 8-bit table does not establish a dependable improvement over the best arithmetic implementation. A 16-bit table is consistently unattractive at larger sizes.
+
+Compiled results
+
+Median microseconds per full transform. The longer confirmation run is shown below; the first run is retained in the source bundle. All C methods use identical upper FFT stages, preallocated output, and reusable plans.
+
+N
+
+Radix 2
+
+Best arithmetic
+
+4 bit lookup
+
+8 bit lookup
+
+16 bit lookup
+
+8 bit speedup
+
+4,096
+
+13.31
+
+11.29
+
+9.73
+
+9.42
+
+10.55
+
+1.20x
+
+16,384
+
+75.82
+
+67.46
+
+63.13
+
+62.57
+
+73.92
+
+1.08x
+
+65,536
+
+394.14
+
+374.60
+
+352.10
+
+368.72
+
+654.28
+
+1.02x
+
+262,144
+
+2,313.18
+
+2,039.16
+
+2,172.52
+
+2,165.97
+
+3,125.88
+
+0.94x
+
+1,048,576
+
+14,762.28
+
+12,757.88
+
+13,474.78
+
+13,471.35
+
+18,456.97
+
+0.95x
+
+At N = 65,536 the 4-bit table was about 6% faster than the best codelet in the confirmation run, but slightly slower in the first run. That small advantage was not repeatable. A speedup below 1.00x means the lookup version is slower. The arithmetic controls include fused 4, 8 and 16 point real-input codelets; this avoids attributing a win merely to removing recursion or combining small stages.
+
+What the timing includes
+
+The C timing includes input permutation and gathers, packing each binary key, copying its full output row, and every remaining FFT merge. It excludes input generation, output allocation and reusable table or plan creation. The original input is never assumed to arrive already bit-packed or already permuted.
+
+Each native sample cycles through 16 distinct seeded inputs. Methods run in randomized order on one pinned CPU. The initial experiment used 11 samples of about 40 ms; confirmation used 21 samples of about 100 ms. Shared virtualized hardware still introduces noise, so differences of a few percent should not determine a production choice without a target-machine test.
+
+Python results and benchmark corrections
+
+Median milliseconds, 15 measurements per method across three seeds. Warm variants reuse the same twiddle plan; lookup variants reuse their table. Garbage collection occurs before every sample and is disabled during that sample to avoid accumulating recursive closure cycles.
+
+N
+
+Uncached
+
+Full cache stripped
+
+8 bit lookup
+
+16 bit lookup
+
+8 bit speedup
+
+4,096
+
+4.221
+
+4.223
+
+2.560
+
+2.908
+
+1.65x
+
+16,384
+
+22.874
+
+22.322
+
+14.684
+
+15.297
+
+1.56x
+
+65,536
+
+110.264
+
+105.194
+
+71.947
+
+75.110
+
+1.53x
+
+The original cached prototype increments a counter for every butterfly, counts every tree visit, and builds summary statistics; its uncached comparison does not. The stripped variant removes those counters and summaries while retaining the original dictionaries and DAG. Original unchanged timings are included in the raw data. Full caching moved around break-even in this environment, rather than consistently reproducing the earlier reported slowdown.
+
+Storage and one time setup
+
+Leaf bits
+
+Patterns
+
+C table
+
+C median us
+
+C first us
+
+Python ms
+
+4
+
+16
+
+1 KiB
+
+0.46
+
+12.20
+
+0.113
+
+8
+
+256
+
+32 KiB
+
+2.23
+
+5.37
+
+1.343
+
+16
+
+65,536
+
+16 MiB
+
+1,608.83
+
+4,995.99
+
+717.429
+
+C entries contain full complex128 spectra, 16 bytes per complex output. Python stores object tuples and complex objects: about 3.3 KiB, 92 KiB and 43 MiB for 4, 8 and 16 bit leaves. C setup is allocation plus population, measured 11 times; the first construction is also shown. These are setup costs, not controlled cold-cache latency measurements.
+
+An 8-bit table needs only 256 entries. A 16-bit table needs 65,536 entries and adds random memory traffic; fewer arithmetic operations do not guarantee less time. To amortize a table, the number of transforms must exceed table setup time divided by the positive per-transform saving. If the warm variant loses, repeated use cannot amortize that loss.
+
+Recommended implementation
+
+Start with a fixed 8-bit direct-index table, and also benchmark 4-bit and arithmetic codelet leaves. Pack the actual decimated FFT leaf into an integer key and index a flat read-only array. No hash table, canonical node IDs, LRU policy or per-node allocation is needed.
+
+Above the cutoff, run the ordinary FFT with no duplicate tracking. Reuse twiddles, input permutation and working buffers across calls. Select the best leaf method once per size and precision, rather than maintaining adaptive bookkeeping inside every FFT.
+
+For uniform random input, avoid caching large subproblems. At N = 65,536 the expected repeated fraction is about 96.875% for 8-bit subproblems, 3.06% for 16-bit subproblems and 0.000024% for 32-bit subproblems. A partial table of equally likely random patterns has no privileged frequent subset.
+
+An untested next candidate is a packed 8-bit real-input table. Store DC and Nyquist as real numbers plus three complex bins: eight doubles, 64 bytes per pattern, 16 KiB total. Reconstruct conjugate bins while writing the full output. Its extra reconstruction work needs measurement; no speedup is claimed here.
+
+Correctness and limits
+
+The C variants passed 630 complete FFT tests through N = 1,048,576, five random seeds per tested size and structured inputs, plus every 4, 8 and 16 bit table row. Worst complete-transform absolute error versus NumPy was 2.24e-12. Python tests covered three seeds and sizes for all eight methods, exhaustive 4 and 8 bit rows, and structured inputs; worst error was 4.34e-13. ASan and UBSan checks passed; leak detection was unavailable under sandbox tracing.
+
+The algorithm is still O(N log N) for a fixed small cutoff. An 8-bit table eliminates three merge levels from online execution; it does not establish a new asymptotic FFT bound or a general-purpose speed advantage. Native code is a purpose-built binary-input microbenchmark, not a replacement claim for FFTW or other tuned libraries.
+
+SciPy and NumPy practical comparisons are retained in the JSON. Their calls include Python dispatch and output allocation, unlike the preallocated C kernel. SciPy rfft returns only N/2 + 1 bins, so its result is contextual and is not an equivalent full-output comparison. All use the same numerical precision.
+
+Reproduce the experiment
+
+The accompanying ZIP contains C source and an auto-compiling Python harness, the Python lookup experiment, the unchanged earlier prototype, and both native datasets. Requirements: Python 3, NumPy, SciPy and GCC on a POSIX platform. No installation or network access is performed by the scripts. Run commands are in README.md.
+
+Environment: AMD EPYC 9V74, Linux x86-64 cloud VM; GCC 14.2.0 with -O3 -march=native, double precision; NumPy 2.3.5 and SciPy 1.17.0. Results apply to this implementation and machine.
+
+Sources: the supplied fft_collision_research.py and fft_collision_research_notes.md; FFTW documentation on generated small codelets (https://fftw.org/fftw3_doc/Generating-your-own-code.html) and reusing plans (https://www.fftw.org/faq/section3.html). The binary lookup design and measurements here are an experiment, with no claim of novelty.

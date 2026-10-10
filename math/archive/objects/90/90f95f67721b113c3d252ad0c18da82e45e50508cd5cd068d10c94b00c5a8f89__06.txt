@@ -1,0 +1,229 @@
+0001 #!/usr/bin/env python3
+0002 """Fresh v13 audit checks. Uploaded modules are read as text, never imported/run.
+0003 
+0004 Exact checks use integers/Fraction. NumPy is used only for separately labelled
+0005 floating-point spectral comparisons. No source test/prototype is executed.
+0006 """
+0007 from __future__ import annotations
+0008 
+0009 import ast
+0010 from collections import Counter
+0011 from fractions import Fraction as F
+0012 import hashlib
+0013 import json
+0014 import math
+0015 from pathlib import Path
+0016 import time
+0017 
+0018 import numpy as np
+0019 
+0020 ROOT = Path(__file__).resolve().parent
+0021 SOURCE = ROOT / "source_evidence"
+0022 
+0023 
+0024 def factors(n):
+0025     out = {}
+0026     p = 2
+0027     while p*p <= n:
+0028         while n % p == 0:
+0029             out[p] = out.get(p, 0) + 1
+0030             n //= p
+0031         p += 1
+0032     if n > 1:
+0033         out[n] = out.get(n, 0) + 1
+0034     return out
+0035 
+0036 
+0037 def phi(n):
+0038     r = n
+0039     for p in factors(n):
+0040         r -= r//p
+0041     return r
+0042 
+0043 
+0044 def mu(n):
+0045     f = factors(n)
+0046     return 0 if max(f.values(), default=0) > 1 else (-1)**len(f)
+0047 
+0048 
+0049 def divisors(n):
+0050     return [d for d in range(1, math.isqrt(n)+1) if n % d == 0] + [n//d for d in range(1, math.isqrt(n)+1) if n%d == 0 and d*d != n]
+0051 
+0052 
+0053 def ramanujan(n, t):
+0054     return sum(d*mu(n//d) for d in divisors(math.gcd(n, t)))
+0055 
+0056 
+0057 def exact_bound_data(n, m):
+0058     ph = phi(n)
+0059     positive = Counter(math.gcd(n, d) for d in range(1, m))
+0060     prefixes = {g: [0]*m for g in positive}
+0061     for g in positive:
+0062         for u in range(1, m):
+0063             prefixes[g][u] = prefixes[g][u-1] + (math.gcd(n, u) == g)
+0064     maxima = {g: max(prefixes[g][u] + prefixes[g][m-1-u] for u in range(m)) for g in positive}
+0065     V = sum((F(2*c, phi(n//g)) for g, c in positive.items()), F(0))
+0066     C = sum((F(maxima[g], phi(n//g)) for g in positive), F(0))
+0067     for g, c in maxima.items():
+0068         assert c <= (m-1)//g
+0069         assert F(ph, phi(n//g)) <= g
+0070         assert c <= 2*positive[g]
+0071     assert C <= V <= F(m*(m-1), ph)
+0072     assert C <= F((m-1)*len(positive), ph)
+0073     return C, V, maxima
+0074 
+0075 
+0076 def exact_q_numerator(n, m):
+0077     """Returns A with Q=A/(N phi(N)) from integer Ramanujan sums."""
+0078     ds = [set(range(u-m+1, u+1)) - {0} for u in range(m)]
+0079     table = [ramanujan(n, j) for j in range(n)]
+0080     return np.array([[sum(table[(d*(j-i)) % n] for d in ds[i%m] & ds[j%m])
+0081                       for j in range(n)] for i in range(n)], dtype=object)
+0082 
+0083 
+0084 def exact_ldl_positive(a):
+0085     """No floating point: ordinary rational LDL for positive definite input."""
+0086     a = [[F(v) for v in row] for row in a]
+0087     n = len(a)
+0088     for k in range(n):
+0089         pivot = a[k][k]
+0090         assert pivot > 0, (n, k, pivot)
+0091         for i in range(k+1, n):
+0092             for j in range(i, n):
+0093                 a[j][i] -= a[i][k]*a[j][k]/pivot
+0094                 a[i][j] = a[j][i]
+0095 
+0096 
+0097 def grid_constant_output(value_over_tau):
+0098     """Independent exact bin-center calculation for identical input rows."""
+0099     centers = []
+0100     for shift in (F(0), F(7, 3), F(14, 3)):
+0101         bin_id = (value_over_tau - shift) // 7
+0102         centers.append(7*(F(bin_id)+F(1, 2))+shift)
+0103     return sorted(centers)[1]
+0104 
+0105 
+0106 def main():
+0107     start = time.time()
+0108     result = {"uploaded_code_executed": False}
+0109     pairs = least_count = strict = 0
+0110     max_v_over_c = (F(0), None)
+0111     for n in range(4, 3001):
+0112         f = factors(n)
+0113         for m in range(2, math.isqrt(n)+1):
+0114             if n % m:
+0115                 continue
+0116             C, V, _ = exact_bound_data(n, m)
+0117             pairs += 1
+0118             strict += C < V
+0119             if V/C > max_v_over_c[0]:
+0120                 max_v_over_c = (V/C, [n, m])
+0121             if m == min(f):
+0122                 assert C == F(m-1, phi(n)) and V == 2*C
+0123                 least_count += 1
+0124     result["exact_divisor_bounds"] = {"all_admissible_pairs_through_n": 3000,
+0125         "pairs": pairs, "strict_C_less_V": strict, "least_factor_cases": least_count,
+0126         "largest_V_over_C": str(max_v_over_c[0]), "at": max_v_over_c[1]}
+0127 
+0128     ram_count = 0
+0129     for n in range(2, 257):
+0130         for t in range(n):
+0131             z = n//math.gcd(n, t)
+0132             assert F(ramanujan(n, t), phi(n)) == F(mu(z), phi(z))
+0133             ram_count += 1
+0134     result["exact_ramanujan_identity_cases"] = ram_count
+0135 
+0136     ldl = []
+0137     for m in range(2, 50):
+0138         w = [[F(m-1-abs(i-j)) - (F(1, 2) if i == j else 0) for j in range(m)] for i in range(m)]
+0139         exact_ldl_positive(w)
+0140         ldl.append(m)
+0141     result["exact_W_minus_half_identity_LDL_sizes"] = ldl
+0142 
+0143     cases = [(4,2),(6,2),(8,2),(9,3),(10,2),(12,2),(15,3),(18,2),
+0144              (21,3),(25,5),(27,3),(35,5),(45,3),(49,7),(63,3),(77,7),(121,11)]
+0145     spectral = []
+0146     for n, p in cases:
+0147         assert min(factors(n)) == p and n%p == 0
+0148         k = n//p
+0149         ph = phi(n)
+0150         a = exact_q_numerator(n, p)
+0151         assert np.array_equal(a, a.T)
+0152         assert sum(a[i,i] for i in range(n)) == (p-1)*n*ph
+0153         w = np.array([[p-1-abs(i-j) for j in range(p)] for i in range(p)], dtype=object)
+0154         if k%p == 0:
+0155             assert np.array_equal(a@a, (p-1)*n*a)
+0156             expected = np.array([float(F(p-1,ph))]*(p*phi(k)) + [0.]*(n-p*phi(k)))
+0157             exact_certificate = "A^2=(p-1)N A"
+0158         else:
+0159             j = p*(p-1)*np.eye(p, dtype=object)-w
+0160             ak = np.eye(n, dtype=object)
+0161             jk = np.eye(p, dtype=object)
+0162             for power in range(1,5):
+0163                 ak = ak@a
+0164                 jk = jk@j
+0165                 assert np.trace(ak) == phi(k)*(k**power)*np.trace(jk)
+0166             eigw = np.linalg.eigvalsh(np.array(w,dtype=float))
+0167             vals = ((p-1)-eigw/p)/ph
+0168             expected = np.array(list(vals)*phi(k)+[0.]*(n-p*phi(k)))
+0169             exact_certificate = "integer spectral moments 1..4"
+0170         actual = np.linalg.eigvalsh(np.array(a, dtype=float)/(n*ph))
+0171         err = float(np.max(np.abs(np.sort(actual)-np.sort(expected))))
+0172         assert err < 2e-12, (n,p,err)
+0173         improved = F(p-1, ph) if k%p == 0 else F(2*p*(p-1)-1, 2*p*ph)
+0174         if p == 2 and k%p:
+0175             improved = F(1, 2*ph)
+0176         assert actual[-1] <= float(improved)+2e-12
+0177         spectral.append({"N":n,"p":p,"exact_check":exact_certificate,
+0178                          "spectrum_max_error":err,"norm_numeric":float(actual[-1]),
+0179                          "rational_bound":str(improved)})
+0180     result["least_factor_spectrum"] = spectral
+0181 
+0182     # Exact source-implied counterexample. M=1 means the row itself is exact.
+0183     assert grid_constant_output(F(0)) == F(7,6)
+0184     assert grid_constant_output(F(1,3)) == F(7,6)
+0185     # tau=sqrt(3); target real=1/sqrt(3)=tau/3; target imaginary=0.
+0186     err_squared = 3*((F(7,6)-F(1,3))**2+F(7,6)**2)
+0187     claimed_failure = F(6*2**51, 6**26)
+0188     assert err_squared == F(37,6) > 4
+0189     assert claimed_failure < F(1,10000)
+0190     result["exact_offset_certificate_counterexample"] = {
+0191         "N":3,"prime":2,"Q":4,"M":1,"input":"e_0", "rows":51,
+0192         "g":3,"normalized_tolerance":2,"failure_probability_actual":1,
+0193         "error_squared":str(err_squared),"claimed_failure":str(claimed_failure),
+0194         "claimed_failure_float":float(claimed_failure)}
+0195 
+0196     # The two block rules, independently computed for an explicit disagreement.
+0197     q = 256
+0198     natural_block = max(2**j for j in range(9) if 2**j <= math.log(q) and 2**(2*j) <= q)
+0199     base2_block = max(2**j for j in range(9) if 2**j <= math.log2(q) and 2**(2*j) <= q)
+0200     assert (natural_block, base2_block) == (4,8)
+0201     result["bessel_block_mismatch"] = {"N":129,"Q":q,"planner_M":natural_block,"executor_M":base2_block}
+0202 
+0203     # Static source inspection only. Parsing creates syntax trees, never code.
+0204     static = {}
+0205     for filename in ("prototype.py","composite_cycle_core.py","offset_class_core.py","v11_fused_reference.py","unit_step_core.py"):
+0206         body = (SOURCE/filename).read_text()
+0207         tree = ast.parse(body)
+0208         function_calls = {}
+0209         for node in tree.body:
+0210             if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)):
+0211                 function_calls[node.name] = [{"call":ast.unparse(c.func),"line":c.lineno}
+0212                                              for c in ast.walk(node) if isinstance(c,ast.Call)]
+0213         static[filename] = {"sha256":hashlib.sha256(body.encode()).hexdigest(), "function_calls":function_calls}
+0214     (ROOT/"STATIC_CALLS.json").write_text(json.dumps(static,indent=2)+"\n")
+0215     calls = {c["call"] for c in static["prototype.py"]["function_calls"]["execute_candidate"]}
+0216     assert "offset_core.streaming_offset_class_fft" in calls
+0217     assert "bessel_core.streaming_fused_all_length_fft" in calls
+0218     calls = {c["call"] for c in static["prototype.py"]["function_calls"]["bessel_candidate"]}
+0219     assert "offset_core.choose_prime_power_block" in calls
+0220     assert not any("addition_kernel_error_bound" in c for c in calls)
+0221     result["static_ast_assertions"] = "PASS"
+0222     result["runtime_seconds"] = time.time()-start
+0223     result["status"] = "PASS: independent checks, with source certificate counterexample confirmed"
+0224     (ROOT/"CHECK_RESULTS.json").write_text(json.dumps(result,indent=2)+"\n")
+0225     print(json.dumps(result,indent=2))
+0226 
+0227 
+0228 if __name__ == "__main__":
+0229     main()

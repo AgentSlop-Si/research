@@ -1,0 +1,331 @@
+0001 #!/usr/bin/env python3
+0002 """Fresh checks for graph-union algebra and output-rank extension.
+0003 
+0004 No uploaded module is imported or executed. Source files are read only for
+0005 SHA-256 provenance. All transforms, convolution, rank operations, and fixtures
+0006 below were authored for this audit; direct quadratic reference methods are
+0007 correctness oracles, not claims about the online fast recognizer's work.
+0008 """
+0009 from pathlib import Path
+0010 from collections import Counter
+0011 from itertools import product
+0012 import hashlib
+0013 import argparse
+0014 import json
+0015 import random
+0016 
+0017 HERE = Path(__file__).resolve().parent
+0018 SOURCE = HERE.parent / 'extracted/fft_hero17_tensor_fiber_graph_union_2026-10-10/hero17_tensor_union'
+0019 RNG = random.Random(1954100917)
+0020 COUNTS = Counter()
+0021 
+0022 
+0023 def primitive_root_of_order(n, p):
+0024     # Audit fixture setup only; not part of an online algorithm.
+0025     assert p > n and (p-1) % n == 0
+0026     for a in range(1, p):
+0027         w = pow(a, (p-1)//n, p)
+0028         if pow(w,n,p) == 1 and all(pow(w,d,p) != 1 for d in range(1,n) if n%d == 0):
+0029             return w
+0030     raise AssertionError((n,p))
+0031 
+0032 
+0033 def materialize(rows, q, m, p, w):
+0034     eta = pow(w,q,p)
+0035     return [sum(c*pow(eta,h*u,p) for h,c in rows[t].items()) % p
+0036             for u in range(m) for t in range(q)]
+0037 
+0038 
+0039 def raw_coefficients(x,q,m,p,w):
+0040     eta=pow(w,q,p)
+0041     inv=pow(m,-1,p)
+0042     return [{h: a for h in range(m)
+0043              if (a := inv*sum(x[t+q*u]*pow(eta,(-h*u)%m,p) for u in range(m))%p)}
+0044             for t in range(q)]
+0045 
+0046 
+0047 def direct_convolution(x,y,p):
+0048     n=len(x)
+0049     return [sum(x[j]*y[(k-j)%n] for j in range(n))%p for k in range(n)]
+0050 
+0051 
+0052 def graph_coefficients(xrows,yrows,q,m,p,w):
+0053     # Independent algebra implementation: enumerate row pairs, intersect labels,
+0054     # keep only a dictionary accumulator. Uploaded code uses frequency buckets,
+0055     # a dense array, and an event list instead.
+0056     eta=pow(w,q,p)
+0057     coeff={}
+0058     edges=0
+0059     events=[]
+0060     for a in range(q):
+0061         for b in range(q):
+0062             t=(a+b)%q
+0063             carry=(a+b)//q
+0064             for h in xrows[a].keys() & yrows[b].keys():
+0065                 term=m*xrows[a][h]*yrows[b][h]*pow(eta,(-h*carry)%m,p)%p
+0066                 idx=(t,h)
+0067                 old=coeff.get(idx,0)
+0068                 coeff[idx]=(old+term)%p
+0069                 events.append((idx,old,coeff[idx]))
+0070                 edges+=1
+0071     return {k:v for k,v in coeff.items() if v}, edges, events
+0072 
+0073 
+0074 def matrix_of_states(states,q,m):
+0075     return [[states.get((t,h),0) for h in range(m)] for t in range(q)]
+0076 
+0077 
+0078 def reconstruct(states,q,m,p,w):
+0079     return materialize([{h:c for (t0,h),c in states.items() if t0==t} for t in range(q)],q,m,p,w)
+0080 
+0081 
+0082 def rank_factor(matrix,p,bound=None):
+0083     """Fresh fixed-rank elimination with an explicit reconstruction assertion."""
+0084     q=len(matrix); m=len(matrix[0]) if q else 0
+0085     basis=[]; pivots=[]; coefficients=[]
+0086     for raw in matrix:
+0087         residual=[v%p for v in raw]
+0088         row_factors=[]
+0089         for pivot,base in zip(pivots,basis):
+0090             multiplier=residual[pivot]
+0091             row_factors.append(multiplier)
+0092             residual=[(a-multiplier*b)%p for a,b in zip(residual,base)]
+0093         pivot=next((j for j,a in enumerate(residual) if a),None)
+0094         if pivot is not None:
+0095             if bound is not None and len(basis)==bound:
+0096                 return None
+0097             multiplier=residual[pivot]
+0098             inverse=pow(multiplier,-1,p)
+0099             basis.append([inverse*a%p for a in residual])
+0100             pivots.append(pivot)
+0101             row_factors.append(multiplier)
+0102         coefficients.append(row_factors)
+0103     for row in coefficients:
+0104         row.extend([0]*(len(basis)-len(row)))
+0105     assert all(sum(coefficients[t][l]*basis[l][h] for l in range(len(basis)))%p == matrix[t][h]%p
+0106                for t in range(q) for h in range(m))
+0107     return coefficients,basis
+0108 
+0109 
+0110 def low_rank_reconstruct(matrix,q,m,p,w,bound):
+0111     labels=[h for h in range(m) if any(matrix[t][h] for t in range(q))]
+0112     compressed=[[matrix[t][h] for h in labels] for t in range(q)]
+0113     factor=rank_factor(compressed,p,bound)
+0114     if factor is None:
+0115         return None
+0116     left,right=factor
+0117     eta=pow(w,q,p)
+0118     powers=[1]
+0119     for _ in range(1,m):
+0120         powers.append(powers[-1]*eta%p)
+0121     evaluated=[[sum(row[j]*powers[(h*u)%m] for j,h in enumerate(labels))%p
+0122                 for u in range(m)] for row in right]
+0123     return [sum(left[t][l]*evaluated[l][u] for l in range(len(right)))%p
+0124             for u in range(m) for t in range(q)]
+0125 
+0126 
+0127 def verify_quotient_identity(xrows,yrows,states,q,m,p,w):
+0128     # The quotient gauge turns the carry-twisted length-Q product into a cyclic
+0129     # convolution separately for every h; this does not give a free joint FFT.
+0130     for h in range(m):
+0131         alpha=[row.get(h,0)*pow(w,(-h*t)%(q*m),p)%p for t,row in enumerate(xrows)]
+0132         beta=[row.get(h,0)*pow(w,(-h*t)%(q*m),p)%p for t,row in enumerate(yrows)]
+0133         ordinary=direct_convolution(alpha,beta,p)
+0134         for t in range(q):
+0135             assert states.get((t,h),0)==m*pow(w,h*t,p)*ordinary[t]%p
+0136             COUNTS['quotient_state_comparisons']+=1
+0137 
+0138 
+0139 def verify_pair(xrows,yrows,q,m,p,w,check_raw=True):
+0140     x=materialize(xrows,q,m,p,w); y=materialize(yrows,q,m,p,w)
+0141     # Recover modes from raw arrays by a separately written full short DFT.
+0142     if check_raw:
+0143         assert raw_coefficients(x,q,m,p,w)==xrows
+0144         assert raw_coefficients(y,q,m,p,w)==yrows
+0145         COUNTS['raw_mode_recoveries']+=2
+0146     states,edges,events=graph_coefficients(xrows,yrows,q,m,p,w)
+0147     expected=direct_convolution(x,y,p)
+0148     actual=reconstruct(states,q,m,p,w)
+0149     assert actual==expected
+0150     COUNTS['all_output_convolution_pairs']+=1
+0151     COUNTS['all_output_convolution_bins']+=q*m
+0152     ax=Counter(h for row in xrows for h in row)
+0153     by=Counter(h for row in yrows for h in row)
+0154     assert edges==sum(ax[h]*by[h] for h in ax)
+0155     kx=sum(map(len,xrows)); ky=sum(map(len,yrows)); s=len(states)
+0156     assert s<=q*m and s<=edges and s*s<=q*kx*ky
+0157     COUNTS['support_bound_cases']+=1
+0158     verify_quotient_identity(xrows,yrows,states,q,m,p,w)
+0159     return states,edges,events,expected
+0160 
+0161 
+0162 def random_rows(q,m,p,r):
+0163     rows=[]
+0164     for _ in range(q):
+0165         hs=RNG.sample(range(m),RNG.randrange(min(r,m)+1))
+0166         rows.append({h:RNG.randrange(1,p) for h in hs})
+0167     return rows
+0168 
+0169 
+0170 def boundary_and_random_cases():
+0171     examples=[]
+0172     for q,m,p in [(1,1,3),(1,8,17),(2,1,5),(2,2,17),(2,3,13),
+0173                   (3,2,13),(3,3,19),(3,4,13),(4,4,97),(4,8,97),(8,4,97),(5,5,101),(6,6,109)]:
+0174         w=primitive_root_of_order(q*m,p)
+0175         for r in (1,2,m):
+0176             for trial in range(12):
+0177                 x=random_rows(q,m,p,r); y=random_rows(q,m,p,r)
+0178                 verify_pair(x,y,q,m,p,w)
+0179         examples.append({'q':q,'m':m,'p':p,'omega':w})
+0180     return examples
+0181 
+0182 
+0183 def exhaustive_tiny():
+0184     q=m=2; p=5; w=2
+0185     choices=[{}]+[{h:c} for h in range(m) for c in range(1,p)]
+0186     vectors=list(product(choices,repeat=q))
+0187     for x in vectors:
+0188         for y in vectors:
+0189             verify_pair(x,y,q,m,p,w,check_raw=False)
+0190             COUNTS['exhaustive_one_mode_pairs_N4']+=1
+0191 
+0192 
+0193 def cancellation_controls():
+0194     q=m=3; p=19; w=primitive_root_of_order(9,p)
+0195     x=[{0:1} for _ in range(q)]
+0196     # Written to reproduce the source loop's event order for bookkeeping only.
+0197     y=[{0:1},{0:p-1},{0:2}]
+0198     states,edges,_,expected=verify_pair(x,y,q,m,p,w)
+0199     dense=[0]*(q*m); active=[]
+0200     for b in range(q):
+0201         for a in range(q):
+0202             idx=((a+b)%q)*m
+0203             if dense[idx]==0:
+0204                 active.append(idx)
+0205             dense[idx]=(dense[idx]+m*y[b][0])%p
+0206     dedup=[idx for idx in dict.fromkeys(active) if dense[idx]]
+0207     assert len(active)==6 and len(dedup)==3
+0208     assert {(idx//m,idx%m):dense[idx] for idx in dedup}==states
+0209     # Final cancellation, disjoint-label zero product, and zero inputs.
+0210     verify_pair(x,[{0:1},{0:p-1},{}],q,m,p,w)
+0211     assert verify_pair(x,[{1:1} for _ in range(q)],q,m,p,w)[0]=={}
+0212     assert verify_pair([{}]*q,x,q,m,p,w)[0]=={}
+0213     return {'q':q,'m':m,'p':p,'omega':w,'edges':edges,'active_events':len(active),
+0214             'deduplicated_surviving_states':len(dedup),'expected_raw':expected}
+0215 
+0216 
+0217 def maximum_rank_controls():
+0218     witnesses=[]
+0219     for q,p in [(2,17),(3,19),(4,97),(5,101),(8,257),(16,257)]:
+0220         m=q; w=primitive_root_of_order(q*m,p)
+0221         for trial in range(3):
+0222             h=list(range(q)); g=list(range(q)); RNG.shuffle(h); RNG.shuffle(g)
+0223             x=[{h[t]:RNG.randrange(1,p)} for t in range(q)]
+0224             y=[{g[t]:RNG.randrange(1,p)} for t in range(q)]
+0225             states,edges,_,_=verify_pair(x,y,q,m,p,w)
+0226             xm=[[materialize(x,q,m,p,w)[t+q*u] for u in range(m)] for t in range(q)]
+0227             ym=[[materialize(y,q,m,p,w)[t+q*u] for u in range(m)] for t in range(q)]
+0228             assert len(rank_factor(xm,p)[1])==q
+0229             assert len(rank_factor(ym,p)[1])==q
+0230             assert edges==q and len(states)==q
+0231             COUNTS['full_matrix_rank_pairs']+=1
+0232         witnesses.append({'q':q,'n':q*q,'p':p,'omega':w,'E':q,'S':q})
+0233     return witnesses
+0234 
+0235 
+0236 def adversarial_controls():
+0237     witnesses=[]
+0238     for s,p in [(2,97),(3,163),(4,257),(5,11251)]:
+0239         q=m=s*s; n=q*m
+0240         # Fixture primality and n-th-root availability are checked directly.
+0241         assert all(p%d for d in range(2,int(p**0.5)+1))
+0242         w=primitive_root_of_order(n,p)
+0243         x=[{t%s:1} for t in range(q)]
+0244         y=[{t//s:1} for t in range(q)]
+0245         states,edges,_,_=verify_pair(x,y,q,m,p,w)
+0246         assert len(states)==edges==s*q
+0247         assert len(states)**2==q*sum(map(len,x))*sum(map(len,y))
+0248         witnesses.append({'s':s,'q':q,'m':m,'p':p,'omega':w,'E':edges,'S':len(states),
+0249                           'reconstruction_contributions':m*len(states),'ratio_2_rejects':len(states)>2*q})
+0250     return witnesses
+0251 
+0252 
+0253 def rank_fallback_controls():
+0254     witnesses=[]
+0255     for s,m,p in [(2,4,97),(3,9,163),(4,16,257),(5,25,11251),
+0256                   (2,64,257),(3,81,1459),(4,64,12289)]:
+0257         q=s*s; n=q*m; w=primitive_root_of_order(n,p); eta=pow(w,q,p)
+0258         x=[{} for _ in range(q)]; y=[{} for _ in range(q)]
+0259         for h in range(s):
+0260             for v in range(s):
+0261                 a=h+s*v
+0262                 x[a][h]=pow(eta,h*((v+h)//s),p)
+0263             for b0 in range(s):
+0264                 b=(s-1)*h+b0
+0265                 y[b][h]=1
+0266         assert max(map(len,x))==1 and max(map(len,y))<=2
+0267         states,edges,_,expected=verify_pair(x,y,q,m,p,w)
+0268         assert states=={(t,h):m%p for t in range(q) for h in range(s)}
+0269         c=matrix_of_states(states,q,m)
+0270         assert len(rank_factor(c,p)[1])==1
+0271         assert low_rank_reconstruct(c,q,m,p,w,1)==expected
+0272         assert len(states)==s*q
+0273         COUNTS['guard_escape_rank_one_families']+=1
+0274         witnesses.append({'s':s,'q':q,'m':m,'n':n,'p':p,'omega':w,'rx':1,'ry':2,
+0275                           'E':edges,'S':len(states),'output_state_matrix_rank':1,
+0276                           'ratio_2_rejects':len(states)>2*q,'rank_1_accepts':True,
+0277                           'active_frequency_columns':s,'rank_1_short_transform_terms':m*s,
+0278                           'rank_1_output_combinations':n})
+0279     # General rectangular rank fixtures, including rank-zero and forced rejection.
+0280     for q,m,p in [(3,4,13),(4,4,97),(4,8,97),(8,4,97),(6,6,109)]:
+0281         w=primitive_root_of_order(q*m,p)
+0282         for d in range(min(q,m)+1):
+0283             for _ in range(4):
+0284                 left=[[RNG.randrange(p) for l in range(d)] for t in range(q)]
+0285                 right=[[RNG.randrange(p) for h in range(m)] for l in range(d)]
+0286                 c=[[sum(left[t][l]*right[l][h] for l in range(d))%p for h in range(m)] for t in range(q)]
+0287                 actual=low_rank_reconstruct(c,q,m,p,w,d)
+0288                 sparse={(t,h):c[t][h] for t in range(q) for h in range(m) if c[t][h]}
+0289                 assert actual==reconstruct(sparse,q,m,p,w)
+0290                 rank=len(rank_factor(c,p)[1])
+0291                 if rank:
+0292                     assert low_rank_reconstruct(c,q,m,p,w,rank-1) is None
+0293                 COUNTS['rank_fallback_matrix_cases']+=1
+0294     return witnesses
+0295 
+0296 
+0297 def main():
+0298     parser=argparse.ArgumentParser()
+0299     parser.add_argument('--output',type=Path,help='Optional result JSON destination; default is no file writes.')
+0300     args=parser.parse_args()
+0301     provenance=json.loads((HERE/'source_provenance.json').read_text())
+0302     hashes={name:meta['sha256'] for name,meta in provenance['files'].items()}
+0303     if SOURCE.exists():
+0304         assert hashes=={name:hashlib.sha256((SOURCE/name).read_bytes()).hexdigest() for name in hashes}
+0305     parameters=boundary_and_random_cases()
+0306     exhaustive_tiny()
+0307     cancellation=cancellation_controls()
+0308     full_rank=maximum_rank_controls()
+0309     adversarial=adversarial_controls()
+0310     rank_extension=rank_fallback_controls()
+0311     result={
+0312         'status':'all independent assertions passed',
+0313         'seed':1954100917,
+0314         'uploaded_code_executed_or_imported':False,
+0315         'model':'Exact supplied prime fields; fixture root search is not online work.',
+0316         'counts':dict(sorted(COUNTS.items())),
+0317         'boundary_and_random_parameters':parameters,
+0318         'cancellation_revival':cancellation,
+0319         'full_rank_graph_witnesses':full_rank,
+0320         'tight_state_growth_witnesses':adversarial,
+0321         'output_rank_fallback_witnesses':rank_extension,
+0322         'source_sha256':hashes,
+0323         'scope':'Algebra/independent checks only. Source tests were read as historical evidence and not rerun. Online fiber recognition is audited in the sibling report.'
+0324     }
+0325     if args.output is not None:
+0326         args.output.write_text(json.dumps(result,indent=2)+'\n')
+0327     print(json.dumps({'status':result['status'],'counts':result['counts']},indent=2))
+0328 
+0329 
+0330 if __name__=='__main__':
+0331     main()

@@ -1,0 +1,60 @@
+   1 """Independent exact tests; no code imported from user uploads."""
+   2 import json, random
+   3 P=998244353
+   4 
+   5 def eye(n): return [[int(i==j) for j in range(n)] for i in range(n)]
+   6 def mul(A,B): return [[sum(a*b for a,b in zip(row,col))%P for col in zip(*B)] for row in A]
+   7 def add(*As): return [[sum(vals)%P for vals in zip(*rows)] for rows in zip(*As)]
+   8 def diag(v): return [[v[i] if i==j else 0 for j in range(len(v))] for i in range(len(v))]
+   9 def rank(A):
+  10     A=[r[:] for r in A]; m=len(A); n=len(A[0]) if m else 0; r=0
+  11     for j in range(n):
+  12         pivot=next((i for i in range(r,m) if A[i][j]),None)
+  13         if pivot is None: continue
+  14         A[r],A[pivot]=A[pivot],A[r]; q=pow(A[r][j],-1,P); A[r]=[v*q%P for v in A[r]]
+  15         for i in range(r+1,m):
+  16             q=A[i][j]; A[i]=[(v-q*w)%P for v,w in zip(A[i],A[r])]
+  17         r+=1
+  18         if r==m: break
+  19     return r
+  20 
+  21 def inv(A):
+  22     n=len(A); T=[row[:]+unit for row,unit in zip(A,eye(n))]
+  23     for j in range(n):
+  24         pivot=next((i for i in range(j,n) if T[i][j]),None)
+  25         if pivot is None: raise ValueError('singular')
+  26         T[j],T[pivot]=T[pivot],T[j]; q=pow(T[j][j],-1,P); T[j]=[v*q%P for v in T[j]]
+  27         for i in range(n):
+  28             if i!=j:
+  29                 q=T[i][j]; T[i]=[(v-q*w)%P for v,w in zip(T[i],T[j])]
+  30     return [r[n:] for r in T]
+  31 
+  32 def check(a,b,c,e,d):
+  33     n=len(a); A=eye(n); C=eye(n)
+  34     for i in range(1,n): A[i][i-1]=-a[i]%P
+  35     for i in range(n-1): C[i][i+1]=-c[i]%P
+  36     B=diag(b); E=diag(e); Ei=diag([pow(v,-1,P) for v in e]); D=diag(d)
+  37     H=add(mul(inv(A),B),mul(inv(C),E),D)
+  38     K=mul(mul(mul(A,H),Ei),C)
+  39     expected=add(mul(mul(B,Ei),C),A,mul(mul(mul(A,D),Ei),C))
+  40     assert K==expected
+  41     assert all(K[i][j]==0 for i in range(n) for j in range(n) if abs(i-j)>1)
+  42     try: Hi=inv(H)
+  43     except ValueError: return False,None
+  44     assert Hi==mul(mul(mul(Ei,C),inv(K)),A)
+  45     q=rank([[Hi[i][j] for j in range(1,n,2)] for i in range(0,n,2)])
+  46     return True,q
+  47 
+  48 rng=random.Random(20261009); checks=0; invertible=0
+  49 for n in range(2,18):
+  50     for trial in range(15):
+  51         # Resets included. Backward diagonal E nonzero is the reduction's explicit hypothesis.
+  52         a=[rng.randrange(0,5) for _ in range(n)]; c=[rng.randrange(0,5) for _ in range(n)]
+  53         b=[rng.randrange(0,5) for _ in range(n)]; e=[rng.randrange(1,5) for _ in range(n)]; d=[rng.randrange(0,5) for _ in range(n)]
+  54         ok,_=check(a,b,c,e,d); checks+=1; invertible+=ok
+  55 examples=[]
+  56 for n in (4,8,16,32,64):
+  57     ok,q=check([0]+[j+2 for j in range(1,n)],[1]*n,[j+3 for j in range(n-1)]+[0],[1]*n,[0]*n)
+  58     assert ok and q==n//2
+  59     examples.append({'N':n,'even_row_odd_column_inverse_rank':q,'lower_bound_rank_inverse_minus_any_diagonal':q})
+  60 print(json.dumps({'field_prime':P,'random_reduction_checks':checks,'invertible_inverse_checks':invertible,'upload_weight_examples':examples,'scope':'Finite exact certificates only; no all-N Fourier factorization or speedup.'},indent=2))

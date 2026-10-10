@@ -1,0 +1,88 @@
+   1 """Cost-aware choice between an existing prepared Phase-8 jet and Phase-9 JIT.
+   2 
+   3 This *deliberately* treats cold compilation as a resource cost, and it compares
+   4 against the already-optimized Phase-8 prepared kernel rather than against fresh
+   5 FFTs alone. It is a heuristic planner, not an optimality theorem.
+   6 """
+   7 from __future__ import annotations
+   8 from dataclasses import dataclass
+   9 import time
+  10 from typing import Sequence
+  11 import numpy as np
+  12 from compiled_kernels import compile_prepared, _generate_source, _FUNCTION_CACHE, njit
+  13 
+  14 
+  15 @dataclass
+  16 class AdaptiveKernel:
+  17     prepared: object
+  18     native: object | None
+  19     mode: str
+  20     reason: str
+  21     estimated_breakeven_versions: int | None
+  22     planning_seconds: float
+  23 
+  24     def single(self, position: int, delta: float, indices: Sequence[int] | None = None):
+  25         chosen = self.native if self.mode == 'native' else self.prepared
+  26         return chosen.single(position, delta, indices=indices)
+  27 
+  28 
+  29 def plan_auto(prepared, *, expected_versions: int, output_bins: Sequence[int] | None = None,
+  30               min_unseen_jit_versions: int = 2048, max_compiled_bytes: int = 256*1024**2,
+  31               samples: int = 6) -> AdaptiveKernel:
+  32     """Choose compiled only if predicted savings amortize compiled startup.
+  33 
+  34     If no compilation for this symbolic shape has been cached, small batches
+  35     stay on the existing NumPy jet path. This avoids the cold JIT cliff.
+  36     For large batches, sample both completed backends on the exact same valid
+  37     updates, including array allocation and output generation. Calibration
+  38     costs are included in planning_seconds and in the breakeven calculation.
+  39     """
+  40     start = time.perf_counter()
+  41     if type(expected_versions) is not int or expected_versions < 1:
+  42         raise ValueError('expected_versions must be a positive integer')
+  43     if type(min_unseen_jit_versions) is not int or min_unseen_jit_versions < 1:
+  44         raise ValueError('invalid minimum JIT reuse')
+  45     n = prepared.n
+  46     extra=0
+  47     for h in range(1, prepared.degree+1):
+  48         d=prepared.kernels[h]
+  49         if d is not None:extra+=d.nbytes
+  50     extra += prepared.kernels[0].nbytes
+  51     if extra > max_compiled_bytes:
+  52         return AdaptiveKernel(prepared,None,'numpy','compiled kernel would exceed memory budget',None,time.perf_counter()-start)
+  53     sparse=[];dense=[]
+  54     for h in range(1,prepared.degree+1):
+  55         c=prepared.sparse_coefficients[h] if prepared.sparse_coefficients else None
+  56         if c is None:dense.append(h)
+  57         else:
+  58             for pos,amp in sorted(c.items()):
+  59                 if amp:sparse.append(h)
+  60     # Compiler memoizes functions by shape, not by numeric input values.
+  61     signature=_generate_source(tuple(dense),tuple(sparse),partial=output_bins is not None)
+  62     cache_present=((signature,True) in _FUNCTION_CACHE and getattr(_FUNCTION_CACHE[(signature,True)],'signatures',()))
+  63     if expected_versions < min_unseen_jit_versions and not cache_present:
+  64         return AdaptiveKernel(prepared,None,'numpy','batch too small to justify an unseen JIT compile',None,time.perf_counter()-start)
+  65     try:
+  66         compiled=compile_prepared(prepared,backend='numba',max_degree=max(8,prepared.degree))
+  67     except (RuntimeError,ValueError) as ex:
+  68         return AdaptiveKernel(prepared,None,'numpy',f'JIT unavailable: {ex}',None,time.perf_counter()-start)
+  69     q=np.asarray(output_bins,dtype=np.int64) if output_bins is not None else None
+  70     events=[((i*1667+3)%n, 0.0001*(i+1)) for i in range(max(samples,2))]
+  71     def run(obj):
+  72         t0=time.perf_counter()
+  73         for t,d in events:
+  74             out=obj.single(t,d,indices=q)
+  75             if not np.all(np.isfinite(out)):
+  76                 raise ArithmeticError('nonfinite benchmark output')
+  77         return (time.perf_counter()-t0)/len(events)
+  78     t_numpy=run(prepared)
+  79     t_jit=run(compiled)
+  80     spent=time.perf_counter()-start
+  81     benefit=t_numpy-t_jit
+  82     if benefit <= 0:
+  83         return AdaptiveKernel(prepared,None,'numpy','Numba not faster than prepared NumPy on sampled workload',None,spent)
+  84     # Startup is sunk in this call. Count it for the amortization decision, too.
+  85     need=int(np.ceil(spent/benefit))
+  86     if expected_versions < need:
+  87         return AdaptiveKernel(prepared,None,'numpy',f'cold compilation/calibration needs about {need} versions to amortize',need,spent)
+  88     return AdaptiveKernel(prepared,compiled,'native','expected workload amortizes measured startup versus prepared NumPy',need,spent)

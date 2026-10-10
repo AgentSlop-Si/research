@@ -1,0 +1,138 @@
+   1 """Independent v4 arithmetic/data audit. Never imports uploaded programs."""
+   2 from pathlib import Path
+   3 import cmath
+   4 import hashlib
+   5 import json
+   6 import math
+   7 import random
+   8 
+   9 HERE = Path(__file__).resolve().parent
+  10 ROOT = HERE.parent
+  11 rng = random.Random(472106)
+  12 
+  13 def packed_sums(rows, U, word_bits=64):
+  14     G, B = len(rows), len(rows[0])
+  15     q = (2*U*G).bit_length()
+  16     lanes = word_bits//q
+  17     assert lanes >= 1
+  18     accum = [0]*((B+lanes-1)//lanes)
+  19     for row in rows:
+  20         for base in range(0, B, lanes):
+  21             word = sum((row[t]+U) << (q*(t-base))
+  22                        for t in range(base, min(base+lanes, B)))
+  23             assert 0 <= word < 1 << word_bits
+  24             accum[base//lanes] += word
+  25             assert accum[base//lanes] < 1 << word_bits
+  26     got = [((accum[t//lanes] >> (q*(t%lanes))) & ((1<<q)-1))-G*U
+  27            for t in range(B)]
+  28     want = [sum(row[t] for row in rows) for t in range(B)]
+  29     assert got == want
+  30     return got
+  31 
+  32 guard_cases = guard_lanes = 0
+  33 for U in [1, 2, 7, 32, 127]:
+  34     for G in [1, 2, 3, 8, 17, 64, 257]:
+  35         for B in [1, 2, 7, 16, 65, 129, 257]:
+  36             for kind in range(4):
+  37                 rows = [[(-U if kind == 0 else U if kind == 1 else
+  38                           (-U if (a+b)%2 else U) if kind == 2 else
+  39                           rng.randint(-U,U)) for b in range(B)] for a in range(G)]
+  40                 packed_sums(rows,U)
+  41                 guard_cases += 1
+  42                 guard_lanes += B
+  43 
+  44 phase_cases = 0
+  45 for N in [1,2,3,5,8,17,31,64,127]:
+  46     for Q in [2,4,8,16,32,128,1024]:
+  47         for r in range(N):
+  48             q = ((2*Q*r+N)//(2*N))%Q
+  49             # Exact circular numerator distance; no floating-point decisions.
+  50             distance = min(abs(Q*r-N*q), abs(Q*r-N*q-N*Q), abs(Q*r-N*q+N*Q))
+  51             assert 2*distance <= N
+  52             phase_cases += 1
+  53 
+  54 decoder_cases = 0
+  55 max_error = max_ratio = 0.0
+  56 phases = [1,-1,1j,-1j]
+  57 for N in [1,2,3,5,8,17,31,64,127]:
+  58     for B in [1,3,8,17,64,129]:
+  59         for g,G in [(1,1),(2,3),(3,5),(4,8)]:
+  60             h1,h2 = 1/32,1/64
+  61             Q0 = 256
+  62             Q1 = 1 << math.ceil(math.log2(256*B))
+  63             U = 33
+  64             atoms = [(rng.randrange(N),rng.randrange(4)) for _ in range(g*G)]
+  65             bound = math.pi/Q0 + math.pi*(B-1)/Q1 + (h1+h2)/math.sqrt(2)
+  66             for m0 in range(0,N,B):
+  67                 count=min(B,N-m0)
+  68                 real_rows,imag_rows=[],[]
+  69                 for group in range(G):
+  70                     vals=[]
+  71                     for t in range(count):
+  72                         val=0j
+  73                         for j,s in atoms[group*g:(group+1)*g]:
+  74                             qa=((2*Q0*((j*m0)%N)+N)//(2*N))%Q0
+  75                             qb=((2*Q1*j+N)//(2*N))%Q1
+  76                             val += phases[s]*cmath.exp(-2j*math.pi*(qa/Q0+t*qb/Q1))
+  77                         vals.append(val/g)
+  78                     real_rows.append([round(v.real/h1) for v in vals])
+  79                     imag_rows.append([round(v.imag/h1) for v in vals])
+  80                 sr=packed_sums(real_rows,U)
+  81                 si=packed_sums(imag_rows,U)
+  82                 for t in range(count):
+  83                     approx=complex(round((h1*sr[t]/G)/h2)*h2,
+  84                                    round((h1*si[t]/G)/h2)*h2)
+  85                     exact=sum(phases[s]*cmath.exp(-2j*math.pi*j*(m0+t)/N)
+  86                               for j,s in atoms)/(g*G)
+  87                     error=abs(approx-exact)
+  88                     assert error <= bound+1e-12,(N,B,g,G,error,bound)
+  89                     max_error=max(max_error,error)
+  90                     max_ratio=max(max_ratio,error/bound)
+  91             decoder_cases += 1
+  92 
+  93 source_data=HERE/'source_v4_results.json'
+  94 if not source_data.exists():
+  95     source_data=ROOT/'extracted_0/results.json'
+  96 saved=json.loads(source_data.read_text())
+  97 rows=saved['packed_correctness']
+  98 slopes={}
+  99 for case in ['flat','random_phase','gaussian','spike_noise']:
+ 100     vals=[r for r in saved['sampling_scaling'] if r['case']==case]
+ 101     xs=[math.log(r['k']) for r in vals]
+ 102     ys=[math.log(r['median_normalized_sampling_error']) for r in vals]
+ 103     xm,ym=sum(xs)/len(xs),sum(ys)/len(ys)
+ 104     slopes[case]=sum((x-xm)*(y-ym) for x,y in zip(xs,ys))/sum((x-xm)**2 for x in xs)
+ 105 saved_summary={
+ 106     'rows':len(rows),
+ 107     'max_decoder_error':max(r['decoder_error_normalized'] for r in rows),
+ 108     'violations':sum(r['decoder_error_normalized']>r['decoder_bound_normalized']+1e-12 for r in rows),
+ 109     'one_word_key_violations':sum(r['params']['descriptor_bits']*r['params']['g_used']>r['params']['word_bits'] for r in rows),
+ 110     'table_exponent_budget_violations':sum(r['params']['descriptor_bits']*r['params']['g_used']>r['params']['gamma']*math.log2(r['N']) for r in rows),
+ 111     'all_lookup_miss_rows':sum(r['table_entries']==r['lookup_count'] for r in rows),
+ 112     'total_cache_misses':sum(r['table_entries'] for r in rows),
+ 113     'total_lookups':sum(r['lookup_count'] for r in rows),
+ 114     'sampling_loglog_slopes':slopes,
+ 115     'clipped_budget_violations':[
+ 116         {'mode':kind,'log2N':r['log2N'],'stated_total':r['eta_total_budget'],
+ 117          'sampling_plus_decoder':r['eta_sample']+r['eta_total_budget']/2}
+ 118         for kind in ['cost_model_linear','cost_model_subfft'] for r in saved[kind]
+ 119         if r['eta_sample']+r['eta_total_budget']/2>r['eta_total_budget']+1e-12
+ 120     ]
+ 121 }
+ 122 manifest=ROOT/'extracted_2/fft_macro_wordram_checkpoint_20261009/MANIFEST.json'
+ 123 manifest_count=None
+ 124 if manifest.exists():
+ 125     obj=json.loads(manifest.read_text())
+ 126     for rel,digest in obj['files'].items():
+ 127         path=manifest.parent/rel
+ 128         assert path.is_relative_to(manifest.parent)
+ 129         assert hashlib.sha256(path.read_bytes()).hexdigest()==digest
+ 130     manifest_count=len(obj['files'])
+ 131 
+ 132 result={'independent_guard_cases':guard_cases,'independent_guard_lanes':guard_lanes,
+ 133         'independent_phase_rounding_cases':phase_cases,
+ 134         'independent_decoder_cases':decoder_cases,'max_decoder_error':max_error,
+ 135         'max_fraction_of_bound':max_ratio,'saved_data_audit':saved_summary,
+ 136         'macro_manifest_verified_files':manifest_count}
+ 137 (HERE/'independent_results.json').write_text(json.dumps(result,indent=2)+'\n')
+ 138 print(json.dumps(result,indent=2))

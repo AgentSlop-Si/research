@@ -1,0 +1,150 @@
+"""Exact modular Jacobian of two quasiseparable separated-generator stages.
+
+Fixed permutation p: M = S2 P S1, P maps stage2 row-input index i to
+stage1 output index p[i]. Each stage is diagonal + strictly lower-rank-r
+triangular outer product + strictly upper-rank-r triangular outer product.
+
+This generator parameterization is a dense, generic semiseparable chart; the
+results below concern THIS chart, not a proof against every QS representation.
+"""
+import json
+import random
+import sys
+from pathlib import Path
+import numpy as np
+
+MOD=12289  # 12288 divisible by 2^12; small enough for safe int64 matmul
+
+def matmul(A,B):
+    return (A@B)%MOD
+
+def stage(n,r,rng):
+    L=np.array([[rng.randrange(1, MOD) for _ in range(r)] for _ in range(n)],dtype=np.int64)
+    V=np.array([[rng.randrange(1, MOD) for _ in range(r)] for _ in range(n)],dtype=np.int64)
+    U=np.array([[rng.randrange(1, MOD) for _ in range(r)] for _ in range(n)],dtype=np.int64)
+    W=np.array([[rng.randrange(1, MOD) for _ in range(r)] for _ in range(n)],dtype=np.int64)
+    d=np.array([rng.randrange(1,MOD) for _ in range(n)],dtype=np.int64)
+    return {'L':L,'V':V,'U':U,'W':W,'d':d}
+
+def value(par):
+    n=len(par['d'])
+    low=np.tril(matmul(par['L'],par['V'].T),k=-1)
+    upp=np.triu(matmul(par['U'],par['W'].T),k=1)
+    return (low+upp+np.diag(par['d']))%MOD
+
+def variants(par):
+    n=len(par['d']);r=par['L'].shape[1]
+    for i in range(n):
+        d=np.zeros((n,n),dtype=np.int64);d[i,i]=1
+        yield ('d',i,0), d
+    for typ,partner,byrow,lower in [('L','V',True,True),('V','L',False,True),('U','W',True,False),('W','U',False,False)]:
+        for i in range(n):
+            for k in range(r):
+                d=np.zeros((n,n),dtype=np.int64)
+                for j in range(n):
+                    if (i>j if byrow and lower else (j>i if byrow and not lower else (j>i if lower else i>j))):
+                        if byrow: d[i,j]=par[partner][j,k]
+                        else: d[j,i]=par[partner][j,k]
+                yield (typ,i,k),d
+
+def basis(n,r,shuffle,seed=1011):
+    rng=random.Random(seed)
+    a,b=stage(n,r,rng),stage(n,r,rng)
+    A=value(a); B=value(b)
+    # row reorder maps P @ A
+    PA=A[shuffle,:]
+    M=matmul(B,PA)
+    J=[]
+    for key,d in variants(a): J.append(matmul(B,d[shuffle,:]).reshape(-1))
+    for key,d in variants(b): J.append(matmul(d,PA).reshape(-1))
+    return M,np.array(J,dtype=np.int64).T,a,b
+
+def rank_mod(matrix,p=None):
+    if p is None: p=MOD
+    a=np.array(matrix,dtype=np.int64,copy=True)%p
+    if not len(a.shape)==2: raise ValueError('matrix required')
+    nr,nc=a.shape;r=0
+    for j in range(nc):
+        if r>=nr:break
+        ids=np.flatnonzero(a[r:,j])
+        if ids.size==0:continue
+        k=r+int(ids[0])
+        if k!=r: a[[r,k]]=a[[k,r]]
+        a[r,j:]=a[r,j:]*pow(int(a[r,j]),-1,p)%p
+        ids=np.flatnonzero(a[r+1:,j])+r+1
+        if ids.size:
+            a[ids,j:]=(a[ids,j:]-a[ids,j:j+1]*a[r:r+1,j:])%p
+        r+=1
+    return r
+
+def basis_null(mat,p=None):
+    if p is None: p=MOD
+    a=np.array(mat,dtype=np.int64,copy=True)%p
+    nr,nc=a.shape;r=0;piv=[]
+    for j in range(nc):
+        if r>=nr:break
+        ids=np.flatnonzero(a[r:,j])
+        if ids.size==0:continue
+        k=r+int(ids[0]);a[[r,k]]=a[[k,r]]
+        a[r,j:]=a[r,j:]*pow(int(a[r,j]),-1,p)%p
+        for i in range(nr):
+            if i!=r and a[i,j]:a[i,j:]=(a[i,j:]-int(a[i,j])*a[r,j:])%p
+        piv.append(j);r+=1
+    free=[j for j in range(nc) if j not in piv]
+    base=[]
+    for f in free:
+        z=np.zeros(nc,dtype=np.int64);z[f]=1
+        for i,j in enumerate(piv):z[j]=(-a[i,f])%p
+        assert not np.any((mat@z)%p)
+        base.append(z)
+    return base
+
+def row_col_constraints(M,R,C):
+    # Tangent to rank<=rank(M[R,C]) variety if actual rank is maximal allowed.
+    n=len(M);A=M[np.ix_(R,C)]
+    LL=basis_null(A.T);RR=basis_null(A)
+    for u in LL:
+        for v in RR:
+            eq=np.zeros(n*n,dtype=np.int64)
+            for i,row in enumerate(R):
+                for j,col in enumerate(C):
+                    eq[row*n+col]=(int(u[i])*int(v[j]))%MOD
+            yield eq
+
+def check_jacobian(M,J,a,b,shuffle,nchecks=14):
+    # Differential identity with exact polynomial finite difference for generator coordinate.
+    rng=random.Random(728)
+    for which,par in ((0,a),(1,b)):
+        vs=list(variants(par))
+        for it in rng.sample(range(len(vs)), min(nchecks,len(vs))):
+            key,_=vs[it]
+            A={name:np.copy(val) for name,val in a.items()}
+            B={name:np.copy(val) for name,val in b.items()}
+            (A if which==0 else B)[key[0]][key[1]] += 1 if key[0]=='d' else 0
+            if key[0]!='d': (A if which==0 else B)[key[0]][key[1],key[2]] +=1
+            Mnew=matmul(value(B),value(A)[shuffle,:])
+            assert np.array_equal((Mnew-M).reshape(-1)%MOD, J[:,it + (0 if which==0 else len(list(variants(a))))]%MOD),(key,which)
+    return True
+
+def study(n,r,shuffle,seed=1011):
+    M,J,a,b=basis(n,r,shuffle,seed)
+    check_jacobian(M,J,a,b,shuffle)
+    count=J.shape[1];rk=rank_mod(J)
+    # Dimension upper bound for separated-generator chart, corrected for
+    # internal GL(r) changes in four triangular pieces, endpoint zero fibers
+    # and the shared intermediate diagonal gauge:
+    upper=2*(n+4*(n-1)*r-2*r*r)-n
+    return {'n':n,'r':r,'seed':seed,'shuffle':list(shuffle),'number_parameters':count,
+            'field_prime':MOD,'jacobian_rank':rk,'ambient_dimension':n*n,
+            'codimension_from_jacobian':n*n-rk,
+            'separated_chart_dimension_upper':upper,
+            'jacobian_finite_differences':'passed'},M,J
+
+if __name__=='__main__':
+    trials=[]
+    for n,r in [(8,1),(16,1),(16,2),(32,1),(32,2)]:
+        shuf=list(range(n));random.Random(919+n).shuffle(shuf)
+        res,_,_=study(n,r,shuf)
+        print(json.dumps(res),flush=True)
+        trials.append(res)
+    Path(__file__).with_name('jacobian_results.json').write_text(json.dumps(trials,indent=2)+'\n')

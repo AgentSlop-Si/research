@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Verify the proved arbitrary-length two-defect identity in exact finite fields.
+No uploaded code is executed or imported. This is a control, not a factorization.
+"""
+import random,json
+from pathlib import Path
+P=Path(__file__).resolve().parent
+
+def solve(A,b,p):
+ rows=[[x%p for x in row]+[bb%p] for row,bb in zip(A,b)];n=len(A)
+ for col in range(n):
+  at=next(i for i in range(col,n) if rows[i][col]); rows[col],rows[at]=rows[at],rows[col]
+  f=pow(rows[col][col],-1,p); rows[col]=[x*f%p for x in rows[col]]
+  for i in range(n):
+   if i!=col:
+    f=rows[i][col];rows[i]=[(x-f*y)%p for x,y in zip(rows[i],rows[col])]
+ return [row[-1] for row in rows]
+
+rng=random.Random(1646);results=[]
+for p in (257,65537):
+ for n in (8,16,32,64,128):
+  z=next(x for x in range(2,p) if pow(x,n,p)==1 and pow(x,n//2,p)!=1)
+  for z in (z,pow(z,3,p)):
+   checked=0
+   for trial in range(10):
+    first=[rng.randrange(p) for _ in range(3)];lastfree=rng.randrange(p)
+    roots=[1,pow(z,-1,p),pow(z,-2,p)]
+    coeff=solve([[pow(r,k,p) for r in roots] for k in range(3)],first,p)
+    hstar=[sum(c*pow(r,k,p) for c,r in zip(coeff,roots))%p for k in range(n)]
+    H=hstar[:-2]+[lastfree,1]
+    for i in range(3,n):
+     direct=sum(H[k]*pow(z,i*k,p) for k in range(n))%p
+     defect=((lastfree-hstar[-2])*pow(z,-2*i,p)+(1-hstar[-1])*pow(z,-i,p))%p
+     assert direct==defect
+     checked+=1
+   results.append({'p':p,'n':n,'z':z,'exact_rows':checked})
+res={'scope':'Two-boundary-defect identity; not a complete factorization','uploaded_code_executed':False,'checks':results,'exact_rows':sum(x['exact_rows'] for x in results)}
+(P/'defect_results.json').write_text(json.dumps(res,indent=2)+'\n');print(json.dumps(res,indent=2))

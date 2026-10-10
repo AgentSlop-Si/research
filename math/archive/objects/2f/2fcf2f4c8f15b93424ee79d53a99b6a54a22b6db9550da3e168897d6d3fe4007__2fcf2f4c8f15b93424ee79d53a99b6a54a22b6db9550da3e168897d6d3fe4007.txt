@@ -1,0 +1,32 @@
+"""Build a chain-safe Phase 15 ZIP with previous Phase 14 archive embedded."""
+from pathlib import Path
+import zipfile,hashlib
+ROOT=Path('/mnt/data')
+DIR=ROOT/'fft_green_phase15_folding'
+OUT=ROOT/'fft_green_research_phase15_2026-10-09.zip'
+entry={}
+entry['FFT_RESEARCH_START_HERE_PHASE15.md']=ROOT/'FFT_RESEARCH_START_HERE_PHASE15.md'
+entry['previous_full_phase14_checkpoint.zip']=ROOT/'fft_green_research_phase14_2026-10-09.zip'
+entry['original_uploaded_nonunitary_green.zip']=ROOT/'fft_nonunitary_global_green_research_2026-10-09(1).zip'
+entry['original_FFT_discussion.txt']=ROOT/'Вставленный текст(1).txt'
+for path in sorted(DIR.rglob('*')):
+    if not path.is_file() or '__pycache__' in path.parts or path.suffix=='.pyc' or path.name=='SHA256SUMS.txt':
+        continue
+    entry[str(path.relative_to(ROOT))]=path
+checks=[f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {arc}' for arc,p in sorted(entry.items())]
+manifest='\n'.join(checks)+'\n'
+(DIR/'SHA256SUMS.txt').write_text(manifest)
+entry['SHA256SUMS.txt']=DIR/'SHA256SUMS.txt'
+with zipfile.ZipFile(OUT,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+    for arc,path in sorted(entry.items()):z.write(path,arc)
+with zipfile.ZipFile(OUT) as z:
+    assert z.testzip() is None
+    for arc,path in entry.items():
+        assert z.read(arc)==path.read_bytes(),arc
+print('ARCHIVE',OUT)
+print('SIZE_BYTES',OUT.stat().st_size)
+print('FILES',len(entry))
+print('SHA256',hashlib.sha256(OUT.read_bytes()).hexdigest())
+print('PREVIOUS_ARCHIVE_INCLUDED', 'previous_full_phase14_checkpoint.zip' in entry)
+print('PRIOR_USER_UPLOADS_INCLUDED', 'original_uploaded_nonunitary_green.zip' in entry and 'original_FFT_discussion.txt' in entry)
+print('ZIP_INTEGRITY_OK',True)

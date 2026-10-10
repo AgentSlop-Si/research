@@ -1,0 +1,428 @@
+0001 #!/usr/bin/env python3
+0002 """Independent exact condition-reset checks; NOT an implementation of #130.
+0003 
+0004 Python 3 + SymPy + NumPy. No network, installation, or imported research code.
+0005 Run: python3 test_condition_reset_independent.py --output results.json
+0006 Exact assertions are separate from illustrative numerical SVD/roundoff results.
+0007 """
+0008 import argparse
+0009 import json
+0010 import math
+0011 import sys
+0012 import unittest
+0013 from pathlib import Path
+0014 
+0015 import numpy as np
+0016 import sympy as s
+0017 
+0018 I = s.I
+0019 R = s.Rational
+0020 RESULTS = {}
+0021 
+0022 
+0023 def canonical(M):
+0024     return M.applyfunc(s.expand)
+0025 
+0026 
+0027 def exact_equal(A, B):
+0028     if A.shape != B.shape or any(s.expand(x) != 0 for x in A - B):
+0029         raise AssertionError(f"Exact matrices differ: {A.shape}, {B.shape}")
+0030 
+0031 
+0032 def is_unitary(M):
+0033     exact_equal(canonical(M.conjugate().T * M), s.eye(M.cols))
+0034 
+0035 
+0036 def shear_left(M, target, source, coefficient):
+0037     """One actual scalar shear, not a simultaneous block operation."""
+0038     if target == source:
+0039         raise ValueError("A shear needs distinct coordinates")
+0040     N = M.copy()
+0041     for k in range(M.cols):
+0042         N[target, k] = s.expand(M[target, k] + coefficient * M[source, k])
+0043     return N
+0044 
+0045 
+0046 def shear_inverse_right(M, target, source, coefficient):
+0047     N = M.copy()
+0048     for k in range(M.rows):
+0049         N[k, source] = s.expand(M[k, source] - coefficient * M[k, target])
+0050     return N
+0051 
+0052 
+0053 def embed(M, coordinates, dimension):
+0054     N = s.eye(dimension)
+0055     for i, a in enumerate(coordinates):
+0056         for j, b in enumerate(coordinates):
+0057             N[a, b] = M[i, j]
+0058     return N
+0059 
+0060 
+0061 def borrowed_add_word(U, source, target, scratch):
+0062     """Dense O(B^2) ADD_U via four-shear commutators; arbitrary scratch.
+0063 
+0064     z += c*x; y += z; z -= c*x; y -= z gives y += c*x.
+0065     This is an independent toy compiler, not the manuscript's replay compiler.
+0066     """
+0067     gates = []
+0068     for j in range(U.rows):
+0069         for i in range(U.cols):
+0070             c = U[j, i]
+0071             if c != 0:
+0072                 gates += [(scratch, source[i], c), (target[j], scratch, s.Integer(1)),
+0073                           (scratch, source[i], -c), (target[j], scratch, s.Integer(-1))]
+0074     return gates
+0075 
+0076 
+0077 def exchange_word(U):
+0078     n = U.rows
+0079     a, b, z = list(range(n)), list(range(n, 2*n)), 2*n
+0080     return (borrowed_add_word(U, a, b, z) +
+0081             borrowed_add_word(-U.conjugate().T, b, a, z) +
+0082             borrowed_add_word(U, a, b, z))
+0083 
+0084 
+0085 def expected_exchange(U):
+0086     n = U.rows
+0087     zero = s.zeros(n)
+0088     W = zero.row_join(-U.conjugate().T).col_join(U.row_join(zero))
+0089     return s.diag(W, s.Integer(1))
+0090 
+0091 
+0092 def to_numpy(M):
+0093     return np.array(M.evalf(17).tolist(), dtype=np.complex128)
+0094 
+0095 
+0096 def local_prefixes(U):
+0097     d = 2*U.rows + 1
+0098     P = s.eye(d)
+0099     Pinv = s.eye(d)
+0100     prefixes = [(P, Pinv)]
+0101     for j, i, c in exchange_word(U):
+0102         P = shear_left(P, j, i, c)
+0103         Pinv = shear_inverse_right(Pinv, j, i, c)
+0104         exact_equal(P * Pinv, s.eye(d))
+0105         # Determinants are also implied by the elementary form of each gate.
+0106         if s.expand(P.det()) != 1:
+0107             raise AssertionError("Non-unimodular exact prefix")
+0108         prefixes.append((P, Pinv))
+0109     exact_equal(P, expected_exchange(U))
+0110     return prefixes
+0111 
+0112 
+0113 def check_serial_fiber(Q, coordinates, U, prefixes, numeric=False):
+0114     """Check every scalar prefix against embed(P_t) Q, with unitary Q."""
+0115     is_unitary(Q)
+0116     M = Q.copy()
+0117     worst = 1.0
+0118     for t, (j, i, c) in enumerate(exchange_word(U), 1):
+0119         M = shear_left(M, coordinates[j], coordinates[i], c)
+0120         P, _ = prefixes[t]
+0121         exact_equal(M, canonical(embed(P, coordinates, Q.rows) * Q))
+0122         if numeric:
+0123             worst = max(worst, float(np.linalg.cond(to_numpy(M))))
+0124     is_unitary(M)
+0125     return M, worst
+0126 
+0127 
+0128 def permutation(p):
+0129     M = s.zeros(len(p))
+0130     for j, i in enumerate(p):
+0131         M[j, i] = 1
+0132     return M
+0133 
+0134 
+0135 class ExactResetTests(unittest.TestCase):
+0136     @classmethod
+0137     def setUpClass(cls):
+0138         cls.H = s.Matrix([[1, 1], [1, -1]]) / s.sqrt(2)
+0139         cls.Hprefix = local_prefixes(cls.H)
+0140         cls.U4 = s.Matrix([[(-I)**(j*k) / 2 for k in range(4)] for j in range(4)])
+0141 
+0142     def test_01_scalar_anchor_counterexample(self):
+0143         S = 8 * s.eye(2)
+0144         whole = s.diag(S, s.eye(2))
+0145         exact_equal(S.conjugate().T * S, 64 * s.eye(2))
+0146         exact_equal(whole.conjugate().T * whole, s.diag(64, 64, 1, 1))
+0147         # From these exact Gram spectra: kappa(S)=1, kappa(S direct-sum I)=8.
+0148         tiny = s.diag(R(1, 8), 1)
+0149         exact_equal(tiny.T * tiny, s.diag(R(1, 64), 1))
+0150         RESULTS['scalar_anchor'] = {'local_condition': 1, 'global_condition': 8,
+0151                                     'small_scale_global_condition': 8}
+0152 
+0153     def test_02_asynchronous_unimodular_blocks(self):
+0154         P = s.diag(4, R(1, 2), R(1, 2))
+0155         Q = s.diag(2, 2, R(1, 4))
+0156         self.assertEqual(P.det(), 1)
+0157         self.assertEqual(Q.det(), 1)
+0158         # Exact diagonal singular values, no numerical SVD needed.
+0159         self.assertEqual(4 / R(1, 2), 8)
+0160         self.assertEqual(2 / R(1, 4), 8)
+0161         self.assertEqual(4 / R(1, 4), 16)
+0162         RESULTS['asynchronous_blocks'] = {'each_condition': 8, 'joint_condition': 16}
+0163 
+0164     def test_03_arbitrary_borrowed_scratch(self):
+0165         c = 3 + 2*I
+0166         word = borrowed_add_word(s.Matrix([[c]]), [0], [1], 2)
+0167         M = s.eye(3)
+0168         for j, i, a in word:
+0169             M = shear_left(M, j, i, a)
+0170             self.assertEqual(s.expand(M.det()), 1)
+0171         exact_equal(M, s.Matrix([[1, 0, 0], [c, 1, 0], [0, 0, 1]]))
+0172         # Full matrix equality covers arbitrary, nonzero and correlated scratch.
+0173         RESULTS['borrowed_scratch_commutator'] = {'scalar_shears': len(word),
+0174                                                 'full_state_identity_verified': True}
+0175 
+0176     def test_04_exact_fourier_bank_exchange(self):
+0177         is_unitary(self.U4)
+0178         prefix = local_prefixes(self.U4)
+0179         is_unitary(prefix[-1][0])
+0180         actual = prefix[-1][0][:, :4]
+0181         expected = s.zeros(9, 4)
+0182         expected[4:8, :] = self.U4
+0183         exact_equal(actual, expected)
+0184         RESULTS['fourier4_exchange'] = {'scalar_shears': len(prefix)-1,
+0185                                        'exact_all_prefix_determinants': 1,
+0186                                        'scratch_restored_for_all_contents': True}
+0187 
+0188     def test_05_actual_dft4_serial_fft_schedule(self):
+0189         # State = four coordinates in bank A, four in bank B, one scratch.
+0190         # Bit reversal in A and B, first H fibers, twiddle -i, crossed H fibers.
+0191         bitrev = permutation([0, 2, 1, 3])
+0192         Q = s.diag(bitrev, bitrev, s.Integer(1))
+0193         worst = 1.0
+0194         fiber_count = 0
+0195         for fiber in ([0, 1], [2, 3]):
+0196             positions = fiber + [4+i for i in fiber] + [8]
+0197             Q, k = check_serial_fiber(Q, positions, self.H, self.Hprefix, True)
+0198             worst = max(worst, k)
+0199             fiber_count += 1
+0200         twiddle = s.eye(9)
+0201         twiddle[7, 7] = -I
+0202         Q = twiddle * Q
+0203         is_unitary(Q)
+0204         for fiber in ([0, 2], [1, 3]):
+0205             positions = [4+i for i in fiber] + fiber + [8]
+0206             Q, k = check_serial_fiber(Q, positions, self.H, self.Hprefix, True)
+0207             worst = max(worst, k)
+0208             fiber_count += 1
+0209         desired = s.zeros(9, 4)
+0210         desired[:4, :] = self.U4
+0211         exact_equal(Q[:, :4], desired)
+0212         exact_equal(Q[8:9, :], s.eye(9)[8:9, :])
+0213         localmax = max(float(np.linalg.cond(to_numpy(P))) for P, _ in self.Hprefix)
+0214         self.assertAlmostEqual(worst, localmax, delta=1e-10)
+0215         RESULTS['actual_dft4'] = {'scalar_shears': fiber_count*48,
+0216                                 'serial_fibers': fiber_count, 'macro_levels': 2,
+0217                                 'exact_matrix_equal_to_normalized_dft4': True,
+0218                                 'all_exact_prefix_factorizations_verified': True,
+0219                                 'numeric_max_global_condition': worst,
+0220                                 'numeric_max_local_condition': localmax,
+0221                                 'numeric_final_condition': float(np.linalg.cond(to_numpy(Q)))}
+0222 
+0223     def test_06_repeated_unitary_macro_resets(self):
+0224         Q = s.eye(9)
+0225         worst = 1.0
+0226         for level in range(10):
+0227             source_offset, target_offset = (0, 4) if level % 2 == 0 else (4, 0)
+0228             fibers = ([0, 1], [2, 3]) if level % 2 == 0 else ([0, 2], [1, 3])
+0229             for fiber in fibers:
+0230                 coordinates = ([source_offset+i for i in fiber] +
+0231                                [target_offset+i for i in fiber] + [8])
+0232                 Q, k = check_serial_fiber(Q, coordinates, self.H, self.Hprefix, True)
+0233                 worst = max(worst, k)
+0234             # Explicit exact unit-modulus twiddle and permutation on full state.
+0235             D = s.eye(9)
+0236             D[target_offset+3, target_offset+3] = -I
+0237             Q = D * Q
+0238             p = list(range(9))
+0239             p[0], p[1] = p[1], p[0]
+0240             Q = permutation(p) * Q
+0241             is_unitary(Q)
+0242         localmax = max(float(np.linalg.cond(to_numpy(P))) for P, _ in self.Hprefix)
+0243         self.assertAlmostEqual(worst, localmax, delta=1e-9)
+0244         RESULTS['ten_macro_resets'] = {'scalar_shears': 960, 'macro_levels': 10,
+0245                                       'exact_unitary_fiber_boundaries': 20,
+0246                                       'numeric_max_global_condition': worst,
+0247                                       'numeric_max_local_condition': localmax}
+0248 
+0249     def test_07_zero_clean_is_not_full_state_reset(self):
+0250         T = s.diag(1, 2)
+0251         x = s.symbols('x')
+0252         for levels in (1, 2, 8):
+0253             M = T**levels
+0254             exact_equal(M * s.Matrix([x, 0]), s.Matrix([x, 0]))
+0255             self.assertEqual(M[1, 1], 2**levels)
+0256         RESULTS['zero_clean_counterexample'] = {'levels': 8, 'restricted_map_condition': 1,
+0257                                                'full_state_condition': 256}
+0258 
+0259     def test_08_retained_garbage_prevents_reset(self):
+0260         # Two inputs and one scratch, accumulating only the first input in scratch.
+0261         G = s.Matrix([[1, 0, 0], [0, 1, 0], [1, 0, 1]])
+0262         M = G**8
+0263         F = M[:, :2]
+0264         exact_equal(F.T * F, s.diag(65, 1))
+0265         self.assertEqual(M[2, 0], 8)
+0266         self.assertNotEqual(M.T * M, s.eye(3))
+0267         RESULTS['retained_garbage'] = {'levels': 8, 'restricted_condition_exact': 'sqrt(65)',
+0268                                      'full_state_condition_exact': '33 + 8*sqrt(17)'}
+0269 
+0270     def test_09_finished_unitarity_does_not_erase_roundoff(self):
+0271         # In binary64, round-to-nearest-even loses the 1 in 2^53+1 exactly.
+0272         x = np.float64(1)
+0273         y = np.float64(1)
+0274         a = np.float64(2**53)
+0275         y = np.float64(y + a*x)
+0276         y = np.float64(y - a*x)
+0277         self.assertEqual(float(y), 0.0)
+0278         exact = s.Matrix([[1, 0], [2**53, 1]])
+0279         inverse = s.Matrix([[1, 0], [-2**53, 1]])
+0280         exact_equal(inverse*exact, s.eye(2))
+0281         RESULTS['roundoff_cancellation'] = {'arithmetic': 'binary64, nearest-even',
+0282                                            'exact_macro': 'identity',
+0283                                            'input': [1, 1], 'computed_output': [1, 0],
+0284                                            'absolute_error_l2': 1}
+0285 
+0286     def test_10_unitary_roundoff_accumulates(self):
+0287         # The exact rational rotation is unitary at EVERY macro boundary.
+0288         # This numerical section illustrates, rather than proves, drift rates.
+0289         U = s.Matrix([[R(3, 5), -R(4, 5)], [R(4, 5), R(3, 5)]])
+0290         is_unitary(U)
+0291         c, d = np.float32(3/5), np.float32(4/5)
+0292         x, y = np.float32(1), np.float32(0)
+0293         rows = []
+0294         for k in range(1, 10001):
+0295             x, y = (np.float32(np.float32(c*x)-np.float32(d*y)),
+0296                     np.float32(np.float32(d*x)+np.float32(c*y)))
+0297             if k in (1, 10, 100, 1000, 10000):
+0298                 rows.append({'macro_steps': k, 'computed_norm': math.hypot(float(x), float(y)),
+0299                              'exact_norm': 1.0})
+0300         self.assertTrue(all(math.isfinite(r['computed_norm']) for r in rows))
+0301         RESULTS['unitary_roundoff_drift'] = rows
+0302 
+0303     def test_11_exact_computable_condition_certificates(self):
+0304         records = []
+0305         for label, U, maximum in [('H2', self.H, R(171, 2)),
+0306                                    ('U4', self.U4, R(1769, 8))]:
+0307             products = []
+0308             for P, Pinv in local_prefixes(U):
+0309                 norm_p_sq = s.expand(sum(a*s.conjugate(a) for a in P))
+0310                 norm_inverse_sq = s.expand(sum(a*s.conjugate(a) for a in Pinv))
+0311                 product = s.expand(norm_p_sq*norm_inverse_sq)
+0312                 self.assertTrue(product.is_Rational)
+0313                 self.assertLessEqual(product, maximum)
+0314                 products.append(product)
+0315             self.assertEqual(max(products), maximum)
+0316             # ||P||_2 ||P^-1||_2 <= ||P||_F ||P^-1||_F.
+0317             # Determinant anchoring then transfers this local bound to serial
+0318             # global prefixes, without adding a global-dimension factor.
+0319             records.append({'local_transform': label,
+0320                             'exact_condition_squared_upper_bound': str(maximum),
+0321                             'display_condition_upper_bound': float(s.sqrt(maximum))})
+0322         RESULTS['exact_condition_certificates'] = records
+0323 
+0324     def test_12_all_length_bluestein_numerical_identities(self):
+0325         # Bounded numerical sanity checks only. No spectral-norm SVD sweep.
+0326         # Fourier convention: exp(+2*pi*i*j*k/N); normalized output 1/sqrt(N).
+0327         rng = np.random.default_rng(20261009)
+0328         rows = []
+0329         for n in (1, 2, 3, 5, 6, 7, 9, 10, 15, 17):
+0330             m = 1 << ((2*n-2).bit_length())
+0331             j = np.arange(n)
+0332             positive_chirp = np.exp(1j*np.pi*j*j/n)
+0333             b = np.zeros(m, dtype=np.complex128)
+0334             b[0] = 1
+0335             for k in range(1, n):
+0336                 b[k] = np.exp(-1j*np.pi*k*k/n)
+0337                 b[m-k] = b[k]
+0338             self.assertEqual(int(np.count_nonzero(b)), 2*n-1)
+0339             # The signed support is -(n-1),...,(n-1); neither endpoint +/-n
+0340             # is inserted. For m=2n this is exactly one missing periodic term.
+0341             if m == 2*n:
+0342                 self.assertEqual(b[n], 0)
+0343             D = m*np.fft.ifft(b)/math.sqrt(n)
+0344             bound = 9+4*math.log(2*n)
+0345             self.assertLessEqual(float(np.max(np.abs(D))), bound)
+0346 
+0347             # Full small matrix identity: Y V* D V X = normalized F_n.
+0348             X = np.zeros((m, n), dtype=np.complex128)
+0349             X[:n] = np.diag(positive_chirp)
+0350             actual = np.fft.fft(D[:, None]*np.fft.ifft(X, axis=0, norm='ortho'),
+0351                                  axis=0, norm='ortho')[:n]
+0352             actual = positive_chirp[:, None]*actual
+0353             reference = np.exp(2j*np.pi*j[:, None]*j[None, :]/n)/math.sqrt(n)
+0354             matrix_error = float(np.max(np.abs(actual-reference)))
+0355             self.assertLess(matrix_error, 2e-12)
+0356 
+0357             # Dirty buffers are arbitrary AND correlated with the source.
+0358             x = rng.normal(size=n)+1j*rng.normal(size=n)
+0359             y0 = rng.normal(size=n)+1j*rng.normal(size=n)
+0360             z0 = rng.normal(size=m)+1j*rng.normal(size=m)
+0361             z0[:n] += x
+0362             w0 = rng.normal(size=m)+1j*rng.normal(size=m)+0.3*z0
+0363             y, z, w = y0.copy(), z0.copy(), w0.copy()
+0364 
+0365             def pass_once(with_source, sign):
+0366                 nonlocal y, z, w
+0367                 if with_source:
+0368                     z[:n] += positive_chirp*x
+0369                 z = np.fft.ifft(z, norm='ortho')
+0370                 w += D*z
+0371                 w = np.fft.fft(w, norm='ortho')
+0372                 y += sign*positive_chirp*w[:n]
+0373                 w = np.fft.ifft(w, norm='ortho')
+0374                 w -= D*z
+0375                 z = np.fft.fft(z, norm='ortho')
+0376                 if with_source:
+0377                     z[:n] -= positive_chirp*x
+0378 
+0379             pass_once(True, 1)
+0380             first_restore = max(np.max(np.abs(z-z0)), np.max(np.abs(w-w0)))
+0381             pass_once(False, -1)
+0382             dirty_error = float(np.max(np.abs(y-y0-reference@x)))
+0383             scratch_error = float(max(np.max(np.abs(z-z0)), np.max(np.abs(w-w0))))
+0384             self.assertLess(float(first_restore), 2e-12)
+0385             self.assertLess(dirty_error, 3e-12)
+0386             self.assertLess(scratch_error, 3e-12)
+0387 
+0388             qj = np.arange(2*n)
+0389             gauss_spectrum = (2*n)*np.fft.ifft(np.exp(-1j*np.pi*qj*qj/n))
+0390             magnitudes = np.abs(gauss_spectrum)
+0391             gauss_error = float(np.max(np.minimum(magnitudes, np.abs(magnitudes-2*math.sqrt(n)))))
+0392             self.assertLess(gauss_error, 2e-11)
+0393             self.assertEqual(int(np.count_nonzero(magnitudes > math.sqrt(n))), n)
+0394             gj = np.arange(4*n)
+0395             G4n = np.sum(np.exp(2j*np.pi*gj*gj/(4*n)))
+0396             sqrt_from_gauss = G4n/(2*(1+1j))
+0397             normalization_error = float(abs(sqrt_from_gauss-math.sqrt(n)))
+0398             self.assertLess(normalization_error, 2e-11)
+0399             rows.append({'Fourier_sign': '+', 'N': n, 'M': m, 'max_abs_diagonal_D': float(np.max(np.abs(D))),
+0400                          'proposed_diagonal_bound': bound,
+0401                          'matrix_identity_max_abs_error': matrix_error,
+0402                          'dirty_add_max_abs_error': dirty_error,
+0403                          'scratch_restore_max_abs_error': scratch_error,
+0404                          'complete_gauss_magnitude_error': gauss_error,
+0405                          'gauss_sqrt_normalization_error': normalization_error})
+0406         RESULTS['bluestein_numerical_only'] = rows
+0407 
+0408 
+0409 def main():
+0410     parser = argparse.ArgumentParser(description=__doc__)
+0411     parser.add_argument('--output', type=Path, help='Optional JSON results path')
+0412     args = parser.parse_args()
+0413     suite = unittest.defaultTestLoader.loadTestsFromTestCase(ExactResetTests)
+0414     outcome = unittest.TextTestRunner(verbosity=2).run(suite)
+0415     payload = {'status': 'PASS' if outcome.wasSuccessful() else 'FAIL',
+0416                'tests_run': outcome.testsRun, 'sympy_version': s.__version__,
+0417                'numpy_version': np.__version__,
+0418                'claim_boundary': 'Independent toy validation. No #130 implementation, speedup, '
+0419                                  'Ailon model equivalence, or numerical stability claim.',
+0420                'results': RESULTS}
+0421     if args.output:
+0422         args.output.write_text(json.dumps(payload, indent=2) + '\n')
+0423     print(json.dumps(payload, indent=2))
+0424     return 0 if outcome.wasSuccessful() else 1
+0425 
+0426 
+0427 if __name__ == '__main__':
+0428     sys.exit(main())

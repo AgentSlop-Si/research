@@ -1,0 +1,24 @@
+"""Optional real-SPD sanity check; mathematical proof in RESEARCH.md.
+Requires numpy, not used by finite-field exact checks.
+"""
+import numpy as np
+import json
+from pathlib import Path
+
+
+def run():
+    output=[]
+    for n in (8,16,32,64,128):
+        T=np.diag([3.]*n)+np.diag([-1.]*(n-1),1)+np.diag([-1.]*(n-1),-1)
+        U=T+np.eye(n)
+        S=np.linalg.inv(T)+np.linalg.inv(U)
+        SI=np.linalg.inv(S)
+        k=np.linalg.cond(S)
+        assert k<=45/11+1e-10
+        assert np.min(S)>0 and np.max(SI[np.triu_indices(n,1)])<0
+        output.append({'n':n,'condition_number':float(k),'S_positive':True,'S_inverse_offdiag_negative':True,
+                      'min_abs_inv_entry':float(np.min(np.abs(SI)))})
+    Path(__file__).with_name('condition_results.json').write_text(json.dumps(output,indent=2)+'\n')
+    for e in output:print(e)
+    return output
+if __name__=='__main__':run()

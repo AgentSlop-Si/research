@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""One-shot reproducible regression: all assertions must pass, nonzero exit on failure."""
+import subprocess,sys,json,pathlib,hashlib,time
+HERE=pathlib.Path(__file__).resolve().parent
+CASES=['test_phase6.py','test_complex.py','test_adversarial.py','scale_audit.py','coverage_bound.py','unitary_entropy_gate.py']
+def main():
+    result={}
+    for script in CASES:
+        t=time.monotonic()
+        proc=subprocess.run([sys.executable,str(HERE/script)],cwd=HERE,text=True,capture_output=True,check=True)
+        result[script]={'pass':True,'duration_s':round(time.monotonic()-t,3),
+                        'stdout_last_300':proc.stdout[-300:]}
+        print('PASS',script,'in',result[script]['duration_s'],'s',flush=True)
+    (HERE/'AUDIT_RESULTS.json').write_text(json.dumps(result,indent=2))
+    return 0
+if __name__=='__main__':sys.exit(main())

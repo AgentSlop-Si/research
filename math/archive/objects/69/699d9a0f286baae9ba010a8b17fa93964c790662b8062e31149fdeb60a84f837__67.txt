@@ -1,0 +1,67 @@
+   1 """Independent exact modular nonexistence checks, no imported project modules.
+   2 
+   3 For N=8, using a primitive eighth root r in F_p gives a specialization
+   4 of Z[zeta_8] -> F_p. A nonzero determinant after specialization proves
+   5 its original determinant is nonzero over the characteristic-zero field.
+   6 
+   7 This certifies lower bounds, never suffices on its own for existence of a
+   8 characteristic-zero rational expression.
+   9 """
+  10 import json
+  11 
+  12 P=998244353
+  13 R=pow(3,(P-1)//8,P)
+  14 assert pow(R,8,P)==1 and pow(R,4,P)==P-1
+  15 
+  16 
+  17 def rank(A):
+  18     if not A:return 0
+  19     A=[list(map(lambda x: x%P,row)) for row in A]
+  20     rows=len(A);cols=len(A[0]);i=0
+  21     for j in range(cols):
+  22         pivot=next((k for k in range(i,rows) if A[k][j]),None)
+  23         if pivot is None:continue
+  24         A[i],A[pivot]=A[pivot],A[i]
+  25         inv=pow(A[i][j],-1,P)
+  26         A[i]=[v*inv%P for v in A[i]]
+  27         for k in range(i+1,rows):
+  28             coeff=A[k][j]
+  29             if coeff:A[k]=[(a-coeff*b)%P for a,b in zip(A[k],A[i])]
+  30         i+=1
+  31         if i==rows:break
+  32     return i
+  33 
+  34 
+  35 def run():
+  36     nodes=[]
+  37     for mask in range(16):
+  38         a=sum(pow(R,j,P) for j in range(4) if mask>>j&1)%P
+  39         b=sum(pow(R,3*j,P) for j in range(4) if mask>>j&1)%P
+  40         nodes.append((a,b))
+  41     assert len({a for a,b in nodes})==16
+  42     polydeg=10
+  43     poly=[[(pow(a,j,P)) for j in range(polydeg+1)] for a,b in nodes]
+  44     augmented=[r+[b] for r,(a,b) in zip(poly,nodes)]
+  45     assert rank(poly)==11
+  46     assert rank(augmented)==12
+  47     ratdeg=7
+  48     rat=[([pow(a,j,P) for j in range(ratdeg+1)]
+  49           + [(-b*pow(a,j,P))%P for j in range(ratdeg+1)])
+  50          for a,b in nodes]
+  51     assert rank(rat)==16
+  52     # Degree 8: 18 columns, 16 rows => nonzero kernel, but existence
+  53     # requires checking Q != 0 at all nodes separately in char zero.
+  54     deg8=[([pow(a,j,P) for j in range(9)]
+  55           + [(-b*pow(a,j,P))%P for j in range(9)])
+  56           for a,b in nodes]
+  57     assert rank(deg8)==16
+  58     return {'field_prime':P,'primitive_eighth_root':R,'unique_alpha_samples':16,
+  59             'polynomial_degree_at_most_10_excluded':rank(poly)==11 and rank(augmented)==12,
+  60             'rational_num_den_degree_at_most_7_excluded':rank(rat)==16,
+  61             'rank_poly_deg10':rank(poly),'rank_poly_deg10_aug':rank(augmented),
+  62             'rank_rational_deg7':rank(rat),'rank_rational_deg8':rank(deg8)}
+  63 
+  64 if __name__=='__main__':
+  65     r=run()
+  66     with open('modular_certificate.json','w') as f:json.dump(r,f,indent=2)
+  67     print(r)

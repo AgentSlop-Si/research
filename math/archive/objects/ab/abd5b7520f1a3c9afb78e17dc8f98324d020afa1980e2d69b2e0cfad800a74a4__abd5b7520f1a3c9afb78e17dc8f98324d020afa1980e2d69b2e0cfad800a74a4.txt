@@ -1,0 +1,38 @@
+"""Rank rigidity of a single complex diagonal mask between real invertible
+mixers: F=A Q B. Since ReF=A ReQ B and ImF=A ImQ B, ranks of the two
+parts classify all complex diagonal phases in Q.
+
+A real orthogonal simultaneous-eigenbasis reconstruction supplies an
+independent positive control. Its dense eigenbasis is NOT a fast FFT.
+"""
+from __future__ import annotations
+import numpy as np
+from numeric_audit import Fhat
+
+def audit_real_mask(n):
+    F=Fhat(n)
+    C=F.real;S=F.imag
+    rk_re=int(np.linalg.matrix_rank(C,tol=1e-9))
+    rk_im=int(np.linalg.matrix_rank(S,tol=1e-9))
+    # C and S commute and are real symmetric; distinct nonzero magnitudes
+    # in C+sqrt(2)*S allow a common real orthogonal eigenbasis.
+    eigvec=np.linalg.eigh(C+np.sqrt(2)*S)[1]
+    Q=eigvec.T@F@eigvec
+    diag=np.diag(Q)
+    real=int(sum(abs(z.imag)<1e-9 for z in diag))
+    imag=int(sum(abs(z.real)<1e-9 for z in diag))
+    mixed=int(sum(abs(z.real)>=1e-9 and abs(z.imag)>=1e-9 for z in diag))
+    off_diag=float(np.max(abs(Q-np.diag(diag))))
+    reconstructed=eigvec@np.diag(diag)@eigvec.T
+    rec_err=float(np.max(abs(reconstructed-F)))
+    return dict(n=n,rank_real=rk_re,rank_imag=rk_im,
+                required_real_phase_entries=rk_re,
+                required_pure_imaginary_entries=rk_im,
+                measured_real_mask_entries=real,
+                measured_imaginary_mask_entries=imag,
+                measured_mixed_mask_entries=mixed,
+                offdiagonal_eigenbasis_error=off_diag,
+                Fourier_reconstruction_error=rec_err)
+if __name__=='__main__':
+    import json
+    print(json.dumps([audit_real_mask(n) for n in (4,8,16,32,64,128)],indent=2))

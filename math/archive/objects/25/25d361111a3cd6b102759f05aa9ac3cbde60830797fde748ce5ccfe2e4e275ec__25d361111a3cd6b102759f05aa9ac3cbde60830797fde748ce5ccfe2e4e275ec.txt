@@ -1,0 +1,95 @@
+"""Exact finite-field analogue of the Haar-augmented Green mixer.
+
+The field is F_998244353. It contains i, sqrt(2), and 2^k-th roots
+for k<=23. The final Q=I+i eps R is unnormalized (as in phase 12).
+"""
+from haar_adapter import HaarEscapeMixer,is_power_of_two
+from unitary_mixer import MOD,UnitaryGreenMixer
+
+
+def tonelli_shanks(n,p=MOD):
+    n%=p
+    if n==0:return 0
+    if pow(n,(p-1)//2,p)!=1:
+        raise ValueError('not a square')
+    if p%4==3:
+        return pow(n,(p+1)//4,p)
+    q=p-1;s=0
+    while q%2==0:
+        s+=1;q//=2
+    z=2
+    while pow(z,(p-1)//2,p)!=p-1:z+=1
+    c=pow(z,q,p);x=pow(n,(q+1)//2,p);t=pow(n,q,p);m=s
+    while t!=1:
+        i=1;u=t*t%p
+        while u!=1:
+            u=u*u%p;i+=1
+            if i>=m:raise AssertionError('tonelli iteration failed')
+        b=pow(c,1<<(m-i-1),p)
+        x=x*b%p;t=t*b*b%p;c=b*b%p;m=i
+    return x
+
+SQRT2=tonelli_shanks(2)
+assert SQRT2*SQRT2%MOD==2
+# Ensure the selected finite-field sqrt(2) is cyclotomically compatible
+# with the exact primitive Fourier roots used by the covariance audits.
+OMEGA8=pow(3,(MOD-1)//8,MOD)
+assert SQRT2==(OMEGA8+pow(OMEGA8,-1,MOD))%MOD
+
+
+def inv_sqrt_size(n):
+    if not is_power_of_two(n):raise ValueError('length not a power of 2')
+    k=n.bit_length()-1
+    root=(pow(2,k//2,MOD)*(SQRT2 if k&1 else 1))%MOD
+    return pow(root,-1,MOD)
+
+
+def haar_synthesis_mod(x):
+    m=len(x);out=[0]*m
+    if not is_power_of_two(m):raise ValueError('bad size')
+    def rec(i,lo,hi,base):
+        if hi-lo==1:out[lo]=base;return
+        w=x[i]*inv_sqrt_size(hi-lo)%MOD;mid=(lo+hi)//2
+        rec(2*i,lo,mid,(base+w)%MOD)
+        rec(2*i+1,mid,hi,(base-w)%MOD)
+    rec(1,0,m,x[0]*inv_sqrt_size(m)%MOD)
+    return out
+
+
+def haar_analysis_mod(x):
+    m=len(x);out=[0]*m
+    if not is_power_of_two(m):raise ValueError('bad size')
+    def rec(i,lo,hi):
+        if hi-lo==1:return x[lo]
+        mid=(lo+hi)//2
+        l=rec(2*i,lo,mid);r=rec(2*i+1,mid,hi)
+        out[i]=(l-r)*inv_sqrt_size(hi-lo)%MOD
+        return (l+r)%MOD
+    out[0]=rec(1,0,m)*inv_sqrt_size(m)%MOD
+    return out
+
+
+class HaarEscapeMixerMod(UnitaryGreenMixer):
+    def __init__(self,n,order=None,seed=20261009):
+        if not is_power_of_two(n) or n<4:raise ValueError('n power of two')
+        super().__init__(n,order=order,seed=seed,p=MOD)
+    def apply_R(self,x):
+        m=self.half
+        return haar_synthesis_mod(x[m:]) + haar_analysis_mod(x[:m])
+
+class StrongHaarEscapeMixerMod(HaarEscapeMixerMod):
+    """Experimental strong-coupling Cayley/Haar stage, p-field only.
+
+    Its path strength 1/2 and Haar strength 1/2 DO NOT obey the Phase-12
+    small-angle five-stage veto or its inherited strong-cut perturbation proof.
+    It is a separate exact finite test of the phase/permutation invariant.
+    """
+    def __init__(self,n,order=None,seed=20261009):
+        from unitary_mixer import TreeCayley,parent_path
+        super().__init__(n,order=order,seed=seed)
+        a=pow(2,-1,MOD)
+        self.path1=TreeCayley(parent_path(list(range(n)),n),a,p=MOD)
+        inv=[0]*n
+        for i,j in enumerate(self.order):inv[j]=i
+        self.path2=TreeCayley(parent_path(inv,n),a,p=MOD)
+        self.eps=a

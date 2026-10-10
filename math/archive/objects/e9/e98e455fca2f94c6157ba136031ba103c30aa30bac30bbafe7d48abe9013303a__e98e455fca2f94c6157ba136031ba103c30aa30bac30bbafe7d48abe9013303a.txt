@@ -1,0 +1,59 @@
+import sys,unittest
+from pathlib import Path
+import numpy as np
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+import inverse_quartic as iq
+import reduced_sparse_sextic as rs
+import fourier_support_elimination as fs
+import complete_quadratic as cq
+import exceptional_charts as ex
+
+class InverseQuarticTests(unittest.TestCase):
+ def test_exact_cyclotomic_ring(self):
+  for i in range(8):
+   for j in range(8):
+    self.assertEqual(iq.cmul(iq.cpowroot(i),iq.cpowroot(j)),iq.cpowroot(i+j))
+  self.assertEqual(iq.cpowroot(4),(-1,0,0,0))
+ def test_quartic_counts(self):
+  eqs=iq.eq_entries(iq.fourier_image_polys(iq.stage_chart_polys()))
+  self.assertEqual(len(eqs),30)
+  self.assertEqual(sum(map(lambda p:len(p[1]),eqs)),1268)
+  self.assertEqual(max(len(mon) for _,e in eqs for mon in e),4)
+  self.assertEqual(len({mon for _,e in eqs for mon in e}),389)
+ def test_quartic_four_finite_field_embeds(self):
+  results=iq.modular_tests(3)
+  self.assertEqual(len(results),4)
+  for result in results.values():
+   self.assertEqual(result['positive_synthetic_factorizations'],3)
+ def test_fourier_support_exact_modular(self):
+  for p in (12289,65537):
+   for variant in (False,True):
+    w=iq.root8(p,variant)
+    y=np.arange(2,23,dtype=np.int64)
+    C,B,info=fs.reduced_C(y,p,w)
+    self.assertTrue(all((int(B[i,1])*int(B[7,0])-int(B[i,0])*int(B[7,1]))%p==0 for i in range(2,7)))
+ def test_five_vanish_identically(self):
+  equations,C,B,D=rs.construct_equations()
+  self.assertEqual(len(equations),25)
+  self.assertEqual(max(len(mon) for _,eq in equations for mon in eq),6)
+ def test_reduced_polynomials_four_field_embeddings(self):
+  results=rs.mod_check(2)
+  self.assertEqual(len(results),4)
+  self.assertTrue(all(row['direct_entry_and_25_equation_evaluations']==2 for row in results.values()))
+ def test_complete_quadratic_184_176(self):
+  E=cq.all_equations()
+  self.assertEqual((len(E),max(len(m) for _,eq in E for m in eq)),(176,2))
+  self.assertEqual(sum(len(eq) for _,eq in E),800)
+ def test_complete_quadratic_degenerate_examples(self):
+  result=cq.modular_test(4)
+  self.assertTrue(all(row['valid_zero_anchor_examples']==1 for row in result))
+ def test_exceptional_inverse(self):
+  obj=ex.exceptional_inverse_example()
+  self.assertEqual(obj['C_inverse'][2][0],'0')
+  self.assertEqual(obj['C_inverse'][1][0],'-1')
+ def test_singular_false_positive(self):
+  results=ex.singular_false_positive()
+  self.assertEqual(len(results),4)
+  self.assertTrue(all(q['quadratic_B_equations_all_zero'] and q['rank_C']==1 for q in results))
+
+if __name__=='__main__':unittest.main()

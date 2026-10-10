@@ -1,0 +1,112 @@
+import random
+import unittest
+from dense_algebra import (schoolbook,karatsuba,interpolation_product,
+                           operation_counts,coverage_bound)
+
+class TestDenseWorstCase(unittest.TestCase):
+    def test_tiny_exhaustive_f3(self):
+        # All 3^4 pairs of 2-coefficient polynomials over F3.
+        for a0 in range(3):
+            for a1 in range(3):
+                for b0 in range(3):
+                    for b1 in range(3):
+                        a=[a0,a1];b=[b0,b1]
+                        expected=schoolbook(a,b,3).coeffs
+                        self.assertEqual(interpolation_product(a,b,3).coeffs,expected)
+                        self.assertEqual(karatsuba(a,b,3).coeffs,expected)
+    def test_random_dense_independent_modular(self):
+        rng=random.Random(20261009)
+        for n in (1,2,3,4,5,8,16,32,64):
+            for _ in range(12):
+                a=[rng.randrange(998244353) for _ in range(n)]
+                b=[rng.randrange(998244353) for _ in range(n)]
+                direct=schoolbook(a,b).coeffs
+                self.assertEqual(karatsuba(a,b).coeffs,direct)
+                self.assertEqual(interpolation_product(a,b).coeffs,direct)
+    def test_unequal_lengths_and_zeros(self):
+        rng=random.Random(761)
+        for m in range(1,12):
+            for n in range(1,12):
+                a=[rng.randrange(19) for _ in range(m)]
+                b=[rng.randrange(19) for _ in range(n)]
+                expected=schoolbook(a,b).coeffs
+                self.assertEqual(karatsuba(a,b).coeffs,expected)
+                self.assertEqual(interpolation_product(a,b).coeffs,expected)
+    def test_same_random_input_no_preprocessing(self):
+        rng=random.Random(9)
+        a=[rng.randrange(2) for _ in range(32)]
+        b=[rng.randrange(2) for _ in range(32)]
+        self.assertEqual(karatsuba(a,b).bilinear_products,243)
+        self.assertEqual(interpolation_product(a,b).bilinear_products,63)
+        self.assertEqual(schoolbook(a,b).bilinear_products,1024)
+    def test_bilinear_lower_bound_count(self):
+        for n in (1,2,4,8,16,32):
+            t=operation_counts(n)
+            self.assertEqual(t['evaluation_bilinear'],2*n-1)
+            self.assertLessEqual(t['evaluation_bilinear'],t['karatsuba_bilinear'])
+            self.assertLessEqual(t['karatsuba_bilinear'],t['schoolbook_bilinear'])
+    def test_small_prime_guard(self):
+        with self.assertRaises(ValueError):interpolation_product([1,2,3],[1,2,3],3)
+    def test_zero_cases(self):
+        for n in (1,2,4,16):
+            for x in ([0]*n,[1]*n,list(range(n))):
+                c=schoolbook(x,[0]*n).coeffs
+                self.assertEqual(interpolation_product(x,[0]*n).coeffs,c)
+    def test_coverage_bound(self):
+        r=coverage_bound(12,2,2,4)
+        self.assertGreater(r['uncovered_lower'],0)
+        self.assertEqual(r['hamming_ball'],79)
+
+if __name__=='__main__':unittest.main()
+
+class TestNAF(unittest.TestCase):
+    def test_small_exact(self):
+        from signed_digit import naf,shift_multiply
+        for a in range(513):
+            for b in (0,1,3,67,1023):
+                res=shift_multiply(a,b)
+                self.assertEqual(res.product,a*b)
+                self.assertFalse(any(u and v for u,v in zip(res.digits,res.digits[1:])))
+    def test_random_large_exact(self):
+        from signed_digit import shift_multiply
+        rng=random.Random(101)
+        for bits in (32,256,1024,2048):
+            for _ in range(6):
+                a=rng.getrandbits(bits)
+                b=rng.getrandbits(bits)
+                r=shift_multiply(a,b)
+                self.assertEqual(r.product,a*b)
+
+class TestIndependentNTT(unittest.TestCase):
+    def test_ntt_reference(self):
+        from fresh_factor import ntt_convolution
+        rng=random.Random(614)
+        for n in (1,2,4,8,16,32,64):
+            for _ in range(10):
+                a=[rng.randrange(998244353) for _ in range(n)]
+                b=[rng.randrange(998244353) for _ in range(n)]
+                self.assertEqual(tuple(ntt_convolution(a,b)),schoolbook(a,b).coeffs)
+
+class TestDenseSafeDispatch(unittest.TestCase):
+    def test_universal_dispatch(self):
+        from universal_dispatch import convolve
+        rng=random.Random(107)
+        for n in (1,4,16,32,64,128):
+            for _ in range(8):
+                a=[rng.randrange(998244353) for _ in range(n)]
+                b=[rng.randrange(998244353) for _ in range(n)]
+                result,method=convolve(a,b)
+                self.assertEqual(result,schoolbook(a,b).coeffs)
+                self.assertEqual(method,'schoolbook' if n<=32 else 'ntt')
+    def test_tensor_rank_small(self):
+        from tensor_rank_audit import modular_rank
+        for n in range(1,8):
+            rows=[[int(i+j==k) for i in range(n) for j in range(n)] for k in range(2*n-1)]
+            self.assertEqual(modular_rank(rows),2*n-1)
+
+class TestComplexAffineDimension(unittest.TestCase):
+    def test_exact_rational_witness(self):
+        from complex_dimension_audit import audit
+        res=audit()
+        self.assertTrue(res['all_representations_rejected'])
+        self.assertEqual(res['n'],6)

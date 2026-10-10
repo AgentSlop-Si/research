@@ -1,0 +1,129 @@
+   1 #!/usr/bin/env python3
+   2 """Independent exact spectral projector controls. Never imports uploaded code."""
+   3 import itertools,json,math,random,sys
+   4 from pathlib import Path
+   5 rng=random.Random(17101093)
+   6 def root(n,p):return next(w for w in range(1,p)if pow(w,n,p)==1 and len({pow(w,k,p)for k in range(n)})==n)
+   7 def prime(p):return p>=2 and all(p%q for q in range(2,math.isqrt(p)+1))
+   8 def fixture(n):
+   9  p=n+1
+  10  while not prime(p):p+=n
+  11  return p,root(n,p)
+  12 def fftdirect(x,w,p):
+  13  n=len(x);return [sum(v*pow(w,-k*j,p)for j,v in enumerate(x))%p for k in range(n)]
+  14 def oracle(x,w,p,K):
+  15  X=fftdirect(x,w,p);n=len(x);return [sum(X[k]*pow(w,k*j,p)for k in K)*pow(n,-1,p)%p for j in range(n)]
+  16 def matrix(n,w,p,K):return [[sum(pow(w,k*(j-i),p)for k in K)*pow(n,-1,p)%p for i in range(n)]for j in range(n)]
+  17 def mm(a,b,p):return [[sum(x*y for x,y in zip(row,col))%p for col in zip(*b)]for row in a]
+  18 def madd(a,b,p,s=1):return [[(x+s*y)%p for x,y in zip(r,t)]for r,t in zip(a,b)]
+  19 def rank(a,p):
+  20  a=[r[:]for r in a];r=0
+  21  for j in range(len(a[0])):
+  22   k=next((k for k in range(r,len(a))if a[k][j]),None)
+  23   if k is None:continue
+  24   a[r],a[k]=a[k],a[r];v=pow(a[r][j],-1,p);a[r]=[x*v%p for x in a[r]]
+  25   for k in range(r+1,len(a)):
+  26    v=a[k][j];a[k]=[(x-v*y)%p for x,y in zip(a[k],a[r])]
+  27   r+=1
+  28   if r==len(a):break
+  29  return r
+  30 def weights(n,w,p,d,S):return [sum(pow(w,-a*ell*(n//d),p)for a in S)*pow(d,-1,p)%p for ell in range(d)]
+  31 def filt(x,w,p,d,S,plus,minus):
+  32  n=len(x);c=weights(n,w,p,d,S)
+  33  y=[sum(v*x[(j+l*(n//d))%n]for l,v in enumerate(c))%p for j in range(n)]
+  34  for k,sgn in [(k,1)for k in plus]+[(k,-1)for k in minus]:
+  35   a=sum(v*pow(w,-k*j,p)for j,v in enumerate(x))*pow(n,-1,p)%p
+  36   y=[(v+sgn*a*pow(w,k*j,p))%p for j,v in enumerate(y)]
+  37  return y
+  38 def batch(x,w,p,d,masks):
+  39  n=len(x);bases={};atoms={};corrections={};out=[]
+  40  for S,plus,minus in masks:
+  41   S=tuple(sorted(S));e=tuple(sorted([(k,1)for k in plus]+[(k,-1)for k in minus]))
+  42   if S not in bases:bases[S]=filt(x,w,p,d,S,[],[])
+  43   if e not in corrections:
+  44    z=[0]*n
+  45    for k,s in e:
+  46     if k not in atoms:atoms[k]=oracle(x,w,p,{k})
+  47     z=[(a+s*b)%p for a,b in zip(z,atoms[k])]
+  48    corrections[e]=z
+  49   out.append([(a+b)%p for a,b in zip(bases[S],corrections[e])])
+  50  return out,{'bases':len(bases),'atoms':len(atoms),'patterns':len(corrections),'output_entries':n*len(out)}
+  51 def poly(nodes,p):
+  52  f=[1]
+  53  for x in nodes:
+  54   g=[0]*(len(f)+1)
+  55   for i,c in enumerate(f):g[i]=(g[i]-x*c)%p;g[i+1]=(g[i+1]+c)%p
+  56   f=g
+  57  return f
+  58 def transfer(n,w,p,K):
+  59  m=n//2;P=poly([pow(w,-k,p)for k in K],p);cols=[]
+  60  for j in range(m):
+  61   f=[0]*(m+j)+[1]
+  62   for k in range(len(f)-1,m-1,-1):
+  63    c=f[k]
+  64    for l,v in enumerate(P):f[k-m+l]=(f[k-m+l]-c*v)%p
+  65   cols.append(f[:m])
+  66  return [list(r)for r in zip(*cols)]
+  67 def powcost(e):return 0 if not e else e.bit_length()-1+e.bit_count()
+  68 def factors(n):return [q for q in range(2,n+1)if n%q==0 and prime(q)]
+  69 def validation_cost(n):return powcost(n)+sum(powcost(n//q)for q in factors(n))
+  70 def single_cost(n,p,w,d,S,plus,minus):
+  71  r=sum(v!=0 for v in weights(n,w,p,d,S));q=len(plus)+len(minus)
+  72  plan=validation_cost(n)+n-1+2*powcost(p-2)+d*len(S)+d
+  73  online=2*r*n+q*(6*n+1)+len(minus)
+  74  return {'plan':plan,'online':online,'total':plan+online,'nonzero_comb_weights':r}
+  75 def main():
+  76  paircount=0;maskcount=0
+  77  for n,p in [(2,7),(3,7),(4,13),(5,11),(6,13)]:
+  78   w=root(n,p);sets=[{i for i in range(n)if bits>>i&1}for bits in range(2**n)];mats=[matrix(n,w,p,K)for K in sets]
+  79   for i,A in enumerate(sets):
+  80    assert mm(mats[i],mats[i],p)==mats[i] and rank(mats[i],p)==len(A);maskcount+=1
+  81    for j,B in enumerate(sets):
+  82     C=matrix(n,w,p,A&B);assert mm(mats[i],mats[j],p)==mm(mats[j],mats[i],p)==C
+  83     assert madd(madd(mats[i],mats[j],p),C,p,-1)==matrix(n,w,p,A|B)
+  84     assert rank(madd(mats[i],mats[j],p,-1),p)==len(A^B);paircount+=1
+  85  complete=[];wrong_sign=0;batchcases=[]
+  86  for n in [6,8,12,15,16,24,30,32,48,64,96,128]:
+  87   p,w=fixture(n);divs=[d for d in range(1,n+1)if n%d==0]
+  88   for trial in range(12):
+  89    d=divs[trial%len(divs)];S={a for a in range(d)if rng.randrange(2)};B={k for k in range(n)if k%d in S}
+  90    plus=rng.sample(sorted(set(range(n))-B),min(2,n-len(B)));minus=rng.sample(sorted(B),min(2,len(B)))
+  91    K=(B-set(minus))|set(plus);x=[rng.randrange(p)for _ in range(n)]
+  92    y=filt(x,w,p,d,S,plus,minus);assert y==oracle(x,w,p,K) and filt(y,w,p,d,S,plus,minus)==y
+  93    X=fftdirect(x,w,p);Y=fftdirect(y,w,p);assert Y==[X[k]if k in K else 0 for k in range(n)]
+  94    base=matrix(n,w,p,B);actual=matrix(n,w,p,K)
+  95    if n<=32:assert rank(madd(actual,base,p,-1),p)==len(plus)+len(minus)
+  96    if minus and filt(x,w,p,d,S,plus+minus,[])!=y:wrong_sign+=1
+  97    complete.append({'N':n,'p':p,'d':d,'q':len(plus)+len(minus),'output_entries':n})
+  98   d=3 if n%3==0 else 2
+  99   masks=[]
+ 100   for trial in range(6):
+ 101    S={trial%d};B={k for k in range(n)if k%d in S};plus=sorted(set(range(n))-B)[:1];minus=sorted(B)[:1];masks.extend([(S,plus,minus)]*2)
+ 102   x=[rng.randrange(p)for _ in range(n)];out,meta=batch(x,w,p,d,masks)
+ 103   for y,(S,plus,minus)in zip(out,masks):assert y==filt(x,w,p,d,S,plus,minus)
+ 104   saved=out[1][:];out[0][0]=(out[0][0]+1)%p;assert out[1]==saved
+ 105   batchcases.append({'N':n,**meta})
+ 106  contrasts=[];density=[]
+ 107  for n in [8,16,32]:
+ 108   p,w=fixture(n);A=(set(range(0,n,2))-{0})|{1};B=set(range(n))-A
+ 109   ra=transfer(n,w,p,A);rb=transfer(n,w,p,B)
+ 110   assert rank(madd(mm(ra,rb,p),mm(rb,ra,p),p,-1),p)==2
+ 111   pa=matrix(n,w,p,A);pb=matrix(n,w,p,B);assert mm(pa,pb,p)==mm(pb,pa,p)==[[0]*n for _ in range(n)]
+ 112   dense=sum(x!=0 for r in pa for x in r);assert dense==n*n
+ 113   contrasts.append({'N':n,'p':p,'quotient_commutator_rank':2,'projector_commutator_rank':0});density.append({'N':n,'p':p,'nonzeros':dense})
+ 114  costs=[]
+ 115  for n,expected,generic_expected in [(256,4405,6974),(1024,17487,33877),(4096,69715,159841),(16384,278625,737394),(65536,1114213,3342462)]:
+ 116   p,w=fixture(n);c=single_cost(n,p,w,2,{0},[1],[0]);generic=2*validation_cost(n)+3*n-2+3*n*(n.bit_length()-1)+powcost(n-1)+powcost(p-2)
+ 117   assert c['total']==expected and generic==generic_expected
+ 118   costs.append({'N':n,'p':p,'projector':c,'generic_double_FFT':generic})
+ 119  n=4096;p,w=fixture(n);sep=4*single_cost(n,p,w,4,{0},[1],[0])['total']+4*single_cost(n,p,w,4,{0,2},[1],[0])['total']
+ 120  plan=validation_cost(n)+n-1+2*powcost(p-2)+4*(1+2)+2*4
+ 121  combined=plan+12*n+2*(5*n+1)+2*n+8*n
+ 122  assert sep==623304 and combined==135266
+ 123  signatures=[]
+ 124  for n in range(2,65):
+ 125   B=(n-1).bit_length();assert len({tuple(k>>j&1 for j in range(B))for k in range(n)})==n and 2**(B-1)<n
+ 126   signatures.append({'N':n,'masks_required':B,'explicit_entries':n*B})
+ 127  r={'status':'PASS','uploaded_code_executed':False,'exhaustive_small_masks':maskcount,'exhaustive_mask_pairs':paircount,'complete_filter_cases':complete,'complete_filter_count':len(complete),'complete_output_entries':sum(c['output_entries']for c in complete),'wrong_sign_controls_detected':wrong_sign,'batch_cases':batchcases,'quotient_projector_contrasts':contrasts,'dense_projectors':density,'static_ledger_reconstructions':costs,'batch_static_ledger':{'N':4096,'separate':sep,'shared':combined,'all_requested_entries':4096*8},'binary_signature_cases':signatures,'large_uploaded_NTT_executed':False}
+ 128  path=Path(sys.argv[1]if len(sys.argv)>1 else 'INDEPENDENT_RESULTS.json');path.write_text(json.dumps(r,indent=2,sort_keys=True)+'\n');print('PASS',paircount,'exhaustive mask pairs;',len(complete),'full filters;',len(batchcases),'shared batches')
+ 129 if __name__=='__main__':main()

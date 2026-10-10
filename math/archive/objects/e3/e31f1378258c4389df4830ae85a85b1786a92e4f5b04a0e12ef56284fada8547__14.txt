@@ -1,0 +1,154 @@
+   1	#!/usr/bin/env python3
+   2	"""Bounded fresh N16 search. Uploaded source is never imported or executed."""
+   3	import os
+   4	os.environ['OPENBLAS_NUM_THREADS'] = '1'
+   5	os.environ['OMP_NUM_THREADS'] = '1'
+   6	from pathlib import Path
+   7	import json, sys, time
+   8	import numpy as np
+   9	import scipy.linalg as la
+  10	HERE = Path(__file__).resolve().parent
+  11	sys.path.insert(0, str(HERE.parent / 'seed_compatibility_gate'))
+  12	from check_n16_outer_gate import cycles, green, PRIME
+  13	
+  14	N, J = 16, 8
+  15	
+  16	def mm(a, b):
+  17	    return np.asarray((a.astype(object) @ b.astype(object)) % PRIME, dtype=np.int64)
+  18	
+  19	def modular_rank(a):
+  20	    a = a.copy()
+  21	    rr, piv, det = 0, [], 1
+  22	    for col in range(a.shape[1]):
+  23	        nz = np.flatnonzero(a[rr:, col])
+  24	        if not len(nz): continue
+  25	        row = rr + int(nz[0])
+  26	        if row != rr:
+  27	            a[[rr,row]] = a[[row,rr]]
+  28	            det = -det
+  29	        d = int(a[rr,col]); det = det * d % PRIME
+  30	        a[rr] = a[rr] * pow(d,-1,PRIME) % PRIME
+  31	        if rr+1 < a.shape[0]:
+  32	            a[rr+1:] = (a[rr+1:] - a[rr+1:,col,None] * a[rr]) % PRIME
+  33	        piv.append(col); rr += 1
+  34	        if rr == a.shape[0]: break
+  35	    return rr, piv, det % PRIME
+  36	
+  37	def exact_diagnostic():
+  38	    rng = np.random.default_rng(16384)
+  39	    gs = np.asarray([green(p,j+2) for j,p in enumerate(cycles(N))], dtype=np.int64)
+  40	    z = pow(3,(PRIME-1)//N,PRIME)
+  41	    b = np.eye(N,dtype=np.int64)
+  42	    for off in (0,4):
+  43	        for i in range(4):
+  44	            for j in range(4): b[off+i,off+j] = pow(z,4*i*j,PRIME)
+  45	    results = []
+  46	    for kind in ('ones','random_nonzero'):
+  47	        a = np.ones((3,N,J),dtype=np.int64) if kind=='ones' else rng.integers(1,1000,(3,N,J),dtype=np.int64)
+  48	        hs = [np.asarray(np.einsum('ij,jik->ik',a[l].astype(object),gs.astype(object))%PRIME,dtype=np.int64) for l in range(3)]
+  49	        bh1=mm(b,hs[0]); prefix=mm(hs[1],bh1); left=mm(mm(hs[2],hs[1]),b)
+  50	        jac=np.zeros((N*N,3*N*J),dtype=np.int64)
+  51	        for i in range(N):
+  52	            for j in range(J):
+  53	                jac[:,i*J+j]=(left[:,i,None]*gs[j,i,None,:]%PRIME).ravel()
+  54	                row=mm(gs[j,i,None,:],bh1)[0]
+  55	                jac[:,N*J+i*J+j]=(hs[2][:,i,None]*row[None,:]%PRIME).ravel()
+  56	                row=mm(gs[j,i,None,:],prefix)[0]
+  57	                jac[i*N:(i+1)*N,2*N*J+i*J+j]=row
+  58	        tangent1=np.concatenate([a[0].ravel(),(-a[1]).ravel(),np.zeros(N*J,dtype=np.int64)])%PRIME
+  59	        tangent2=np.concatenate([np.zeros(N*J,dtype=np.int64),a[1].ravel(),(-a[2]).ravel()])%PRIME
+  60	        assert not np.any(mm(jac,tangent1[:,None])) and not np.any(mm(jac,tangent2[:,None]))
+  61	        rank,piv,det=modular_rank(jac)
+  62	        item={'kind':kind,'rank':rank,'pivot_columns':piv,'pivot_minor_determinant_mod_p':det,
+  63	              'parameter_values':a.tolist(),'two_scalar_gauge_tangents_verified':True}
+  64	        results.append(item)
+  65	        print('exact Jacobian',kind,rank,flush=True)
+  66	    (HERE/'EXACT_JACOBIAN_DIAGNOSTIC.json').write_text(json.dumps({'prime':PRIME,'parameter_order':'layer,row,term','results':results},indent=2)+'\n')
+  67	    return results
+  68	
+  69	def setup():
+  70	    gs=[]
+  71	    for j,p in enumerate(cycles(N)):
+  72	        t=1/(j+2); g=np.zeros((N,N))
+  73	        for col in range(N):
+  74	            r=col; c=1/(1-t**N)
+  75	            for _ in range(N): g[r,col]=c; r=p[r]; c*=t
+  76	        gs.append(g)
+  77	    gs=np.asarray(gs)
+  78	    u=np.empty((N,J,N)); transforms=np.empty((N,J,J)); cond=[]
+  79	    for i in range(N):
+  80	        q,r=la.qr(gs[:,i,:].T,mode='economic')
+  81	        u[i]=q.T; transforms[i]=r
+  82	        cond.append(float(np.linalg.cond(r)))
+  83	    z=np.exp(2j*np.pi/N)
+  84	    f=z**(np.arange(N)[:,None]*np.arange(N)[None,:])/4
+  85	    b=np.eye(N,dtype=complex)
+  86	    for off in (0,4): b[off:off+4,off:off+4]=z**(4*np.arange(4)[:,None]*np.arange(4)[None,:])
+  87	    return gs,u,transforms,cond,b,f
+  88	
+  89	def evaluate(a,u,b,target,derivative=True):
+  90	    hs=np.einsum('lij,ijk->lik',a,u)
+  91	    bh1=b@hs[0]; prefix=hs[1]@bh1
+  92	    residual=(hs[2]@prefix-target).ravel()
+  93	    if not derivative: return residual,hs
+  94	    left=hs[2]@hs[1]@b
+  95	    jac=np.empty((N*N,3*N*J),dtype=complex)
+  96	    for i in range(N):
+  97	        jac[:,i*J:(i+1)*J]=np.einsum('r,jc->rcj',left[:,i],u[i]).reshape(N*N,J)
+  98	        jac[:,N*J+i*J:N*J+(i+1)*J]=np.einsum('r,jc->rcj',hs[2][:,i],u[i]@bh1).reshape(N*N,J)
+  99	        block=np.zeros((N,N,J),dtype=complex)
+ 100	        block[i]=(u[i]@prefix).T
+ 101	        jac[:,2*N*J+i*J:2*N*J+(i+1)*J]=block.reshape(N*N,J)
+ 102	    return residual,jac,hs
+ 103	
+ 104	def search():
+ 105	    gs,u,transforms,cond,b,target=setup()
+ 106	    rng=np.random.default_rng(161616)
+ 107	    started=time.monotonic(); traces=[]; best=None
+ 108	    # Fixed bounds: three starts, at most 60 accepted/attempted Newton iterations each,
+ 109	    # at most 12 backtracking trials, 150 seconds total between iterations.
+ 110	    for start in range(3):
+ 111	        a=(rng.normal(size=(3,N,J))+1j*rng.normal(size=(3,N,J)))/np.sqrt(2*J)
+ 112	        history=[]
+ 113	        for step in range(60):
+ 114	            r,jac,hs=evaluate(a,u,b,target)
+ 115	            norm=float(la.norm(r)); maximum=float(np.max(np.abs(r)))
+ 116	            history.append({'iteration':step,'residual_l2':norm,'residual_max':maximum})
+ 117	            if best is None or norm<best[0]: best=(norm,a.copy(),start,step)
+ 118	            print('search',start,step,norm,flush=True)
+ 119	            if maximum<2e-12 or time.monotonic()-started>150: break
+ 120	            delta,_,rank,_=la.lstsq(jac,-r,lapack_driver='gelsy')
+ 121	            history[-1]['numerical_jacobian_rank']=int(rank)
+ 122	            accepted=False
+ 123	            for back in range(12):
+ 124	                candidate=a+delta.reshape(a.shape)*2.**(-back)
+ 125	                if la.norm(evaluate(candidate,u,b,target,False)[0]) < norm:
+ 126	                    a=candidate; accepted=True; history[-1]['step_fraction']=2.**(-back); break
+ 127	            if not accepted: break
+ 128	        traces.append({'start':start,'iterations':history})
+ 129	        if best[0]<1e-11 or time.monotonic()-started>150: break
+ 130	    norm,a,start,step=best
+ 131	    r,jac,hs=evaluate(a,u,b,target)
+ 132	    sv=la.svdvals(jac)
+ 133	    # Map all searched coordinates back to the original endpoint entries.
+ 134	    physical=np.empty_like(a)
+ 135	    for l in range(3):
+ 136	        for i in range(N): physical[l,i]=la.solve_triangular(transforms[i],a[l,i])
+ 137	    physical[2]*=4 # Convert the fitted unitary target to the specified F16.
+ 138	    original_hs=np.einsum('lij,jik->lik',physical,gs)
+ 139	    original_error=float(np.max(np.abs(original_hs[2]@original_hs[1]@b@original_hs[0]-4*target)))
+ 140	    np.savez(HERE/'NUMERICAL_CANDIDATE.npz',a=a,u=u,transforms=transforms,physical=physical,
+ 141	             bank=b,target=target,jacobian=jac)
+ 142	    result={'status':'NUMERICAL_DISCOVERY_ONLY','search_bounds':{'starts':3,'iterations_per_start':60,'backtracking_trials':12,'wall_seconds':150},
+ 143	            'elapsed_seconds':time.monotonic()-started,'traces':traces,'best_start':start,'best_iteration':step,
+ 144	            'orthonormal_chart_residual_l2':norm,'orthonormal_chart_residual_max':float(np.max(np.abs(r))),
+ 145	            'original_physical_chart_residual_max':original_error,'jacobian_singular_min':float(sv[-1]),
+ 146	            'jacobian_singular_max':float(sv[0]),'physical_endpoint_min_abs':float(np.min(np.abs(physical))),
+ 147	            'physical_endpoint_max_abs':float(np.max(np.abs(physical))), 'row_template_condition_numbers':cond,
+ 148	            'exact_certificate_accepted':False}
+ 149	    (HERE/'NUMERICAL_SEARCH_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+ 150	    print(json.dumps({k:v for k,v in result.items() if k not in ('traces','row_template_condition_numbers')}),flush=True)
+ 151	
+ 152	if __name__=='__main__':
+ 153	    exact_diagnostic()
+ 154	    search()

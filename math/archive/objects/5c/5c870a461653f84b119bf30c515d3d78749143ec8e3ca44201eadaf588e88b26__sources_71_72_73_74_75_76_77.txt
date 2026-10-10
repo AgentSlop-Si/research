@@ -1,0 +1,546 @@
+===== SOURCE 71 fft_orbit_correction_research/kernel_spectrum/audit.py SHA256 0bfa6481ab8394eb7a8a9352c2b2151743a6f8abf418c2d370987aabf2d4e09b =====
+   1 """Exact implementation audit; no floating-point ranks or timings."""
+   2 import json
+   3 from pathlib import Path
+   4 from collections import Counter
+   5 from orbit_kernel import (Counted, prepare_orbit, prepare_radix, apply,
+   6     coefficient_kernel, expected_preparation, expected_online)
+   7 from prior_exact_arithmetic import PrimeField, CyclotomicField
+   8 
+   9 
+  10 def horner(f, coefficients, z):
+  11     y = f.zero
+  12     for c in reversed(coefficients):
+  13         y = f.add(f.mul(y,z), c)
+  14     return y
+  15 
+  16 
+  17 def audit_case(f, n, name):
+  18     eta = f.root(2*n)
+  19     assert f.power(eta, 2*n) == f.one
+  20     assert f.power(eta, n) == f.neg(f.one)
+  21     plan = prepare_orbit(f,n,eta)
+  22     baseline = prepare_radix(f,n,eta)
+  23     t = coefficient_kernel(f,plan.fft)
+  24     assert t[0] == f.one
+  25     assert plan.preparation == expected_preparation(n,'orbit')
+  26     assert baseline.preparation == expected_preparation(n,'radix')
+  27     direct = [horner(f,t,z) for z in plan.fft.powers]
+  28     assert plan.spectrum == baseline.spectrum == direct
+  29     odd_product = f.one
+  30     for k, z in enumerate(plan.fft.powers):
+  31         forcing = plan.fft.inverse_n
+  32         if k % 2:
+  33             forcing = f.neg(forcing)
+  34             odd_product = f.mul(odd_product, f.sub(f.one,z))
+  35         rhs = f.add(f.mul(f.sub(f.one,z), direct[k]), forcing)
+  36         assert direct[(k+2) % (2*n)] == rhs
+  37     assert odd_product == f.integer(2)
+  38     # Without the boundary, k=0 forces H(q)=0. Actual H(q)=1/N != 0.
+  39     assert direct[2] == plan.fft.inverse_n != f.zero
+  40     q = f.mul(eta,eta)
+  41     for z in [f.integer(2), f.integer(3), eta]:
+  42         lhs = horner(f,t,f.mul(q,z))
+  43         rhs = f.add(f.mul(f.sub(f.one,z),horner(f,t,z)),
+  44                     f.mul(f.power(z,n),plan.fft.inverse_n))
+  45         assert lhs == rhs
+  46     online = None
+  47     for j in range(n):
+  48         x = [f.zero]*n
+  49         x[j] = f.one
+  50         y, online = apply(f,plan,x)
+  51         expected = [t[i-j] if i>=j else f.zero for i in range(n)]
+  52         assert y == expected
+  53         assert online['field_operations'] == expected_online(n)
+  54     # Mixed input verifies that basis checks were not accidentally special-cased.
+  55     x = [f.integer((j*j+3*j+7) % 17-8) for j in range(n)]
+  56     y, _ = apply(f,plan,x)
+  57     expected = []
+  58     for i in range(n):
+  59         total = f.zero
+  60         for j in range(i+1):
+  61             total = f.add(total,f.mul(t[i-j],x[j]))
+  62         expected.append(total)
+  63     assert y == expected
+  64     # Full q-Pascal factorization: ordinary FFT remains much cheaper.
+  65     full_basis = 0
+  66     if n <= 16:
+  67         factorial = [f.one]
+  68         for j in range(1,n):
+  69             factorial.append(f.mul(factorial[-1],f.sub(f.one,f.power(q,j))))
+  70         middle = [f.mul(f.power(q,j*(j-1)//2),t[j]) for j in range(n)]
+  71         middle = [f.neg(v) if j%2 else v for j,v in enumerate(middle)]
+  72         for j in range(n):
+  73             x = [f.zero]*n
+  74             x[j] = f.one
+  75             c = Counted(f)
+  76             v = [c.mul(a,b) for a,b in zip(factorial,x)]
+  77             v, first = apply(f,plan,list(reversed(v)))
+  78             v = list(reversed(v))
+  79             v = [c.mul(a,b) for a,b in zip(middle,v)]
+  80             v, second = apply(f,plan,v)
+  81             v = [c.mul(a,b) for a,b in zip(factorial,v)]
+  82             assert v == [f.power(q,i*j) for i in range(n)]
+  83             counts = Counter(c.count)
+  84             counts.update(first['field_operations'])
+  85             counts.update(second['field_operations'])
+  86             l = n.bit_length()-1
+  87             assert dict(counts) == dict(mul=4*n*l+15*n,
+  88                                        add=4*n*(l+1),sub=4*n*(l+1))
+  89             full_basis += 1
+  90     return dict(field=name,n=n,spectrum_points=2*n,
+  91                 kernel_basis_vectors=n,full_fourier_basis_vectors=full_basis,
+  92                 orbit_preparation=plan.preparation,
+  93                 radix_preparation=baseline.preparation,
+  94                 online=online, boundary_negative_control='PASS',status='PASS')
+  95 
+  96 
+  97 def main():
+  98     cases=[]
+  99     for p in (65537,998244353):
+ 100         f=PrimeField(p)
+ 101         for l in range(1,8):
+ 102             cases.append(audit_case(f,2**l,f'F_{p}'))
+ 103     for n in (2,4,8):
+ 104         cases.append(audit_case(CyclotomicField(2*n),n,f'Q(zeta_{2*n})'))
+ 105     sizes=(16,64,256,1024,4096)
+ 106     cost_rows=[]
+ 107     for n in sizes:
+ 108         a,b=expected_preparation(n,'orbit'),expected_preparation(n,'radix')
+ 109         cost_rows.append(dict(n=n,orbit_field_ops=sum(a.values()),
+ 110             radix_field_ops=sum(b.values()),online_field_ops=sum(expected_online(n).values())))
+ 111     summary=dict(status='PASS',cases=len(cases),
+ 112         spectrum_points=sum(c['spectrum_points'] for c in cases),
+ 113         kernel_basis_vectors=sum(c['kernel_basis_vectors'] for c in cases),
+ 114         full_fourier_basis_vectors=sum(c['full_fourier_basis_vectors'] for c in cases),
+ 115         model='exact field arithmetic; primitive 2N-th root supplied; no bit or stability claim',
+ 116         cost_rows=cost_rows,details=cases)
+ 117     out=Path(__file__).parent/'results'
+ 118     out.mkdir(exist_ok=True)
+ 119     (out/'audit.json').write_text(json.dumps(summary,indent=2)+'\n')
+ 120     print(json.dumps({k:v for k,v in summary.items() if k!='details'},indent=2))
+ 121 
+ 122 
+ 123 if __name__=='__main__':
+ 124     main()
+===== END SOURCE 71; 5103 bytes; 124 lines =====
+===== SOURCE 72 fft_orbit_correction_research/kernel_spectrum/orbit_kernel.py SHA256 da06699b319dbaaa5bdf07a3d5b8ba95c9ceaf0993a935364d9b5a93f01c3108 =====
+   1 """Linear-work exact spectrum preparation for the root-dependent q-kernel.
+   2 
+   3 The FFT application is ordinary radix two, not a sub-N-log-N FFT algorithm.
+   4 An exact primitive 2N-th root eta is SUPPLIED; q = eta**2.
+   5 """
+   6 from collections import Counter
+   7 from dataclasses import dataclass
+   8 
+   9 
+  10 class Counted:
+  11     def __init__(self, field):
+  12         self.field, self.count = field, Counter()
+  13     def __getattr__(self, name):
+  14         return getattr(self.field, name)
+  15     def add(self, a, b):
+  16         self.count['add'] += 1
+  17         return self.field.add(a, b)
+  18     def sub(self, a, b):
+  19         self.count['sub'] += 1
+  20         return self.field.sub(a, b)
+  21     def mul(self, a, b):
+  22         self.count['mul'] += 1
+  23         return self.field.mul(a, b)
+  24     def neg(self, a):
+  25         self.count['neg'] += 1
+  26         return self.field.neg(a)
+  27     def inv(self, a):
+  28         self.count['constant_inverse'] += 1
+  29         return self.field.inv(a)
+  30 
+  31 
+  32 @dataclass
+  33 class FFTPlan:
+  34     n: int
+  35     powers: list
+  36     permutation: list
+  37     inverse_n: object
+  38     inverse_length: object
+  39 
+  40 
+  41 @dataclass
+  42 class KernelPlan:
+  43     fft: FFTPlan
+  44     spectrum: list
+  45     preparation: dict
+  46     method: str
+  47 
+  48 
+  49 def fft_plan(c, n, eta):
+  50     if n < 2 or n & (n-1):
+  51         raise ValueError('N must be a power of two at least 2')
+  52     powers = [c.one]
+  53     for _ in range(1, 2*n):
+  54         powers.append(c.mul(powers[-1], eta))
+  55     half = c.inv(c.integer(2))
+  56     inverse_n = c.one
+  57     for _ in range(n.bit_length()-1):
+  58         inverse_n = c.mul(inverse_n, half)
+  59     inverse_length = c.mul(inverse_n, half)
+  60     # Linear total integer work; no N separate log(N)-step bit reversals.
+  61     permutation = [0]
+  62     while len(permutation) < 2*n:
+  63         doubled = [2*j for j in permutation]
+  64         permutation = doubled + [j+1 for j in doubled]
+  65     return FFTPlan(n, powers, permutation, inverse_n, inverse_length)
+  66 
+  67 
+  68 def fft(c, plan, values, inverse=False, traffic=None):
+  69     m = 2*plan.n
+  70     if len(values) != m:
+  71         raise ValueError('FFT input length must be 2N')
+  72     out = [values[j] for j in plan.permutation]
+  73     if traffic is not None:
+  74         traffic['permutation_index_reads'] += m
+  75         traffic['permutation_value_reads'] += m
+  76         traffic['permutation_value_writes'] += m
+  77     width = 2
+  78     while width <= m:
+  79         half, stride = width//2, m//width
+  80         for base in range(0, m, width):
+  81             for j in range(half):
+  82                 idx = j*stride
+  83                 if inverse:
+  84                     idx = (-idx) % m
+  85                 u = out[base+j]
+  86                 v = c.mul(plan.powers[idx], out[base+j+half])
+  87                 out[base+j] = c.add(u, v)
+  88                 out[base+j+half] = c.sub(u, v)
+  89                 if traffic is not None:
+  90                     traffic['butterfly_value_reads'] += 2
+  91                     traffic['butterfly_twiddle_reads'] += 1
+  92                     traffic['butterfly_value_writes'] += 2
+  93         width *= 2
+  94     if inverse:
+  95         out = [c.mul(plan.inverse_length, value) for value in out]
+  96         if traffic is not None:
+  97             traffic['normalization_value_reads'] += m
+  98             traffic['normalization_value_writes'] += m
+  99     return out
+ 100 
+ 101 
+ 102 def prepare_orbit(field, n, eta):
+ 103     c = Counted(field)
+ 104     plan = fft_plan(c, n, eta)
+ 105     factors = [c.sub(c.one, root) for root in plan.powers]
+ 106     v = [c.zero] * (2*n)
+ 107     # The even orbit's zero coefficient removes dependence on v[0].
+ 108     v[2] = plan.inverse_n
+ 109     for r in range(1, n):
+ 110         v[(2*r+2) % (2*n)] = c.add(
+ 111             c.mul(factors[2*r], v[2*r]), plan.inverse_n)
+ 112     # Odd orbit: composition y -> 2*y + b; closure gives y = -b.
+ 113     b = c.zero
+ 114     for r in range(n):
+ 115         b = c.sub(c.mul(factors[2*r+1], b), plan.inverse_n)
+ 116     v[1] = c.neg(b)
+ 117     for r in range(n-1):
+ 118         v[2*r+3] = c.sub(
+ 119             c.mul(factors[2*r+1], v[2*r+1]), plan.inverse_n)
+ 120     return KernelPlan(plan, v, dict(c.count), 'orbit')
+ 121 
+ 122 
+ 123 def coefficient_kernel(c, plan):
+ 124     """Backward recurrence from t[N-1]=1/N: N-1 multiplies/subtracts."""
+ 125     n = plan.n
+ 126     kernel = [c.zero] * n
+ 127     kernel[-1] = plan.inverse_n
+ 128     for j in range(n-1, 0, -1):
+ 129         kernel[j-1] = c.mul(c.sub(c.one, plan.powers[2*j]), kernel[j])
+ 130     return kernel
+ 131 
+ 132 
+ 133 def prepare_radix(field, n, eta):
+ 134     """Same complete plan and kernel, with an ordinary preprocessing FFT."""
+ 135     c = Counted(field)
+ 136     plan = fft_plan(c, n, eta)
+ 137     kernel = coefficient_kernel(c, plan)
+ 138     spectrum = fft(c, plan, kernel + [c.zero]*n)
+ 139     return KernelPlan(plan, spectrum, dict(c.count), 'radix')
+ 140 
+ 141 
+ 142 def apply(field, plan, x):
+ 143     """T*x: 2 length-2N FFTs plus a diagonal; all output entries retained.
+ 144 
+ 145 Traffic counters describe a logical array implementation, not every temporary
+ 146 Python-list allocation or interpreter reference operation. Those add O(N)
+ 147 traffic and space here and are not claimed to match these counters exactly.
+ 148 """
+ 149     n = plan.fft.n
+ 150     if len(x) != n:
+ 151         raise ValueError('wrong input length')
+ 152     c, traffic = Counted(field), Counter()
+ 153     padded = list(x) + [c.zero]*n
+ 154     traffic['padding_input_reads'] = n
+ 155     traffic['padding_output_writes'] = 2*n
+ 156     spectrum = fft(c, plan.fft, padded, traffic=traffic)
+ 157     product = [c.mul(a,b) for a,b in zip(spectrum, plan.spectrum)]
+ 158     traffic['diagonal_value_reads'] = 4*n
+ 159     traffic['diagonal_value_writes'] = 2*n
+ 160     values = fft(c, plan.fft, product, inverse=True, traffic=traffic)
+ 161     out = values[:n]
+ 162     traffic['output_value_reads'] = n
+ 163     traffic['output_value_writes'] = n
+ 164     return out, {'field_operations': dict(c.count), 'array_traffic': dict(traffic)}
+ 165 
+ 166 
+ 167 def expected_preparation(n, method):
+ 168     l = n.bit_length()-1
+ 169     if method == 'orbit':
+ 170         return dict(mul=5*n+l-2, add=n-1, sub=4*n-1,
+ 171                     neg=1, constant_inverse=1)
+ 172     if method == 'radix':
+ 173         return dict(mul=n*l+4*n+l-1, add=n*(l+1),
+ 174                     sub=n*l+2*n-1, constant_inverse=1)
+ 175     raise ValueError(method)
+ 176 
+ 177 
+ 178 def expected_online(n):
+ 179     l = n.bit_length()-1
+ 180     return dict(mul=2*n*l+6*n, add=2*n*(l+1), sub=2*n*(l+1))
+===== END SOURCE 72; 5982 bytes; 180 lines =====
+===== SOURCE 73 fft_orbit_correction_research/orbit_norm/run_audit.py SHA256 f2fcb1bc1af76ed9349f86fadd8420ae0b1e2a0d97d25c8e67cd4e1706e27b2e =====
+   1 """Audit new orbit rule only; previous factorization tests are not relabeled."""
+   2 import json
+   3 from pathlib import Path
+   4 from time import perf_counter
+   5 
+   6 from fixed_kernel import apply, prepare
+   7 from orbit_rewrite import full_orbit_reference, collapsed_orbit, false_fourier_collapse
+   8 from prior_exact_arithmetic import PrimeField, CyclotomicField
+   9 
+  10 
+  11 def one_case(field, n, b, label):
+  12     q = field.root(n)
+  13     for j in range(n):
+  14         x = [field.one if i == j else field.zero for i in range(n)]
+  15         reference, _ = full_orbit_reference(field, n, q, b, x)
+  16         result, counts = collapsed_orbit(field, n, q, b, x)
+  17         assert result == reference, (label, n, b, j)
+  18         if b == n:
+  19             assert result == x
+  20     m = n//b
+  21     if m > 1:
+  22         assert counts['field_operations'] == {
+  23             'mul': b*m*(m+1)//2, 'add': b*m*(m-1)//2}
+  24         assert counts['kernel_preparation']['mul'] == 6*m-4+m.bit_length()-1
+  25     x = [field.integer((j*j+2*j+5) % 23-11) for j in range(n)]
+  26     assert full_orbit_reference(field, n, q, b, x)[0] == collapsed_orbit(field, n, q, b, x)[0]
+  27     return {'field': label, 'n': n, 'orbit_size': b, 'basis_vectors': n,
+  28             'mixed_input': True, 'collapsed_cost': counts}
+  29 
+  30 
+  31 def counterexample():
+  32     field, n = PrimeField(65537), 8
+  33     plan = prepare(field, n, field.root(n))
+  34     for j in range(n):
+  35         x = [field.one if i == j else field.zero for i in range(n)]
+  36         true, _ = apply(field, plan, x)
+  37         wrong = false_fourier_collapse(field, plan, x)
+  38         if true != wrong:
+  39             return {'field': 'F_65537', 'n': n, 'basis_index': j,
+  40                     'true_fourier': true, 'illegal_norm_replacement': wrong,
+  41                     'wrong_outputs': sum(a != b for a, b in zip(true, wrong))}
+  42     raise AssertionError('negative control unexpectedly passed')
+  43 
+  44 
+  45 def main():
+  46     start, rows = perf_counter(), []
+  47     for p in (65537, 998244353):
+  48         field = PrimeField(p)
+  49         for n in (2, 4, 8, 16, 32):
+  50             for b in (2, 4, 8):
+  51                 if b <= n:
+  52                     rows.append(one_case(field, n, b, f'F_{p}'))
+  53             if n > 8:
+  54                 rows.append(one_case(field, n, n, f'F_{p}'))
+  55     for n in (2, 4, 8):
+  56         for b in (2, 4, 8):
+  57             if b <= n:
+  58                 rows.append(one_case(CyclotomicField(n), n, b, f'Q(zeta_{n})'))
+  59     result = {'status': 'PASS', 'cases': len(rows),
+  60         'basis_vectors': sum(row['basis_vectors'] for row in rows),
+  61         'elapsed_seconds': perf_counter()-start,
+  62         'scope': 'Conditional exact graph compression, not an arbitrary Fourier speedup.',
+  63         'negative_control': counterexample(), 'records': rows}
+  64     path = Path(__file__).parent / 'results' / 'orbit_audit.json'
+  65     path.write_text(json.dumps(result, indent=2)+'\n')
+  66     print(json.dumps({k:v for k,v in result.items() if k != 'records'}, indent=2))
+  67 
+  68 
+  69 if __name__ == '__main__':
+  70     main()
+===== END SOURCE 73; 2892 bytes; 70 lines =====
+===== SOURCE 74 fft_orbit_correction_research/run_all.py SHA256 9f422256898ef68b68d6da8f1e68dc8076368c95d9b0dce468581e86a9ef19b0 =====
+   1 """Run each exact mechanism audit; Python standard library only."""
+   2 import json
+   3 from pathlib import Path
+   4 import subprocess
+   5 import sys
+   6 
+   7 base=Path(__file__).resolve().parent
+   8 scripts=('kernel_spectrum/audit.py','orbit_norm/run_audit.py',
+   9          'sparse_forcing/sparse_forcing.py','cycle_flow/audit.py')
+  10 log=[]
+  11 for script in scripts:
+  12     run=subprocess.run([sys.executable,str(base/script)],cwd=base,
+  13                        capture_output=True,text=True)
+  14     log.append({'script':script,'returncode':run.returncode,
+  15                 'stdout':run.stdout,'stderr':run.stderr})
+  16     if run.returncode:
+  17         print(run.stdout,end=''); print(run.stderr,end='',file=sys.stderr)
+  18         raise SystemExit(run.returncode)
+  19 (base/'verification_log.json').write_text(json.dumps(log,indent=2)+'\n')
+  20 print('PASS: all four exact mechanism audits.')
+  21 print('2254 basis-case comparisons; 1044 kernel-spectrum values; 104 median checks.')
+  22 print('Positive restricted graph/preparation results; no general sub-NlogN FFT claim.')
+===== END SOURCE 74; 1006 bytes; 22 lines =====
+===== SOURCE 75 fft_orbit_correction_research/sparse_forcing/sparse_forcing.py SHA256 d3e18d49665bd356af4296bad52528015cd2fe8fd4d46067b0f37ab91a6ffc5a =====
+   1 """Exact full DFT for sparse q-difference forcing; fresh restricted inputs.
+   2 
+   3 Python standard library, prime-field oracle. This is not a general faster FFT.
+   4 """
+   5 from collections import Counter
+   6 import json
+   7 from pathlib import Path
+   8 import random
+   9 
+  10 
+  11 def root(n, p):
+  12     assert n >= 2 and n & (n-1) == 0 and (p-1) % n == 0
+  13     q = pow(3, (p-1)//n, p)
+  14     assert pow(q,n,p) == 1 and pow(q,n//2,p) != 1
+  15     return q
+  16 
+  17 
+  18 def forcing(x, q, p):
+  19     n = len(x)
+  20     r = [x[-1] % p]
+  21     qp = q
+  22     for j in range(1,n):
+  23         r.append(((qp-1)*x[j]+x[j-1]) % p)
+  24         qp = qp*q % p
+  25     return r
+  26 
+  27 
+  28 def invert_forcing(r, q, p):
+  29     n = len(r)
+  30     powers = [1]
+  31     for j in range(1,n): powers.append(powers[-1]*q % p)
+  32     x = [0]*n
+  33     x[-1] = r[0] % p
+  34     for j in range(n-1,0,-1):
+  35         x[j-1] = (r[j]-(powers[j]-1)*x[j]) % p
+  36     return x
+  37 
+  38 
+  39 def transform(x, q, p):
+  40     """Detect forcing and return all N Fourier values with charged arithmetic.
+  41 
+  42     Scalar operation counts include multiplication by 1. Constant comparisons,
+  43     indexing, and traffic have a separate O(N(s+1)) word bound, not zero cost.
+  44     The exact primitive root q is supplied. No input FFT is called.
+  45     """
+  46     n = len(x)
+  47     assert n >= 2 and n & (n-1) == 0
+  48     count = Counter()
+  49     powers = [1]
+  50     for j in range(1,n):
+  51         powers.append(powers[-1]*q % p); count['mul'] += 1
+  52     r = [x[-1] % p]
+  53     for j in range(1,n):
+  54         r.append(((powers[j]-1)*x[j]+x[j-1]) % p)
+  55         count['sub'] += 1; count['mul'] += 1; count['add'] += 1
+  56     support = [j for j in range(1,n) if r[j]]
+  57     rhs = [r[0]]*n
+  58     for j in support:
+  59         term = r[j]
+  60         for k in range(n):
+  61             rhs[k] = (rhs[k]+term) % p; count['add'] += 1
+  62             if k+1 < n:
+  63                 term = term*powers[j] % p; count['mul'] += 1
+  64     out = [0]*n
+  65     out[1] = rhs[0]
+  66     for k in range(1,n):
+  67         out[(k+1)%n] = ((1-powers[k])*out[k]+rhs[k]) % p
+  68         count['sub'] += 1; count['mul'] += 1; count['add'] += 1
+  69     s = len(support)
+  70     assert dict(count) == {'mul':(s+3)*(n-1),'sub':2*(n-1),'add':s*n+2*(n-1)}
+  71     return out, {'n':n,'middle_support':s,'field_operations':dict(count),
+  72                  'root_assumption':'primitive order-N root supplied',
+  73                  'word_work':'O(N(s+1)), including detection/indexing/traffic',
+  74                  'storage':'O(N) field elements and indices'}
+  75 
+  76 
+  77 def direct(x,q,p):
+  78     return [sum(x[j]*pow(q,k*j,p) for j in range(len(x))) % p
+  79             for k in range(len(x))]
+  80 
+  81 
+  82 def run():
+  83     rng=random.Random(91702)
+  84     basis=0; special=[]; dense=[]
+  85     for p in (65537,998244353):
+  86         for n in (2,4,8,16,32,64):
+  87             q=root(n,p)
+  88             for j in range(n):
+  89                 r=[int(i==j) for i in range(n)]
+  90                 x=invert_forcing(r,q,p)
+  91                 assert forcing(x,q,p)==r
+  92                 result,cost=transform(x,q,p)
+  93                 assert result==direct(x,q,p)
+  94                 basis+=1
+  95         for n in (64,128,256):
+  96             q=root(n,p)
+  97             for s in (0,1,2,4):
+  98                 r=[0]*n; r[0]=rng.randrange(1,p)
+  99                 for j in rng.sample(range(1,n),s): r[j]=rng.randrange(1,p)
+ 100                 x=invert_forcing(r,q,p)
+ 101                 result,cost=transform(x,q,p)
+ 102                 assert forcing(x,q,p)==r
+ 103                 assert result==direct(x,q,p)
+ 104                 assert cost['middle_support']==s
+ 105                 special.append({'prime':p,**cost})
+ 106             # Invertibility permits every middle forcing coefficient to be nonzero.
+ 107             r=[1]*n
+ 108             x=invert_forcing(r,q,p)
+ 109             result,cost=transform(x,q,p)
+ 110             assert result==direct(x,q,p)
+ 111             assert cost['middle_support']==n-1
+ 112             dense.append({'prime':p,**cost})
+ 113     report={'status':'PASS','forcing_basis_vectors':basis,
+ 114             'sparse_family_cases':len(special),'dense_forcing_controls':len(dense),
+ 115             'sparse_cases':special,'dense_controls':dense,
+ 116             'scope':'Fresh full exact DFT for sparse q-forcing; worst-case quadratic for this evaluator.'}
+ 117     Path(__file__).with_name('results.json').write_text(json.dumps(report,indent=2)+'\n')
+ 118     print(json.dumps({k:v for k,v in report.items() if k not in ('sparse_cases','dense_controls')}))
+ 119 
+ 120 
+ 121 if __name__=='__main__': run()
+===== END SOURCE 75; 4234 bytes; 121 lines =====
+===== SOURCE 76 fft_parity_exact_gate_2026-10-10/RUN_ALL.sh SHA256 9941a5770b04be4be9a5b90c42c579f467c6ce68441bcd58ebed64135f42db7c =====
+   1 #!/usr/bin/env bash
+   2 set -euo pipefail
+   3 cd "$(dirname "$0")"
+   4 python test_exact.py
+   5 python gf2_depth_certificate.py
+===== END SOURCE 76; 112 bytes; 5 lines =====
+===== SOURCE 77 fft_parity_exact_gate_2026-10-10/prior_helpers/bisection_probe.py SHA256 25d13d6f1a7d988daa688211618fc6840632c33c4dd024ec865ec5f6bab638ee =====
+   1 """Minimal dependency-free helper copied from the previous checkpoint.
+   2 The original complete source and all previous evidence remain untouched inside
+   3 ../prior_checkpoint_full.zip.
+   4 """
+   5 def input_line_permutations(n, perms):
+   6     seq=list(range(n)); allseq=[seq]
+   7     for perm in perms:
+   8         seq=[seq[perm[j]] for j in range(n)]
+   9         allseq.append(seq)
+  10     return allseq
+===== END SOURCE 77; 373 bytes; 10 lines =====

@@ -1,0 +1,88 @@
+   1 """Extract positive-rank transitions from independently replayed block words."""
+   2 from collections import Counter
+   3 from hashlib import sha256
+   4 from itertools import combinations
+   5 from pathlib import Path
+   6 import json,struct,sys,gzip,argparse
+   7 
+   8 
+   9 def prepare(path,destination):
+  10     raw=Path(path).read_bytes();raw=gzip.decompress(raw) if str(path).endswith('.gz') else raw;d=json.loads(raw)
+  11     h,v,R=d['h'],d['v'],d['R']
+  12     frames=[(0,0,0),(0,0,h)]+[(c,u,1 if c==u else u.bit_count()-c.bit_count()) for c,u in d['frames']]
+  13     physical=[None]*R;transitions=Counter()
+  14     for s,a,b in d['events']:
+  15         assert 0<=s<R and -1<=a<len(d['frames']) and 0<=b<len(d['frames'])
+  16         assert physical[s]==(None if a==-1 else a)
+  17         if a!=-1:
+  18             c,u=d['frames'][a];cc,uu=d['frames'][b]
+  19             assert not cc&~c and not u&~uu
+  20         source=0 if a==-1 else a+2
+  21         target=b+2
+  22         if source!=target:
+  23             transitions[source,target]+=1
+  24         physical[s]=b
+  25     # Independently derive the same transition multiset from the actual XOR
+  26     # word, without trusting the compiler's auxiliary event list.
+  27     actual=[None]*R;from_word=Counter()
+  28     def incidence(s,g):
+  29         a=actual[s]
+  30         if a is not None:
+  31             c,u=d['frames'][a];cc,uu=d['frames'][g]
+  32             assert not cc&~c and not u&~uu
+  33         source=0 if a is None else a+2
+  34         target=g+2
+  35         if source!=target:from_word[source,target]+=1
+  36         actual[s]=g
+  37     triples=list(combinations(range(h),3))
+  38     frame_lookup={tuple(f):i for i,f in enumerate(d['frames'])}
+  39     assert len(frame_lookup)==len(d['frames'])
+  40     for i,s in d['sources'].items():
+  41         mask=sum(1<<j for j in triples[int(i)])
+  42         incidence(s,frame_lookup[mask,mask])
+  43     for a,b,g in d['ops']:
+  44         assert a!=b
+  45         incidence(a,g);incidence(b,g)
+  46     for s,g,common,triple in d['outputs']:
+  47         incidence(s,g)
+  48     assert from_word==transitions and actual==physical
+  49     out=set();singles=0;centers=0
+  50     for s,g,common,triple in d['outputs']:
+  51         assert s not in out and physical[s]==g
+  52         out.add(s)
+  53         c,u,r=frames[g+2]
+  54         if len(triple)==1:
+  55             assert c==1<<common and u==(1<<h)-1 and r==h-1
+  56             transitions[0,g+2]+=1  # copied retained center
+  57             transitions[g+2,1]+=1 # cleanup of original, rank one
+  58             centers+=1
+  59         else:
+  60             assert c==1<<common and u==((1<<h)-1)^sum(1<<j for j in triple if j!=common)
+  61             singles+=h-r # growth into target orthogonal complement + target line
+  62     assert centers==h
+  63     for s,g in enumerate(physical):
+  64         assert g is not None
+  65         if s not in out:
+  66             transitions[g+2,1]+=1
+  67     mass=singles+sum((frames[b][2]-frames[a][2])*count for (a,b),count in transitions.items())
+  68     assert mass==h*R+h*(h-1)
+  69     histogram=Counter({1:singles})
+  70     for (a,b),count in transitions.items():
+  71         r=frames[b][2]-frames[a][2]
+  72         assert r>0
+  73         histogram[r]+=count
+  74     with Path(destination).open('wb') as f:
+  75         f.write(struct.pack('<6I2Q',h,v,R,len(frames),len(transitions),singles,mass,h*(h-1)))
+  76         for c,u,r in frames:f.write(struct.pack('<2QI',c,u,r))
+  77         for (a,b),count in sorted(transitions.items()):f.write(struct.pack('<2Iq',a,b,count))
+  78     receipt=dict(h=h,v=v,R=R,frames=len(frames),distinct_transitions=len(transitions),singles=singles,rank_mass=mass,
+  79                  rank_histogram_with_side_growth_split_into_singletons=dict(sorted(histogram.items())),word_sha256=sha256(raw).hexdigest(),copied_centers=centers,
+  80                  transition_events_equal_independent_xor_word_reconstruction=True)
+  81     Path(str(destination)+'.json').write_text(json.dumps(receipt,indent=2)+'\n')
+  82     return receipt
+  83 
+  84 
+  85 if __name__=='__main__':
+  86  parser=argparse.ArgumentParser(description=__doc__)
+  87  parser.add_argument('word',type=Path);parser.add_argument('destination',type=Path)
+  88  args=parser.parse_args();print(json.dumps(prepare(args.word,args.destination),indent=2))

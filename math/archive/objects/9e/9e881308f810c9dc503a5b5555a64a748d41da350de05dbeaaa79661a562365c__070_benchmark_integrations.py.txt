@@ -1,0 +1,122 @@
+"""All-value checks for the uploaded v3 organizer and Phase-8 jet integration."""
+import importlib.util
+import json
+from pathlib import Path
+import sys
+from time import perf_counter_ns
+import numpy as np
+from scipy import fft
+from multi_view import SharedProjectedFourierStore
+from view_optimizer import AdaptiveSpectralOrganizer
+from algebra_projection import prepare_projected_jet
+from baseline_sum_product_v8.algebra_fft import AlgebraFFT
+
+ROOT=Path(__file__).resolve().parent
+
+
+def load(name,path):
+    spec=importlib.util.spec_from_file_location(name,path)
+    mod=importlib.util.module_from_spec(spec);sys.modules[name]=mod;spec.loader.exec_module(mod)
+    return mod
+
+
+def organizer(scenario,repeats=5):
+    workload=load('organizer_workload',ROOT/'baseline_query_v3/benchmark_view_optimizer.py')
+    original=load('original_optimizer',ROOT/'baseline_query_v3/view_optimizer.py')
+    vb,union,projection,coeff,positions,events=workload.setup(clusters=2 if scenario=='two_clusters' else 1)
+    rng=np.random.default_rng(944)
+    methods=('sequential_fixed','original_organizer_fixed_store','repaired_organizer','repaired_zero_budget')
+    def trial(method):
+        start=perf_counter_ns()
+        store=SharedProjectedFourierStore(262144,union,projection,vb,coeff,prepared_positions=positions,
+                                         event_capacity=1024,promote_after=None)
+        if method=='sequential_fixed':obj=store
+        elif method=='original_organizer_fixed_store':obj=original.AdaptiveSpectralOrganizer(store,
+                  history_queries=20,min_history=4,replan_every=24,merge_threshold=1.07)
+        else:obj=AdaptiveSpectralOrganizer(store,history_queries=20,min_history=4,replan_every=24,
+                   merge_threshold=1.07,max_group_cache_bytes=0 if method=='repaired_zero_budget' else 8*1024**2)
+        outputs=[]
+        for t,event in enumerate(events,1):
+            workload.apply(obj,event)
+            outputs.extend(obj.query(name) for name in workload.due_names(t,scenario,8))
+            if t%256==0:store.compact()
+        elapsed=(perf_counter_ns()-start)/1e6
+        report={'ms':elapsed,'storage_bytes':obj.storage_bytes}
+        if hasattr(obj,'stats'):
+            report['replans']=obj.stats.replans
+            report['partition']=obj.partition
+            report['planning_ms']=getattr(obj.stats,'planning_ns',0)/1e6
+            report['published_bins']=getattr(obj.stats,'published_bins',None)
+        return report,np.stack(outputs)
+    reference=trial('sequential_fixed')[1]
+    results={m:[] for m in methods};error=0
+    for _ in range(repeats):
+        for method in rng.permutation(methods):
+            row,out=trial(method)
+            error=max(error,float(np.max(abs(out-reference))))
+            np.testing.assert_allclose(out,reference,rtol=2e-10,atol=2e-10)
+            results[method].append(row)
+    return {'scenario':scenario,'basis_registration_excluded':True,'all_returned_values_compared':True,
+            'output_values':int(reference.size),'max_abs_error':error,'trials':results,
+            'median_ms':{m:float(np.median([r['ms'] for r in rows])) for m,rows in results.items()},
+            'note':'Original organizer uses the repaired store to isolate organizer changes; no full-FFT speed claim.'}
+
+
+def jets(n,q=64,versions=48,repeats=5):
+    rng=np.random.default_rng(n+958)
+    signals=rng.normal(0,.005/np.sqrt(n),(5,n));signals[:,0]+=1
+    bins=np.sort(rng.choice(n,q,replace=False))
+    events=[(int(rng.integers(n)),float(rng.normal(0,.01))) for _ in range(versions)]
+    def build():
+        e=AlgebraFFT(n)
+        a,b,c,d,f=[e.signal(x) for x in signals]
+        root=e.add(e.mul(a,a,a),e.scale(e.mul(a,b),2),e.mul(c,d,f))
+        return e,root,a
+    def trial(method):
+        start=perf_counter_ns()
+        if method in ('dense_jet','projected_jet'):
+            e,root,a=build()
+            prepared=e.prepare(root,a) if method=='dense_jet' else prepare_projected_jet(e,root,a,bins)
+            if method=='projected_jet':payload=prepared.coefficients.nbytes
+            else:payload=sum(v.nbytes for v in prepared.frequency_coefficients)+sum(v.nbytes for v in prepared.kernels if v is not None)
+        else:
+            spectra=[fft.rfft(x) for x in signals]
+            full=[]
+            for s in spectra:
+                z=s[np.minimum(bins,n-bins)].copy();hi=bins>n//2;z[hi]=z[hi].conj();full.append(z)
+            aa,bb,cc,dd,ee=full
+            fixed=cc*dd*ee
+            payload=sum(x.nbytes for x in full)+fixed.nbytes
+        setup=(perf_counter_ns()-start)/1e6;start=perf_counter_ns();out=[]
+        for pos,delta in events:
+            if method=='dense_jet':
+                out.append(np.asarray([prepared.single_frequency(pos,delta,int(k)) for k in bins]))
+            elif method=='projected_jet':out.append(prepared.single(pos,delta))
+            elif method=='analytic_projected':
+                changed=aa+delta*np.exp((-2j*np.pi/n)*((bins*pos)%n))
+                out.append(changed**3+2*changed*bb+fixed)
+            else:
+                x=signals[0].copy();x[pos]+=delta
+                h=fft.rfft(x);changed=h[np.minimum(bins,n-bins)].copy()
+                hi=bins>n//2;changed[hi]=changed[hi].conj()
+                out.append(changed**3+2*changed*bb+fixed)
+        warm=(perf_counter_ns()-start)/1e6
+        return {'setup_ms':setup,'warm_ms':warm,'cold_ms':setup+warm,'prepared_numeric_bytes':payload},np.stack(out)
+    methods=('dense_jet','projected_jet','analytic_projected','fresh_changed_fft')
+    reference=trial('fresh_changed_fft')[1];rows={m:[] for m in methods};error=0
+    for _ in range(repeats):
+        for method in rng.permutation(methods):
+            row,out=trial(method);rows[method].append(row)
+            error=max(error,float(np.max(abs(out-reference))))
+            np.testing.assert_allclose(out,reference,rtol=2e-10,atol=2e-10)
+    return {'n':n,'q':q,'versions':versions,'degree':3,'max_abs_error':error,'trials':rows,
+            'summary':{m:{key:float(np.median([r[key] for r in trials])) for key in trials[0]} for m,trials in rows.items()}}
+
+
+if __name__=='__main__':
+    out={'organizers':[],'jets':[]}
+    for scenario in ('sync','two_clusters','async','shift'):
+        row=organizer(scenario);out['organizers'].append(row);print('organizer',scenario,row['median_ms'],flush=True)
+    for n in (4096,65536,262144):
+        row=jets(n);out['jets'].append(row);print('jets',n,row['summary'],flush=True)
+    (ROOT/'results/benchmark_integrations.json').write_text(json.dumps(out,indent=2)+'\n')

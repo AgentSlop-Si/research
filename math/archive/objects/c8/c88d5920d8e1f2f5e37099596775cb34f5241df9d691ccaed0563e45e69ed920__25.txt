@@ -1,0 +1,184 @@
+   1 """Phase 3: exact NTT/tabulation barrier and input-independent low-rank sharing.
+   2 
+   3 The arithmetic identities are exact over prime fields. This module does NOT
+   4 claim to improve general DFT/NTT asymptotic complexity.
+   5 """
+   6 from __future__ import annotations
+   7 
+   8 from itertools import product
+   9 from math import isqrt, log2
+  10 
+  11 
+  12 def is_prime(n: int) -> bool:
+  13     if n < 2:
+  14         return False
+  15     if n % 2 == 0:
+  16         return n == 2
+  17     divisor = 3
+  18     while divisor * divisor <= n:
+  19         if n % divisor == 0:
+  20             return False
+  21         divisor += 2
+  22     return True
+  23 
+  24 
+  25 def choose_ntt_prime(n: int) -> int:
+  26     """Smallest prime q with n | (q-1), using trial division (small n)."""
+  27     if n < 2 or (n & (n - 1)):
+  28         raise ValueError("n must be a power of two >= 2")
+  29     multiplier = 1
+  30     while True:
+  31         q = multiplier * n + 1
+  32         if is_prime(q):
+  33             return q
+  34         multiplier += 1
+  35 
+  36 
+  37 def distinct_prime_factors(m: int) -> list[int]:
+  38     result = []
+  39     d = 2
+  40     while d * d <= m:
+  41         if m % d == 0:
+  42             result.append(d)
+  43             while m % d == 0:
+  44                 m //= d
+  45         d += 1
+  46     if m > 1:
+  47         result.append(m)
+  48     return result
+  49 
+  50 
+  51 def primitive_root(q: int) -> int:
+  52     if not is_prime(q):
+  53         raise ValueError("q must be prime")
+  54     factors = distinct_prime_factors(q - 1)
+  55     for candidate in range(2, q):
+  56         if all(pow(candidate, (q - 1) // p, q) != 1 for p in factors):
+  57             return candidate
+  58     raise RuntimeError("primitive root not found")
+  59 
+  60 
+  61 def ntt_root(n: int, q: int) -> int:
+  62     if (q - 1) % n:
+  63         raise ValueError("n must divide q-1")
+  64     root = pow(primitive_root(q), (q - 1) // n, q)
+  65     assert pow(root, n, q) == 1
+  66     assert n == 1 or pow(root, n // 2, q) != 1
+  67     return root
+  68 
+  69 
+  70 def direct_ntt(a: list[int], q: int, root: int) -> list[int]:
+  71     n = len(a)
+  72     return [sum(a[j] * pow(root, j*k, q) for j in range(n)) % q
+  73             for k in range(n)]
+  74 
+  75 
+  76 def radix2_ntt(a: list[int], q: int, root: int) -> list[int]:
+  77     n = len(a)
+  78     if n < 1 or (n & (n - 1)):
+  79         raise ValueError("power of two needed")
+  80     values = [x % q for x in a]
+  81     j = 0
+  82     for i in range(1, n):
+  83         bit = n >> 1
+  84         while j & bit:
+  85             j ^= bit
+  86             bit >>= 1
+  87         j ^= bit
+  88         if i < j:
+  89             values[i], values[j] = values[j], values[i]
+  90     m = 2
+  91     while m <= n:
+  92         wstep = pow(root, n // m, q)
+  93         for start in range(0, n, m):
+  94             w = 1
+  95             for k in range(m // 2):
+  96                 u = values[start+k]
+  97                 v = (values[start+k + m//2] * w) % q
+  98                 values[start+k] = (u+v) % q
+  99                 values[start+k + m//2] = (u-v) % q
+ 100                 w = (w * wstep) % q
+ 101         m *= 2
+ 102     return values
+ 103 
+ 104 
+ 105 def inverse_ntt(spectrum: list[int], q: int, root: int) -> list[int]:
+ 106     n = len(spectrum)
+ 107     inv = pow(root, -1, q)
+ 108     inv_n = pow(n, -1, q)
+ 109     return [(x * inv_n) % q for x in radix2_ntt(spectrum, q, inv)]
+ 110 
+ 111 
+ 112 def tabulate_butterfly(q: int) -> list[tuple[int,int]]:
+ 113     """All possible 2-point transforms over F_q; q^2 stored pairs."""
+ 114     return [((a+b) % q, (a-b) % q) for a in range(q) for b in range(q)]
+ 115 
+ 116 
+ 117 def hadamard_matrix(n: int, modulus: int = 3) -> list[list[int]]:
+ 118     if n < 1 or n & (n - 1):
+ 119         raise ValueError("power of two required")
+ 120     return [[(1 if (i & j).bit_count() % 2 == 0 else -1) % modulus
+ 121              for j in range(n)] for i in range(n)]
+ 122 
+ 123 
+ 124 def rank_one_sign_sparse(n: int, modulus: int = 3) -> dict:
+ 125     """Search rank-one sign matrices +/-u*v for sparse residual WHT.
+ 126 
+ 127     Exact for the *restricted* family where u,v have only +/-1 values.
+ 128     This is NOT a search over all rank-one matrices or all circuits.
+ 129     """
+ 130     H = hadamard_matrix(n, modulus)
+ 131     best = None
+ 132     for bits in product((-1, 1), repeat=n-1):
+ 133         u = (1,) + bits  # remove global sign symmetry
+ 134         v = []
+ 135         missed = 0
+ 136         for col in range(n):
+ 137             plus = sum(1 for row in range(n) if H[row][col] == (u[row] % modulus))
+ 138             minus = n - plus
+ 139             if plus >= minus:
+ 140                 v.append(1)
+ 141                 missed += minus
+ 142             else:
+ 143                 v.append(-1)
+ 144                 missed += plus
+ 145         if best is None or missed < best[0]:
+ 146             best = (missed, u, tuple(v))
+ 147     sparse = []
+ 148     for i in range(n):
+ 149         for j in range(n):
+ 150             val = (H[i][j] - best[1][i]*best[2][j]) % modulus
+ 151             if val:
+ 152                 sparse.append((i,j,val))
+ 153     assert len(sparse) == best[0]
+ 154     return {"n":n,"p":modulus,"u":list(best[1]),"v":list(best[2]),
+ 155             "sparse":sparse,"nonzero":len(sparse),"dense":n*n}
+ 156 
+ 157 
+ 158 def apply_rank_one_sparse(cert: dict, x: list[int]) -> list[int]:
+ 159     p = cert["p"]
+ 160     n = cert["n"]
+ 161     if len(x) != n:
+ 162         raise ValueError("bad input length")
+ 163     scalar = sum(cert["v"][j]*x[j] for j in range(n)) % p
+ 164     out = [cert["u"][i]*scalar % p for i in range(n)]
+ 165     for i,j,value in cert["sparse"]:
+ 166         out[i] = (out[i] + value*x[j]) % p
+ 167     return out
+ 168 
+ 169 
+ 170 def run_summary() -> None:
+ 171     print("Exact NTT: required field size and all-input table growth")
+ 172     print("N       q       q^2 entries for a complete 2-point lookup")
+ 173     for n in (8,16,32,64,128,256,512,1024):
+ 174         q = choose_ntt_prime(n)
+ 175         print(f"{n:<7} {q:<7} {q*q:,}")
+ 176     print("\nLow-rank + sparse WHT decomposition over F_3 (restricted sign-rank-one search)")
+ 177     for n in (2,4,8):
+ 178         c = rank_one_sign_sparse(n)
+ 179         print(f"n={n}: dense={c['dense']} sparse_residual={c['nonzero']} rank=1")
+ 180     print("\nNo general NTT or complex-FFT sub-NlogN claim.")
+ 181 
+ 182 
+ 183 if __name__ == "__main__":
+ 184     run_summary()

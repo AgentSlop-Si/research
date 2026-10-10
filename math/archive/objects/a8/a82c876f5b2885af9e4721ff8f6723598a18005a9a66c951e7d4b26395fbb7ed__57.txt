@@ -1,0 +1,205 @@
+   1 """Exact direct global finite-field DFT and Boolean compression bottleneck audit.
+   2 
+   3 All mathematical statements about complex-valued Lipschitz encoding/decoding
+   4 are in RESEARCH.md. The exact packed algorithm is NOT a linear-time FFT:
+   5 one arbitrary-width integer multiplication costs M(N*s) bit operations.
+   6 No cached inputs, no multi-threaded control, no uncharged table.
+   7 """
+   8 from __future__ import annotations
+   9 
+  10 from dataclasses import dataclass, asdict
+  11 from fractions import Fraction
+  12 from math import ceil, log2
+  13 from typing import Sequence
+  14 
+  15 P = 998244353
+  16 ROOT = 3
+  17 
+  18 
+  19 def next_power_of_two(n: int) -> int:
+  20     if n <= 0:
+  21         raise ValueError("n must be positive")
+  22     return 1 << (n - 1).bit_length()
+  23 
+  24 
+  25 def check_fft_size(n: int, p: int = P) -> None:
+  26     if n < 1 or (n & (n - 1)):
+  27         raise ValueError("N must be a positive power of two")
+  28     if (p - 1) % (2*n):
+  29         raise ValueError("a primitive 2N-th root must exist in the chosen field")
+  30 
+  31 
+  32 def chirp_phases(n: int, p: int = P, primitive_root: int = ROOT):
+  33     """O(N) exact field products to prepare plus/minus quadratic chirps."""
+  34     check_fft_size(n, p)
+  35     zeta = pow(primitive_root, (p-1)//(2*n), p)
+  36     if pow(zeta, n, p) != p-1 or pow(zeta, 2*n, p) != 1:
+  37         raise ValueError("primitive_root does not produce a primitive 2N-th root")
+  38     zinv = pow(zeta, p-2, p)
+  39     zeta2 = zeta*zeta % p
+  40     zinv2 = zinv*zinv % p
+  41     d = [1]*n
+  42     h = [1]*n
+  43     mult_d, mult_h = zeta, zinv
+  44     for j in range(1, n):
+  45         d[j] = d[j-1]*mult_d % p
+  46         h[j] = h[j-1]*mult_h % p
+  47         mult_d = mult_d*zeta2 % p
+  48         mult_h = mult_h*zinv2 % p
+  49     return d, h, zeta
+  50 
+  51 
+  52 @dataclass(frozen=True)
+  53 class PackedCost:
+  54     length: int
+  55     field_prime: int
+  56     cell_bits: int
+  57     operand_bits: int
+  58     packed_operand_actual_bits_A: int
+  59     packed_operand_actual_bits_H: int
+  60     product_actual_bits: int
+  61     one_arbitrary_width_multiplication: int
+  62     coefficient_reads: int
+  63     # Cross-layer bit arithmetic cost is NOT counted as a unit operation.
+  64     hidden_bit_model: str = "M(operand_bits) plus O(N*cell_bits) packing/unpacking plus field arithmetic"
+  65 
+  66 
+  67 def packed_dft(values: Sequence[int], p: int = P,
+  68                primitive_root: int = ROOT) -> tuple[list[int], PackedCost]:
+  69     """Fresh exact full NTT via ONE big-integer multiply (charged in bit model).
+  70 
+  71     Known composition of Bluestein's quadratic chirp with Kronecker
+  72     substitution; one bigint multiply is emphatically NOT a unit-cost gate.
+  73     """
+  74     n = len(values)
+  75     check_fft_size(n, p)
+  76     d, h, _ = chirp_phases(n, p, primitive_root)
+  77     a = [d[j]*(int(values[j]) % p) % p for j in range(n)]
+  78 
+  79     # For linear product of two length-N vectors with each entry <=p-1,
+  80     # every nonnegative coefficient is <= N*(p-1)^2, so no base carries.
+  81     bound = n * (p-1) * (p-1)
+  82     cell_bytes = max(1, (bound.bit_length()+7)//8)
+  83     cell_bits = 8*cell_bytes
+  84     assert (1 << cell_bits) > bound
+  85     buf_a = b''.join(t.to_bytes(cell_bytes, 'little') for t in a)
+  86     buf_h = b''.join(t.to_bytes(cell_bytes, 'little') for t in h)
+  87     aa = int.from_bytes(buf_a, 'little')
+  88     hh = int.from_bytes(buf_h, 'little')
+  89     product = aa * hh  # One enormous multiplication: must count its bit work!
+  90     full = product.to_bytes(2*n*cell_bytes, 'little')
+  91     coefficients = [int.from_bytes(full[i*cell_bytes:(i+1)*cell_bytes], 'little')
+  92                     for i in range(2*n-1)]
+  93     assert max(coefficients, default=0) <= bound
+  94 
+  95     out = []
+  96     for j in range(n):
+  97         value = coefficients[j]
+  98         if j+n < len(coefficients):
+  99             value += coefficients[j+n]
+ 100         out.append(d[j]*(value % p) % p)
+ 101     model = PackedCost(
+ 102         length=n, field_prime=p, cell_bits=cell_bits,
+ 103         operand_bits=n*cell_bits,
+ 104         packed_operand_actual_bits_A=aa.bit_length(),
+ 105         packed_operand_actual_bits_H=hh.bit_length(),
+ 106         product_actual_bits=product.bit_length(),
+ 107         one_arbitrary_width_multiplication=1,
+ 108         coefficient_reads=2*n-1)
+ 109     return out, model
+ 110 
+ 111 
+ 112 def direct_dft(values: Sequence[int], p: int = P, primitive_root: int = ROOT) -> list[int]:
+ 113     """Independent quadratic reference: fresh exact DFT in F_p."""
+ 114     n = len(values)
+ 115     check_fft_size(n, p)
+ 116     omega = pow(primitive_root, (p-1)//n, p)
+ 117     out = []
+ 118     for k in range(n):
+ 119         step = pow(omega, k, p)
+ 120         phase = 1
+ 121         acc = 0
+ 122         for x in values:
+ 123             acc = (acc + (int(x) % p)*phase) % p
+ 124             phase = phase*step % p
+ 125         out.append(acc)
+ 126     return out
+ 127 
+ 128 
+ 129 def ntt_reference(values: Sequence[int], p: int = P, primitive_root: int = ROOT) -> list[int]:
+ 130     """Independent iterative radix-2 NTT reference with full bit reversal."""
+ 131     n = len(values)
+ 132     check_fft_size(n, p)
+ 133     arr = [int(v) % p for v in values]
+ 134     j = 0
+ 135     for i in range(1,n):
+ 136         bit = n >> 1
+ 137         while j & bit:
+ 138             j ^= bit
+ 139             bit >>= 1
+ 140         j ^= bit
+ 141         if i < j:
+ 142             arr[i], arr[j] = arr[j], arr[i]
+ 143     length = 2
+ 144     while length <= n:
+ 145         base = pow(primitive_root, (p-1)//length, p)
+ 146         for start in range(0,n,length):
+ 147             phase = 1
+ 148             half = length >> 1
+ 149             for r in range(half):
+ 150                 a = arr[start+r]
+ 151                 b = phase*arr[start+half+r] % p
+ 152                 arr[start+r] = (a+b) % p
+ 153                 arr[start+half+r] = (a-b) % p
+ 154                 phase = phase*base % p
+ 155         length *= 2
+ 156     return arr
+ 157 
+ 158 
+ 159 def block_digits(bits: Sequence[int], block_bits: int) -> tuple[int,...]:
+ 160     """Exact fixed-point encoder. Encoded coordinate is digit / 2**block_bits."""
+ 161     if block_bits < 1 or len(bits) % block_bits:
+ 162         raise ValueError("block_bits must divide the nonzero signal length")
+ 163     if any(int(x) not in (0,1) for x in bits):
+ 164         raise ValueError("Boolean inputs required")
+ 165     out = []
+ 166     for i in range(0,len(bits),block_bits):
+ 167         digit = 0
+ 168         for j in range(block_bits):
+ 169             digit = (digit << 1) + int(bits[i+j])
+ 170         out.append(digit)
+ 171     return tuple(out)
+ 172 
+ 173 
+ 174 def block_encode_exact(bits: Sequence[int], block_bits: int) -> tuple[Fraction,...]:
+ 175     return tuple(Fraction(d,1<<block_bits) for d in block_digits(bits,block_bits))
+ 176 
+ 177 
+ 178 def grid_count(M: int, L: int, epsilon: Fraction = Fraction(0)) -> int:
+ 179     """Each real coordinate has at most Q grid cells, a theorem sufficient bound.
+ 180 
+ 181     Encoder coordinates are complex bounded in magnitude by integer M;
+ 182     decoder is L-Lipschitz on encoded values and has max error epsilon <1/2.
+ 183     """
+ 184     if M <= 0 or L <= 0 or not 0 <= epsilon < Fraction(1,2):
+ 185         raise ValueError("require M>0, L>0 and 0<=epsilon<1/2")
+ 186     ratio = Fraction(4*M*L,1)/(1-2*epsilon)
+ 187     return (ratio.numerator + ratio.denominator-1)//ratio.denominator + 1
+ 188 
+ 189 
+ 190 def packing_possible(n: int, w: int, M: int, L: int,
+ 191                      epsilon: Fraction = Fraction(0), complex_coordinates: bool = True) -> bool:
+ 192     """Necessary capacity condition for an exact/near-exact complex FFT decoder."""
+ 193     if n < 1 or w < 1:
+ 194         raise ValueError("positive dimensions required")
+ 195     Q = grid_count(M,L,epsilon)
+ 196     return Q**(2*w if complex_coordinates else w) >= 2**n
+ 197 
+ 198 if __name__ == "__main__":
+ 199     from random import Random
+ 200     r=Random(20261009)
+ 201     for n in (4,8,16,32,64,256,1024):
+ 202         vals=[r.randrange(P) for _ in range(n)]
+ 203         got,cost=packed_dft(vals)
+ 204         assert got==ntt_reference(vals)
+ 205         print(f'N={n:<5} radix_cell_bits={cost.cell_bits:<4} bigint_operand_bits={cost.operand_bits:<10} exact=True')

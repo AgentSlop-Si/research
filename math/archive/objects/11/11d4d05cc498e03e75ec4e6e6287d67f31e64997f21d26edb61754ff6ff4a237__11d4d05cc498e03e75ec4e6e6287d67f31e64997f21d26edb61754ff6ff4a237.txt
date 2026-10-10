@@ -1,0 +1,123 @@
+import sys,unittest
+from pathlib import Path
+from random import Random
+from math import sqrt,log2
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from unitary_mixer import (MOD,UnitaryGreenMixer,TreeCayley,all_path_edges,
+                          parent_complete_binary_forest,parent_path,random_order,rank_mod)
+from audit import tree_exact_root_leaf,exact_modular
+
+
+def invert_mod(A,p=MOD):
+    n=len(A)
+    X=[[v%p for v in A[i]]+[int(i==j) for j in range(n)] for i in range(n)]
+    for j in range(n):
+        pivot=next((i for i in range(j,n) if X[i][j]%p),None)
+        if pivot is None:raise ValueError('singular')
+        X[pivot],X[j]=X[j],X[pivot]
+        inv=pow(X[j][j],-1,p)
+        X[j]=[(val*inv)%p for val in X[j]]
+        for i in range(n):
+            if i!=j and X[i][j]:
+                c=X[i][j]
+                X[i]=[(X[i][k]-c*X[j][k])%p for k in range(2*n)]
+    return [row[n:] for row in X]
+
+
+def mult_mod(A,x,p=MOD):
+    return [sum(a*b for a,b in zip(row,x))%p for row in A]
+
+
+class StructuralTests(unittest.TestCase):
+    def test_tree_forest_shapes(self):
+        for n in (1,2,3,4,7,8,15,16,31,32,64,129):
+            parents,m=parent_complete_binary_forest(n)
+            self.assertEqual(len(parents),n)
+            self.assertLessEqual(m,n)
+            self.assertTrue((m+1)&m==0)
+            self.assertGreater((m+1)*2-1,n)
+
+    def test_cayley_exact_dense_modular(self):
+        p=MOD;imag=pow(3,(p-1)//4,p)
+        rng=Random(201)
+        for n in (4,7,12,16):
+            for parents in (parent_complete_binary_forest(n)[0],parent_path(list(range(n)),n)):
+                stage=TreeCayley(parents,2,p=p)
+                adj=[[0]*n for _ in range(n)]
+                for u,pa in enumerate(parents):
+                    if pa!=-1:adj[u][pa]=adj[pa][u]=1
+                for invflag in (False,True):
+                    s=(imag*2*(-1 if invflag else 1))%p
+                    Iminus=[[ (int(i==j)-s*adj[i][j])%p for j in range(n)] for i in range(n)]
+                    densinv=invert_mod(Iminus,p)
+                    dense=[[ (2*densinv[i][j]-int(i==j))%p for j in range(n)] for i in range(n)]
+                    for t in range(2):
+                        x=[rng.randrange(p) for _ in range(n)]
+                        self.assertEqual(stage.apply(x,inverse=invflag),mult_mod(dense,x))
+
+    def test_stage_roundtrip_and_involution(self):
+        for n in (16,32,64,128,256):
+            with self.subTest(n=n):
+                self.assertEqual(exact_modular(n,4)['roundtrip_vectors'],4)
+
+    def test_full_matrix_inverse_modular(self):
+        p=MOD
+        for n in (8,16):
+            mixer=UnitaryGreenMixer(n,seed=n,p=p)
+            S=mixer.dense()
+            cols=[]
+            for j in range(n):
+                v=[0]*n;v[j]=1
+                cols.append(mixer.apply(v,inverse=True))
+            Sinv=[[cols[j][i] for j in range(n)] for i in range(n)]
+            for i in range(n):
+                for j in range(n):
+                    self.assertEqual(sum(S[i][k]*Sinv[k][j] for k in range(n))%p,int(i==j))
+
+    def test_tree_leaf_exact_formula(self):
+        for d in range(1,10):
+            with self.subTest(d=d):
+                out=tree_exact_root_leaf(d)
+                self.assertLess(out['exact_formula_error'],1e-11)
+        lam=(1+sqrt(33))/2
+        self.assertTrue(lam<4)
+        self.assertGreater(log2(4/lam),.2)
+
+    def test_random_graph_edge_count(self):
+        n=128;order=random_order(n,seed=99)
+        p1,p2=all_path_edges(order)
+        self.assertEqual(len(p1),n-1)
+        self.assertEqual(len(p2),n-1)
+        self.assertEqual(len(set(p1)),n-1)
+        self.assertEqual(len({tuple(sorted(e)) for e in p2}),n-1)
+
+    def test_unitarity_and_cut_numeric(self):
+        try:import numpy as np
+        except ImportError:self.skipTest('NumPy unavailable')
+        for n in (32,64,128):
+            with self.subTest(n=n):
+                mix=UnitaryGreenMixer(n,seed=20261009+n)
+                S=np.array(mix.dense())
+                self.assertLess(float(np.max(abs(S.conj().T@S-np.eye(n)))),1e-10)
+                p1,p2=all_path_edges(mix.order)
+                rng=Random(2026+n)
+                for set0 in (set(range(n//2)),set(rng.sample(range(n),n//2))):
+                    E=sum((a in set0)!=(b in set0) for a,b in p1+p2)
+                    I=sorted(set0);J=sorted(set(range(n))-set0)
+                    sv=np.linalg.svd(S[np.ix_(I,J)],compute_uv=False)
+                    self.assertGreaterEqual(sum(v>=1/64-1e-10 for v in sv),(E+31)//32)
+
+    def test_one_stage_is_not_fourier(self):
+        try:import numpy as np
+        except ImportError:self.skipTest('NumPy unavailable')
+        n=32
+        mix=UnitaryGreenMixer(n,seed=123)
+        S=np.array(mix.dense())
+        z=np.roll(np.eye(n),1,axis=0)
+        omega=np.exp(-2j*np.pi*np.arange(n)/n)
+        residual=S@z-omega[:,None]*S
+        self.assertGreater(float(np.linalg.norm(residual)/sqrt(n)),.1)
+        F=np.fft.fft(np.eye(n))/sqrt(n)
+        self.assertLess(float(np.max(np.abs(F@z-omega[:,None]*F))),1e-10)
+
+if __name__=='__main__':unittest.main()

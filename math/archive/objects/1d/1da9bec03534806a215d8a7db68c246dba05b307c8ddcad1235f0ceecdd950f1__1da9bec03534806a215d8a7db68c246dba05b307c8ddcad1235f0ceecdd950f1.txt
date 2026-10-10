@@ -1,0 +1,100 @@
+import unittest,random
+from weyl_gate import (P,modular_root,ntt,shift,inverse_shift,modulate,
+                       check_weyl,TridiagonalLU,seeded_product,
+                       NearResonantGreen,seeded_near_resonant_product,
+                       DiagonalAfter,ScaledFFT)
+
+class WeylTests(unittest.TestCase):
+    def test_fft_control_8(self):self.assertTrue(check_weyl(ntt,8,trials=3,seed=11).passed)
+    def test_fft_control_64(self):self.assertTrue(check_weyl(ntt,64,trials=3,seed=11).passed)
+    def test_fft_control_256(self):self.assertTrue(check_weyl(ntt,256,trials=2,seed=11).passed)
+    def test_fft_control_1024(self):self.assertTrue(check_weyl(ntt,1024,trials=1,seed=11).passed)
+    def test_fft_control_4096(self):self.assertTrue(check_weyl(ntt,4096,trials=1,seed=11).passed)
+
+    def test_direct_dft_8(self):
+        n=8;w=modular_root(n)
+        from weyl_gate import modular_sqrt
+        c=pow(modular_sqrt(n),-1,P)
+        for k in range(n):
+            x=[int(i==k) for i in range(n)]
+            self.assertEqual(ntt(x),[c*pow(w,j*k,P)%P for j in range(n)])
+
+    def test_complex_shift_conventions(self):
+        x=list(range(8))
+        self.assertEqual(inverse_shift(shift(x)),x)
+        self.assertEqual(shift(inverse_shift(x)),x)
+        self.assertEqual(modulate(x)[0],0)
+
+    def test_one_equation_only_8(self):
+        r=check_weyl(DiagonalAfter(8),8,trials=2,seed=13)
+        self.assertTrue(r.first_equation);self.assertFalse(r.second_equation)
+        self.assertTrue(r.calibrated);self.assertFalse(r.passed)
+    def test_one_equation_only_64(self):
+        r=check_weyl(DiagonalAfter(64),64,trials=2,seed=13)
+        self.assertTrue(r.first_equation);self.assertFalse(r.second_equation)
+
+    def test_wrong_scalar_16(self):
+        r=check_weyl(ScaledFFT(16,7),16,trials=2,seed=13)
+        self.assertTrue(r.first_equation);self.assertTrue(r.second_equation)
+        self.assertFalse(r.calibrated);self.assertFalse(r.passed)
+
+    def test_four_calls(self):
+        self.assertEqual(check_weyl(ntt,16,trials=1).circuit_calls,4)
+    def test_one_sided_failure_bound(self):
+        r=check_weyl(ntt,16,trials=2)
+        self.assertIn('998244353^-2',r.one_sided_false_accept_bound)
+
+    def test_seeded_green_16(self):
+        r=check_weyl(seeded_product(16,seed=19),16,trials=1,seed=14)
+        self.assertFalse(r.passed);self.assertFalse(r.first_equation);self.assertFalse(r.second_equation)
+    def test_seeded_green_64(self):
+        r=check_weyl(seeded_product(64,seed=19),64,trials=1,seed=14)
+        self.assertFalse(r.passed)
+    def test_seeded_green_256(self):
+        r=check_weyl(seeded_product(256,seed=19),256,trials=1,seed=14)
+        self.assertFalse(r.passed)
+    def test_seeded_green_1024(self):
+        r=check_weyl(seeded_product(1024,seed=19),1024,trials=1,seed=14)
+        self.assertFalse(r.passed)
+    def test_seeded_green_4096(self):
+        r=check_weyl(seeded_product(4096,seed=19),4096,trials=1,seed=14)
+        self.assertFalse(r.passed)
+
+    def test_resonant_green_16(self):
+        self.assertFalse(check_weyl(NearResonantGreen(16),16,trials=1).passed)
+    def test_resonant_green_256(self):
+        self.assertFalse(check_weyl(NearResonantGreen(256),256,trials=1).passed)
+    def test_near_resonant_product_16(self):
+        self.assertFalse(check_weyl(seeded_near_resonant_product(16,seed=21),16,trials=1).passed)
+    def test_near_resonant_product_64(self):
+        self.assertFalse(check_weyl(seeded_near_resonant_product(64,seed=21),64,trials=1).passed)
+    def test_near_resonant_product_256(self):
+        self.assertFalse(check_weyl(seeded_near_resonant_product(256,seed=21),256,trials=1).passed)
+    def test_near_resonant_product_1024(self):
+        self.assertFalse(check_weyl(seeded_near_resonant_product(1024,seed=21),1024,trials=1).passed)
+
+    def test_tridiagonal_solver_against_its_matrix(self):
+        n=32;rng=random.Random(2020)
+        lo=[0]+[rng.randrange(1,20) for _ in range(n-1)]
+        up=[rng.randrange(1,20) for _ in range(n-1)]+[0]
+        diag=[rng.randrange(30,100) for _ in range(n)]
+        sol=TridiagonalLU.build(lo,diag,up)
+        x=[rng.randrange(P) for _ in range(n)]
+        y=sol.solve(x)
+        recovered=[]
+        for i in range(n):
+            z=diag[i]*y[i]
+            if i:z+=lo[i]*y[i-1]
+            if i<n-1:z+=up[i]*y[i+1]
+            recovered.append(z%P)
+        self.assertEqual(recovered,x)
+
+    def test_green_apply_linearity(self):
+        n=128; rng=random.Random(12);g=seeded_product(n,seed=19)
+        a=[rng.randrange(P) for _ in range(n)]
+        b=[rng.randrange(P) for _ in range(n)]
+        lhs=g([(u+v)%P for u,v in zip(a,b)])
+        rhs=[(u+v)%P for u,v in zip(g(a),g(b))]
+        self.assertEqual(lhs,rhs)
+
+if __name__=='__main__':unittest.main()

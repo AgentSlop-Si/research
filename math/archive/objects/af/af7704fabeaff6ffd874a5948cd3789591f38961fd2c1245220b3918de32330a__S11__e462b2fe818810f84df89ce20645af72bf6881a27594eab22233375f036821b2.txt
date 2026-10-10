@@ -1,0 +1,47 @@
+   1 """Numerical warning gate: denominator coefficients can grow exponentially in K.
+   2 This is not a rigorous floating-point error upper bound; the exact limiting
+   3 argument and binomial coefficient formula are documented in THEOREM.md.
+   4 """
+   5 import cmath,math,json,random
+   6 from pathlib import Path
+   7 from rational_forcing import AllLengthGreen,P0,G0
+   8 
+   9 
+  10 def dense_denominator(n,support):
+  11     omega=cmath.exp(-2j*math.pi/n)
+  12     den=[1+0j]
+  13     for j in support:
+  14         lam=omega**j
+  15         new=[0j]*(len(den)+1)
+  16         for i,v in enumerate(den):
+  17             new[i]+=v
+  18             new[i+1]-=lam*v
+  19         den=new
+  20     return den
+  21 
+  22 
+  23 def run():
+  24     n=1<<17
+  25     r=[]
+  26     for k in (4,8,16,32):
+  27         clustered=dense_denominator(n,range(k))
+  28         dispersed=dense_denominator(n,[j*(n//k) for j in range(k)])
+  29         item={'N':n,'K':k,'clustered_max_abs_coef':max(abs(z) for z in clustered),
+  30               'dispersed_max_abs_coef':max(abs(z) for z in dispersed),
+  31               'central_binomial_comparison':math.comb(k,k//2),
+  32               'clustered_to_output_upper_amplification':max(abs(z) for z in clustered)/k}
+  33         r.append(item)
+  34     e=AllLengthGreen(512,P0,G0)
+  35     random.seed(20261010)
+  36     ks=[]
+  37     for trial in range(16):
+  38         x=[random.randrange(P0) for _ in range(e.n)]
+  39         ks.append(sum(bool(z) for z in e.sparse_residual(x)))
+  40     out={'denominator_coefficient_warnings':r,'uniform_random_input_residual_supports':ks,
+  41          'generic_input_predicted_support':512*(1-1/P0),
+  42          'interpretation':'Finite-field correctness does not imply bounded complex bit precision; dense generic inputs do not sparsify.'}
+  43     Path(__file__).with_name('PRECISION_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+  44     print(json.dumps(out,indent=2))
+  45     return out
+  46 
+  47 if __name__=='__main__':run()

@@ -1,0 +1,405 @@
+===== SOURCE 50 fft_new_material_fusion_checkpoint_20261009/fft_green_fusion_research/resolvent_escape.py SHA256 5a5ad7fb7adc6f586addbbe0948f950f0b917b9f785f1ec1be4809d36a046cc2 =====
+   1 """A charged, exact condition-budget escape mixer; not a Fourier transform.
+   2 
+   3 K(M)=I+(I-M)^-1 for a weighted full cycle M with M^N=-I.
+   4 All field calls below are counted; addressing/cycle verification is O(N).
+   5 """
+   6 from dataclasses import dataclass
+   7 from collections import Counter
+   8 
+   9 
+  10 class Counted:
+  11     def __init__(self, field):
+  12         self.field = field
+  13         self.zero, self.one = field.zero, field.one
+  14         self.count = Counter()
+  15     def add(self, a, b):
+  16         self.count['add'] += 1
+  17         return self.field.add(a, b)
+  18     def sub(self, a, b):
+  19         self.count['sub'] += 1
+  20         return self.field.sub(a, b)
+  21     def mul(self, a, b):
+  22         self.count['mul'] += 1
+  23         return self.field.mul(a, b)
+  24     def inv(self, a):
+  25         self.count['inverse'] += 1
+  26         return self.field.inv(a)
+  27 
+  28 
+  29 def cycle_order(permutation):
+  30     n = len(permutation)
+  31     if n < 1 or any(not isinstance(j,int) or j < 0 or j >= n for j in permutation):
+  32         raise ValueError('not a permutation')
+  33     order, seen, j = [], [False]*n, 0
+  34     while not seen[j]:
+  35         seen[j] = True; order.append(j); j = permutation[j]
+  36     if j != 0 or len(order) != n:
+  37         raise ValueError('one full cycle required')
+  38     return tuple(order)
+  39 
+  40 
+  41 def cycle_solve(c, order, coefficients, rhs, closure_inverse):
+  42     """Solve y_j=rhs_j+coefficients[j]*y_perm(j), exactly4N+1 gates."""
+  43     value = c.zero
+  44     for j in reversed(order):
+  45         value = c.add(rhs[j], c.mul(coefficients[j], value))
+  46     value = c.mul(value, closure_inverse)
+  47     out = [c.zero]*len(order)
+  48     for j in reversed(order):
+  49         value = c.add(rhs[j], c.mul(coefficients[j], value))
+  50         out[j] = value
+  51     return out
+  52 
+  53 
+  54 @dataclass
+  55 class EscapePlan:
+  56     n: int
+  57     source: tuple
+  58     target: tuple
+  59     source_order: tuple
+  60     target_order: tuple
+  61     source_coefficients: tuple
+  62     target_coefficients: tuple
+  63     source_half_coefficients: tuple
+  64     target_half_coefficients: tuple
+  65     half: object
+  66     half_closure_inverse: object
+  67     preparation_counts: dict
+  68 
+  69     def apply(self, field, values, *, target=False, inverse=False):
+  70         if len(values) != self.n:
+  71             raise ValueError('wrong vector length')
+  72         c = Counted(field)
+  73         order = self.target_order if target else self.source_order
+  74         if inverse:
+  75             coefficients = self.target_half_coefficients if target else self.source_half_coefficients
+  76             z = cycle_solve(c, order, coefficients, values, self.half_closure_inverse)
+  77             result = [c.sub(x, c.mul(self.half, y)) for x,y in zip(values,z)]
+  78         else:
+  79             coefficients = self.target_coefficients if target else self.source_coefficients
+  80             z = cycle_solve(c, order, coefficients, values, self.half)
+  81             result = [c.add(x,y) for x,y in zip(values,z)]
+  82         return result, dict(c.count)
+  83 
+  84 
+  85 def prepare_affine(field, n, q, a=5, b=1, shift=1):
+  86     """Prepare source/target K and inverses:2N+log2(N)+4 field gates.
+  87 
+  88     Exact complex theorem; modular prototype rejects singular numerator.
+  89     N>=2 dyadic. Descriptor is supplied as bounded integer words.
+  90     """
+  91     if n < 2 or n & (n-1):
+  92         raise ValueError('dyadic N>=2 required')
+  93     if any(not isinstance(x,int) for x in (a,b,shift)) or a%4 != 1 or b%2 != 1 or shift%2 != 1:
+  94         raise ValueError('a=1 mod4 and odd b,shift required')
+  95     a,b,shift = a%n,b%n,shift%n
+  96     c = Counted(field)
+  97     roots = [c.one]
+  98     for _ in range(1,n): roots.append(c.mul(roots[-1],q))
+  99     if c.mul(roots[-1],q) != c.one or roots[n//2] == c.one:
+ 100         raise ValueError('primitive Nth root required')
+ 101     two = c.add(c.one,c.one)
+ 102     if two == c.zero: raise ValueError('characteristic two excluded')
+ 103     half = c.inv(two)
+ 104     power = half
+ 105     for _ in range(n.bit_length()-1): power = c.mul(power,power)
+ 106     denominator = c.add(c.one,power)
+ 107     if denominator == c.zero:
+ 108         raise ValueError('singular numerator:2^N+1 vanishes in this field')
+ 109     half_closure_inverse = c.inv(denominator)
+ 110     half_roots = [c.mul(half,x) for x in roots]
+ 111     source = tuple((a*j+shift)%n for j in range(n))
+ 112     ai = pow(a,-1,n)
+ 113     target = tuple(ai*(k+b)%n for k in range(n))
+ 114     source_order, target_order = cycle_order(source), cycle_order(target)
+ 115     source_indices = [(b*j)%n for j in range(n)]
+ 116     target_indices = [(-shift*j)%n for j in target]
+ 117     return EscapePlan(n,source,target,source_order,target_order,
+ 118                       tuple(roots[e] for e in source_indices),tuple(roots[e] for e in target_indices),
+ 119                       tuple(half_roots[e] for e in source_indices),tuple(half_roots[e] for e in target_indices),
+ 120                       half,half_closure_inverse,dict(c.count))
+ 121 
+ 122 
+ 123 def signed_cycle_forward(field, values):
+ 124     """K(C)x for C(x)=(x1,...,xN-1,-x0), including N=1.
+ 125 
+ 126     Cold cost is3N+1 gates:two setup gates plus3N-1 application gates.
+ 127     Uses only scalar1/2; no2^N coefficient is needed in this direction.
+ 128     """
+ 129     n = len(values)
+ 130     if not n: raise ValueError('nonempty vector required')
+ 131     c = Counted(field)
+ 132     two = c.add(c.one,c.one)
+ 133     if two == c.zero: raise ValueError('characteristic two excluded')
+ 134     half = c.inv(two)
+ 135     setup = dict(c.count)
+ 136     total = values[0]
+ 137     for x in values[1:]: total = c.add(total,x)
+ 138     z = c.mul(half,total)
+ 139     out = [c.add(values[0],z)]
+ 140     for i in range(1,n):
+ 141         z = c.sub(z,values[i-1])
+ 142         out.append(c.add(values[i],z))
+ 143     return out, dict(c.count), setup
+ 144 
+ 145 
+ 146 def varying_rank_one_gauge_recognize(field, base, dressed, mm, inverse, rank):
+ 147     """Offline dense audit of layer-dependent rank<=1 intermediate gauges.
+ 148 
+ 149     This certifies only equivalence to supplied same-length baseline stages.
+ 150     Dense audit work is O(tN^3), explicitly not part of an O(N) evaluator.
+ 151     """
+ 152     if not base or len(base) != len(dressed):
+ 153         raise ValueError('matching nonempty stage lists required')
+ 154     n = len(base[0])
+ 155     identity = [[field.one if i==j else field.zero for j in range(n)] for i in range(n)]
+ 156     h = identity
+ 157     ranks = []
+ 158     for i,(b,g) in enumerate(zip(base,dressed)):
+ 159         try:
+ 160             h = mm(field,mm(field,g,h),inverse(field,b))
+ 161             inverse(field,h)
+ 162         except ValueError:
+ 163             return dict(match=False,reason='singular stage or gauge',stage=i)
+ 164         delta = [[field.sub(x,y) for x,y in zip(row,ident)] for row,ident in zip(h,identity)]
+ 165         r = rank(field,delta)
+ 166         ranks.append(r)
+ 167         if i+1 < len(base) and r > 1:
+ 168             return dict(match=False,reason='intermediate gauge rank exceeds one',stage=i,ranks=ranks)
+ 169     return dict(match=h==identity,reason='verified' if h==identity else 'final gauge does not cancel',ranks=ranks)
+===== END SOURCE 50; 6641 bytes; 169 lines =====
+===== SOURCE 51 fft_new_material_fusion_checkpoint_20261009/fft_green_fusion_research/run_audit.py SHA256 cdf392f26b433f3db55811fbbea71fe87771fa0107113d14022fc5dc7e3622ab =====
+   1 """Independent exact identities, original-material checks, and charged probes."""
+   2 from pathlib import Path
+   3 from fractions import Fraction as Q
+   4 from random import Random
+   5 from collections import Counter
+   6 import hashlib
+   7 import json
+   8 import sys
+   9 
+  10 from exact_fields import PrimeField, CyclotomicField, inverse, mm, mv, rank, fourier
+  11 from resolvent_escape import prepare_affine, signed_cycle_forward, varying_rank_one_gauge_recognize
+  12 
+  13 ORIGINAL = Path(__file__).resolve().parent.parent/'fft_new_fusion_materials_20261009'/'green'/'fft_global_green_gauge'
+  14 sys.path.insert(0,str(ORIGINAL))
+  15 from gauge_fft import GaugeFFT
+  16 from gauge_recognizer import gauge_recognize
+  17 from norm_budget import exact_green_condition1
+  18 
+  19 
+  20 class Rational:
+  21     zero,one = Q(0),Q(1)
+  22     def add(self,a,b):return a+b
+  23     def sub(self,a,b):return a-b
+  24     def mul(self,a,b):return a*b
+  25     def neg(self,a):return -a
+  26     def inv(self,a):return 1/a
+  27     def integer(self,a):return Q(a)
+  28 
+  29 
+  30 class Probe:
+  31     def __init__(self,field):
+  32         self.field=field;self.zero=field.zero;self.one=field.one;self.count=Counter()
+  33     def add(self,a,b):self.count['add']+=1;return self.field.add(a,b)
+  34     def sub(self,a,b):self.count['sub']+=1;return self.field.sub(a,b)
+  35     def mul(self,a,b):self.count['mul']+=1;return self.field.mul(a,b)
+  36     def inv(self,a):self.count['inverse']+=1;return self.field.inv(a)
+  37 
+  38 
+  39 def identity(field,n):
+  40     return [[field.one if i==j else field.zero for j in range(n)] for i in range(n)]
+  41 
+  42 
+  43 def plus(field,a,b):
+  44     return [[field.add(x,y) for x,y in zip(r,s)] for r,s in zip(a,b)]
+  45 
+  46 
+  47 def minus(field,a,b):
+  48     return [[field.sub(x,y) for x,y in zip(r,s)] for r,s in zip(a,b)]
+  49 
+  50 
+  51 def norm1(a):
+  52     return max(sum(abs(x) for x in col) for col in zip(*a))
+  53 
+  54 
+  55 def monomial(field,permutation,coefficients):
+  56     n=len(permutation)
+  57     return [[coefficients[i] if permutation[i]==j else field.zero for j in range(n)] for i in range(n)]
+  58 
+  59 
+  60 def check_escape():
+  61     rng=Random(991)
+  62     out={'basis_cases':0,'fresh_roundtrips':0,'intertwining_matrices':0,
+  63          'counted_preparations':0,'counted_applications':0,'rational_norms':[],
+  64          'signed_forward_cases':0,'singular_modular_rejections':0,'invalid_rejections':0}
+  65     for field,sizes in ((PrimeField(97),(2,4,8,16)),(PrimeField(193),(2,4,8,16,32)),
+  66                         (CyclotomicField(4),(4,)),(CyclotomicField(8),(8,))):
+  67         for n in sizes:
+  68             q=field.root(n)
+  69             for a,b,shift in ((1,1,1),(5,3,5),(-3,-1,-3)):
+  70                 probe=Probe(field)
+  71                 plan=prepare_affine(probe,n,q,a,b,shift)
+  72                 assert plan.preparation_counts==dict(probe.count)
+  73                 assert sum(probe.count.values())==2*n+(n.bit_length()-1)+4
+  74                 out['counted_preparations']+=1
+  75                 eye=identity(field,n)
+  76                 m=monomial(field,plan.source,plan.source_coefficients)
+  77                 kh=plus(field,eye,inverse(field,minus(field,eye,monomial(field,plan.target,plan.target_coefficients))))
+  78                 k=plus(field,eye,inverse(field,minus(field,eye,m)))
+  79                 ki=inverse(field,k)
+  80                 f=fourier(field,n)
+  81                 assert mm(field,f,k)==mm(field,kh,f)
+  82                 out['intertwining_matrices']+=1
+  83                 for j in range(n):
+  84                     x=[field.one if i==j else field.zero for i in range(n)]
+  85                     for reverse,expected in ((False,k),(True,ki)):
+  86                         probe=Probe(field)
+  87                         y,counts=plan.apply(probe,x,inverse=reverse)
+  88                         assert counts==dict(probe.count)
+  89                         assert sum(counts.values())==(6*n+1 if reverse else 5*n+1)
+  90                         assert y==mv(field,expected,x)
+  91                         out['basis_cases']+=1;out['counted_applications']+=1
+  92                 for _ in range(3):
+  93                     x=[field.integer(rng.randrange(-20,21)) for _ in range(n)]
+  94                     y,_=plan.apply(field,x)
+  95                     z,_=plan.apply(field,y,inverse=True)
+  96                     assert z==x
+  97                     out['fresh_roundtrips']+=1
+  98 
+  99     field=Rational()
+ 100     for n in (1,2,3,4,8,16,32):
+ 101         eye=identity(field,n)
+ 102         perm=list(range(1,n))+[0]
+ 103         c=monomial(field,perm,[Q(1)]*(n-1)+[Q(-1)])
+ 104         k=plus(field,eye,inverse(field,minus(field,eye,c)))
+ 105         ki=inverse(field,k)
+ 106         assert all(x!=0 for row in k+ki for x in row)
+ 107         nk,ni=norm1(k),norm1(ki)
+ 108         assert nk==Q(n+2,2)
+ 109         assert ni==Q(2**n,2**n+1)
+ 110         assert nk*ni==Q((n+2)*2**(n-1),2**n+1)
+ 111         for j in range(n):
+ 112             x=[Q(int(i==j)) for i in range(n)]
+ 113             probe=Probe(field)
+ 114             y,counts,setup=signed_cycle_forward(probe,x)
+ 115             assert y==mv(field,k,x)
+ 116             assert counts==dict(probe.count)
+ 117             assert sum(counts.values())==3*n+1 and sum(setup.values())==2
+ 118             out['signed_forward_cases']+=1
+ 119         out['rational_norms'].append(dict(N=n,norm1_K=str(nk),norm1_inverse=str(ni),
+ 120                                          kappa1=str(nk*ni),inverse_nonzeros=n*n,
+ 121                                          signed_cold_field_gates=3*n+1,
+ 122                                          inverse_denominator_bits=(2**n+1).bit_length()))
+ 123     for p,n in ((5,2),(17,4),(257,8),(65537,16)):
+ 124         field=PrimeField(p)
+ 125         try:prepare_affine(field,n,field.root(n))
+ 126         except ValueError as e:
+ 127             assert 'singular numerator' in str(e)
+ 128             out['singular_modular_rejections']+=1
+ 129         else:raise AssertionError('singular K accepted')
+ 130     field=PrimeField(97)
+ 131     for args in ((1,1,5,1,1),(3,1,5,1,1),(4,1,5,1,1),
+ 132                  (4,field.root(4),2,1,1),(4,field.root(4),5,2,1),
+ 133                  (4,field.root(4),5,1,2)):
+ 134         try:prepare_affine(field,*args)
+ 135         except ValueError:out['invalid_rejections']+=1
+ 136         else:raise AssertionError('invalid request accepted')
+ 137     try:signed_cycle_forward(Rational(),[])
+ 138     except ValueError:out['invalid_rejections']+=1
+ 139     else:raise AssertionError('empty signed input accepted')
+ 140     return out
+ 141 
+ 142 
+ 143 def check_green_bounds():
+ 144     field=Rational();out=[]
+ 145     for n in (2,4,8,16):
+ 146         t=[[Q(3) if i==j else Q(-1) if abs(i-j)==1 else Q(0) for j in range(n)] for i in range(n)]
+ 147         eye=identity(field,n);u=plus(field,t,eye)
+ 148         s=plus(field,inverse(field,t),inverse(field,u))
+ 149         si=inverse(field,s)
+ 150         claimed=mm(field,mm(field,u,inverse(field,plus(field,t,u))),t)
+ 151         assert claimed==si
+ 152         n1,ninv=norm1(s),norm1(si)
+ 153         assert (n1,ninv,n1*ninv)==exact_green_condition1(n)
+ 154         assert n1<Q(3,2) and ninv<Q(17,6) and n1*ninv<Q(17,4)
+ 155         # Slightly sharpened all-N bound from the sign pattern and Gjj>=1/7.
+ 156         assert ninv<Q(58,21) and n1*ninv<Q(29,7)
+ 157         out.append(dict(N=n,norm1=str(n1),norm1_inverse=str(ninv),kappa1=str(n1*ninv)))
+ 158     return out
+ 159 
+ 160 
+ 161 def literal_gauge_action(gauge,x,inverse=False):
+ 162     p=gauge.p;dot=0;count=Counter()
+ 163     for a,y in zip(gauge.v,x):
+ 164         dot=(dot+a*y)%p;count['mul']+=1;count['add']+=1
+ 165     scale=(gauge.neg_beta if inverse else gauge.alpha)*dot%p;count['mul']+=1
+ 166     out=[]
+ 167     for y,a in zip(x,gauge.u):
+ 168         out.append((y+scale*a)%p);count['mul']+=1;count['add']+=1
+ 169     return out,count
+ 170 
+ 171 
+ 172 def check_gauges():
+ 173     out={'original_gauge_cases':[],'varying_gauge_cases':[],'corruptions_rejected':0}
+ 174     field=PrimeField(998244353);rng=Random(45)
+ 175     for n in (4,8,16,32):
+ 176         plan=GaugeFFT(n)
+ 177         b=[plan.physical_matrix(i,dressed=False) for i in range(len(plan.stages))]
+ 178         g=[plan.physical_matrix(i,dressed=True) for i in range(len(plan.stages))]
+ 179         assert gauge_recognize(b,g,plan.p)['match']
+ 180         assert varying_rank_one_gauge_recognize(field,b,g,mm,inverse,rank)['match']
+ 181         for j in range(n):
+ 182             x=[int(i==j) for i in range(n)]
+ 183             y,stats=plan.apply(x)
+ 184             assert y==mv(field,fourier(field,n),x)
+ 185         x=[rng.randrange(plan.p) for _ in range(n)]
+ 186         literal_calls=[]
+ 187         for reverse in (False,True):
+ 188             stats=dict(add=0,mul=0,reads=0,writes=0,gauge_calls=0)
+ 189             y=plan.gauge.action(x,inverse=reverse,stats=stats)
+ 190             independent,actual=literal_gauge_action(plan.gauge,x,inverse=reverse)
+ 191             assert independent==y and actual['add']==stats['add']+1
+ 192             assert actual['mul']==stats['mul']==2*n+1
+ 193             literal_calls.append(dict(reported_add=stats['add'],literal_add=actual['add']))
+ 194         L=len(plan.stages)
+ 195         out['original_gauge_cases'].append(dict(N=n,gauge_calls=2*(L-1),
+ 196                 undercounted_additions=2*(L-1),literal_call_counts=literal_calls,
+ 197                 all_stages_dense=all(all(v!=0 for row in a for v in row) for a in g)))
+ 198         if L<3:continue
+ 199         eye=identity(field,n);previous=eye;varying=[]
+ 200         for i,base in enumerate(b):
+ 201             if i==L-1:h=eye
+ 202             else:
+ 203                 u=[(j+1)*(i+1)%field.p for j in range(n)]
+ 204                 v=[(3*j+1+i)%field.p for j in range(n)]
+ 205                 h=plus(field,eye,[[u[j]*v[k]%field.p for k in range(n)] for j in range(n)])
+ 206             varying.append(mm(field,mm(field,h,base),inverse(field,previous)))
+ 207             previous=h
+ 208         result=varying_rank_one_gauge_recognize(field,b,varying,mm,inverse,rank)
+ 209         assert result['match']
+ 210         assert not gauge_recognize(b,varying,plan.p)['match']
+ 211         bad=[[row[:] for row in a] for a in varying];bad[-1][0][0]=(bad[-1][0][0]+1)%plan.p
+ 212         assert not varying_rank_one_gauge_recognize(field,b,bad,mm,inverse,rank)['match']
+ 213         out['corruptions_rejected']+=1
+ 214         singular=[[row[:] for row in a] for a in varying];singular[0]=[[0]*n for _ in range(n)]
+ 215         assert not varying_rank_one_gauge_recognize(field,b,singular,mm,inverse,rank)['match']
+ 216         out['corruptions_rejected']+=1
+ 217         out['varying_gauge_cases'].append(dict(N=n,ranks=result['ranks'],constant_gauge_detector_accepts=False))
+ 218     return out
+ 219 
+ 220 
+ 221 def main():
+ 222     folder=Path(__file__).parent
+ 223     result=dict(status='PASS',escape=check_escape(),green_bounds=check_green_bounds(),gauges=check_gauges())
+ 224     result['source_sha256']={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(folder.glob('*.py'))}
+ 225     result['dependency_path']='../fft_new_fusion_materials_20261009/green/fft_global_green_gauge'
+ 226     result['dependency_sha256']={name:hashlib.sha256((ORIGINAL/name).read_bytes()).hexdigest()
+ 227                                  for name in ('gauge_fft.py','gauge_recognizer.py','green_stages.py','norm_budget.py')}
+ 228     (folder/'results.json').write_text(json.dumps(result,indent=2)+'\n')
+ 229     print(json.dumps(result,indent=2))
+ 230 
+ 231 
+ 232 if __name__=='__main__':main()
+===== END SOURCE 51; 10640 bytes; 232 lines =====

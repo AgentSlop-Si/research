@@ -1,0 +1,42 @@
+"""Optional *different arithmetic model* practical sanity check.
+
+This compares exact Python integer recurrence convolution to native floating-point
+SciPy fftconvolve on bounded integer data whose exact outputs can be rounded.
+NOT the same exact-computation guarantee and NOT evidence for a new general FFT.
+"""
+import json,random,statistics,time
+from pathlib import Path
+
+def run():
+    try:
+        import numpy as np
+        from scipy.signal import fftconvolve
+    except ImportError:
+        print('Optional NumPy/SciPy not installed; skipping')
+        return
+    from fresh_factor import convolve
+    rng=random.Random(77)
+    rows=[]
+    for n in [1024,4096,8192]:
+        a=[7]*n
+        b=[rng.randrange(-32,33) for _ in range(n)]
+        a_numpy=np.asarray(a,dtype='float64')
+        b_numpy=np.asarray(b,dtype='float64')
+        exact_times=[];float_times=[]
+        for _ in range(7):
+            t=time.perf_counter()
+            result,plan=convolve(a,b,mod=None)
+            exact_times.append((time.perf_counter()-t)*1000)
+            t=time.perf_counter()
+            ref=np.rint(fftconvolve(a_numpy,b_numpy)).astype(np.int64)
+            float_times.append((time.perf_counter()-t)*1000)
+            assert result==ref.tolist()
+        row=dict(n=n,exact_python_ms=round(statistics.median(exact_times),3),
+                 scipy_approx_ms=round(statistics.median(float_times),3),
+                 selected_method=plan.method)
+        rows.append(row)
+        print(row)
+    path=Path(__file__).with_name('benchmark_native_results.json')
+    path.write_text(json.dumps(rows,indent=2)+'\n')
+    print('SAVED',path)
+if __name__=='__main__':run()

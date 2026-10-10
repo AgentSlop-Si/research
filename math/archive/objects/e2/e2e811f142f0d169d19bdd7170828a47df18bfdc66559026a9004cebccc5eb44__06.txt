@@ -1,0 +1,155 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh review-authored parity-rank and affine-depth controls; source programs are inert."""
+   3 import json,random
+   4 from fractions import Fraction
+   5 from pathlib import Path
+   6 from exact_utils import Field,prime_by_trial_division
+   7 BASE=Path(__file__).parent
+   8 
+   9 def rank_formula(k,a,b):return (1<<k)//(4 if a.bit_length()+b.bit_length()<=k else 2)
+  10 def boundary(k,a):return sum(1<<(k-j-1) for j in range(k) if (a&((1<<(j+1))-1)).bit_count()%2)
+  11 def pull(mask,columns):return sum(((mask&v).bit_count()%2)<<j for j,v in enumerate(columns))
+  12 def binary_rank(rows):
+  13     piv={}
+  14     for r in rows:
+  15         while r:
+  16             j=r.bit_length()-1
+  17             if j in piv:r^=piv[j]
+  18             else:piv[j]=r;break
+  19     return len(piv)
+  20 def random_columns(k,rng):
+  21     rows=[1<<j for j in range(k)]
+  22     for _ in range(2*k*k):
+  23         i,j=rng.sample(range(k),2)
+  24         if rng.randrange(4)==0:rows[i],rows[j]=rows[j],rows[i]
+  25         else:rows[i]^=rows[j]
+  26     return [sum(((rows[i]>>j)&1)<<i for i in range(k)) for j in range(k)]
+  27 def transform_table(cols):
+  28     k=len(cols);basis=[pull(1<<j,cols) for j in range(k)];out=[0]*(1<<k)
+  29     for m in range(1,1<<k):low=m&-m;out[m]=out[m^low]^basis[low.bit_length()-1]
+  30     return out
+  31 
+  32 def trace(k,cols,a,weights=None):
+  33     masks=[a]
+  34     for col in cols:masks.append(pull(masks[-1],col))
+  35     ds=[boundary(k,m) for m in masks];weights=weights or [1]*len(masks);cap=sum(r*d for r,d in zip(weights,ds));rank=rank_formula(k,a,masks[-1])
+  36     return {'N':1<<k,'input_mask':a,'output_mask':masks[-1],'masks':masks,'stage_capacities':ds,'capacity':cap,'complex_fourier_rank':rank,'gap':rank-cap}
+  37 
+  38 def best(k,cols):
+  39     tables=[transform_table(c) for c in cols];bs=[0]+[boundary(k,m) for m in range(1,1<<k)];winner=None;key=None
+  40     for a in range(1,1<<k):
+  41         m=a;cap=bs[m]
+  42         for table in tables:m=table[m];cap+=bs[m]
+  43         gap=rank_formula(k,a,m)-cap;candidate=(gap,-cap)
+  44         if key is None or candidate>key:winner=a;key=candidate
+  45     return trace(k,cols,winner)
+  46 
+  47 def primitive(n,p):
+  48     for g in range(2,p):
+  49         w=pow(g,(p-1)//n,p)
+  50         if pow(w,n,p)==1 and pow(w,n//2,p)!=1:return w
+  51     raise AssertionError
+  52 
+  53 def rank_controls():
+  54     out=[];deficient=[]
+  55     for k in range(2,7):
+  56         n=1<<k;count=sum(rank_formula(k,a,b)==n//4 for a in range(1,n) for b in range(1,n));assert count==(k-2)*(n//2)+1;deficient.append({'k':k,'deficient_ordered_pairs':count})
+  57         sets={(a,s):[j for j in range(n) if (a&j).bit_count()%2==s] for a in range(1,n) for s in range(2)}
+  58         for p in (12289,65537):
+  59             assert prime_by_trial_division(p);w=primitive(n,p);f=Field(p);powers=[pow(w,j,p) for j in range(n)];checks=0
+  60             for a in range(1,n):
+  61                 for b in range(1,n):
+  62                     signs=((s,t) for s in range(2) for t in range(2)) if n<=16 else [(0,1)]
+  63                     for s,t in signs:
+  64                         actual=f.rank([[powers[(i*j)%n] for j in sets[a,s]] for i in sets[b,t]])
+  65                         assert actual==rank_formula(k,a,b),(k,a,b,s,t,p,actual);checks+=1
+  66             out.append({'N':n,'prime':p,'full_parity_matrix_rank_checks':checks})
+  67     # Imported sampling criterion hypotheses, checked as exact residue counts.
+  68     sets_checked=0
+  69     for u in range(10):
+  70         h=1<<(u+1)
+  71         for a in range(1<<u,h):
+  72             for sign in (0,1):
+  73                 e=[j for j in range(h) if (a&j).bit_count()%2==sign]
+  74                 assert len(e)==h//2 and len({j%(h//2) for j in e})==h//2
+  75                 for s in range(u+2):
+  76                     counts=[0]*(1<<s)
+  77                     for j in e:counts[j%len(counts)]+=1
+  78                     assert max(counts)-min(counts)<=1
+  79                 sets_checked+=1
+  80     cols=[0,1,2,3,4,13,6,7];rows=[0,1,2,3,4,6,7,12];bad=[]
+  81     for p,expected in ((12289,7),(65537,8)):
+  82         w=primitive(16,p);actual=Field(p).rank([[pow(w,i*j,p) for j in cols] for i in rows]);assert actual==expected;bad.append({'prime':p,'rank':actual})
+  83     return {'parity_matrix_checks':out,'deficient_pair_counts':deficient,'balanced_residue_sets':sets_checked,'general_universal_set_bad_prime':{'rows':rows,'columns':cols,'complex_rank':8,'specializations':bad,'scope':'This is a general universal-set witness, not a claim that these columns are a parity halfset'}}
+  84 
+  85 def verify_records():
+  86     source=json.loads((BASE/'sources/EXACT_CERTIFICATES.json').read_text());legacy=[];universal=[]
+  87     for ntext,row in source['legacy_layout_witnesses'].items():
+  88         n=int(ntext);k=n.bit_length()-1;cols=row['three_GF2_shuffle_columns'];rng=random.Random(20261016+17*k)
+  89         assert cols==[random_columns(k,rng) for _ in range(3)]
+  90         assert all(binary_rank(c)==k for c in cols)
+  91         actual=best(k,cols)
+  92         assert all(actual[key]==row[key] for key in actual)
+  93         if n>256:assert actual['gap']>0
+  94         legacy.append(actual)
+  95     for _,row in source['universal_GF2_depth_witnesses'].items():
+  96         k=row['k'];cols=row['GF2_shuffle_columns'];assert all(binary_rank(c)==k for c in cols)
+  97         actual=trace(k,cols,row['input_mask'],[row['r']]*row['t']);assert all(actual[key]==row[key] for key in actual)
+  98         q=row['q'];assert k>row['t']*q and all(m%(1<<q)==0 for m in actual['masks'])
+  99         assert actual['capacity']<(1<<k)//4<=actual['complex_fourier_rank'];universal.append(actual)
+ 100     h=source['heterogeneous_example'];k=h['k'];cols=h['GF2_shuffle_columns'];rs=h['stage_orders'];qs=h['quotas'];assert all(binary_rank(c)==k for c in cols)
+ 101     actual=trace(k,cols,h['input_mask'],rs);assert actual['masks']==h['stage_masks'] and actual['stage_capacities']==h['stage_boundaries'] and actual['capacity']==h['capacity'] and actual['complex_fourier_rank']==h['exact_complex_fourier_rank']
+ 102     assert sum(qs)<k and sum((Fraction(r,1<<q) for r,q in zip(rs,qs)),Fraction())<=Fraction(1,4)
+ 103     assert all(m%(1<<q)==0 for m,q in zip(actual['masks'],qs));assert actual['capacity']<(1<<k)//4
+ 104     # Full modular rank corroboration of the N512 and N1024 saved cuts.
+ 105     ranks=[]
+ 106     for n in (512,1024):
+ 107         row=source['legacy_layout_witnesses'][str(n)];a=row['input_mask'];b=row['output_mask'];cc=[j for j in range(n) if not (j&a).bit_count()%2];rr=[i for i in range(n) if (i&b).bit_count()%2]
+ 108         for p in (12289,65537):
+ 109             w=primitive(n,p);powers=[pow(w,j,p) for j in range(n)];rank=Field(p).rank([[powers[i*j%n] for j in cc] for i in rr]);assert rank==n//2;ranks.append({'N':n,'prime':p,'full_rank':rank})
+ 110     return {'legacy_seed_cases':legacy,'universal_depth_cases':universal,'heterogeneous_case':actual,'large_modular_ranks':ranks}
+ 111 
+ 112 def stress():
+ 113     saved=json.loads((BASE/'sources/MIXER_EXPERIMENT.json').read_text());out={}
+ 114     for k in range(8,13):
+ 115         records=[]
+ 116         for j in range(50):
+ 117             rng=random.Random(20261010000+10000*k+j);records.append(best(k,[random_columns(k,rng) for _ in range(3)]))
+ 118         gaps=[r['gap'] for r in records]
+ 119         result={'trials':50,'failed_rank_gate':sum(g>0 for g in gaps),'survived_gate':sum(g<=0 for g in gaps),
+ 120                 'max_fourier_minus_capacity':max(gaps),'min_fourier_minus_capacity':min(gaps),
+ 121                 'example_excluded':next((r for r in records if r['gap']>0),None),'example_survivor':next((r for r in records if r['gap']<=0),None)}
+ 122         assert result==saved[str(1<<k)];out[str(1<<k)]=result
+ 123     return out
+ 124 
+ 125 def new_nullspace_controls():
+ 126     results=[]
+ 127     for t,r in ((2,1),(3,1),(4,1),(5,1),(6,1),(2,2),(3,3)):
+ 128         q=(4*r*t-1).bit_length();k=t*q+1;rng=random.Random(713000+t*31+r)
+ 129         maps=[random_columns(k,rng) for _ in range(t-1)]
+ 130         images=[1<<i for i in range(k)];equations=[]
+ 131         for stage in range(t):
+ 132             equations.extend(sum(((images[i]>>bit)&1)<<i for i in range(k)) for bit in range(q))
+ 133             if stage<t-1:images=[pull(m,maps[stage]) for m in images]
+ 134         rows=equations[:];pivots=[];at=0
+ 135         for bit in range(k):
+ 136             found=next((i for i in range(at,len(rows)) if (rows[i]>>bit)&1),None)
+ 137             if found is None:continue
+ 138             rows[at],rows[found]=rows[found],rows[at]
+ 139             for i in range(len(rows)):
+ 140                 if i!=at and (rows[i]>>bit)&1:rows[i]^=rows[at]
+ 141             pivots.append(bit);at+=1
+ 142         free=max(set(range(k))-set(pivots));mask=1<<free
+ 143         for bit,row in zip(pivots,rows):
+ 144             if (row&mask).bit_count()%2:mask|=1<<bit
+ 145         assert mask and all((row&mask).bit_count()%2==0 for row in equations)
+ 146         witness=trace(k,maps,mask,[r]*t)
+ 147         assert all(m%(1<<q)==0 for m in witness['masks']) and witness['capacity']<(1<<k)//4
+ 148         results.append({'k':k,'t':t,'r':r,'q':q,'constraint_rank':len(pivots),'witness':witness})
+ 149     return results
+ 150 
+ 151 if __name__=='__main__':
+ 152     result={'status':'PASS','rank_controls':rank_controls(),'records':verify_records(),'all_250_mixer_trials':stress(),'fresh_nullspace_controls':new_nullspace_controls(),
+ 153       'source_uniform_helper_r_greater_than_one_correction':{'k':9,'t':2,'r':2,'q':4,'input_mask':16,'stage_boundaries':[31,31],'unweighted_source_capacity':62,'correct_weighted_capacity':124,'mathematical_theorem_unaffected':True}}
+ 154     (BASE/'VERIFIED_RESULTS.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 155     print('PASS: exhaustive parity matrix controls, universal-set guards, all saved certificates, all 250 mixer trials, and four full N512/N1024 ranks')

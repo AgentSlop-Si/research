@@ -1,0 +1,186 @@
+   1	"""Experimental all-level quantized FFT table batching.
+   2	
+   3	NOT an exact FFT and NOT OpenAI #130. Produces an approximation to fft(x)/N
+   4	for complex |x[j]|<=1 using a finite grid, one reusable K-point normalized
+   5	DFT table, and FFT-stage-group input phase factors. Full tables are very large
+   6	at useful accuracy: `lazy` mode is a correctness emulator, NOT a faster
+   7	algorithm or evidence of an asymptotic speedup.
+   8	"""
+   9	from __future__ import annotations
+  10	from dataclasses import dataclass
+  11	import math
+  12	import numpy as np
+  13	
+  14	
+  15	def reverse_bits(k: int, bits: int) -> int:
+  16	    out=0
+  17	    for _ in range(bits):
+  18	        out=(out<<1)|(k&1)
+  19	        k>>=1
+  20	    return out
+  21	
+  22	
+  23	def is_pow2(n:int)->bool:
+  24	    return n>0 and (n & (n-1))==0
+  25	
+  26	
+  27	@dataclass
+  28	class TableStats:
+  29	    hits:int=0
+  30	    misses:int=0
+  31	    processed:int=0
+  32	    group_count:int=0
+  33	
+  34	class QuantizedDFTTable:
+  35	    """Input/output quantized to component grid -1,-1+1/R,...,1.
+  36	
+  37	    q=(2R+1)^2 possible complex entries; there are q^K possible blocks.
+  38	    `full` precomputes them ALL; `lazy` computes misses (no asymptotic speed
+  39	    promise because high-entropy inputs can cause many misses).
+  40	    """
+  41	    def __init__(self, K:int, R:int, mode:str="full", max_entries:int=150_000):
+  42	        if not is_pow2(K) or R<1:
+  43	            raise ValueError("K must be a power of two and R positive")
+  44	        if mode not in ("full","lazy","direct"):
+  45	            raise ValueError("invalid table mode")
+  46	        self.K=K;self.R=R;self.mode=mode;self.base=2*R+1
+  47	        self.possible=self.base**(2*K)
+  48	        self.stats=TableStats()
+  49	        self.cache={}
+  50	        self.complete=None
+  51	        if mode=="full":
+  52	            if self.possible>max_entries:
+  53	                raise MemoryError(f"full table would have {self.possible:,} entries; max {max_entries:,}")
+  54	            ids=np.arange(self.possible,dtype=np.int64)
+  55	            values=np.empty((self.possible,K),dtype=np.complex128)
+  56	            tmp=ids.copy()
+  57	            for j in range(K):
+  58	                real=(tmp%self.base).astype(np.float64)-R;tmp//=self.base
+  59	                imag=(tmp%self.base).astype(np.float64)-R;tmp//=self.base
+  60	                values[:,j]=(real+1j*imag)/R
+  61	            # The table outputs are quantized too; its representation is uniform
+  62	            # at every group level.
+  63	            z=np.fft.fft(values,axis=1)/K
+  64	            self.complete=self.quantize(z)
+  65	
+  66	    def quantize(self,x):
+  67	        # Clip because the true normalized intermediate is within unit disk;
+  68	        # clipping is 1-Lipschitz relative to any true component in [-1,1].
+  69	        x=np.asarray(x)
+  70	        re=np.clip(np.rint(x.real*self.R),-self.R,self.R)/self.R
+  71	        im=np.clip(np.rint(x.imag*self.R),-self.R,self.R)/self.R
+  72	        return re + 1j*im
+  73	
+  74	    def index(self,values):
+  75	        if len(values)!=self.K:raise ValueError("wrong block length")
+  76	        k=0;power=1
+  77	        for v in values:
+  78	            re=int(round(v.real*self.R))+self.R
+  79	            im=int(round(v.imag*self.R))+self.R
+  80	            if not (0<=re<self.base and 0<=im<self.base):
+  81	                raise ValueError("input outside quantization bounds")
+  82	            k+=(re+self.base*im)*power
+  83	            power*=self.base*self.base
+  84	        return k
+  85	
+  86	    def apply(self,vec):
+  87	        if self.mode=="direct":
+  88	            self.stats.processed+=1
+  89	            return self.quantize(np.fft.fft(vec)/self.K)
+  90	        key=self.index(vec)
+  91	        self.stats.processed+=1
+  92	        if self.complete is not None:
+  93	            self.stats.hits+=1
+  94	            return self.complete[key]
+  95	        item=self.cache.get(key)
+  96	        if item is not None:
+  97	            self.stats.hits+=1
+  98	            return item
+  99	        self.stats.misses+=1
+ 100	        item=self.quantize(np.fft.fft(vec)/self.K)
+ 101	        self.cache[key]=item
+ 102	        return item
+ 103	
+ 104	
+ 105	def normalized_fft_quantized(x, block_stages:int, R:int, *, table_mode:str="lazy", max_entries:int=150_000):
+ 106	    """Block-stage FFT with rounding. Returns (quantized fft(x)/N, statistics).
+ 107	
+ 108	    If L=log2 N is divisible by block_stages, one *same* complete table is
+ 109	    reused at every group level. For a final shorter group, make a second
+ 110	    table of smaller width. In `lazy` mode tables grow only on misses, so
+ 111	    complexity can be worse than ideal full-table lookup.
+ 112	    """
+ 113	    x=np.asarray(x,dtype=np.complex128)
+ 114	    N=len(x)
+ 115	    if not is_pow2(N):raise ValueError("power-of-two N required")
+ 116	    if block_stages<1:raise ValueError("block_stages must be positive")
+ 117	    if np.any(abs(x)>1+1e-12):raise ValueError("requires |input|<=1")
+ 118	    if N==1:return np.asarray([complex(x[0])]),TableStats(),{}
+ 119	    L=N.bit_length()-1
+ 120	    bitrev=np.fromiter((reverse_bits(i,L) for i in range(N)),dtype=np.int64,count=N)
+ 121	    table_by_k={}
+ 122	    for stages in range(1,min(block_stages,L)+1):
+ 123	        if stages==block_stages or L%block_stages==stages:
+ 124	            k=1<<stages
+ 125	            table_by_k[k]=QuantizedDFTTable(k,R,table_mode,max_entries)
+ 126	    a=table_by_k[next(iter(table_by_k))].quantize(x[bitrev])
+ 127	    stats=TableStats()
+ 128	    s=0
+ 129	    while s<L:
+ 130	        t=min(block_stages,L-s)
+ 131	        K=1<<t;M=1<<(s+t);J=1<<s
+ 132	        table=table_by_k[K]
+ 133	        nxt=np.empty(N,dtype=np.complex128)
+ 134	        for base in range(0,N,M):
+ 135	            for j in range(J):
+ 136	                z=np.empty(K,dtype=np.complex128)
+ 137	                for r in range(K):
+ 138	                    b=reverse_bits(r,t)
+ 139	                    twiddle=np.exp(-2j*np.pi*(j*b)/M)
+ 140	                    z[b]=a[base+j+J*r]*twiddle
+ 141	                z=table.quantize(z)
+ 142	                out=table.apply(z)
+ 143	                for k in range(K):
+ 144	                    nxt[base+j+J*k]=out[k]
+ 145	        a=nxt;s+=t;stats.group_count+=1
+ 146	    for tb in table_by_k.values():
+ 147	        stats.processed+=tb.stats.processed
+ 148	        stats.hits+=tb.stats.hits
+ 149	        stats.misses+=tb.stats.misses
+ 150	    return a,stats,table_by_k
+ 151	
+ 152	
+ 153	def normal_dit_stages(x, start_s:int, num_stages:int, modular=False):
+ 154	    """Raw numerical reference to verify only a group of butterfly layers.
+ 155	    This expects its input already in the proper iterative DIT ordering.
+ 156	    """
+ 157	    a=np.asarray(x,dtype=np.complex128).copy()
+ 158	    N=len(a)
+ 159	    if not is_pow2(N):raise ValueError("N must be power of two")
+ 160	    for st in range(start_s+1,start_s+num_stages+1):
+ 161	        m=1<<st;h=m//2
+ 162	        phase=np.exp(-2j*np.pi*np.arange(h)/m)
+ 163	        for base in range(0,N,m):
+ 164	            u=a[base:base+h].copy()
+ 165	            v=a[base+h:base+m].copy()*phase
+ 166	            a[base:base+h]=(u+v)/2
+ 167	            a[base+h:base+m]=(u-v)/2
+ 168	    return a
+ 169	
+ 170	
+ 171	def direct_group_matrix(x,start_s:int,num_stages:int):
+ 172	    """Equivalent to a table call, but evaluates the K-point FFT directly.
+ 173	    No quantization. Tests the input-modulation factorization independently.
+ 174	    """
+ 175	    a=np.asarray(x,dtype=np.complex128)
+ 176	    N=len(a);K=1<<num_stages;M=1<<(start_s+num_stages);J=1<<start_s
+ 177	    nxt=np.empty(N,dtype=np.complex128)
+ 178	    for base in range(0,N,M):
+ 179	        for j in range(J):
+ 180	            seq=np.empty(K,dtype=np.complex128)
+ 181	            for r in range(K):
+ 182	                b=reverse_bits(r,num_stages)
+ 183	                seq[b]=a[base+j+J*r]*np.exp(-2j*np.pi*j*b/M)
+ 184	            y=np.fft.fft(seq)/K
+ 185	            for k in range(K):nxt[base+j+J*k]=y[k]
+ 186	    return nxt

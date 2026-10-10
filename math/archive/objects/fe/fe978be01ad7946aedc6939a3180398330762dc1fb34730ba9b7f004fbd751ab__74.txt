@@ -1,0 +1,96 @@
+1: """Finite-integer signed atom sampler; no arbitrary real RAM operations.
+2: 
+3: Coordinates are pairs of signed integers, optionally sharing a fixed denominator.
+4: Phase encoding: 0=+1, 1=+i, 2=-1, 3=-i. No floating input is silently accepted.
+5: The rejection cap gives a declared failure event; it never biases accepted atoms.
+6: """
+7: from bisect import bisect_right
+8: from math import ceil, log
+9: from random import Random
+10: from fractions import Fraction
+11: 
+12: 
+13: def sample_count(n, sampling_error, failure, group_size=1):
+14:     """Union bound: P(max complex error > a) <= 4n exp(-k a^2/4)."""
+15:     if n < 1 or not 0 < sampling_error < 1 or not 0 < failure < 1:
+16:         raise ValueError('invalid sampling parameters')
+17:     if type(group_size) is not int or group_size < 1:
+18:         raise ValueError('group_size must be positive')
+19:     k = ceil(4 * log(4*n/failure) / sampling_error**2)
+20:     return ((k + group_size - 1)//group_size)*group_size
+21: 
+22: 
+23: def sample_count_integer(n, sampling_error, failure, group_size=1):
+24:     """Conservative uniform count from exact rational parameters, no logarithm.
+25: 
+26:     ceil(log2(4n/failure)) >= ln(4n/failure). Fixed dyadic error and a
+27:     polynomial failure denominator require O(log n)-bit integer operations.
+28:     """
+29:     error, delta = Fraction(sampling_error), Fraction(failure)
+30:     if n < 1 or not 0 < error < 1 or not 0 < delta < 1:
+31:         raise ValueError('invalid sampling parameters')
+32:     if type(group_size) is not int or group_size < 1:
+33:         raise ValueError('group_size must be positive')
+34:     ratio = Fraction(4*n,1)/delta
+35:     upper_integer = (ratio.numerator+ratio.denominator-1)//ratio.denominator
+36:     log_upper = (upper_integer-1).bit_length()
+37:     rational_k = 4*log_upper/(error*error)
+38:     k = (rational_k.numerator+rational_k.denominator-1)//rational_k.denominator
+39:     return ((k+group_size-1)//group_size)*group_size
+40: 
+41: 
+42: def sample_atoms(coordinates, k, *, seed=0, cap_failure=1e-9):
+43:     if type(k) is not int or k < 1 or not 0 < cap_failure < 1:
+44:         raise ValueError('invalid sampling parameters')
+45:     rng = Random(seed)
+46:     cumulative, labels = [], []
+47:     total = 0
+48:     for j, pair in enumerate(coordinates):
+49:         if len(pair) != 2 or any(type(v) is not int for v in pair):
+50:             raise ValueError('coordinates must be pairs of Python integers')
+51:         for part, v in enumerate(pair):
+52:             if v:
+53:                 total += abs(v)
+54:                 cumulative.append(total)
+55:                 labels.append((j, part + (2 if v < 0 else 0)))
+56:     if total == 0:
+57:         return {'samples': [], 'mass': 0, 'failed': False,
+58:                 'counts': {'input_coordinates': len(coordinates),
+59:                            'random_words': 0, 'binary_search_comparison_bound': 0,
+60:                            'rejection_cap': 0, 'mass_bits': 0}}
+61:     # cap >= log2(k/cap_failure), conservatively computed via an integer ratio.
+62:     numerator, denominator = Fraction(cap_failure).as_integer_ratio()
+63:     ratio_ceiling = (k*denominator + numerator - 1)//numerator
+64:     cap = max(1, (ratio_ceiling-1).bit_length())
+65:     bits = (total-1).bit_length()
+66:     random_words = 0
+67:     samples = []
+68:     for _ in range(k):
+69:         for attempt in range(cap):
+70:             ticket = rng.getrandbits(bits)
+71:             random_words += 1
+72:             if ticket < total:
+73:                 samples.append(labels[bisect_right(cumulative, ticket)])
+74:                 break
+75:         else:
+76:             return {'samples': samples, 'mass': total, 'failed': True,
+77:                     'counts': {'input_coordinates': len(coordinates),
+78:                                'random_words': random_words,
+79:                                'binary_search_comparison_bound': len(samples)*len(cumulative).bit_length(),
+80:                                'rejection_cap': cap, 'mass_bits': total.bit_length()}}
+81:     return {'samples': samples, 'mass': total, 'failed': False,
+82:             'counts': {'input_coordinates': len(coordinates),
+83:                        'random_words': random_words,
+84:                        'binary_search_comparison_bound': k*len(cumulative).bit_length(),
+85:                        'rejection_cap': cap, 'mass_bits': total.bit_length()}}
+86: 
+87: 
+88: def exact_atom_probabilities(coordinates):
+89:     """Reference only: Fraction probabilities for small independent checks."""
+90:     from fractions import Fraction
+91:     mass = sum(abs(r)+abs(i) for r, i in coordinates)
+92:     if not mass:
+93:         return []
+94:     return [(j, part+(2 if v < 0 else 0), Fraction(abs(v), mass))
+95:             for j, pair in enumerate(coordinates)
+96:             for part, v in enumerate(pair) if v]

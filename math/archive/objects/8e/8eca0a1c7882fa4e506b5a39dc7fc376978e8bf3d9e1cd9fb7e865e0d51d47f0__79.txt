@@ -1,0 +1,67 @@
+1: """Independent finite-field matrix-rank stress tests for the Jacobian bottleneck."""
+2: from __future__ import annotations
+3: import random
+4: import unittest
+5: 
+6: P=998244353
+7: ROOT=3
+8: 
+9: 
+10: def rank_mod(rows, p=P):
+11:     if not rows: return 0
+12:     a=[[v%p for v in row] for row in rows]
+13:     height,width=len(a),len(a[0]); r=0
+14:     for col in range(width):
+15:         sel=next((i for i in range(r,height) if a[i][col]),None)
+16:         if sel is None:continue
+17:         a[r],a[sel]=a[sel],a[r]
+18:         inv=pow(a[r][col],p-2,p)
+19:         for j in range(col,width):a[r][j]=a[r][j]*inv%p
+20:         for i in range(height):
+21:             if i==r:continue
+22:             f=a[i][col]
+23:             if f:
+24:                 for j in range(col,width):a[i][j]=(a[i][j]-f*a[r][j])%p
+25:         r+=1
+26:         if r==height:break
+27:     return r
+28: 
+29: 
+30: def matmul(A,B,p=P):
+31:     if len(A[0])!=len(B):raise ValueError('wrong dimensions')
+32:     return [[sum(A[i][k]*B[k][j] for k in range(len(B)))%p
+33:              for j in range(len(B[0]))] for i in range(len(A))]
+34: 
+35: 
+36: def fourier_matrix(n,p=P):
+37:     if (p-1)%n:raise ValueError('bad root')
+38:     root=pow(ROOT,(p-1)//n,p)
+39:     return [[pow(root,k*j,p) for j in range(n)] for k in range(n)]
+40: 
+41: 
+42: class BottleneckRank(unittest.TestCase):
+43:     def test_exact_fft_rank_is_full(self):
+44:         for n in (1,2,4,8,16,32):
+45:             self.assertEqual(rank_mod(fourier_matrix(n)),n)
+46: 
+47:     def test_any_nonlinear_jacobian_factors_through_width(self):
+48:         # For differentiable E:C^n -> C^w and D:C^w -> C^n,
+49:         # J_(D o E) = J_D J_E at a point, with rank <= w.
+50:         # Testing arbitrary Jacobians is a finite-field model of the identity.
+51:         r=random.Random(20261009)
+52:         for n in (2,4,8,16):
+53:             F=fourier_matrix(n)
+54:             for w in (1,max(1,n//2),n-1):
+55:                 J_encoder=[[r.randrange(P) for _ in range(n)] for _ in range(w)]
+56:                 J_decoder=[[r.randrange(P) for _ in range(w)] for _ in range(n)]
+57:                 composition=matmul(J_decoder,J_encoder)
+58:                 self.assertLessEqual(rank_mod(composition),w)
+59:                 self.assertNotEqual(composition,F)
+60: 
+61:     def test_construction_at_full_width(self):
+62:         n=8
+63:         J_encoder=[[int(i==j) for j in range(n)] for i in range(n)]
+64:         J_decoder=fourier_matrix(n)
+65:         self.assertEqual(matmul(J_decoder,J_encoder),fourier_matrix(n))
+66: 
+67: if __name__=='__main__': unittest.main()

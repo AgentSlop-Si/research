@@ -1,0 +1,58 @@
+   1 """Auditable arithmetic proxies, not wall-clock or same-accuracy speedup claims.
+   2 Includes modular field multiplies/adds/inverses inside rational vs Bluestein;
+   3 preconditioner and Green solve are common O(N) tolls, itemized separately.
+   4 """
+   5 import json,random,time
+   6 from pathlib import Path
+   7 from rational_forcing import (AllLengthGreen,forcing_from_sparse,bluestein_transform,
+   8                               PolyStats,P0,G0)
+   9 
+  10 
+  11 def run():
+  12     rng=random.Random(20261010)
+  13     rows=[]
+  14     for n,p,g in [(119,998244353,3),(256,P0,G0),(1024,P0,G0),(4096,P0,G0)]:
+  15         eng=AllLengthGreen(n,p,g)
+  16         # use r directly to compare FFT forcing strategies, same output length,
+  17         # then separately account for P and L linear operations.
+  18         full=PolyStats()
+  19         generic=[rng.randrange(p) for _ in range(n)]
+  20         fb,_=bluestein_transform(generic,n,eng.omega,p,g,full)
+  21         blu_ops=full.total_field_ops()
+  22         for k in sorted({1,2,3,4,8,16,32,min(n,64)}):
+  23             if k>n:continue
+  24             entries={j:rng.randrange(1,p) for j in rng.sample(range(n),k)}
+  25             st=PolyStats()
+  26             t0=time.perf_counter()
+  27             y,_=forcing_from_sparse(entries,n,eng.omega,p,g,st)
+  28             elapsed=time.perf_counter()-t0
+  29             row={'N':n,'K':k,
+  30                  'rational_field_op_proxy':st.total_field_ops(),
+  31                  'full_bluestein_field_op_proxy':blu_ops,
+  32                  'ratio_rational_to_full':round(st.total_field_ops()/blu_ops,5),
+  33                  'short_ntt_calls':st.ntt_calls,
+  34                  'max_short_ntt_length':st.max_ntt_length,
+  35                  'full_bluestein_max_ntt_length':full.max_ntt_length,
+  36                  'rational_blocks':st.rational_blocks,
+  37                  'kernel_cache_builds':st.cached_kernel_transforms,
+  38                  'kernel_cache_hits':st.cached_kernel_hits,
+  39                  'short_twiddle_plans_built':st.twiddle_tables_built,
+  40                  'short_twiddle_plan_hits':st.twiddle_table_hits,
+  41                  'rational_elapsed_seconds':round(elapsed,5),
+  42                  'green_common_P_and_L_field_toll_upper':8*n+1,
+  43                  'primitive_root_discovery_included_in_both':False,
+  44                  'prime':p}
+  45             # Validate without N^2 reference using independent Bluestein.
+  46             v=[entries.get(j,0) for j in range(n)]
+  47             z,_=bluestein_transform(v,n,eng.omega,p,g)
+  48             assert y==z,(n,k)
+  49             rows.append(row)
+  50     summary={'metric':'Scalar modular field addition/multiplication/inversion count in code; does not include P/L factor setup, memory, prime search, bit complexity, primitive root discovery or Python overhead',
+  51              'rows':rows,'count':len(rows),'passed':True}
+  52     out=Path(__file__).with_name('BENCH_RESULTS.json')
+  53     out.write_text(json.dumps(summary,indent=2)+'\n')
+  54     for d in rows:
+  55         print('N=%4d K=%2d ratio=%6.3f short_max=%3d full_max=%5d'%(d['N'],d['K'],d['ratio_rational_to_full'],d['max_short_ntt_length'],d['full_bluestein_max_ntt_length']))
+  56     return summary
+  57 
+  58 if __name__=='__main__':run()

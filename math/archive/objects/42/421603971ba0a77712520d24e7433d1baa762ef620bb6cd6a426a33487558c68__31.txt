@@ -1,0 +1,161 @@
+1: import sys
+2: from pathlib import Path
+3: sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+4: import unittest
+5: from itertools import product,combinations_with_replacement
+6: from random import Random
+7: from degree_boundary import (
+8:     P, INV2, Counter, ntt, direct_dft, quadratic_fft, midpoint_recover,
+9:     cubic_fft, cubic_jacobian_vector, cubic_recovery_nplus1, randomized_gauge,
+10:     wedge_gauge, wedge_coefficients, cubic_global_wedge_fft, second_moment_target,
+11:     matrix_rank_mod, run_audit,
+12: )
+13: from feature_rank_audit import verify as verify_feature_rank
+14: 
+15: class DegreeBoundaryTests(unittest.TestCase):
+16:     def test_standard_ntt_vs_independent_direct(self):
+17:         rng=Random(101)
+18:         for n in (1,2,4,8,16,32,64,128):
+19:             for _ in range(3):
+20:                 x=[rng.randrange(P) for j in range(n)]
+21:                 self.assertEqual(ntt(x),direct_dft(x))
+22: 
+23:     def test_quadratic_midpoint_exhaustive_boolean(self):
+24:         rng=Random(102)
+25:         for n in (2,4,8):
+26:             weights=[rng.randrange(P) for _ in range(n)]
+27:             for variant in ('plain','square','affine_square','pair_overlap'):
+28:                 for tup in product((0,1),repeat=n):
+29:                     self.assertEqual(quadratic_fft(tup,weights,variant),direct_dft(tup))
+30: 
+31:     def test_quadratic_midpoint_full_matrix(self):
+32:         rng=Random(103)
+33:         for n in (2,4,8,16,32,64):
+34:             weights=[rng.randrange(P) for _ in range(n)]
+35:             for variant in ('square','affine_square','pair_overlap'):
+36:                 fn=lambda x: quadratic_fft(x,weights,variant)
+37:                 for i in range(n):
+38:                     basis=[int(j==i) for j in range(n)]
+39:                     self.assertEqual(midpoint_recover(fn,basis),direct_dft(basis))
+40:                 for _ in range(3):
+41:                     x=[rng.randrange(P) for _ in range(n)]
+42:                     self.assertEqual(midpoint_recover(fn,x),direct_dft(x))
+43: 
+44:     def test_midpoint_not_simple_boolean_evaluation(self):
+45:         n=4; weights=[7,22,56,3]
+46:         a=[INV2]*n
+47:         self.assertNotEqual(quadratic_fft(a,weights,'affine_square'),direct_dft(a))
+48:         self.assertEqual(midpoint_recover(lambda x:quadratic_fft(x,weights,'affine_square'),[31,10,87,6]),
+49:                          direct_dft([31,10,87,6]))
+50: 
+51:     def test_wedge_exact_pair_expansion(self):
+52:         rng=Random(104)
+53:         for n in (2,3,4,8,16):
+54:             a=[rng.randrange(1,P) for _ in range(n)]
+55:             b=[rng.randrange(1,P) for _ in range(n)]
+56:             coeff=wedge_coefficients(a,b)
+57:             for _ in range(5):
+58:                 x=[rng.randrange(P) for _ in range(n)]
+59:                 pairs=[]
+60:                 for i in range(n):
+61:                     for j in range(i+1,n):
+62:                         pairs.append((x[i]*x[i]*x[j]-x[i]*x[j]*x[j])%P)
+63:                 self.assertEqual(wedge_gauge(x,a,b),sum(t*v for t,v in zip(coeff,pairs))%P)
+64:                 bits=[rng.randrange(2) for _ in range(n)]
+65:                 self.assertEqual(wedge_gauge(bits,a,b),0)
+66: 
+67:     def test_wedge_global_cubic_correct_on_cube(self):
+68:         rng=Random(105)
+69:         for n in (2,4,8,16):
+70:             a=[rng.randrange(P) for _ in range(n)]
+71:             b=[rng.randrange(P) for _ in range(n)]
+72:             output_weights=[rng.randrange(P) for _ in range(n)]
+73:             for _ in range(10):
+74:                 bits=[rng.randrange(2) for _ in range(n)]
+75:                 self.assertEqual(cubic_global_wedge_fft(bits,a,b,output_weights),direct_dft(bits))
+76: 
+77:     def test_cubic_dense_gauge_exact_boolean(self):
+78:         rng=Random(106)
+79:         for n in (2,4,8):
+80:             gauge=randomized_gauge(n,n+1)
+81:             for bits in product((0,1),repeat=n):
+82:                 self.assertEqual(cubic_fft(bits,gauge),direct_dft(bits))
+83: 
+84:     def test_cubic_midpoint_shortcut_fails(self):
+85:         n=4
+86:         gauge=randomized_gauge(n,107)
+87:         h=[13,24,12,19]
+88:         j=cubic_jacobian_vector([INV2]*n,h,gauge)
+89:         # Correcting for the 3/4 derivative of the x_i^3 term does not
+90:         # remove the antisymmetric pair gauge at the midpoint.
+91:         estimate=[v*4*pow(3,-1,P)%P for v in j]
+92:         self.assertNotEqual(estimate,direct_dft(h))
+93: 
+94:     def test_cubic_universal_nplus1_recovery(self):
+95:         rng=Random(108)
+96:         for n in (2,4,8,16):
+97:             gauge=randomized_gauge(n,100+n)
+98:             for k in range(n):
+99:                 x=[int(j==k) for j in range(n)]
+100:                 self.assertEqual(cubic_recovery_nplus1(x,gauge),direct_dft(x))
+101:             for _ in range(4):
+102:                 x=[rng.randrange(P) for j in range(n)]
+103:                 self.assertEqual(cubic_recovery_nplus1(x,gauge),direct_dft(x))
+104: 
+105:     def test_cubic_second_moment_matrix_full_rank(self):
+106:         for n in (1,2,3,4,5,8,16,32,64,128):
+107:             M=second_moment_target(n)
+108:             self.assertEqual(matrix_rank_mod(M),n)
+109:             inv6=pow(6,-1,P)
+110:             for i in range(n):
+111:                 self.assertEqual(3*M[i][i]%P,1)
+112:                 for j in range(i):
+113:                     self.assertEqual(M[i][j],inv6)
+114: 
+115:     def test_exact_boolean_nullspace_dimensions(self):
+116:         """Independently check that cubic pair gauges span the FULL kernel."""
+117:         for n in (2,3,4,5,6,7,8):
+118:             masks=list(product((0,1),repeat=n))
+119:             mono3=list(combinations_with_replacement(range(n),3))
+120:             B=[[int(all(bits[i] for i in mono)) for mono in mono3] for bits in masks]
+121:             rank=matrix_rank_mod(B)
+122:             self.assertEqual(rank,n+n*(n-1)//2+n*(n-1)*(n-2)//6)
+123:             self.assertEqual(len(mono3)-rank,n*(n-1)//2)
+124:         for n in (2,3,4,5,6,7):
+125:             mono=[()]+[(i,) for i in range(n)]+list(combinations_with_replacement(range(n),2))
+126:             B=[[int(all(bits[i] for i in m)) for m in mono]
+127:                 for bits in product((0,1),repeat=n)]
+128:             self.assertEqual(len(mono)-matrix_rank_mod(B),n)
+129: 
+130:     def test_counter_charged_baseline(self):
+131:         n=16
+132:         weights=[5]*n
+133:         costs={}
+134:         for variant in ('plain','square','affine_square','pair_overlap'):
+135:             c=Counter();quadratic_fft([3]*n,weights,variant,c)
+136:             costs[variant]=c.work
+137:         self.assertLess(costs['plain'],costs['square'])
+138:         self.assertLess(costs['square'],costs['pair_overlap'])
+139:         self.assertLess(costs['square'],costs['affine_square'])
+140: 
+141:     def test_validation(self):
+142:         with self.assertRaises(ValueError):ntt([1,2,3])
+143:         with self.assertRaises(ValueError):quadratic_fft([1,2,3],[1,2],'affine_square')
+144:         with self.assertRaises(ValueError):quadratic_fft([1,2],[1,2],'unknown')
+145:         with self.assertRaises(ValueError):cubic_fft([1,2],[[]])
+146:         with self.assertRaises(ValueError):wedge_gauge([1,2],[1,2],[1])
+147: 
+148:     def test_audit_end_to_end(self):
+149:         result=run_audit()
+150:         self.assertEqual(result['quadratic_basis_columns_tested'],378)
+151:         self.assertEqual(result['wedge_dense_overlap_tests'],24)
+152:         self.assertEqual(result['general_full_fft_O_N'],'NOT_ESTABLISHED')
+153: 
+154:     def test_high_overlap_feature_bank_requires_extra_slot(self):
+155:         for n in (2,4,8):
+156:             z=verify_feature_rank(n)
+157:             self.assertEqual(z['rank_N_nonlinear_features'],n)
+158:             self.assertEqual(z['rank_after_adding_all_FFT_outputs'],n+1)
+159:             self.assertEqual(z['rank_after_adding_square_and_FFT_outputs'],n+1)
+160: 
+161: if __name__=='__main__':unittest.main()

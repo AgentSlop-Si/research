@@ -1,0 +1,49 @@
+0001 #include <algorithm>
+0002 #include <array>
+0003 #include <chrono>
+0004 #include <cmath>
+0005 #include <complex>
+0006 #include <cstdint>
+0007 #include <iomanip>
+0008 #include <iostream>
+0009 #include <random>
+0010 #include <stdexcept>
+0011 #include <utility>
+0012 #include <vector>
+0013 extern "C" {
+0014 typedef double fftw_complex[2]; typedef struct fftw_plan_s *fftw_plan;
+0015 fftw_plan fftw_plan_dft_1d(int,fftw_complex*,fftw_complex*,int,unsigned);
+0016 void fftw_execute_dft(const fftw_plan,fftw_complex*,fftw_complex*);
+0017 void fftw_destroy_plan(fftw_plan);
+0018 }
+0019 static constexpr unsigned FFTW_ESTIMATE_=(1u<<6); static constexpr int FFTW_FORWARD_=-1;
+0020 using C=std::complex<double>; using Clock=std::chrono::steady_clock;
+0021 static double ms(Clock::time_point t){return std::chrono::duration<double,std::milli>(Clock::now()-t).count();}
+0022 struct Term{size_t index; C value;}; struct Result{std::vector<C> v; uint64_t bf=0;};
+0023 static Result rec(size_t n,const std::vector<Term>&s){
+0024  if(s.empty())return{}; if(n==1)return{{s[0].value},0};
+0025  std::vector<Term> e,o;e.reserve(s.size());o.reserve(s.size());for(auto&t:s)(t.index&1?o:e).push_back({t.index>>1,t.value});
+0026  auto E=rec(n/2,e),O=rec(n/2,o); Result R;R.v.resize(n);R.bf=E.bf+O.bf+n/2;
+0027  constexpr double P=3.14159265358979323846; C w(1),q=std::polar(1.0,-2*P/double(n));
+0028  bool he=!E.v.empty(),ho=!O.v.empty(); for(size_t k=0;k<n/2;k++){C u=he?E.v[k]:C{}, z=ho?w*O.v[k]:C{};R.v[k]=u+z;R.v[k+n/2]=u-z;w*=q;}return R;
+0029 }
+0030 static Result sparse_fft(size_t n,const std::vector<Term>&s){return rec(n,s);}
+0031 class FFTW {int n_;std::vector<std::array<double,2>> in_,out_;fftw_plan p_{};public:
+0032  explicit FFTW(int n):n_(n),in_(n),out_(n){p_=fftw_plan_dft_1d(n,reinterpret_cast<fftw_complex*>(in_.data()),reinterpret_cast<fftw_complex*>(out_.data()),FFTW_FORWARD_,FFTW_ESTIMATE_);if(!p_)throw std::runtime_error("plan");}
+0033  ~FFTW(){fftw_destroy_plan(p_);} void init(const std::vector<double>&x){for(int i=0;i<n_;i++){in_[i][0]=x[i];in_[i][1]=0;}execute();}
+0034  void apply(const std::vector<Term>&s){for(auto&t:s){in_[t.index][0]+=t.value.real();in_[t.index][1]+=t.value.imag();}}
+0035  void execute(){fftw_execute_dft(p_,reinterpret_cast<fftw_complex*>(in_.data()),reinterpret_cast<fftw_complex*>(out_.data()));}
+0036  const auto&out()const{return out_;}
+0037 };
+0038 static std::vector<C> copyout(const FFTW&f){std::vector<C>x(f.out().size());for(size_t i=0;i<x.size();i++)x[i]=C(f.out()[i][0],f.out()[i][1]);return x;}
+0039 static double err(const std::vector<C>&a,const FFTW&f){double e=0;for(size_t i=0;i<a.size();i++)e=std::max(e,std::abs(a[i]-C(f.out()[i][0],f.out()[i][1])));return e;}
+0040 static double med(std::vector<double>v){std::sort(v.begin(),v.end());return v[v.size()/2];}
+0041 int main(int ac,char**av){size_t n=ac>1?std::stoull(av[1]):262144;int reps=ac>2?std::stoi(av[2]):7;std::mt19937_64 g(987654321+n);std::normal_distribution<double>d(0,1);std::uniform_real_distribution<double>dv(-.2,.2);
+0042  std::vector<double>x(n);for(auto&z:x)z=d(g);FFTW f((int)n);f.init(x);auto cached=copyout(f);
+0043  std::cout<<"N,k,adaptive_ms,fftw_ms,speedup,butterflies,max_err\n";
+0044  for(size_t k=1;k<=std::min<size_t>(2048,n/4);k<<=1){std::vector<double>ta,tb;uint64_t bf=0;double mx=0;
+0045    for(int r=0;r<reps;r++){std::vector<Term>s;s.reserve(k);size_t start=g()%n,stride=((g()%(n/2))*2+1);for(size_t j=0;j<k;j++)s.push_back({(start+j*stride)&(n-1),C(dv(g),0)});
+0046      auto t=Clock::now();auto delta=sparse_fft(n,s);for(size_t i=0;i<n;i++)cached[i]+=delta.v[i];ta.push_back(ms(t));bf=delta.bf;
+0047      f.apply(s);t=Clock::now();f.execute();tb.push_back(ms(t));mx=std::max(mx,err(cached,f));if(mx>5e-6)throw std::runtime_error("bad "+std::to_string(mx));}
+0048    double a=med(ta),b=med(tb);std::cout<<n<<","<<k<<","<<std::fixed<<std::setprecision(6)<<a<<","<<b<<","<<b/a<<","<<bf<<","<<std::scientific<<mx<<"\n";}
+0049 }

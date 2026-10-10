@@ -1,0 +1,200 @@
+"""Cold and warm complete requested-output benchmarks, including strong controls.
+
+Run OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python benchmark_phase8.py
+Every method returns/retains all requested outputs; every value is checked
+outside timing. Data generation excluded equally. Five randomized repeats.
+"""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import platform
+import sys
+from time import perf_counter_ns
+import numpy as np
+import scipy
+from scipy import fft
+from projected_circuit import ProjectedCircuit
+from multi_view import SharedProjectedFourierStore
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT/'baseline_phase7'))
+from persistent_chain import ChainEngine
+
+
+def ms(t): return (perf_counter_ns()-t)/1e6
+
+
+def phase(n, bins, pos):
+    return np.exp((-2j*np.pi/n)*((bins*pos) % n))
+
+
+def projected_register(signals, bins):
+    rows = []
+    n = signals.shape[1]
+    for x in signals:
+        h = fft.rfft(x)
+        z = h[np.minimum(bins, n-bins)].copy()
+        hi = bins > n//2
+        z[hi] = z[hi].conj()
+        rows.append(z)
+    return np.stack(rows)
+
+
+def circuit_case(n=8192, m=128, q=64, versions=96, changes=1, repeats=5):
+    rng = np.random.default_rng(806+n+q+changes)
+    signals = rng.normal(0, .003/np.sqrt(n), (m,n))
+    signals[:,0] += 1
+    bins = np.sort(rng.choice(n, q, replace=False))
+    edits = []
+    for _ in range(versions):
+        at = [m//3] if changes == 1 else rng.choice(m, changes, replace=False)
+        edits.append([(int(j), int(rng.integers(n)), float(rng.normal(0,.005))) for j in at])
+
+    def phase7():
+        t = perf_counter_ns()
+        e = ChainEngine()
+        original = e.chain([e.seed(x) for x in signals])
+        original.frequencies(bins)
+        setup = ms(t); t = perf_counter_ns()
+        out = []
+        for edit in edits:
+            branch = original
+            for j, p, d in edit: branch = branch.edit(j,p,d)
+            out.append(branch.frequencies(bins))
+        warm = ms(t)
+        return setup, warm, np.stack(out), e.memory_report()
+
+    def phase8():
+        t = perf_counter_ns()
+        e = ProjectedCircuit(n, bins)
+        original = e.product([e.register(x) for x in signals])
+        original.frequencies()
+        setup = ms(t); t = perf_counter_ns()
+        out = []
+        for edit in edits:
+            changes = {j: e.add(original.factor(j), e.impulse(p,d)) for j,p,d in edit}
+            branch = original.replace_many(changes)
+            out.append(branch.frequencies())
+        warm = ms(t)
+        return setup, warm, np.stack(out), e.memory_report()
+
+    def vectorized():
+        t = perf_counter_ns()
+        spec = projected_register(signals,bins)
+        setup = ms(t); t = perf_counter_ns()
+        out = []
+        for edit in edits:
+            x = spec.copy()
+            for j,p,d in edit: x[j] += d*phase(n,bins,p)
+            out.append(np.prod(x, axis=0))
+        warm = ms(t)
+        return setup,warm,np.stack(out),{'basis_projection_bytes':spec.nbytes}
+
+    def analytic():
+        t = perf_counter_ns()
+        spec = projected_register(signals,bins)
+        at = m//3
+        other = np.prod(np.delete(spec,at,axis=0),axis=0)
+        base = np.prod(spec,axis=0)
+        setup = ms(t); t = perf_counter_ns()
+        out = [base+edit[0][2]*phase(n,bins,edit[0][1])*other for edit in edits]
+        warm = ms(t)
+        return setup,warm,np.stack(out),{'basis_projection_bytes':spec.nbytes,'extra_numeric_bytes':base.nbytes+other.nbytes}
+
+    methods = {'phase7':phase7,'phase8':phase8,'vectorized_product':vectorized}
+    if changes == 1: methods['analytic_one_factor'] = analytic
+    data = {name:[] for name in methods}; maxerr = 0
+    reference = vectorized()[2]
+    for _ in range(repeats):
+        for name in rng.permutation(list(methods)):
+            setup, warm, result, memory = methods[name]()
+            maxerr = max(maxerr,float(np.max(abs(result-reference))))
+            np.testing.assert_allclose(result,reference,rtol=3e-10,atol=3e-10)
+            data[name].append({'setup_ms':setup,'warm_ms':warm,'cold_ms':setup+warm,'memory':memory})
+    summary = {name:{key:float(np.median([r[key] for r in rows])) for key in ('setup_ms','warm_ms','cold_ms')}
+               for name,rows in data.items()}
+    return {'n':n,'m':m,'q':q,'versions':versions,'changed_factors':changes,
+            'max_abs_error':maxerr,'summary':summary,'trials':data,
+            'output_bytes_each':versions*q*16}
+
+
+def full_output_case(n, repeats=5, versions=24, m=8):
+    rng = np.random.default_rng(n+810)
+    signals = rng.normal(0,.01/np.sqrt(n),(m,n)); signals[:,0] += 1
+    changes = [(int(rng.integers(n)),float(rng.normal(0,.03))) for _ in range(versions)]
+    def prepare():
+        spectra = [fft.rfft(x) for x in signals]
+        other = np.prod(np.stack(spectra[1:]),axis=0)
+        return spectra[0]*other,other
+    def run(name):
+        t = perf_counter_ns(); out=[]
+        if name == 'phase7_sparse':
+            e = ChainEngine(); v = e.chain([e.seed(x) for x in signals])
+            for p,d in changes: out.append(v.edit(0,p,d).dense())
+        elif name == 'analytic_sparse':
+            bs, ospec = prepare()
+            base,other = fft.irfft(bs,n=n),fft.irfft(ospec,n=n)
+            for p,d in changes: out.append(base+d*np.roll(other,p))
+        else:
+            _,other = prepare()
+            for p,d in changes:
+                x = signals[0].copy();x[p] += d
+                out.append(fft.irfft(fft.rfft(x)*other,n=n))
+        elapsed = ms(t)
+        return elapsed,out
+    names = ['phase7_sparse','analytic_sparse','prepared_fft']
+    times = {name:[] for name in names}; error=0
+    for _ in range(repeats):
+        results={}
+        for name in rng.permutation(names):
+            elapsed,out = run(name);times[name].append(elapsed);results[name]=out
+        for name in names:
+            for a,b in zip(results[name],results['prepared_fft']):
+                error=max(error,float(np.max(abs(a-b))))
+                np.testing.assert_allclose(a,b,rtol=1e-9,atol=1e-11)
+    return {'n':n,'m':m,'versions':versions,'all_output_values_checked':True,
+            'output_bytes_each':n*versions*8,'max_abs_error':error,
+            'cold_ms':{name:float(np.median(v)) for name,v in times.items()},'trials_ms':times}
+
+
+def history_case(retained,repeats=5,updates=100):
+    spec=importlib.util.spec_from_file_location('old_multi',ROOT/'baseline_query_v2/multi_view.py')
+    old=importlib.util.module_from_spec(spec);sys.modules[spec.name]=old;spec.loader.exec_module(old)
+    def run(cls,compact):
+        s=cls(1024,list(range(8)),np.ones((16,8)),{'hot':list(range(8)),'cold':[0]},promote_after=None)
+        for _ in range(retained):s.add_coefficient(0,.125)
+        s.query('hot')
+        t=perf_counter_ns()
+        for _ in range(updates):
+            s.add_coefficient(0,.125);s.query('hot')
+            if compact:
+                s.query('cold');s.compact()
+        elapsed=ms(t)
+        np.testing.assert_allclose(s.query('hot'),np.full(8,(retained+updates)*.125))
+        return elapsed
+    return {'retained_events':retained,'queries':updates,
+            'old_ms':float(np.median([run(old.SharedProjectedFourierStore,False) for _ in range(repeats)])),
+            'fixed_ms':float(np.median([run(SharedProjectedFourierStore,False) for _ in range(repeats)])),
+            'old_query_all_and_compact_ms':float(np.median([run(old.SharedProjectedFourierStore,True) for _ in range(repeats)])),
+            'log_construction_excluded':True}
+
+
+def main():
+    result={'environment':{'python':platform.python_version(),'numpy':np.__version__,'scipy':scipy.__version__,
+                           'platform':platform.platform(),'openblas_threads':os.getenv('OPENBLAS_NUM_THREADS')},
+            'protocol':'Five randomized repetitions; all outputs retained and compared; full rFFT registration charged; no dense relation discovery.',
+            'circuits':[], 'full_output':[], 'history':[]}
+    for n,m,q,v,p in [(8192,128,4,96,1),(8192,128,64,96,1),(8192,128,64,96,4),
+                       (65536,32,64,96,4),(4096,32,256,48,16)]:
+        row=circuit_case(n,m,q,v,p);result['circuits'].append(row)
+        print('circuit',n,m,q,p,row['summary'],flush=True)
+    for n in (4096,65536,262144):
+        row=full_output_case(n);result['full_output'].append(row)
+        print('full',n,row['cold_ms'],flush=True)
+    for retained in (0,1000,10000,100000):
+        row=history_case(retained);result['history'].append(row);print('history',row,flush=True)
+    (ROOT/'results/benchmark_phase8.json').write_text(json.dumps(result,indent=2)+'\n')
+
+
+if __name__=='__main__':main()

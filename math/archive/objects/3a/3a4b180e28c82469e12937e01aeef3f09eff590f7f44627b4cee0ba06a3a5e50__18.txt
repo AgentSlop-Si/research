@@ -1,0 +1,235 @@
+   1 """Deterministic linear selection and full-prefix Fourier-surrogate planner.
+   2 
+   3 Algorithmic bounds use the corrected source's ideal arithmetic model.
+   4 Python floats, logarithms, random bits and downstream FFTs are not a certified
+   5 implementation of that probability theorem. Prefix sums of computed float
+   6 magnitudes use exact Fractions to avoid subtractive-cancellation decisions.
+   7 """
+   8 from dataclasses import dataclass
+   9 from fractions import Fraction
+  10 import math
+  11 import random
+  12 
+  13 
+  14 def _parameters(epsilon, delta):
+  15     try:
+  16         epsilon, delta = float(epsilon), float(delta)
+  17     except (TypeError, ValueError, OverflowError) as exc:
+  18         raise ValueError('epsilon and delta must be finite numeric parameters') from exc
+  19     if not (math.isfinite(epsilon) and 0 < epsilon < 1 and
+  20             math.isfinite(delta) and 0 < delta < 1):
+  21         raise ValueError('epsilon and delta must be finite and strictly between 0 and 1')
+  22     return epsilon, delta
+  23 
+  24 
+  25 def _snapshot(values):
+  26     try:
+  27         x = tuple(complex(v) for v in values)
+  28     except (TypeError, ValueError) as exc:
+  29         raise ValueError('need a one-dimensional complex sequence') from exc
+  30     n = len(x)
+  31     if not n or n & (n-1):
+  32         raise ValueError('input length must be a positive power of two')
+  33     if any(not (math.isfinite(v.real) and math.isfinite(v.imag)) for v in x):
+  34         raise ValueError('input values must be finite')
+  35     return x
+  36 
+  37 
+  38 def _small_sort(values, keys, stats):
+  39     out = list(values)
+  40     for i in range(1, len(out)):
+  41         item, j = out[i], i
+  42         while j:
+  43             stats['selection_comparisons'] += 1
+  44             if not keys[item] < keys[out[j-1]]:
+  45                 break
+  46             out[j] = out[j-1]
+  47             j -= 1
+  48         out[j] = item
+  49     return out
+  50 
+  51 
+  52 def _select(values, rank, keys, stats):
+  53     """BFPRT median-of-five selection; keys include unique index tie-breaks."""
+  54     stats['selection_calls'] += 1
+  55     stats['selection_partition_volume'] += len(values)
+  56     if len(values) <= 5:
+  57         return _small_sort(values, keys, stats)[rank]
+  58     medians = []
+  59     for start in range(0, len(values), 5):
+  60         group = _small_sort(values[start:start+5], keys, stats)
+  61         medians.append(group[len(group)//2])
+  62     pivot = _select(medians, len(medians)//2, keys, stats)
+  63     lower, upper = [], []
+  64     for item in values:
+  65         stats['selection_comparisons'] += 1
+  66         if keys[item] < keys[pivot]:
+  67             lower.append(item)
+  68         else:
+  69             stats['selection_comparisons'] += 1
+  70             if keys[pivot] < keys[item]:
+  71                 upper.append(item)
+  72     if rank < len(lower):
+  73         return _select(lower, rank, keys, stats)
+  74     if rank == len(lower):
+  75         return pivot
+  76     return _select(upper, rank-len(lower)-1, keys, stats)
+  77 
+  78 
+  79 @dataclass(frozen=True)
+  80 class Candidate:
+  81     head_size: int
+  82     residual_mass: Fraction
+  83     requested_samples: int
+  84     actual_draws_if_chosen: int
+  85     support_upper_bound: int
+  86     method: str
+  87 
+  88 
+  89 @dataclass(frozen=True)
+  90 class PrefixPlan:
+  91     version: str
+  92     snapshot: tuple
+  93     epsilon: float
+  94     delta: float
+  95     cap: int
+  96     magnitude_fractions: tuple
+  97     magnitudes: tuple
+  98     total_mass: Fraction
+  99     nonzero_indices: tuple
+ 100     ordered_top_indices: tuple
+ 101     prefix_masses: tuple
+ 102     candidates: tuple
+ 103     chosen: Candidate
+ 104     lambda_numeric: float
+ 105     selection_stats: tuple
+ 106 
+ 107 
+ 108 def _candidate(m, s, total, prefix, epsilon, budget_factor):
+ 109     residual = total-prefix
+ 110     if total == 0 or residual <= Fraction(epsilon)*total:
+ 111         requested = 0
+ 112     else:
+ 113         raw = budget_factor*residual*residual/(total*total)
+ 114         requested = -(-raw.numerator//raw.denominator)
+ 115     if s+requested >= m:
+ 116         return Candidate(s,residual,requested,0,m,'exact-input')
+ 117     if requested == 0:
+ 118         return Candidate(s,residual,0,0,s,'head-only')
+ 119     return Candidate(s,residual,requested,requested,s+requested,'sample-tail')
+ 120 
+ 121 
+ 122 def plan_prefix(values, epsilon, delta, *, max_head=None):
+ 123     epsilon, delta = _parameters(epsilon,delta)
+ 124     x = _snapshot(values)
+ 125     n = len(x)
+ 126     if max_head is not None and (not isinstance(max_head,int) or
+ 127                                  isinstance(max_head,bool) or max_head < 0):
+ 128         raise ValueError('max_head must be a nonnegative integer or None')
+ 129     magnitudes = tuple(math.hypot(v.real,v.imag) for v in x)
+ 130     if any(not math.isfinite(a) for a in magnitudes):
+ 131         raise OverflowError('a complex magnitude is outside the floating-point range')
+ 132     masses = tuple(Fraction(a) for a in magnitudes)
+ 133     total = sum(masses,Fraction(0))
+ 134     nonzero = tuple(j for j,a in enumerate(magnitudes) if a != 0)
+ 135     m = len(nonzero)
+ 136     requested_cap = max(1,(n.bit_length()-1)**2) if max_head is None else max_head
+ 137     cap = min(m,requested_cap)
+ 138     keys = tuple((-a,j) for j,a in enumerate(magnitudes))
+ 139     stats = {'selection_calls':0,'selection_partition_volume':0,
+ 140              'selection_comparisons':0,'input_values_scanned':n,
+ 141              'selected_indices':cap,'candidate_count':cap+1}
+ 142     if cap == 0:
+ 143         top = []
+ 144     elif cap == m:
+ 145         top = list(nonzero)
+ 146     else:
+ 147         cut = _select(list(nonzero),cap-1,keys,stats)
+ 148         top = []
+ 149         for j in nonzero:
+ 150             stats['selection_comparisons'] += 1
+ 151             if keys[j] <= keys[cut]:
+ 152                 top.append(j)
+ 153     top.sort(key=lambda j: keys[j])
+ 154     assert len(top) == cap
+ 155     prefix = [Fraction(0)]
+ 156     for j in top:
+ 157         prefix.append(prefix[-1]+masses[j])
+ 158     # Logs are evaluated without forming 4N/delta, which can overflow.
+ 159     logarithm = math.log(4*n)-math.log(delta)
+ 160     factor = 4*Fraction(logarithm)/(Fraction(epsilon)**2)
+ 161     candidates = tuple(_candidate(m,s,total,prefix[s],epsilon,factor)
+ 162                        for s in range(cap+1))
+ 163     chosen = min(candidates,key=lambda c:(c.support_upper_bound,
+ 164                         c.actual_draws_if_chosen,c.head_size))
+ 165     return PrefixPlan('full-prefix-v1',x,epsilon,delta,cap,masses,magnitudes,total,
+ 166         nonzero,tuple(top),tuple(prefix),candidates,chosen,logarithm,
+ 167         tuple(sorted(stats.items())))
+ 168 
+ 169 
+ 170 def construct_surrogate(values, epsilon, delta, *, plan, rng=None):
+ 171     """Validate binding, then copy or sample. Exact bypass occurs before RNG use.
+ 172 
+ 173     Returns sparse entries and clearly separated construction metadata.
+ 174     Sorted uniforms and one residual scan avoid a hash/coalescing assumption.
+ 175     """
+ 176     epsilon, delta = _parameters(epsilon,delta)
+ 177     x = _snapshot(values)
+ 178     if not isinstance(plan,PrefixPlan) or plan.version != 'full-prefix-v1':
+ 179         raise ValueError('unsupported plan')
+ 180     if plan.snapshot != x or plan.epsilon != epsilon or plan.delta != delta:
+ 181         raise ValueError('stale plan: input or requested parameters differ')
+ 182     chosen = plan.chosen
+ 183     info = {'method':chosen.method,'head_size':chosen.head_size,
+ 184             'requested_samples':chosen.requested_samples,'actual_draws':0,
+ 185             'copied_nonzeros':0,'sampled_distinct_indices':0,
+ 186             'support_upper_bound':chosen.support_upper_bound,
+ 187             'realized_support':0,'input_binding_values_checked':len(x),
+ 188             'reused_selected_indices':True,'selection_calls_during_construction':0}
+ 189     if chosen.method == 'exact-input':
+ 190         entries = [(j,x[j]) for j in plan.nonzero_indices]
+ 191         info['copied_nonzeros'] = len(entries)
+ 192         info['realized_support'] = len(entries)
+ 193         return entries,info
+ 194     head = plan.ordered_top_indices[:chosen.head_size]
+ 195     entries = [(j,x[j]) for j in head]
+ 196     info['copied_nonzeros'] = len(head)
+ 197     if chosen.method == 'head-only':
+ 198         info['realized_support'] = len(entries)
+ 199         return entries,info
+ 200     k = chosen.requested_samples
+ 201     assert 0 < k and chosen.head_size+k < len(plan.nonzero_indices)
+ 202     if rng is None:
+ 203         rng = random.Random()
+ 204     uniforms = sorted(float(rng.random()) for _ in range(k))
+ 205     if any(not (0 <= u < 1) for u in uniforms):
+ 206         raise ValueError('random generator must supply values in [0,1)')
+ 207     targets = [Fraction(u)*chosen.residual_mass for u in uniforms]
+ 208     selected = [False]*len(x)
+ 209     for j in head:
+ 210         selected[j] = True
+ 211     cumulative, cursor = Fraction(0),0
+ 212     for j in plan.nonzero_indices:
+ 213         if selected[j]:
+ 214             continue
+ 215         cumulative += plan.magnitude_fractions[j]
+ 216         count = 0
+ 217         while cursor < k and targets[cursor] < cumulative:
+ 218             cursor += 1
+ 219             count += 1
+ 220         if count:
+ 221             magnitude = float(chosen.residual_mass*count/k)
+ 222             phase = complex(x[j].real/plan.magnitudes[j],x[j].imag/plan.magnitudes[j])
+ 223             value = magnitude*phase
+ 224             if not (math.isfinite(value.real) and math.isfinite(value.imag)):
+ 225                 raise OverflowError('sampled coefficient is outside the floating-point range')
+ 226             info['sampled_distinct_indices'] += 1
+ 227             if value != 0:
+ 228                 entries.append((j,value))
+ 229     assert cursor == k and cumulative == chosen.residual_mass
+ 230     info['actual_draws'] = k
+ 231     info['realized_support'] = len(entries)
+ 232     info['sorted_uniform_count'] = k
+ 233     info['residual_scan_nonzeros'] = len(plan.nonzero_indices)-len(head)
+ 234     assert len(entries) <= chosen.support_upper_bound
+ 235     return entries,info

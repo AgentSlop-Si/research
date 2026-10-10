@@ -1,0 +1,53 @@
+   1 """Exact tests for half-grid spectral extension over a prime field."""
+   2 import json, random
+   3 from check_displacement import rank
+   4 from pathlib import Path
+   5 P=97
+   6 
+   7 def evaluate(a,x):
+   8     y=0
+   9     for c in reversed(a): y=(y*x+c)%P
+  10     return y
+  11 
+  12 def matvec(E,v): return [sum(a*b for a,b in zip(row,v))%P for row in E]
+  13 
+  14 def main():
+  15     rng=random.Random(20261009); reports=[]
+  16     for L in [1,2,4,8,16]:
+  17         alpha=next(a for a in range(1,P) if pow(a,L,P)==P-1 and pow(a,2*L,P)==1)
+  18         omega=alpha*alpha%P
+  19         E=[[2*pow(L*(1-alpha*pow(omega,(r-s)%L,P))%P,-1,P)%P
+  20             for s in range(L)] for r in range(L)]
+  21         for s in range(L):
+  22             v=[int(j==s) for j in range(L)]
+  23             twice=matvec(E,matvec(E,v))
+  24             assert twice==v[1:]+v[:1]
+  25         for k in range(1,L+1):
+  26             for _ in range(10):
+  27                 q=[rng.randrange(P) for _ in range(k)]+[rng.randrange(1,P)]
+  28                 de=[evaluate(q,pow(omega,r,P)) for r in range(L)]
+  29                 do=[evaluate(q,alpha*pow(omega,r,P)%P) for r in range(L)]
+  30                 defect=[[(E[r][s]*(de[s]-do[r]))%P for s in range(L)] for r in range(L)]
+  31                 assert rank(defect,P)==k
+  32                 # Restrict input to degree<k polynomials: x=F[:,0:k] coeffs.
+  33                 restricted=[[sum(defect[r][s]*pow(omega,s*j,P) for s in range(L))%P
+  34                              for j in range(k)] for r in range(L)]
+  35                 assert rank(restricted,P)==max(0,2*k-L)
+  36         for _ in range(100):
+  37             a=[rng.randrange(P) for _ in range(L)]
+  38             v=[evaluate(a,pow(omega,r,P)) for r in range(L)]
+  39             assert matvec(E,v)==[evaluate(a,alpha*pow(omega,r,P)%P) for r in range(L)]
+  40             # A product H of degree <2L splits H(x)=He(x^2)+x Ho(x^2).
+  41             h=[rng.randrange(P) for _ in range(2*L)]
+  42             for r in range(L):
+  43                 x=pow(alpha,r,P); hp=evaluate(h,x); hm=evaluate(h,-x%P)
+  44                 ev=(hp+hm)*pow(2,-1,P)%P
+  45                 od=(hp-hm)*pow(2*x,-1,P)%P
+  46                 assert ev==evaluate(h[::2],pow(omega,r,P))
+  47                 assert od==evaluate(h[1::2],pow(omega,r,P))
+  48         reports.append(dict(L=L,alpha=alpha,random_polynomials=100,squared_operator_columns=L,commutation_rank_checks=10*L,restricted_rank_checks=10*L))
+  49     result=dict(status='passed',field_prime=P,tests=reports,
+  50                 limitation='Exact small finite-field checks; no FFT runtime or numerical-stability benchmark.')
+  51     Path(__file__).with_name('spectral_bridge_checks.json').write_text(json.dumps(result,indent=2)+'\n')
+  52     print(json.dumps(result,indent=2))
+  53 if __name__=='__main__': main()

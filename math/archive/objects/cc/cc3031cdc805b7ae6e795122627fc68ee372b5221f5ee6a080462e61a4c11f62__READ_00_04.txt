@@ -1,0 +1,386 @@
+
+===== SOURCE 0 8c9b568fcba301eef95dd760a79b8d95cb8cb67ffc1bf332a54b715d8c57536c fft_materials_extension_20261009/fft_joint_decode_research/adaptive_recurrence.py | 5684 bytes 172 lines =====
+   1 """Fully charged support-adaptive sparse-annihilator decoder.
+   2 
+   3 For stride b, distinct lambda=z_s**b give R_b(t)=prod(1-lambda*t).
+   4 The original exponential sum is annihilated by R_b(t**b), possibly much
+   5 sparser than its minimal denominator. Classical recurrence arithmetic;
+   6 no general sparse-FFT improvement is claimed.
+   7 """
+   8 from pathlib import Path
+   9 import sys
+  10 from dataclasses import dataclass
+  11 from operator import index
+  12 
+  13 ROOT=Path(__file__).resolve().parent.parent
+  14 sys.path.insert(0,str(ROOT/'fft_qweyl_boundary_research'))
+  15 from fixed_kernel import Counted
+  16 from prior_exact_arithmetic import PrimeField,CyclotomicField
+  17 
+  18 
+  19 def power(c,x,exponent):
+  20     """Binary constant powering; every actual multiply is charged."""
+  21     if exponent<0:
+  22         raise ValueError('nonnegative exponent required')
+  23     if exponent==0:
+  24         return c.one
+  25     result=None
+  26     value=x
+  27     while exponent:
+  28         if exponent&1:
+  29             result=value if result is None else c.mul(result,value)
+  30         exponent//=2
+  31         if exponent:
+  32             value=c.mul(value,value)
+  33     return result
+  34 
+  35 
+  36 def denominator(c,roots):
+  37     q=[c.one]
+  38     for root in roots:
+  39         out=[q[0]]
+  40         out.extend(c.sub(q[j],c.mul(root,q[j-1])) for j in range(1,len(q)))
+  41         out.append(c.neg(c.mul(root,q[-1])))
+  42         q=out
+  43     return q
+  44 
+  45 
+  46 def initial_values(c,roots,amplitudes,length):
+  47     """Direct modal prefix with O(length) workspace, no stored power table."""
+  48     if len(roots)!=len(amplitudes):
+  49         raise ValueError('amplitude length does not match support')
+  50     out=[]
+  51     value=amplitudes[0]
+  52     for j in range(length):
+  53         out.append(value)
+  54         if j+1<length:
+  55             value=c.mul(value,roots[0])
+  56     for root,amplitude in zip(roots[1:],amplitudes[1:]):
+  57         value=amplitude
+  58         for j in range(length):
+  59             out[j]=c.add(out[j],value)
+  60             if j+1<length:
+  61                 value=c.mul(value,root)
+  62     return out
+  63 
+  64 
+  65 @dataclass
+  66 class AdaptivePlan:
+  67     n: int
+  68     roots: list
+  69     stride: int
+  70     degree: int
+  71     initial_length: int
+  72     taps: list
+  73     short_denominator: list
+  74     candidates: list
+  75     preparation: dict
+  76     support_equality_tests: int
+  77     coefficient_zero_tests: int
+  78 
+  79 
+  80 def default_strides(n,k):
+  81     limit=min(n,k*k)
+  82     values=[]
+  83     b=1
+  84     while b<=limit:
+  85         values.append(b)
+  86         b*=2
+  87     return values
+  88 
+  89 
+  90 def expected_online(n,k,initial_length,tap_count):
+  91     m=min(n,initial_length)
+  92     return dict(mul=k*(m-1)+(n-m)*tap_count,
+  93                 add=(k-1)*m+(n-m)*(tap_count-1))
+  94 
+  95 
+  96 def prepare_adaptive(field,n,roots,strides=None):
+  97     if n<1 or not roots:
+  98         raise ValueError('positive output length and nonempty support required')
+  99     roots=list(roots)
+ 100     if any(z==field.zero for z in roots):
+ 101         raise ValueError('support roots must be nonzero')
+ 102     k=len(roots)
+ 103     raw=default_strides(n,k) if strides is None else list(strides)
+ 104     normalized=[]
+ 105     for b in raw:
+ 106         if isinstance(b,bool):
+ 107             raise TypeError('strides must be integers, not booleans')
+ 108         b=index(b)
+ 109         if b<1:
+ 110             raise ValueError('strides must be positive')
+ 111         normalized.append(b)
+ 112     strides=sorted(set([1]+normalized))
+ 113     c=Counted(field)
+ 114     equality=0
+ 115     zero_tests=0
+ 116     records=[]
+ 117     best=None
+ 118     for b in strides:
+ 119         powered=[power(c,z,b) for z in roots]
+ 120         distinct=[]
+ 121         for value in powered:
+ 122             matched=False
+ 123             for previous in distinct:
+ 124                 equality+=1
+ 125                 if value==previous:
+ 126                     matched=True
+ 127                     break
+ 128             if not matched:
+ 129                 distinct.append(value)
+ 130         if b==1 and len(distinct)!=k:
+ 131             raise ValueError('input support roots must be distinct')
+ 132         q=denominator(c,distinct)
+ 133         nonzero=[]
+ 134         for i in range(1,len(q)):
+ 135             zero_tests+=1
+ 136             if q[i]!=field.zero:
+ 137                 nonzero.append(i)
+ 138         order=b*len(distinct)
+ 139         online=expected_online(n,k,order,len(nonzero))
+ 140         row=dict(stride=b,distinct_powers=len(distinct),annihilator_degree=order,
+ 141                  initial_length=min(n,order),tap_count=len(nonzero),online=online,
+ 142                  online_field_total=sum(online.values()))
+ 143         records.append(row)
+ 144         key=(row['online_field_total'],row['initial_length'],b)
+ 145         if best is None or key<best[0]:
+ 146             best=(key,b,q,nonzero,order)
+ 147     _,stride,q,nonzero,order=best
+ 148     taps=[(stride*i,c.neg(q[i])) for i in nonzero]
+ 149     return AdaptivePlan(n,roots,stride,len(q)-1,min(n,order),taps,q,records,
+ 150                         dict(c.count),equality,zero_tests)
+ 151 
+ 152 
+ 153 def apply_adaptive(field,plan,amplitudes):
+ 154     if len(amplitudes)!=len(plan.roots):
+ 155         raise ValueError('wrong amplitude length')
+ 156     c=Counted(field)
+ 157     out=initial_values(c,plan.roots,amplitudes,plan.initial_length)
+ 158     for m in range(plan.initial_length,plan.n):
+ 159         distance,weight=plan.taps[0]
+ 160         value=c.mul(weight,out[m-distance])
+ 161         for distance,weight in plan.taps[1:]:
+ 162             value=c.add(value,c.mul(weight,out[m-distance]))
+ 163         out.append(value)
+ 164     count=dict(c.count)
+ 165     # Zero entries are retained in the closed ledger for easy comparison.
+ 166     count.setdefault('mul',0);count.setdefault('add',0)
+ 167     return out,dict(field_operations=count,full_output_writes=plan.n,
+ 168                     returned_output_count=plan.n,initial_prefix=plan.initial_length,
+ 169                     recurrence_outputs=plan.n-plan.initial_length,
+ 170                     recurrence_taps=len(plan.taps),transform_calls=0,
+ 171                     input_amplitude_reads=len(plan.roots),
+ 172                     model='exact field operations and explicit word indices')
+
+===== SOURCE 1 c73d5a443e2ce83d5264ebc18c4bd9b96989827e4b695d92761cc156518c7f39 fft_materials_extension_20261009/fft_joint_decode_research/fft_decoded_baseline.py | 3394 bytes 97 lines =====
+   1 """Ordinary FFT implementation of the supplied decoded-state J_Q primitive.
+   2 
+   3 Extends consecutive length-L coefficient blocks by -T_(1/Q) U_Q. Uses
+   4 four length-2L FFTs per new block; all fixed spectra and initial data paid.
+   5 Supplied primitive 2Lth root eta is an additional comparator assumption.
+   6 """
+   7 from dataclasses import dataclass
+   8 from adaptive_recurrence import ROOT,Counted,denominator,initial_values
+   9 import sys
+  10 sys.path.insert(0,str(ROOT/'fft_qbasis_research'))
+  11 from orbit_kernel import fft_plan,fft
+  12 
+  13 
+  14 @dataclass
+  15 class DecodedPlan:
+  16     n: int
+  17     roots: list
+  18     length: int
+  19     q: list
+  20     reciprocal: list
+  21     fft: object
+  22     upper_spectrum: list
+  23     lower_spectrum: list
+  24     preparation: dict
+  25 
+  26 
+  27 def prepare_baseline(field,n,roots,eta):
+  28     if n<1 or not roots:
+  29         raise ValueError('positive output length and nonempty support required')
+  30     roots=list(roots)
+  31     k=len(roots)
+  32     length=max(2,1<<(k-1).bit_length())
+  33     c=Counted(field)
+  34     q=denominator(c,roots)
+  35     h=[field.one]
+  36     for j in range(1,length):
+  37         terms=[c.mul(q[i],h[j-i]) for i in range(1,min(k,j)+1)]
+  38         value=terms[0]
+  39         for v in terms[1:]:
+  40             value=c.add(value,v)
+  41         h.append(c.neg(value))
+  42     plan=fft_plan(c,length,eta)
+  43     upper=[field.zero]*(2*length)
+  44     upper[0]=q[length] if length<=k else field.zero
+  45     for distance in range(1,length):
+  46         j=length-distance
+  47         upper[2*length-distance]=q[j] if j<=k else field.zero
+  48     upper_spectrum=fft(c,plan,upper)
+  49     lower_spectrum=fft(c,plan,h+[field.zero]*length)
+  50     return DecodedPlan(n,roots,length,q,h,plan,upper_spectrum,lower_spectrum,dict(c.count))
+  51 
+  52 
+  53 def apply_baseline(field,plan,amplitudes):
+  54     if len(amplitudes)!=len(plan.roots):
+  55         raise ValueError('wrong amplitude length')
+  56     n,l=plan.n,plan.length
+  57     c=Counted(field)
+  58     state=initial_values(c,plan.roots,amplitudes,l)
+  59     result=state[:n]
+  60     blocks=0
+  61     def convolve(values,spectrum):
+  62         transformed=fft(c,plan.fft,values+[field.zero]*l)
+  63         product=[c.mul(a,b) for a,b in zip(transformed,spectrum)]
+  64         return fft(c,plan.fft,product,inverse=True)[:l]
+  65     while len(result)<n:
+  66         middle=convolve(state,plan.upper_spectrum)
+  67         tail=convolve(middle,plan.lower_spectrum)
+  68         state=[c.neg(a) for a in tail]
+  69         result.extend(state[:n-len(result)])
+  70         blocks+=1
+  71     counts=dict(c.count);counts.setdefault('mul',0);counts.setdefault('add',0)
+  72     return result,dict(field_operations=counts,blocks=blocks,
+  73                        fft_calls=4*blocks,fft_length=2*l,
+  74                        full_output_writes=n,returned_output_count=n,
+  75                        initial_prefix=l,extra_computed_values=(blocks+1)*l-n)
+  76 
+  77 
+  78 def expected_online(n,k):
+  79     l=max(2,1<<(k-1).bit_length())
+  80     levels=l.bit_length()-1
+  81     blocks=max(0,(n+l-1)//l-1)
+  82     out=dict(mul=k*(l-1)+blocks*(4*l*levels+12*l),
+  83              add=(k-1)*l+blocks*4*l*(levels+1))
+  84     if blocks:
+  85         out['sub']=blocks*4*l*(levels+1)
+  86         out['neg']=blocks*l
+  87     return out
+  88 
+  89 
+  90 def expected_preparation(k):
+  91     l=max(2,1<<(k-1).bit_length())
+  92     levels=l.bit_length()-1
+  93     reciprocal_products=sum(min(k,j) for j in range(1,l))
+  94     transforms=2*l*(levels+1)
+  95     return dict(mul=k*(k+1)//2+reciprocal_products+2*l+levels+transforms,
+  96                 add=reciprocal_products-l+1+transforms,
+  97                 sub=k*(k-1)//2+transforms,neg=k+l-1,constant_inverse=1)
+
+===== SOURCE 2 1b07df42b631b47b05c2f77d89e4e43b38480da68da508c2e3815de87bb9f405 fft_materials_extension_20261009/fft_joint_decode_research/hybrid.py | 1624 bytes 44 lines =====
+   1 """Paid discovery with a conventional O(N log k) fallback.
+   2 
+   3 Selection minimizes the displayed unit-field-operation ledger, not native
+   4 runtime. All candidate discovery is paid even when the FFT route is chosen.
+   5 """
+   6 from dataclasses import dataclass
+   7 from collections import Counter
+   8 from adaptive_recurrence import prepare_adaptive,apply_adaptive,expected_online
+   9 from fft_decoded_baseline import (prepare_baseline,apply_baseline,
+  10     expected_preparation as baseline_preparation,expected_online as baseline_online)
+  11 
+  12 
+  13 @dataclass
+  14 class HybridPlan:
+  15     adaptive: object
+  16     baseline: object
+  17     method: str
+  18     preparation: dict
+  19     adaptive_online_total: int
+  20     baseline_additional_total: int
+  21 
+  22 
+  23 def prepare_hybrid(field,n,roots,eta,strides=None):
+  24     adaptive=prepare_adaptive(field,n,roots,strides)
+  25     k=len(roots)
+  26     recurrence_cost=sum(expected_online(n,k,adaptive.initial_length,len(adaptive.taps)).values())
+  27     fft_cost=sum(baseline_preparation(k).values())+sum(baseline_online(n,k).values())
+  28     counts=Counter(adaptive.preparation)
+  29     baseline=None
+  30     if recurrence_cost<=fft_cost:
+  31         method='sparse_annihilator'
+  32     else:
+  33         method='decoded_fft'
+  34         baseline=prepare_baseline(field,n,roots,eta)
+  35         counts.update(baseline.preparation)
+  36     return HybridPlan(adaptive,baseline,method,dict(counts),recurrence_cost,fft_cost)
+  37 
+  38 
+  39 def apply_hybrid(field,plan,amplitudes):
+  40     if plan.method=='sparse_annihilator':
+  41         out,counts=apply_adaptive(field,plan.adaptive,amplitudes)
+  42     else:
+  43         out,counts=apply_baseline(field,plan.baseline,amplitudes)
+  44     return out,dict(method=plan.method,**counts)
+
+===== SOURCE 3 53a1b7ab46c8b94844eb510fd21f51ddc954c8f1fd7d0da30f75314bec3fda08 fft_materials_extension_20261009/fft_joint_decode_research/review_edge_checks.py | 3123 bytes 65 lines =====
+   1 """Independent focused checks; not a timing or asymptotic experiment."""
+   2 import json
+   3 from pathlib import Path
+   4 
+   5 from adaptive_recurrence import (
+   6     PrimeField, prepare_adaptive, apply_adaptive, expected_online, Counted, denominator,
+   7 )
+   8 from fft_decoded_baseline import (
+   9     prepare_baseline, apply_baseline,
+  10     expected_online as baseline_online,
+  11     expected_preparation as baseline_preparation,
+  12 )
+  13 from hybrid import prepare_hybrid, apply_hybrid
+  14 
+  15 
+  16 def main():
+  17     field = PrimeField(97)
+  18     cases = 0
+  19     for roots in ([2], [2, 3, 5], [2, 3, 5, 7, 11]):
+  20         k = len(roots)
+  21         length = max(2, 1 << (k - 1).bit_length())
+  22         eta = field.root(2 * length)  # Oracle supplies the comparator root.
+  23         for n in (1, 2, 5, 7, 19):
+  24             for strides in (None, [], [1, 1, 3, 121]):
+  25                 amplitudes = [(i * i + 4) % 97 for i in range(k)]
+  26                 expected = [sum(amplitudes[i] * pow(roots[i], j, 97)
+  27                                 for i in range(k)) % 97 for j in range(n)]
+  28                 plan = prepare_adaptive(field, n, roots, strides)
+  29                 result, counts = apply_adaptive(field, plan, amplitudes)
+  30                 assert result == expected
+  31                 assert counts['field_operations'] == expected_online(
+  32                     n, k, plan.initial_length, len(plan.taps))
+  33                 baseline = prepare_baseline(field, n, roots, eta)
+  34                 other, other_counts = apply_baseline(field, baseline, amplitudes)
+  35                 assert other == expected
+  36                 assert other_counts['field_operations'] == baseline_online(n, k)
+  37                 assert baseline.preparation == baseline_preparation(k)
+  38                 hybrid = prepare_hybrid(field, n, roots, eta, strides)
+  39                 final, final_counts = apply_hybrid(field, hybrid, amplitudes)
+  40                 assert final == expected
+  41                 cold = sum(hybrid.preparation.values()) + sum(
+  42                     final_counts['field_operations'].values())
+  43                 assert cold == sum(hybrid.adaptive.preparation.values()) + min(
+  44                     hybrid.adaptive_online_total, hybrid.baseline_additional_total)
+  45                 cases += 1
+  46     dense_controls = []
+  47     for prime in (65537, 998244353):
+  48         field = PrimeField(prime)
+  49         q = field.root(4096)
+  50         roots = [field.power(q, a + 256 * j)
+  51                  for a in (1, 3) for j in range(8)]
+  52         polynomial = denominator(Counted(field), roots)
+  53         nonconstant_terms = sum(x != field.zero for x in polynomial[1:])
+  54         assert nonconstant_terms == 16
+  55         dense_controls.append(dict(prime=prime, nonconstant_terms=nonconstant_terms))
+  56     result = dict(status='PASS', focused_cases=cases, dense_controls=dense_controls,
+  57                   scope='short and nonblock-aligned output; arbitrary nonzero roots; '
+  58                         'stride normalization; exact hybrid cold selection')
+  59     destination = Path(__file__).parent / 'results' / 'independent_edge_checks.json'
+  60     destination.write_text(json.dumps(result, indent=2) + '\n')
+  61     print(json.dumps(result, indent=2))
+  62 
+  63 
+  64 if __name__ == '__main__':
+  65     main()

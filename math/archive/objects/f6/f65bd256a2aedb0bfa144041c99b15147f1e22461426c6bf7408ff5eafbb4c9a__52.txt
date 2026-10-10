@@ -1,0 +1,273 @@
+   1 #!/usr/bin/env python3
+   2 """Fresh stdlib-only Phase16 audit. Source files are data, never imported/executed."""
+   3 import ast
+   4 from collections import deque
+   5 from fractions import Fraction as Q
+   6 from functools import lru_cache
+   7 from itertools import permutations, product
+   8 from pathlib import Path
+   9 import hashlib,json,math,random,sys,zipfile
+  10 
+  11 P=65537
+  12 R=random.Random(161022)
+  13 
+  14 def ident(n): return [[int(i==j) for j in range(n)] for i in range(n)]
+  15 def matmul(A,B): return [[sum(x*y for x,y in zip(row,col))%P for col in zip(*B)] for row in A]
+  16 def matadd(A,B,c=1): return [[(x+c*y)%P for x,y in zip(a,b)] for a,b in zip(A,B)]
+  17 def rank(A):
+  18     A=[r[:] for r in A]; k=0
+  19     for j in range(len(A[0])):
+  20         q=next((q for q in range(k,len(A)) if A[q][j]%P),None)
+  21         if q is None: continue
+  22         A[k],A[q]=A[q],A[k]; f=pow(A[k][j],-1,P); A[k]=[f*v%P for v in A[k]]
+  23         for q in range(k+1,len(A)):
+  24             f=A[q][j]
+  25             if f: A[q]=[(x-f*y)%P for x,y in zip(A[q],A[k])]
+  26         k+=1
+  27         if k==len(A):break
+  28     return k
+  29 
+  30 def inverse(A):
+  31     n=len(A); B=[r[:]+ident(n)[i] for i,r in enumerate(A)]
+  32     for j in range(n):
+  33         q=next((q for q in range(j,n) if B[q][j]%P),None)
+  34         if q is None: raise ValueError('singular')
+  35         B[j],B[q]=B[q],B[j]; f=pow(B[j][j],-1,P); B[j]=[f*v%P for v in B[j]]
+  36         for q in range(n):
+  37             if q!=j:
+  38                 f=B[q][j]
+  39                 if f:B[q]=[(x-f*y)%P for x,y in zip(B[q],B[j])]
+  40     return [r[n:] for r in B]
+  41 
+  42 def maps(s):
+  43     return [[((x+2*y+k)%s)*s+y for x in range(s) for y in range(s)] for k in [0,1]]+[[x*s+(y+2*x+k)%s for x in range(s) for y in range(s)] for k in [0,1]]
+  44 def half(s):return [x*s+(y+s//2)%s for x in range(s) for y in range(s)]
+  45 def green(pi,w):
+  46     A=ident(len(pi))
+  47     for i,j in enumerate(pi):A[i][j]=(A[i][j]-w[i])%P
+  48     return inverse(A)
+  49 def pureweights(plans,c,d):return [[v*d[i]*pow(d[pi[i]],-1,P)%P for i in range(len(d))] for pi,v in zip(plans,c)]
+  50 def monomial(tau,d):
+  51     n=len(d); M=[[0]*n for _ in d]
+  52     for j in range(n):M[tau[j]][j]=d[tau[j]]*pow(d[j],-1,P)%P
+  53     return M
+  54 
+  55 def forest(plans,weights,c):
+  56     n=len(plans[0]); edges=[[] for _ in range(n)]
+  57     for t,pi in enumerate(plans):
+  58         for i,j in enumerate(pi):
+  59             z=c[t]*pow(weights[t][i],-1,P)%P
+  60             edges[i].append((j,z));edges[j].append((i,pow(z,-1,P)))
+  61     d=[None]*n; components=0
+  62     for root in range(n):
+  63         if d[root] is not None:continue
+  64         components+=1;d[root]=1;todo=deque([root])
+  65         while todo:
+  66             i=todo.popleft()
+  67             for j,z in edges[i]:
+  68                 if d[j] is None:d[j]=d[i]*z%P;todo.append(j)
+  69     w0=pureweights(plans,c,d)
+  70     defects=[(t,i) for t in range(len(plans)) for i in range(n) if weights[t][i]!=w0[t][i]]
+  71     return d,components,defects
+  72 
+  73 # A quotient tower over Q: i^2=-1, a^2=1-2i, b^2=1+8i, c^2=1-16i.
+  74 # Inverses explicitly prove units, so all resulting identities hold under every
+  75 # complex embedding, including the supplied principal square-root choices.
+  76 def vadd(a,b):return tuple(x+y for x,y in zip(a,b))
+  77 def vneg(a):return tuple(-x for x in a)
+  78 def vsub(a,b):return vadd(a,vneg(b))
+  79 def radicand(n):
+  80     if n==2:return (Q(-1),)
+  81     return (Q(1),Q({4:-2,8:8,16:-16}[n]))+(Q(0),)*(n//2-2)
+  82 @lru_cache(None)
+  83 def vmul(a,b):
+  84     n=len(a)
+  85     if not any(a) or not any(b):return (Q(0),)*n
+  86     if n==1:return (a[0]*b[0],)
+  87     h=n//2;aa,ab=a[:h],a[h:];ba,bb=b[:h],b[h:]
+  88     return vadd(vmul(aa,ba),vmul(vmul(ab,bb),radicand(n)))+vadd(vmul(aa,bb),vmul(ab,ba))
+  89 @lru_cache(None)
+  90 def vinv(a):
+  91     n=len(a)
+  92     if n==1:
+  93         if not a[0]:raise ZeroDivisionError('nonunit')
+  94         return (1/a[0],)
+  95     h=n//2;x,y=a[:h],a[h:]
+  96     t=vinv(vsub(vmul(x,x),vmul(vmul(y,y),radicand(n))))
+  97     return vmul(x,t)+vneg(vmul(y,t))
+  98 def rat(x):return (Q(x),)+(Q(0),)*15
+  99 def unit(k):return (Q(0),)*k+(Q(1),)+(Q(0),)*(15-k)
+ 100 ZERO=rat(0);ONE=rat(1);IM=unit(1)
+ 101 ROOTS={vsub(ONE,vmul(rat(2),IM)):unit(2),vadd(ONE,vmul(rat(8),IM)):unit(4),vsub(ONE,vmul(rat(16),IM)):unit(8)}
+ 102 def parse_expr(text):
+ 103     """Strict inert-data grammar; no eval, compile, exec, import or sympify."""
+ 104     def visit(n):
+ 105         if isinstance(n,ast.Constant) and type(n.value) is int:return rat(n.value)
+ 106         if isinstance(n,ast.Name) and n.id=='I':return IM
+ 107         if isinstance(n,ast.UnaryOp) and isinstance(n.op,ast.USub):return vneg(visit(n.operand))
+ 108         if isinstance(n,ast.BinOp):
+ 109             a,b=visit(n.left),visit(n.right)
+ 110             if isinstance(n.op,ast.Add):return vadd(a,b)
+ 111             if isinstance(n.op,ast.Sub):return vsub(a,b)
+ 112             if isinstance(n.op,ast.Mult):return vmul(a,b)
+ 113             if isinstance(n.op,ast.Div):return vmul(a,vinv(b))
+ 114         if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='sqrt' and len(n.args)==1 and not n.keywords:
+ 115             return ROOTS[visit(n.args[0])]
+ 116         raise ValueError('certificate expression outside restricted grammar')
+ 117     return visit(ast.parse(text,mode='eval').body)
+ 118 def vmm(A,B):
+ 119     out=[]
+ 120     for row in A:
+ 121         r=[]
+ 122         for col in zip(*B):
+ 123             v=ZERO
+ 124             for a,b in zip(row,col):v=vadd(v,vmul(a,b))
+ 125             r.append(v)
+ 126         out.append(r)
+ 127     return out
+ 128 
+ 129 def f4_check(source):
+ 130     c=json.loads((source/'EXACT_F4_CERTIFICATE.json').read_text())
+ 131     F,X,Y=[[[parse_expr(z) for z in row] for row in c[key]] for key in ['fourier_unnormalized','first_rook_factor_X','second_rook_factor_Y']]
+ 132     powers=[ONE,vneg(IM),vneg(ONE),IM]
+ 133     assert F==[[powers[i*j%4] for j in range(4)] for i in range(4)]
+ 134     assert vmm(Y,X)==F
+ 135     for A in [X,Y]:
+ 136         assert all(A[i][j]==ZERO for i in range(4) for j in range(4) if i//2!=j//2 and i%2!=j%2)
+ 137     pis=[list(range(4)),[2,3,0,1],list(range(4)),[1,0,3,2]]
+ 138     I=[[ONE if i==j else ZERO for j in range(4)] for i in range(4)]
+ 139     invchecks=0;zero_weights=0;variable_id=[]
+ 140     for stagekey,target in [('first_stage_weight_vectors',X),('second_stage_weight_vectors',Y)]:
+ 141         total=[[ZERO]*4 for _ in range(4)]
+ 142         ws=[[parse_expr(z) for z in row] for row in c[stagekey]]
+ 143         for slot,(pi,w) in enumerate(zip(pis,ws)):
+ 144             zero_weights+=sum(z==ZERO for z in w)
+ 145             A=[r[:] for r in I]; G=[[ZERO]*4 for _ in range(4)]
+ 146             for i in range(4):A[i][pi[i]]=vsub(A[i][pi[i]],w[i])
+ 147             for i,j in enumerate(pi):
+ 148                 if i==j:G[i][i]=vinv(vsub(ONE,w[i]))
+ 149                 else:
+ 150                     den=vinv(vsub(ONE,vmul(w[i],w[j])))
+ 151                     G[i][i]=den;G[i][j]=vmul(w[i],den)
+ 152             assert vmm(A,G)==I and vmm(G,A)==I;invchecks+=1
+ 153             total=[[vadd(a,b) for a,b in zip(r,s)] for r,s in zip(total,G)]
+ 154             if slot==2:variable_id.append(w[0]!=w[1])
+ 155         assert total==target
+ 156     assert any(variable_id)
+ 157     # Deliberately corrupt one certificate weight and prove the affected inverse changes.
+ 158     w=parse_expr(c['first_stage_weight_vectors'][2][0]);assert vinv(vsub(ONE,w))!=vinv(vsub(ONE,vadd(w,ONE)))
+ 159     for bad in ['__import__("os")','I.real','sqrt(2)','1.5']:
+ 160         try:parse_expr(bad)
+ 161         except (ValueError,KeyError):pass
+ 162         else:raise AssertionError('unsafe expression accepted')
+ 163     return {'status':'PASS','exact_inverses_verified_both_sides':invchecks,'exact_stage_sums':2,'exact_product_YX_equals_F4':True,'zero_weight_occurrences':zero_weights,'variable_identity_generator_in_each_stage':variable_id,'variable_identity_generator_excludes_any_common_constant_reference':any(variable_id),'arithmetic':'stdlib Fraction, 16-dimensional quadratic quotient tower; strict AST data parser','principal_sqrt_dependency':'identities hold for every embedding, hence supplied branches','negative_controls':5}
+ 164 
+ 165 def main():
+ 166     source=Path(__file__).parent/'source'
+ 167     target=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).with_name('INDEPENDENT_RESULTS.json')
+ 168     out={'status':'PASS','source_code_executed_or_imported':False,'dependencies':'Python standard library only'}
+ 169     exhaustive=[];nperm=0
+ 170     for n in range(2,9):
+ 171         allowed={(u,b) for u in range(n) for b in range(n) if u*u%n==1 and 2*b%n==0 and b*b%n==0};found=[]
+ 172         for tau in permutations(range(n)):
+ 173             nperm+=1;inv=[0]*n
+ 174             for j,k in enumerate(tau):inv[k]=j
+ 175             b=tau[0]
+ 176             # j=0 forces the weights a_j/a_0 = omega^(b*tau(j)).
+ 177             commutes=all((i*(tau[j]-b)+b*tau[j]-j*inv[i])%n==0 for i in range(n) for j in range(n))
+ 178             u=(tau[1]-b)%n
+ 179             classified=(u,b) in allowed and all(tau[j]==(u*j+b)%n for j in range(n))
+ 180             assert commutes==classified
+ 181             if commutes:found.append([u,b])
+ 182         exhaustive.append({'N':n,'commuting_permutation_supports':found})
+ 183     out['monomial_classification_exhaustive_permutations']=nperm;out['monomial_classification_small_sizes']=exhaustive
+ 184     vertexchecks=0
+ 185     for s in range(2,34,2):
+ 186         q=half(s);n=s*s
+ 187         for pi in maps(s):
+ 188             assert sorted(pi)==list(range(n))
+ 189             for i in range(n):assert pi[q[i]]==q[pi[i]];vertexchecks+=1
+ 190         b=q[0];u=(q[1]-b)%n
+ 191         assert not (u*u%n==1 and 2*b%n==0 and b*b%n==0 and all(q[j]==(u*j+b)%n for j in range(n)))
+ 192     out['Margulis_half_y_commutation_vertex_checks']=vertexchecks;out['exact_gauge_no_go_checked_sides']=list(range(2,34,2))
+ 193     fullranks=[]
+ 194     for s in [2,4,8]:
+ 195         n=s*s;z=pow(3,(P-1)//n,P);F=[[pow(z,i*j,P) for j in range(n)] for i in range(n)]
+ 196         for k in range(4):
+ 197             d=[1]*n if k==0 else [R.randrange(1,P) for _ in range(n)]
+ 198             M=monomial(half(s),d);C=matadd(matmul(F,M),matmul(M,F),-1);r=rank(C);assert r==n
+ 199             fullranks.append({'N':n,'gauge':k,'rank':r})
+ 200     out['fresh_gauged_commutator_ranks']=fullranks
+ 201     forestchecks=[];rankcontrols=[];conjugations=0
+ 202     for s in [2,4]:
+ 203         n=s*s;plans=maps(s);c=[2,3,5,7];d=[R.randrange(1,P) for _ in range(n)];w=pureweights(plans,c,d)
+ 204         recovered,nc,defects=forest(plans,w,c);assert not defects and pureweights(plans,c,recovered)==w
+ 205         bad=[r[:] for r in w];loop=next((t,i) for t,p in enumerate(plans) for i,j in enumerate(p) if i==j);t,i=loop;bad[t][i]=bad[t][i]*2%P
+ 206         _,_,defects=forest(plans,bad,c);assert defects==[loop]
+ 207         forestchecks.append({'s':s,'edges':4*n,'components':nc,'one_self_loop_defect':list(loop)})
+ 208         base=[green(pi,wi) for pi,wi in zip(plans,w)]
+ 209         for pi,cj,G in zip(plans,c,base):
+ 210             H=green(pi,[cj]*n)
+ 211             assert G==[[d[i]*H[i][j]*pow(d[j],-1,P)%P for j in range(n)] for i in range(n)];conjugations+=1
+ 212         M=monomial(half(s),d)
+ 213         T0=matmul(matadd(base[0],base[1],3),matadd(base[2],base[3],5));assert rank(matadd(matmul(T0,M),matmul(M,T0),-1))==0
+ 214         for k in range(7):
+ 215             changed=[r[:] for r in w]
+ 216             for slot in R.sample(range(4*n),k):
+ 217                 t,i=divmod(slot,n);changed[t][i]=changed[t][i]*11%P
+ 218             gs=[green(pi,wi) for pi,wi in zip(plans,changed)]
+ 219             T=matmul(matadd(gs[0],gs[1],3),matadd(gs[2],gs[3],5));rd=rank(matadd(T,T0,-1));rc=rank(matadd(matmul(T,M),matmul(M,T),-1));assert rd<=k and rc<=2*k
+ 220             rankcontrols.append({'N':n,'changed_occurrences':k,'rank_difference':rd,'rank_commutator':rc})
+ 221     out['fresh_forest_controls']=forestchecks;out['exact_resolvent_conjugations']=conjugations;out['rank_edit_controls']=rankcontrols
+ 222     n=16;pi=maps(4)[1];a=[2]*n;b=a[:];b[0]=3;A=green(pi,a);B=green(pi,b);r1=rank(matadd(B,A,-1));r2=rank(matadd(matmul(B,B),matmul(A,A),-1));assert(r1,r2)==(1,2)
+ 223     out['shared_parameter_countercontrol']={'one_occurrence_rank':r1,'two_occurrences_rank':r2,'charged_occurrences':2}
+ 224     # Root-of-unity kernel count is equivalent to solving delta*j=e (mod N).
+ 225     kernelcases=0
+ 226     for n in range(2,81):
+ 227         for delta in range(1,n):
+ 228             g=math.gcd(n,delta)
+ 229             for e in range(n):
+ 230                 z=sum(delta*j%n==e for j in range(n));assert z==(g if e%g==0 else 0);kernelcases+=1
+ 231     out['exact_root_kernel_support_cases']=kernelcases
+ 232     gaps=[]
+ 233     for s in range(3,257):
+ 234         n=s*s;p=next(t for t in range(2,n+1) if n%t==0);g=n-n//p-(2*s-1);assert g>0
+ 235         if s in [3,4,5,6,8,16,32,64,128,256]:gaps.append({'s':s,'gap':g})
+ 236     out['rook_support_gaps']=gaps;out['rook_support_sides_checked']=254
+ 237     # Exact signed-sum identity underlying the phase-only gap for small even s:
+ 238     # floating controls accompany the independent all-size proof in REVIEW.md.
+ 239     phase=[]
+ 240     for s in [4,6,8,10,12,16,20]:
+ 241         h=s//2;angles=[math.pi*y/s for y in range(h)]
+ 242         expected=1/(math.sqrt(2)*math.sin(math.pi/(2*s)))
+ 243         best=max(abs(sum(sign*complex(math.cos(a),math.sin(a)) for sign,a in zip(signs,angles))) for signs in product([-1,1],repeat=h))
+ 244         assert abs(best-expected)<1e-11
+ 245         bound=math.sqrt(2-2*math.sqrt(2)/(s*math.sin(math.pi/(2*s))))/2
+ 246         assert bound>0
+ 247         phase.append({'s':s,'signed_sum_max':best,'distance_lower_bound':bound})
+ 248     out['phase_gap_numerical_formula_controls']=phase
+ 249     # Complete the square exactly, no numerical orthogonality testing needed.
+ 250     qchecks=0
+ 251     for n in range(2,41):
+ 252         for d in range((n-1)//2+1):
+ 253             alpha=Q(d,n)
+ 254             for t in [Q(0),Q(1,3),Q(1),Q(2),alpha/(1-alpha)]:
+ 255                 lhs=1+t*t-alpha*(1+t)**2
+ 256                 rhs=(1-2*alpha)/(1-alpha)+(1-alpha)*(t-alpha/(1-alpha))**2
+ 257                 assert lhs==rhs;qchecks+=1
+ 258     out['exact_Frobenius_quadratic_identities']=qchecks
+ 259     out['F4_certificate']=f4_check(source)
+ 260     sourcehashes=json.loads((source/'SHA256SUMS.json').read_text());assert len(sourcehashes)==17
+ 261     for name,v in sourcehashes.items():
+ 262         data=(source/name).read_bytes();assert len(data)==v['bytes'] and hashlib.sha256(data).hexdigest()==v['sha256']
+ 263     out['source_manifest_entries_verified']=len(sourcehashes)
+ 264     outer=source/'fft_hero0_phase16_gauge_curvature_2026-10-10.zip'
+ 265     assert hashlib.sha256(outer.read_bytes()).hexdigest()=='2b0cabeea7b373bb47942db4e2d86f7dd8577ea5e41bb5e5bbaeab8d043847d0'
+ 266     assert hashlib.sha256((source/'prior_phase15_bundle.zip').read_bytes()).hexdigest()=='94cb33b22de6ecd0cf73c104b9f281a92abfe4ca4748f1e99577ead072dd7285'
+ 267     with zipfile.ZipFile(outer) as z:assert z.testzip() is None
+ 268     out['source_zip_and_predecessor_identity_verified']=True
+ 269     tree=ast.parse((source/'test_phase16.py').read_text());testcount=sum(isinstance(n,ast.FunctionDef) and n.name.startswith('test_') for n in ast.walk(tree));assert testcount==19
+ 270     out['source_test_definitions_counted_not_run']=testcount
+ 271     out['uploaded_counts_and_seeded_floats_reproduced']=False
+ 272     target.write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))
+ 273 if __name__=='__main__':main()

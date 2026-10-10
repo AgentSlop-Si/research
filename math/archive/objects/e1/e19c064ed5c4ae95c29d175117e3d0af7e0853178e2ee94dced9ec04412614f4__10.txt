@@ -1,0 +1,130 @@
+   1 #!/usr/bin/env python3
+   2 """Independent controls for v19, including corrected inverse-density scope."""
+   3 import json
+   4 from pathlib import Path
+   5 from random import Random
+   6 from exact_utils import Field,root
+   7 
+   8 P=998244353
+   9 F=Field(P)
+  10 
+  11 
+  12 def permutation_power(perm,step):
+  13     out=[0]*len(perm);seen=set()
+  14     for v in range(len(perm)):
+  15         if v in seen:continue
+  16         cycle=[];w=v
+  17         while w not in seen:
+  18             seen.add(w);cycle.append(w);w=perm[w]
+  19         assert w==v
+  20         for i,w in enumerate(cycle):out[w]=cycle[(i+step)%len(cycle)]
+  21     return out
+  22 
+  23 
+  24 def green(perm,alpha):
+  25     n=len(perm);den=F.eye(n)
+  26     for v,w in enumerate(perm):den[w][v]=(den[w][v]-alpha)%P
+  27     return F.inverse(den)
+  28 
+  29 
+  30 def shifted(g,perm,scalar):
+  31     out=[None]*len(perm)
+  32     for v,w in enumerate(perm):out[w]=[scalar*x%P for x in g[v]]
+  33     return out
+  34 
+  35 
+  36 def packet_controls():
+  37     rng=Random(84113);out=[]
+  38     for n in (5,8,13,17):
+  39         perm=list(range(n));rng.shuffle(perm)
+  40         for b in (2,4,8):
+  41             xi=root(b,P,3);alpha=3
+  42             terms=[green(perm,alpha*pow(xi,r,P)%P) for r in range(b)]
+  43             fused=green(permutation_power(perm,b),pow(alpha,b,P))
+  44             rhs=[]
+  45             for s in range(b):
+  46                 right=shifted(fused,permutation_power(perm,s),pow(alpha,s,P));rhs.append(right)
+  47                 left=[[sum(pow(xi,-r*s,P)*terms[r][i][j] for r in range(b))*F.inv(b)%P for j in range(n)] for i in range(n)]
+  48                 assert left==right
+  49             coeff=[r*r+2*r+3 for r in range(b)]
+  50             chat=[sum(coeff[r]*pow(xi,r*s,P) for r in range(b))*F.inv(b)%P for s in range(b)]
+  51             literal=[[sum(coeff[r]*terms[r][i][j] for r in range(b))%P for j in range(n)] for i in range(n)]
+  52             polynomial=[[b*sum(chat[s]*rhs[s][i][j] for s in range(b))%P for j in range(n)] for i in range(n)]
+  53             assert literal==polynomial
+  54             out.append({'N':n,'packet_width':b,'character_channels_checked':b,'arbitrary_weight_identity':True})
+  55     return out
+  56 
+  57 
+  58 def polynomial_matrix(n,coeff):
+  59     a=[[0]*n for _ in range(n)]
+  60     for j in range(n):
+  61         for step,value in enumerate(coeff):a[(j+step)%n][j]=(a[(j+step)%n][j]+value)%P
+  62     return a
+  63 
+  64 
+  65 def rational_controls():
+  66     out=[]
+  67     for n in (11,17,32):
+  68         for e in (0,1,2,3):
+  69             for d in (0,1,2,3):
+  70                 m=(n-e)//2
+  71                 if d>=m:continue
+  72                 q=[1]+[3+2*j for j in range(d)]
+  73                 p=[2+j*j for j in range(e+1)]
+  74                 t=F.mul(F.inverse(polynomial_matrix(n,q)),polynomial_matrix(n,p))
+  75                 a=list(range(m+e,2*m+e));b=list(range(m))
+  76                 block=[[t[i][j] for j in b] for i in a]
+  77                 rank=F.rank(block);assert rank<=d
+  78                 out.append({'N':n,'denominator_degree':d,'numerator_degree':e,'rectangle_size':m,'rank':rank})
+  79     return out
+  80 
+  81 
+  82 def separator_controls():
+  83     rng=Random(198771);out=[]
+  84     for u,s,v in [(3,1,4),(3,2,3),(4,3,2),(2,2,4)]:
+  85         n=u+s+v
+  86         for _ in range(100):
+  87             a=[[rng.randrange(1,100) for j in range(n)] for i in range(n)]
+  88             for i in range(u):
+  89                 for j in range(u+s,n):a[i][j]=0
+  90             # Force a singular principal block, outside v19's sufficient guard.
+  91             for j in range(u):a[0][j]=0
+  92             try:ai=F.inverse(a);break
+  93             except ValueError:pass
+  94         else:raise AssertionError('No test matrix found')
+  95         assert F.det([row[:u] for row in a[:u]])==0
+  96         rank=F.rank([row[u+s:] for row in ai[:u]])
+  97         complement=[row[u:] for row in a[:u+s]]
+  98         assert rank==F.rank(complement)-s and rank<=s
+  99         out.append({'U':u,'S':s,'V':v,'full_inverse_exists':True,'principal_UU_singular':True,
+ 100                     'reverse_VU_nonzero':True,'inverse_cross_rank':rank,'complementary_block_rank':F.rank(complement)})
+ 101     return out
+ 102 
+ 103 
+ 104 def density_controls():
+ 105     out=[]
+ 106     for n in (4,8,16,17):
+ 107         z=root(n,P,3);assert z!=1
+ 108         fourier=[[pow(z,i*j,P) for j in range(n)] for i in range(n)]
+ 109         # Independent nonzero endpoint scalings and row/column permutations.
+ 110         row_order=list(reversed(range(n)));col_order=list(range(1,n))+[0]
+ 111         target=[[(i+2)*(j+3)*fourier[row_order[i]][col_order[j]]%P for j in range(n)] for i in range(n)]
+ 112         denominator=F.inverse(target)
+ 113         assert all(x for row in denominator for x in row)
+ 114         assert F.mul(denominator,target)==F.eye(n)
+ 115         out.append({'N':n,'inverse_nonzero_entries':n*n,'required_graph_treewidth':n-1})
+ 116     return out
+ 117 
+ 118 
+ 119 def main():
+ 120     result={'status':'PASS','packet':packet_controls(),'rational_scan':rational_controls(),
+ 121             'guard_free_separator':separator_controls(),'direct_inverse_density':density_controls(),
+ 122             'correction':'A^-1 monomially Fourier implies dense A; no constant-degree sparse direct-inverse escape exists in this model.',
+ 123             'cost_scope':'Only a character-weight packet has the demonstrated O(N) single-stride solve; a general numerator must be charged.'}
+ 124     Path('PACKET_SEPARATOR_RESULTS.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 125     print(json.dumps({'status':'PASS','packet_cases':len(result['packet']),
+ 126                       'rational_cases':len(result['rational_scan']),'singular_principal_separator_cases':4,
+ 127                       'density_cases':4},sort_keys=True))
+ 128 
+ 129 
+ 130 if __name__=='__main__':main()

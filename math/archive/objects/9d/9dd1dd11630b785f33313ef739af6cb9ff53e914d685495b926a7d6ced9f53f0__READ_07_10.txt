@@ -1,0 +1,430 @@
+
+===== SOURCE 7 9af4e863f97d6b3fecfc02efbf8e4b7a7d042e0741b1ad8738c549e6293e7b74 fft_materials_extension_20261009/fft_joint_sideinfo_research/run_audit.py | 6551 bytes 147 lines =====
+   1 """Focused exact audit; Python whole-field reference work is not algorithm work."""
+   2 from collections import Counter
+   3 import hashlib
+   4 import json
+   5 from pathlib import Path
+   6 import random
+   7 
+   8 from galois_defect import signed_action, transform, hybrid_transform
+   9 
+  10 
+  11 P = 998244353
+  12 
+  13 
+  14 def root_for(n):
+  15     # Test-field constant/root generation; the algorithm API explicitly takes
+  16     # a supplied root, verifies its order and prepares all its powers itself.
+  17     return pow(3, (P-1)//n, P)
+  18 
+  19 
+  20 def direct(values, root):
+  21     return [sum(value*pow(root, j*k, P) for j, value in enumerate(values)) % P
+  22             for k in range(len(values))]
+  23 
+  24 
+  25 def structured(n, rng):
+  26     """Dense-family generator with telescoping P_5 defects of support <=2."""
+  27     inv2 = (P+1)//2
+  28     state = [rng.randrange(1, P)]
+  29     q = 2
+  30     while q <= n:
+  31         m = q//2
+  32         if q <= 4:
+  33             reduced = [rng.randrange(P) for _ in range(m)]
+  34         else:
+  35             seed = [0]*m
+  36             seed[1] = rng.randrange(1, P)
+  37             reduced = [0]*m
+  38             current = seed
+  39             for _ in range(max(1, q//8)):
+  40                 reduced = [(a+b) % P for a, b in zip(reduced, current)]
+  41                 current = signed_action(current, P, Counter())
+  42         state = [((a+b)*inv2) % P for a, b in zip(state, reduced)] + [
+  43                  ((a-b)*inv2) % P for a, b in zip(state, reduced)]
+  44         q *= 2
+  45     return state
+  46 
+  47 
+  48 def main():
+  49     rng = random.Random(9017)
+  50     accepted_checks = 0
+  51     dense_checks = 0
+  52     reference_checks = 0
+  53     rows = []
+  54     for n in (1, 2, 4, 8, 16, 32, 64, 128, 256, 1024):
+  55         omega = root_for(n)
+  56         for case in range(3):
+  57             values = structured(n, rng)
+  58             original = list(values)
+  59             fast = transform(values, P, omega)
+  60             baseline = transform(values, P, omega, use_fast_path=False)
+  61             hybrid = hybrid_transform(values, P, omega)
+  62             assert fast['accepted']
+  63             assert values == original
+  64             assert fast['values'] == baseline['values']
+  65             assert hybrid['values'] == baseline['values']
+  66             assert hybrid['counts']['output_writes'] == n
+  67             assert fast['counts']['output_writes'] == n
+  68             assert fast['counts']['input_reads'] == n
+  69             if n >= 2:
+  70                 expected = 9*n-12+2*fast['counts'].get('sparse_terms',0)+fast['counts'].get('neg',0)
+  71                 assert fast['field_operations'] == expected
+  72                 assert hybrid['field_operations'] <= baseline['field_operations']+n-3+hybrid['counts'].get('neg',0)
+  73             if n <= 64:
+  74                 assert fast['values'] == direct(values, omega)
+  75                 reference_checks += 1
+  76             accepted_checks += 1
+  77             dense_checks += all(values)
+  78             if case == 0:
+  79                 rows.append({'n': n, 'all_input_entries_nonzero': all(values),
+  80                              'fast_operations': fast['field_operations'],
+  81                              'baseline_operations': baseline['field_operations'],
+  82                              'hybrid_operations':hybrid['field_operations'],
+  83                              'hybrid_choices':hybrid['choices'],
+  84                              'supports': fast['supports'],
+  85                              'counts': fast['counts'],
+  86                              'preparation_counts': fast['preparation_counts'],
+  87                              'after_discovery_counts': fast['after_discovery_counts']})
+  88     generic_checks = 0
+  89     for n in (16, 32, 64, 256):
+  90         values = [rng.randrange(1, P) for _ in range(n)]
+  91         got = transform(values, P, root_for(n))
+  92         assert not got['accepted']
+  93         assert got['values'] == transform(values, P, root_for(n), use_fast_path=False)['values']
+  94         hybrid = hybrid_transform(values, P, root_for(n))
+  95         assert hybrid['values'] == got['values']
+  96         assert hybrid['counts']['output_writes'] == n
+  97         assert got['counts']['output_writes'] == n
+  98         generic_checks += 1
+  99     # Zero and uniform inputs meet the cap zero; a generic q=4 input also
+ 100     # works because multiplication by five is the identity modulo four.
+ 101     zero_cap_checks = 0
+ 102     for n in (1, 2, 4, 8, 32, 128):
+ 103         for values in ([0]*n, [7]*n):
+ 104             got = transform(values, P, root_for(n), max_defect=0)
+ 105             assert got['accepted']
+ 106             assert got['values'] == transform(values, P, root_for(n), use_fast_path=False)['values']
+ 107             zero_cap_checks += 1
+ 108     invalid_checks = 0
+ 109     for values, p, root, cap in (([], P, 1, 2), ([1,2,3], P, 1, 2),
+ 110                                   ([1,2], P, 1, 2), ([1,P], P, P-1, 2),
+ 111                                   ([1,2], P, P-1, -1), ([1,True], P, P-1, 2)):
+ 112         try:
+ 113             transform(values, p, root, max_defect=cap)
+ 114         except ValueError:
+ 115             invalid_checks += 1
+ 116         else:
+ 117             raise AssertionError('invalid argument accepted')
+ 118     # Independent recurrence identity at every odd frequency, independent
+ 119     # of the support restriction used by the optimization.
+ 120     identity_checks = 0
+ 121     for q in (4, 8, 16, 32, 64):
+ 122         m, omega = q//2, root_for(q)
+ 123         reduced = [rng.randrange(P) for _ in range(m)]
+ 124         acted = signed_action(reduced, P, Counter())
+ 125         defect = [(a-b) % P for a,b in zip(acted,reduced)]
+ 126         for k in range(1,q,2):
+ 127             original = sum(v*pow(omega,j*k,P) for j,v in enumerate(reduced)) % P
+ 128             shifted = sum(v*pow(omega,j*((5*k)%q),P) for j,v in enumerate(reduced)) % P
+ 129             delta = sum(v*pow(omega,j*k,P) for j,v in enumerate(defect)) % P
+ 130             assert (shifted-original) % P == delta
+ 131             identity_checks += 1
+ 132     root = Path(__file__).resolve().parent
+ 133     result = {'status':'PASS', 'structured_transforms':accepted_checks,
+ 134               'fully_dense_structured_inputs':dense_checks,
+ 135               'independent_direct_dft_checks':reference_checks,
+ 136               'generic_fallback_checks':generic_checks,
+ 137               'zero_cap_checks':zero_cap_checks, 'invalid_checks':invalid_checks,
+ 138               'odd_orbit_identity_checks':identity_checks, 'cost_rows':rows,
+ 139               'hybrid_full_output_checks':accepted_checks+generic_checks,
+ 140               'source_sha256':hashlib.sha256((root/'galois_defect.py').read_bytes()).hexdigest(),
+ 141               'scope':'Restricted exact full-output linear-time fast path; no general FFT improvement.'}
+ 142     (root/'results.json').write_text(json.dumps(result,indent=2)+'\n')
+ 143     print(json.dumps({k:v for k,v in result.items() if k!='cost_rows'},indent=2))
+ 144 
+ 145 
+ 146 if __name__ == '__main__':
+ 147     main()
+
+===== SOURCE 8 f5b7aa1fa3c48fe70e2440c57ec44be20cd5862d7a5c84f1f43415642d32cc7c fft_materials_extension_20261009/fft_joint_sideinfo_research/tensor/run_audit.py | 5216 bytes 125 lines =====
+   1 """Focused exact correctness, rejection, and operation-count audit."""
+   2 
+   3 from collections import Counter
+   4 import json
+   5 from pathlib import Path
+   6 import random
+   7 
+   8 from tensor_sideinfo import certify, evaluate, transform
+   9 
+  10 
+  11 def direct_dft(values, modulus, omega):
+  12     n = len(values)
+  13     return [sum(value * pow(omega, j * k, modulus) for j, value in enumerate(values)) % modulus
+  14             for k in range(n)]
+  15 
+  16 
+  17 def fft_reference(values, modulus, omega):
+  18     """Independent recursive radix-two reference; never used by the candidate."""
+  19     n = len(values)
+  20     if n == 1:
+  21         return list(values)
+  22     even = fft_reference(values[::2], modulus, omega * omega % modulus)
+  23     odd = fft_reference(values[1::2], modulus, omega * omega % modulus)
+  24     out = [0] * n
+  25     power = 1
+  26     for k in range(n // 2):
+  27         term = power * odd[k] % modulus
+  28         out[k] = (even[k] + term) % modulus
+  29         out[k + n // 2] = (even[k] - term) % modulus
+  30         power = power * omega % modulus
+  31     return out
+  32 
+  33 
+  34 def synthesize(factors, scale, modulus):
+  35     values = [scale]
+  36     for a0, a1 in factors:
+  37         values = [a0 * value % modulus for value in values] + [a1 * value % modulus for value in values]
+  38     return values
+  39 
+  40 
+  41 def main():
+  42     randomizer = random.Random(20261009)
+  43     exact_cases = 0
+  44     declined_cases = 0
+  45     invalid_cases = 0
+  46     count_records = []
+  47     for modulus, generator, max_log in [(17, 3, 4), (97, 5, 5), (65537, 3, 12)]:
+  48         for d in range(max_log + 1):
+  49             n = 1 << d
+  50             omega = pow(generator, (modulus - 1) // n, modulus)
+  51             examples = [[0] * n, [1] * n]
+  52             if n <= 32:
+  53                 examples.extend([[int(j == k) for j in range(n)] for k in range(n)])
+  54             for _ in range(3):
+  55                 factors = [(randomizer.randrange(modulus), randomizer.randrange(modulus)) for _ in range(d)]
+  56                 examples.append(synthesize(factors, randomizer.randrange(1, modulus), modulus))
+  57             for values in examples:
+  58                 counts = Counter()
+  59                 observed = transform(values, modulus, omega, counts)
+  60                 assert observed is not None
+  61                 expected = direct_dft(values, modulus, omega) if n <= 32 else fft_reference(values, modulus, omega)
+  62                 assert observed == expected, (modulus, n, values)
+  63                 exact_cases += 1
+  64                 if any(values):
+  65                     assert counts["field_multiplications"] == (0 if n == 1 else 6 * n - 7 + 2 * d)
+  66                     assert counts["field_additions"] == 2 * n - 2
+  67                     assert counts["certificate_multiplications"] == n - 1
+  68                     assert counts["exact_equality_checks"] == n
+  69                     assert counts["field_inversions"] == int(n > 1)
+  70             if d >= 2:
+  71                 # A single altered non-pivot/non-neighbor coordinate destroys
+  72                 # the tensor identity, while retaining a dense fresh input.
+  73                 values = [1] * n
+  74                 values[-1] = 2
+  75                 counts = Counter()
+  76                 assert transform(values, modulus, omega, counts) is None
+  77                 assert not counts["root_preparation_multiplications"]
+  78                 assert not counts["evaluation_multiplications"]
+  79                 declined_cases += 1
+  80             if modulus == 65537:
+  81                 values = synthesize([(1, randomizer.randrange(1, modulus)) for _ in range(d)], 7, modulus)
+  82                 counts = Counter()
+  83                 result = transform(values, modulus, omega, counts)
+  84                 assert result == fft_reference(values, modulus, omega)
+  85                 exact_cases += 1
+  86                 count_records.append({"n": n, "counts": dict(sorted(counts.items()))})
+  87 
+  88     # Composite-ring positive control: 2 has principal order eight mod 17,
+  89     # and 4 has principal order eight mod 257; combine these by exact CRT.
+  90     modulus = 17 * 257
+  91     omega = next(x for x in range(modulus) if x % 17 == 2 and x % 257 == 4)
+  92     values = synthesize([(1, 2), (3, 4), (5, 6)], 1, modulus)
+  93     assert transform(values, modulus, omega) == direct_dft(values, modulus, omega)
+  94     exact_cases += 1
+  95 
+  96     for callback in [
+  97         lambda: transform([], 17, 1),
+  98         lambda: transform([0, 0, 0], 17, 1),
+  99         lambda: transform([True, 1], 17, 16),
+ 100         lambda: transform([17, 1], 17, 16),
+ 101         lambda: transform([1, 1], 16, 15),
+ 102         lambda: transform([1, 1], 17, 1),
+ 103         lambda: transform([1], 17, 2),
+ 104         lambda: certify([3, 3], 15),
+ 105     ]:
+ 106         try:
+ 107             callback()
+ 108         except ValueError:
+ 109             invalid_cases += 1
+ 110         else:
+ 111             raise AssertionError("invalid input accepted")
+ 112 
+ 113     result = {
+ 114         "status": "PASS", "exact_full_output_cases": exact_cases,
+ 115         "unstructured_declines": declined_cases, "invalid_input_cases": invalid_cases,
+ 116         "count_records": count_records,
+ 117         "scope": "fresh verified binary-index rank-one tensors; no arbitrary-input FFT claim",
+ 118     }
+ 119     destination = Path(__file__).with_name("results.json")
+ 120     destination.write_text(json.dumps(result, indent=2) + "\n")
+ 121     print(json.dumps({key: value for key, value in result.items() if key != "count_records"}, indent=2))
+ 122 
+ 123 
+ 124 if __name__ == "__main__":
+ 125     main()
+
+===== SOURCE 9 d2fc6b55cee2b9a11b28612d4428839d98a467d615f01a8bd696e70dbb5ffc87 fft_materials_extension_20261009/fft_joint_sideinfo_research/tensor/tensor_sideinfo.py | 5884 bytes 152 lines =====
+   1 """Exact full DFT of a freshly verified binary-index rank-one tensor.
+   2 
+   3 The implementation uses modular scalar arithmetic.  It accepts an odd modulus,
+   4 a supplied principal dyadic root, and a unit pivot.  In particular, every
+   5 nonzero input over an odd prime field has an eligible first nonzero pivot.
+   6 No Fourier backend is called by the candidate.
+   7 """
+   8 
+   9 from collections import Counter
+  10 from dataclasses import dataclass
+  11 
+  12 
+  13 def _mul(a, b, modulus, counts, stage):
+  14     counts[stage + "_multiplications"] += 1
+  15     counts["field_multiplications"] += 1
+  16     return a * b % modulus
+  17 
+  18 
+  19 @dataclass(frozen=True)
+  20 class TensorCertificate:
+  21     n: int
+  22     modulus: int
+  23     pivot: int
+  24     scale: int
+  25     factors: tuple
+  26 
+  27 
+  28 def certify(values, modulus, counts=None):
+  29     """Return an exact tensor certificate, or None for an unstructured input.
+  30 
+  31     A nonunit first nonzero pivot raises ValueError, rather than incorrectly
+  32     declining or claiming a certificate.  Prime moduli avoid this case.
+  33     """
+  34     if counts is None:
+  35         counts = Counter()
+  36     if not isinstance(modulus, int) or isinstance(modulus, bool) or modulus < 3 or not modulus & 1:
+  37         raise ValueError("modulus must be an odd integer at least three")
+  38     n = len(values)
+  39     if n < 1 or n & (n - 1):
+  40         raise ValueError("length must be a positive power of two")
+  41     pivot = None
+  42     for j, value in enumerate(values):
+  43         counts["validation_input_reads"] += 1
+  44         if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value < modulus:
+  45             raise ValueError("inputs must be canonical integer residues")
+  46         if pivot is None and value:
+  47             pivot = j
+  48     d = n.bit_length() - 1
+  49     if pivot is None:
+  50         counts["accepted_zero_inputs"] += 1
+  51         return TensorCertificate(n, modulus, 0, 0, ((1, 1),) * d)
+  52     scale = values[pivot]
+  53     counts["pivot_reads"] += 1
+  54     factors = []
+  55     ratios = []
+  56     if d:
+  57         try:
+  58             inverse = pow(scale, -1, modulus)
+  59         except ValueError as exc:
+  60             raise ValueError("the first nonzero pivot must be a unit") from exc
+  61         counts["field_inversions"] += 1
+  62     for bit in range(d):
+  63         counts["neighbor_input_reads"] += 1
+  64         ratio = _mul(values[pivot ^ (1 << bit)], inverse, modulus, counts, "factor")
+  65         ratios.append(ratio)
+  66         factors.append((ratio, 1) if pivot & (1 << bit) else (1, ratio))
+  67     generated = [scale]
+  68     counts["certificate_values_written"] += 1
+  69     for ratio in ratios:
+  70         size = len(generated)
+  71         for j in range(size):
+  72             counts["certificate_values_read"] += 1
+  73             generated.append(_mul(generated[j], ratio, modulus, counts, "certificate"))
+  74             counts["certificate_values_written"] += 1
+  75     for mask, value in enumerate(generated):
+  76         counts["verification_input_reads"] += 1
+  77         counts["exact_equality_checks"] += 1
+  78         counts["verification_index_xors"] += 1
+  79         if values[pivot ^ mask] != value:
+  80             counts["declined_inputs"] += 1
+  81             return None
+  82     counts["accepted_nonzero_inputs"] += 1
+  83     return TensorCertificate(n, modulus, pivot, scale, tuple(factors))
+  84 
+  85 
+  86 def root_powers(n, modulus, omega, counts):
+  87     """Validate a supplied dyadic root and build its charged N-entry table.
+  88 
+  89     For N>1, omega**(N/2) == -1 suffices for a principal N-th root over
+  90     every odd residue ring.  This check does not assume primality.
+  91     """
+  92     if not isinstance(omega, int) or isinstance(omega, bool) or not 0 <= omega < modulus:
+  93         raise ValueError("root must be a canonical integer residue")
+  94     d = n.bit_length() - 1
+  95     if n == 1:
+  96         if omega != 1:
+  97             raise ValueError("the length-one root must equal one")
+  98     else:
+  99         half_power = omega
+ 100         for _ in range(d - 1):
+ 101             half_power = _mul(half_power, half_power, modulus, counts, "root_validation")
+ 102         if half_power != modulus - 1:
+ 103             raise ValueError("the supplied root is not a principal dyadic root")
+ 104     powers = [1]
+ 105     for _ in range(1, n):
+ 106         powers.append(_mul(powers[-1], omega, modulus, counts, "root_preparation"))
+ 107     counts["root_table_values_written"] += n
+ 108     return powers
+ 109 
+ 110 
+ 111 def evaluate(certificate, omega, counts=None):
+ 112     """Evaluate every DFT coordinate of a trusted internally issued certificate.
+ 113 
+ 114     Certificate objects are not authenticated against manual field edits.
+ 115     The safe fresh-input entry point below constructs its own certificate.
+ 116     """
+ 117     if counts is None:
+ 118         counts = Counter()
+ 119     n, modulus = certificate.n, certificate.modulus
+ 120     powers = root_powers(n, modulus, omega, counts)
+ 121     if not certificate.scale:
+ 122         counts["final_output_values_written"] += n
+ 123         return [0] * n
+ 124     suffix = [certificate.scale]
+ 125     for bit in range(len(certificate.factors) - 1, -1, -1):
+ 126         a0, a1 = certificate.factors[bit]
+ 127         size = 1 << (len(certificate.factors) - bit)
+ 128         half = size >> 1
+ 129         values = []
+ 130         for k in range(size):
+ 131             counts["root_table_reads"] += 1
+ 132             counts["twiddle_index_shifts"] += 1
+ 133             factor = (_mul(a1, powers[k << bit], modulus, counts, "evaluation") + a0) % modulus
+ 134             counts["field_additions"] += 1
+ 135             counts["suffix_values_read"] += 1
+ 136             counts["suffix_index_masks"] += 1
+ 137             value = _mul(factor, suffix[k & (half - 1)], modulus, counts, "evaluation")
+ 138             values.append(value)
+ 139             counts["stage_values_written"] += 1
+ 140         suffix = values
+ 141     counts["final_output_values_returned"] += n
+ 142     return suffix
+ 143 
+ 144 
+ 145 def transform(values, modulus, omega, counts=None):
+ 146     """Verify the fresh original input and return its full exact DFT, or None."""
+ 147     if counts is None:
+ 148         counts = Counter()
+ 149     certificate = certify(values, modulus, counts)
+ 150     if certificate is None:
+ 151         return None
+ 152     return evaluate(certificate, omega, counts)

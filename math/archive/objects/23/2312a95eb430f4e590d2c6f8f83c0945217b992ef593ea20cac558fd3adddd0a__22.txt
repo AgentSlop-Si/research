@@ -1,0 +1,58 @@
+1: """Certify bit-reversal between all rank-one separated-generator stages.
+2: Produces reproducible integer parameters, independent prime-field ranks, and
+3: full-row Jacobian minor certificates at the generic-domination thresholds.
+4: """
+5: from pathlib import Path
+6: import json,subprocess,tempfile,random
+7: import numpy as np
+8: from multistage_jacobian import materialize,check_differences,rank_minor
+9: 
+10: HERE=Path(__file__).resolve().parent
+11: 
+12: def bitrev(n):
+13:     m=(n-1).bit_length()
+14:     assert (1<<m)==n
+15:     return [int(format(i,f'0{m}b')[::-1],2) for i in range(n)]
+16: 
+17: def run_rank(J,p):
+18:     nrows,ncols=J.shape
+19:     with tempfile.TemporaryDirectory() as tmp:
+20:         f=Path(tmp)/'Jacobian.bin'
+21:         J.astype(np.int32).tofile(f)
+22:         output=subprocess.check_output([str(HERE/'rankmod'),str(f),str(nrows),str(ncols),str(p)],text=True)
+23:     line1,line2=output.splitlines()
+24:     data=dict(part.split('=') for part in line1.split())
+25:     return (int(data['rank']),int(data['det']), [int(x) for x in line2[7:].split(',')])
+26: 
+27: def single(n,t,p,seed=99017):
+28:     perms=[bitrev(n)]*(t-1)
+29:     M,J,pars,stages=materialize(n,t,perms,seed,p)
+30:     check_differences(n,t,perms,pars,M,J,seed+197,p,num=30)
+31:     rank,det,columns=run_rank(J,p)
+32:     target=min(n*n,n+t*(4*n-6))
+33:     assert rank==target,(n,t,p,rank,target)
+34:     if n<=16:
+35:         py_rank,pycols,pydet=rank_minor(J,p)
+36:         assert py_rank==rank and pycols==columns
+37:         if rank==n*n: assert det==pydet
+38:     item={'n':n,'t':t,'prime':p,'rank':rank,'theoretical_upper':target,
+39:           'codimension':n*n-rank,'full_dimensional':rank==n*n,
+40:           'full_rank_minor_det_mod_prime':det if rank==n*n else None,
+41:           'full_rank_minor_column_indices':columns if rank==n*n else None}
+42:     return item,pars
+43: 
+44: if __name__=='__main__':
+45:     all_results=[];full=[]
+46:     for n in (8,16,32):
+47:         tstop=n//4+1
+48:         for t in range(1,tstop+1):
+49:             r1,pars=single(n,t,12289)
+50:             r2,_=single(n,t,65537)
+51:             all_results.extend([r1,r2])
+52:             print('n',n,'t',t,'rank',r1['rank'],'bound',r1['theoretical_upper'],flush=True)
+53:             if t==tstop:
+54:                 witness={'n':n,'t':t,'permutation':bitrev(n),'seed_for_audit':99017,
+55:                          'stages':[{k:v.tolist() for k,v in par.items()} for par in pars],
+56:                          'certificates_by_field': {'12289':r1,'65537':r2}}
+57:                 (HERE/f'WITNESS_N{n}_T{t}.json').write_text(json.dumps(witness,indent=2)+'\n')
+58:     (HERE/'BITREV_RESULTS.json').write_text(json.dumps(all_results,indent=2)+'\n')

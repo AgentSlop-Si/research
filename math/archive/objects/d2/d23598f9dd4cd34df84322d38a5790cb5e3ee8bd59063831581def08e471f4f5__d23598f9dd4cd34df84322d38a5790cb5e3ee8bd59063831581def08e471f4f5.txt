@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+import json,time,math
+from phase6_exact import *
+
+def main():
+  stats=[]
+  for q,m in [(256,16),(512,16),(1024,16),(2048,16),(4096,16),(8192,16),(16384,16),(32768,32)]:
+    k=q//m; support=[1,5]
+    x=synth_sparse(k,m,support,seed=q*17)
+    t=time.monotonic();counts=OpCounter();y,found,c=adaptive_green_sparse(x,m,2,counter=counts)
+    ours=time.monotonic()-t
+    t=time.monotonic();ref=independent_full_dft(x);standard=time.monotonic()-t
+    assert y==ref and set(found)==set(support)
+    stats.append({'q':q,'m':m,'k':k,'modes':len(found),'counted_modular_add_mult':c.add+c.mult,
+       'arithmetic_ops_per_input':round((c.add+c.mult)/q,4),'root_generation_charged':True,
+       'small_dfts_count':c.full_block_dfts,'k_butterflies':c.ntt_butterflies,
+       'python_seconds_ours':round(ours,4),'python_seconds_oracle':round(standard,4)})
+    print(q,m,round((c.add+c.mult)/q,3),round(ours,3),round(standard,3),flush=True)
+  open('scale_audit.json','w').write(json.dumps(stats,indent=2))
+if __name__=='__main__':main()

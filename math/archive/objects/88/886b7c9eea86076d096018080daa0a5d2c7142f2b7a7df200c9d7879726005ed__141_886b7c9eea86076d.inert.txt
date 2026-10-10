@@ -1,0 +1,12 @@
+# Phase 12 results — what we did and did not beat
+
+Date: 2026-10-09
+
+1. **Guaranteed multiplication-count improvement for all fresh dense inputs.** Karatsuba needs 3 half-size products where naive uses 4. Evaluation/interpolation needs exactly `2n−1` input-dependent products for two n-coefficient polynomials over F998244353 when `2n−1 <= p`. This is the optimal bilinear rank, not a new discovery. Our Python code gives exact results for arbitrary dense field inputs.
+2. **Main bottleneck newly clarified.** Reducing pointwise products from 512 (NTT) to 511 (interpolation) at n=256 doesn't help runtime: 52.50 ms for the quadratic-work interpolation vs 2.11 ms for the NTT. The problem is the *linear evaluation/interpolation work*, not a shortage of optimizations to the variable products.
+3. **A useful restricted lower-bound-style obstruction.** A family of M rank-r affine F2 subspaces plus at most k edits covers at most `M 2^r sum_{j<=k} C(n,j)` inputs. In particular, for r,k=o(n), M=2^{o(n)}, this can't cover all n-bit strings. This generalizes the failure of the A−k sparse-residual idea without claiming an unrestricted FFT lower bound.
+4. **Stronger complex-field dimension barrier.** A finite family of affine subspaces of dimension at most r, plus k-sparse errors, cannot cover all complex n-vectors whenever r+k<n. This directly scopes out a universal shortcut based on a finite menu of simple A−k baselines in the exact-complex model.
+5. **Integer A−k recoding has a classical limit.** Signed nonadjacent form reduces the count of shift additions but not their O(n²) worst-case total bit work. For a fixed 4096-bit random sample, it used 1344 signed terms instead of 2069 1-bits; in Python it was vastly slower than `a*b`.
+6. **No universal exponent improvement.** A length-dependent dispatcher chooses schoolbook below length 32 and NTT for larger arrays. This preserves correctness for fresh arbitrary inputs and can improve small-size constants, but remains Θ(N log N) field work for large N in its supported finite-field model. It does not implement OpenAI #130 or beat its all-length exact-complex-DFT exponent.
+
+All methods, tests, witnesses and limitations are detailed in `RESEARCH.md`. No threading or stored answers are used.

@@ -1,0 +1,812 @@
+#!/usr/bin/env python3
+"""Fused all-length unit-step-chirp lift (v11 research prototype).
+
+This module continues v10 in two directions:
+
+1. it removes the accidental R-by-N Chebyshev storage from the prototype by
+   streaming the Chebyshev recurrence and decoding only the selected dyadic
+   frequencies;
+2. it uses Neumann's Bessel addition theorem inside each chirp block so the
+   original input and local phase are compressed once into a constant number
+   of local summary channels.
+
+The rank-R decoder work remains O(RN).  The fusion removes the rank factor
+from input/phase passes and from persistent full-length storage; it does not
+claim an O(N) shrinking-error algorithm.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable
+
+import numpy as np
+import numpy.typing as npt
+from scipy.special import jv
+
+import unit_step_core as core
+
+ComplexArray = npt.NDArray[np.complex128]
+
+
+def next_power_of_two(n: int) -> int:
+    if n < 1:
+        raise ValueError("n must be positive")
+    return 1 << (n - 1).bit_length()
+
+
+def choose_dyadic_block(q: int) -> int:
+    if q < 2 or q & (q - 1):
+        raise ValueError("q must be a power of two")
+    if q <= 4:
+        return 1
+    target = max(1.0, math.log2(q))
+    m = 1 << int(math.floor(math.log2(target)))
+    while m * m > q:
+        m //= 2
+    return max(1, m)
+
+
+def exact_nearest_grid_map(n: int, q: int | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact integer nearest-grid map.
+
+    j_k = floor(kQ/N + 1/2) is formed with integer arithmetic.  theta_num is
+    the exact numerator in theta_k = theta_num/N.
+    """
+    if n < 1:
+        raise ValueError("n must be positive")
+    if q is None:
+        q = next_power_of_two(n)
+    if q < n:
+        raise ValueError("q must be at least n")
+    indices = np.empty(n, dtype=np.int64)
+    theta_num = np.empty(n, dtype=np.int64)
+    for k in range(n):
+        j = (2 * k * q + n) // (2 * n)
+        if not (0 <= j < q):
+            raise AssertionError("nearest grid index outside range")
+        indices[k] = j
+        theta_num[k] = k * q - j * n
+    if np.unique(indices).size != n:
+        raise AssertionError("nearest-grid map is not injective")
+    if np.max(np.abs(theta_num), initial=0) * 2 > n:
+        raise AssertionError("nearest-grid offset exceeded one half")
+    theta = theta_num.astype(np.float64) / float(n)
+    return indices, theta_num, theta
+
+
+def normalized_dft(x: npt.ArrayLike) -> ComplexArray:
+    arr = np.asarray(x, dtype=np.complex128)
+    return np.fft.fft(arr) / math.sqrt(arr.size)
+
+
+def bessel_tail_bound(rank: int) -> float:
+    """Uniform Jacobi--Anger tail after orders 0,...,rank-1."""
+    if rank < 1:
+        return float("inf")
+    a = math.pi / 2.0
+    if rank + 1 <= a:
+        return float("inf")
+    return (
+        2.0
+        * math.exp(math.pi * math.pi / (4.0 * (rank + 1)))
+        * (a**rank / math.factorial(rank))
+        / (1.0 - a / (rank + 1))
+    )
+
+
+def bessel_rank_for_tail(tol: float) -> int:
+    if not (0.0 < tol < 1.0):
+        raise ValueError("tol must lie in (0,1)")
+    rank = 1
+    while bessel_tail_bound(rank) > tol:
+        rank += 1
+    return rank
+
+
+def small_argument_bessel_tail(delta: float, halfwidth: int) -> float:
+    """Bound sum_{|h|>halfwidth} |J_h(delta)|.
+
+    The retained Neumann-addition channels are h=-halfwidth,...,+halfwidth.
+    """
+    if halfwidth < 0:
+        raise ValueError("halfwidth must be nonnegative")
+    d = abs(float(delta))
+    if d == 0.0:
+        return 0.0
+    order = halfwidth + 1
+    a = d / 2.0
+    if a >= order + 1:
+        return float("inf")
+    return (
+        2.0
+        * math.exp(d * d / (4.0 * (order + 1)))
+        * (a**order / math.factorial(order))
+        / (1.0 - a / (order + 1))
+    )
+
+
+def addition_kernel_error_bound(n: int, rank: int, block: int, halfwidth: int) -> float:
+    """Uniform extra kernel error from the truncated Bessel addition theorem."""
+    q = next_power_of_two(n)
+    if q % block:
+        raise ValueError("block must divide q")
+    delta_max = math.pi * (block - 1) / q
+    return (2 * rank - 1) * small_argument_bessel_tail(delta_max, halfwidth)
+
+
+def bessel_l1_envelope() -> float:
+    """Crude uniform bound for |J0(z)|+2 sum_{r>=1}|Jr(z)|, 0<=z<=pi."""
+    return 1.0 + 2.0 * math.exp(math.pi**2 / 8.0) * (math.exp(math.pi / 2.0) - 1.0)
+
+
+@dataclass
+class SelectedDecoderPlan:
+    q: int
+    block: int
+    state: core.ChirpState
+    selected: np.ndarray
+    idx: np.ndarray
+    gauge: np.ndarray
+    boundary: np.ndarray
+    src1: np.ndarray
+    src2: np.ndarray
+    selected_pos: np.ndarray
+
+    @classmethod
+    def build(
+        cls,
+        q: int,
+        block: int,
+        state: core.ChirpState,
+        selected: npt.ArrayLike,
+    ) -> "SelectedDecoderPlan":
+        _, k, _ = core.validate_dimensions(q, block)
+        state.validate(q)
+        sel = np.asarray(selected, dtype=np.int64)
+        if np.any(sel < 0) or np.any(sel >= q):
+            raise ValueError("selected indices outside dyadic range")
+        j = np.arange(q, dtype=np.int64)
+        idx = (state.a * j) % q
+        tri_j = core._tri_array_mod(j, q)
+        phase = ((state.a % q) * tri_j + (state.beta * j) % q) % q
+        gauge = np.exp(2j * np.pi * phase.astype(np.float64) / q)
+        boundary_phase = (
+            block * ((idx + state.beta) % q)
+            + state.a * (core.tri_int(block) % q)
+        ) % q
+        boundary = np.exp(-2j * np.pi * boundary_phase.astype(np.float64) / q)
+        src1 = idx % k
+        src2 = (idx + state.a * block) % k
+        inv = np.empty(q, dtype=np.int64)
+        inv[idx] = j
+        return cls(
+            q=q,
+            block=block,
+            state=state,
+            selected=sel.copy(),
+            idx=idx,
+            gauge=gauge,
+            boundary=boundary,
+            src1=src1,
+            src2=src2,
+            selected_pos=inv[sel],
+        )
+
+    def decode_selected(self, summaries: npt.ArrayLike, dtype: Any = np.complex128) -> ComplexArray:
+        _, k, _ = core.validate_dimensions(self.q, self.block)
+        d = np.asarray(summaries, dtype=dtype)
+        if d.shape != (k,):
+            raise ValueError("summaries must have shape (K,)")
+        d_fft = np.asarray(np.fft.fft(d.astype(np.complex128)), dtype=dtype)
+        gauge = self.gauge.astype(dtype, copy=False)
+        boundary = self.boundary.astype(dtype, copy=False)
+        forcing = (
+            d_fft[self.src1] - boundary * d_fft[self.src2]
+        ) / math.sqrt(self.q)
+        terms = (forcing / gauge).astype(dtype)
+        seed = np.asarray(core.pairwise_sum(terms, dtype) / 2.0, dtype=dtype).item()
+        prefix = core.balanced_exclusive_scan(terms, dtype)
+        pos = self.selected_pos
+        return (gauge[pos] * (seed - prefix[pos])).astype(np.complex128)
+
+
+def _chebyshev_stream(theta: np.ndarray, rank: int):
+    """Yield T_r(2 theta) using only two full-length arrays."""
+    if rank <= 0:
+        return
+    x = 2.0 * theta
+    prev = np.ones_like(x, dtype=np.float64)
+    yield 0, prev
+    if rank == 1:
+        return
+    cur = x.copy()
+    yield 1, cur
+    for r in range(2, rank):
+        nxt = 2.0 * x * cur - prev
+        yield r, nxt
+        prev, cur = cur, nxt
+
+
+def _clenshaw_selected_series(
+    theta: np.ndarray,
+    rank: int,
+    row_provider,
+) -> ComplexArray:
+    """Evaluate a0 + sum_{r>=1} 2(-i)^r row_r T_r(2theta).
+
+    row_provider(r) returns the selected dyadic row for expansion order r.
+    Only two N-vectors are retained.
+    """
+    if rank <= 0:
+        return np.zeros(theta.size, dtype=np.complex128)
+    x = 2.0 * theta
+    b_next = np.zeros(theta.size, dtype=np.complex128)
+    b_next2 = np.zeros(theta.size, dtype=np.complex128)
+    for r in range(rank - 1, 0, -1):
+        a_r = 2.0 * ((-1j) ** r) * row_provider(r)
+        b_cur = a_r + 2.0 * x * b_next - b_next2
+        b_next2, b_next = b_next, b_cur
+    a0 = row_provider(0)
+    return a0 + x * b_next - b_next2
+
+
+def reference_bessel_chirp_row(
+    x: npt.ArrayLike,
+    rank: int,
+    block: int,
+    state: core.ChirpState,
+    dtype: Any = np.complex128,
+) -> ComplexArray:
+    """v10-style reference: materialize each weighted dyadic input and row."""
+    arr = np.asarray(x, dtype=np.complex128)
+    n = arr.size
+    q = next_power_of_two(n)
+    indices, _, theta = exact_nearest_grid_map(n, q)
+    cheb = [v for _, v in _chebyshev_stream(theta, rank)]
+    s = np.arange(q, dtype=np.float64) / q
+    out = np.zeros(n, dtype=np.complex128)
+    for r in range(rank):
+        padded = np.zeros(q, dtype=np.complex128)
+        padded[:n] = arr * jv(r, math.pi * s[:n])
+        row = core.one_row_estimate(padded, block, state, dtype).astype(np.complex128)
+        coeff = 1.0 if r == 0 else 2.0 * ((-1j) ** r)
+        out += coeff * cheb[r] * row[indices]
+    return math.sqrt(q / n) * out
+
+
+def streamed_bessel_chirp_row(
+    x: npt.ArrayLike,
+    rank: int,
+    block: int,
+    state: core.ChirpState,
+    dtype: Any = np.complex128,
+) -> ComplexArray:
+    """Exact v10 truncated row with O(N) storage and selected-output decoding."""
+    arr = np.asarray(x, dtype=np.complex128)
+    n = arr.size
+    q = next_power_of_two(n)
+    _, k, _ = core.validate_dimensions(q, block)
+    indices, _, theta = exact_nearest_grid_map(n, q)
+    plan = SelectedDecoderPlan.build(q, block, state, indices)
+    padded = np.zeros(q, dtype=np.complex128)
+    padded[:n] = arr
+    phase = core.local_phase_matrix(q, block, state)
+    base = phase * padded.reshape(k, block)
+    z = math.pi * np.arange(q, dtype=np.float64) / q
+
+    def provide(r: int) -> ComplexArray:
+        weights = jv(r, z).reshape(k, block)
+        summaries = core.pairwise_sum_axis1(base * weights, np.complex128)
+        return plan.decode_selected(summaries, dtype)
+
+    out = _clenshaw_selected_series(theta, rank, provide)
+    return math.sqrt(q / n) * out
+
+
+def fused_addition_bessel_chirp_row(
+    x: npt.ArrayLike,
+    rank: int,
+    block: int,
+    state: core.ChirpState,
+    halfwidth: int = 0,
+    dtype: Any = np.complex128,
+) -> ComplexArray:
+    """One-pass local compression using truncated Neumann addition channels.
+
+    J_r(pi*(bM+t)/Q) is replaced by
+      sum_{|h|<=halfwidth} J_{r-h}(pi*b/K) J_h(pi*t/Q).
+    """
+    if halfwidth < 0:
+        raise ValueError("halfwidth must be nonnegative")
+    arr = np.asarray(x, dtype=np.complex128)
+    n = arr.size
+    q = next_power_of_two(n)
+    _, k, _ = core.validate_dimensions(q, block)
+    indices, _, theta = exact_nearest_grid_map(n, q)
+    plan = SelectedDecoderPlan.build(q, block, state, indices)
+    padded = np.zeros(q, dtype=np.complex128)
+    padded[:n] = arr
+    phase = core.local_phase_matrix(q, block, state)
+    base = phase * padded.reshape(k, block)
+
+    local_z = math.pi * np.arange(block, dtype=np.float64) / q
+    orders = np.arange(-halfwidth, halfwidth + 1, dtype=np.int64)
+    local_weights = np.stack([jv(int(h), local_z) for h in orders], axis=1)
+    # K x M times M x (2H+1): the input/phase matrix is consumed once.
+    channels = base @ local_weights
+
+    block_z = math.pi * np.arange(k, dtype=np.float64) / k
+
+    def provide(r: int) -> ComplexArray:
+        factors = np.stack([jv(int(r - h), block_z) for h in orders], axis=1)
+        summaries = np.sum(channels * factors, axis=1)
+        return plan.decode_selected(summaries, dtype)
+
+    out = _clenshaw_selected_series(theta, rank, provide)
+    return math.sqrt(q / n) * out
+
+
+def exact_lift_with_addition_fusion(
+    x: npt.ArrayLike,
+    rank: int,
+    block: int,
+    halfwidth: int = 0,
+) -> ComplexArray:
+    """Expectation/center of the fused approximation, using exact Q FFTs."""
+    arr = np.asarray(x, dtype=np.complex128)
+    n = arr.size
+    q = next_power_of_two(n)
+    if q % block:
+        raise ValueError("block must divide q")
+    k = q // block
+    indices, _, theta = exact_nearest_grid_map(n, q)
+    padded = np.zeros(q, dtype=np.complex128)
+    padded[:n] = arr
+    blocks = padded.reshape(k, block)
+    local_z = math.pi * np.arange(block, dtype=np.float64) / q
+    orders = np.arange(-halfwidth, halfwidth + 1, dtype=np.int64)
+    local_weights = np.stack([jv(int(h), local_z) for h in orders], axis=1)
+    channels = blocks @ local_weights
+    block_z = math.pi * np.arange(k, dtype=np.float64) / k
+    def provide(r: int) -> ComplexArray:
+        factors = np.stack([jv(int(r - h), block_z) for h in orders], axis=1)
+        approx_weights = local_weights @ factors.T  # M x K
+        weighted = padded * approx_weights.T.reshape(q)
+        f = normalized_dft(weighted)
+        return f[indices]
+
+    out = _clenshaw_selected_series(theta, rank, provide)
+    return math.sqrt(q / n) * out
+
+
+def exact_truncated_lift(x: npt.ArrayLike, rank: int) -> ComplexArray:
+    arr = np.asarray(x, dtype=np.complex128)
+    n = arr.size
+    q = next_power_of_two(n)
+    indices, _, theta = exact_nearest_grid_map(n, q)
+    s = np.arange(q, dtype=np.float64) / q
+    def provide(r: int) -> ComplexArray:
+        padded = np.zeros(q, dtype=np.complex128)
+        padded[:n] = arr * jv(r, math.pi * s[:n])
+        return normalized_dft(padded)[indices]
+
+    out = _clenshaw_selected_series(theta, rank, provide)
+    return math.sqrt(q / n) * out
+
+
+def fused_deterministic_error_bound(
+    x: npt.ArrayLike,
+    rank: int,
+    block: int,
+    halfwidth: int,
+) -> float:
+    arr = np.asarray(x, dtype=np.complex128)
+    extra = addition_kernel_error_bound(arr.size, rank, block, halfwidth)
+    return (bessel_tail_bound(rank) + extra) * float(np.linalg.norm(arr))
+
+
+def fused_one_row_variance_bound(
+    x: npt.ArrayLike,
+    rank: int,
+    block: int,
+    halfwidth: int,
+) -> float:
+    arr = np.asarray(x, dtype=np.complex128)
+    amp = 1.0 + bessel_tail_bound(rank) + addition_kernel_error_bound(
+        arr.size, rank, block, halfwidth
+    )
+    return (block / arr.size) * amp * amp * float(np.linalg.norm(arr)) ** 2
+
+
+def streaming_fused_all_length_fft(
+    x: npt.ArrayLike,
+    rank: int,
+    rows: int,
+    g: float,
+    rng: np.random.Generator,
+    halfwidth: int = 0,
+    dtype: Any = np.complex128,
+) -> ComplexArray:
+    """End-to-end robust all-length transform using fused local channels."""
+    arr = np.asarray(x, dtype=np.complex128)
+    n = arr.size
+    q = next_power_of_two(n)
+    block = choose_dyadic_block(q)
+    if rows <= 0 or rows % 2 != 1:
+        raise ValueError("rows must be positive and odd")
+    norm = float(np.linalg.norm(arr))
+    if norm == 0.0:
+        return np.zeros(n, dtype=np.complex128)
+    amp = 1.0 + bessel_tail_bound(rank) + addition_kernel_error_bound(
+        n, rank, block, halfwidth
+    )
+    tau = g * amp * math.sqrt(block / n) * norm
+    real_state = core.MajorityGridState.zeros(n)
+    imag_state = core.MajorityGridState.zeros(n)
+    for _ in range(rows):
+        state = core.draw_state(q, rng)
+        row = fused_addition_bessel_chirp_row(
+            arr, rank, block, state, halfwidth, dtype
+        )
+        core.majority_grid_update(real_state, row.real, tau)
+        core.majority_grid_update(imag_state, row.imag, tau)
+    return (
+        core.majority_grid_finalize(real_state, tau)
+        + 1j * core.majority_grid_finalize(imag_state, tau)
+    )
+
+
+def fused_total_uniform_error_bound(
+    x: npt.ArrayLike,
+    rank: int,
+    g: float,
+    halfwidth: int = 0,
+) -> float:
+    arr = np.asarray(x, dtype=np.complex128)
+    n = arr.size
+    block = choose_dyadic_block(next_power_of_two(n))
+    eps = bessel_tail_bound(rank) + addition_kernel_error_bound(
+        n, rank, block, halfwidth
+    )
+    return (
+        eps
+        + (5.0 / math.sqrt(2.0))
+        * g
+        * (1.0 + eps)
+        * math.sqrt(block / n)
+    ) * float(np.linalg.norm(arr))
+
+
+def finite_precision_lift_bound(
+    x: npt.ArrayLike,
+    rank: int,
+    block: int,
+    unit_roundoff: float,
+    c_row: float = 64.0,
+    c_aux: float = 64.0,
+) -> float:
+    """Conditional finite-precision bound for one all-length row.
+
+    Assumptions are stated in RESEARCH.md.  The first term is the accumulated
+    v9 row error using the uniform Bessel l1 envelope.  The second conservatively
+    covers weight generation, Chebyshev recurrence, and pairwise accumulation.
+    """
+    arr = np.asarray(x, dtype=np.complex128)
+    n = arr.size
+    q = next_power_of_two(n)
+    norm = float(np.linalg.norm(arr))
+    bj = bessel_l1_envelope()
+    transform = (
+        math.sqrt(q / n)
+        * c_row
+        * unit_roundoff
+        * max(1.0, math.log2(q))
+        * math.sqrt(block * q)
+        * bj
+        * norm
+    )
+    auxiliary = (
+        math.sqrt(q / n)
+        * c_aux
+        * unit_roundoff
+        * block
+        * (1.0 + rank * rank)
+        * bj
+        * norm
+    )
+    return transform + auxiliary
+
+
+def sufficient_mantissa_bits(
+    n: int,
+    rank: int,
+    block: int,
+    g: float,
+    c_row: float = 64.0,
+    c_aux: float = 64.0,
+    fraction: float = 0.25,
+) -> int:
+    """Bits making the conditional FP bound <= fraction*g*sqrt(M/N)||x||."""
+    if not (0.0 < fraction < 1.0) or g <= 0:
+        raise ValueError("invalid fraction or g")
+    q = next_power_of_two(n)
+    bj = bessel_l1_envelope()
+    bound_per_norm = math.sqrt(q / n) * bj * (
+        c_row * max(1.0, math.log2(q)) * math.sqrt(block * q)
+        + c_aux * block * (1.0 + rank * rank)
+    )
+    target_per_norm = fraction * g * math.sqrt(block / n)
+    return max(2, math.ceil(math.log2(bound_per_norm / target_per_norm)))
+
+
+def allocation_model(n: int, rank: int, block: int, halfwidth: int) -> dict[str, int]:
+    q = next_power_of_two(n)
+    k = q // block
+    return {
+        "v10_chebyshev_full_length_scalars": rank * n,
+        "v10_weighted_input_full_length_scalars": q,
+        "v11_chebyshev_full_length_scalars": 2 * n,
+        "v11_static_cycle_full_length_scalars": 6 * q,
+        "v11_local_channel_scalars": (2 * halfwidth + 1) * k,
+        "v11_rank_dependent_full_length_scalars": 0,
+    }
+
+
+def make_cases(n: int, rng: np.random.Generator) -> dict[str, ComplexArray]:
+    idx = np.arange(n)
+    spike = np.zeros(n, dtype=np.complex128)
+    spike[int(rng.integers(n))] = 1.0
+    return {
+        "flat": np.ones(n, dtype=np.complex128),
+        "gaussian": rng.normal(size=n) + 1j * rng.normal(size=n),
+        "random_phase": np.exp(2j * np.pi * rng.random(n)),
+        "spike": spike,
+        "chirp": np.exp(2j * np.pi * (3 * idx * idx + 5 * idx) / n),
+    }
+
+
+def run_experiments(seed: int = 20261009) -> dict[str, Any]:
+    rng = np.random.default_rng(seed)
+    payload: dict[str, Any] = {"seed": seed}
+
+    equivalence = []
+    for n in [31, 61, 97, 127, 257]:
+        q = next_power_of_two(n)
+        block = choose_dyadic_block(q)
+        rank = 10
+        x = rng.normal(size=n) + 1j * rng.normal(size=n)
+        state = core.draw_state(q, rng)
+        ref = reference_bessel_chirp_row(x, rank, block, state)
+        got = streamed_bessel_chirp_row(x, rank, block, state)
+        equivalence.append({
+            "N": n,
+            "Q": q,
+            "M": block,
+            "rank": rank,
+            "max_error": float(np.max(np.abs(ref - got))),
+        })
+    payload["streamed_equivalence"] = equivalence
+
+    selected_decoder = []
+    for q, block in [(64, 4), (128, 8), (256, 8)]:
+        state = core.draw_state(q, rng)
+        k = q // block
+        d = rng.normal(size=k) + 1j * rng.normal(size=k)
+        selected = np.sort(rng.choice(q, size=q // 2, replace=False))
+        plan = SelectedDecoderPlan.build(q, block, state, selected)
+        got = plan.decode_selected(d)
+        ref = core.decode_balanced_scan(d, q, block, state)[selected]
+        selected_decoder.append({
+            "Q": q,
+            "M": block,
+            "max_error": float(np.max(np.abs(got - ref))),
+        })
+    payload["selected_decoder"] = selected_decoder
+
+    addition = []
+    for n in [31, 61, 127, 257, 509]:
+        q = next_power_of_two(n)
+        block = choose_dyadic_block(q)
+        rank = 10
+        for halfwidth in [0, 1]:
+            for name in ["gaussian", "random_phase", "spike"]:
+                x = make_cases(n, rng)[name]
+                ref = exact_truncated_lift(x, rank)
+                got = exact_lift_with_addition_fusion(x, rank, block, halfwidth)
+                err = float(np.max(np.abs(got - ref)))
+                bound = addition_kernel_error_bound(n, rank, block, halfwidth) * float(np.linalg.norm(x))
+                addition.append({
+                    "N": n,
+                    "M": block,
+                    "rank": rank,
+                    "halfwidth": halfwidth,
+                    "case": name,
+                    "error": err,
+                    "bound": bound,
+                    "ratio": err / max(bound, 1e-300),
+                })
+    payload["addition_fusion"] = addition
+
+    row_fusion = []
+    for n in [31, 61, 127, 257]:
+        q = next_power_of_two(n)
+        block = choose_dyadic_block(q)
+        rank = 10
+        x = rng.normal(size=n) + 1j * rng.normal(size=n)
+        state = core.draw_state(q, rng)
+        exact = streamed_bessel_chirp_row(x, rank, block, state)
+        for halfwidth in [0, 1]:
+            got = fused_addition_bessel_chirp_row(x, rank, block, state, halfwidth)
+            row_fusion.append({
+                "N": n,
+                "M": block,
+                "halfwidth": halfwidth,
+                "max_row_difference": float(np.max(np.abs(got - exact))),
+            })
+    payload["row_fusion_stress"] = row_fusion
+
+    asymptotic = []
+    alpha = 1.0 / 3.0
+    for exp in [20, 30, 40, 60, 80, 120, 160]:
+        n = (1 << exp) - 1
+        q = 1 << exp
+        block = choose_dyadic_block(q)
+        rank = bessel_rank_for_tail(n ** (-alpha))
+        for halfwidth in [0, 1]:
+            extra = addition_kernel_error_bound(n, rank, block, halfwidth)
+            asymptotic.append({
+                "log2_N_approx": exp,
+                "M": block,
+                "rank": rank,
+                "halfwidth": halfwidth,
+                "addition_error_bound": extra,
+                "target_N_minus_alpha": n ** (-alpha),
+                "ratio": extra / (n ** (-alpha)),
+            })
+    payload["asymptotic_addition"] = asymptotic
+
+    fp = []
+    for n in [127, 257, 511, 1023]:
+        q = next_power_of_two(n)
+        block = choose_dyadic_block(q)
+        x = rng.normal(size=n) + 1j * rng.normal(size=n)
+        state = core.draw_state(q, rng)
+        for rank in [4, 8, 12]:
+            ref = streamed_bessel_chirp_row(x, rank, block, state, np.complex128)
+            got = streamed_bessel_chirp_row(x, rank, block, state, np.complex64)
+            err = float(np.max(np.abs(got - ref)))
+            u = float(np.finfo(np.float32).eps / 2.0)
+            model = finite_precision_lift_bound(x, rank, block, u)
+            fp.append({
+                "N": n,
+                "M": block,
+                "rank": rank,
+                "float32_error": err,
+                "conditional_bound": model,
+                "ratio": err / max(model, 1e-300),
+            })
+    payload["finite_precision_stress"] = fp
+
+
+    robust_fused = []
+    for n in [31, 61, 127]:
+        rank = 10
+        rows = 9
+        g = (2.0 * n * math.comb(rows, (rows + 1) // 2) / 0.1) ** (
+            1.0 / (rows + 1)
+        )
+        for name in ["random_phase", "spike", "gaussian"]:
+            x = make_cases(n, rng)[name]
+            got = streaming_fused_all_length_fft(
+                x, rank, rows, g, rng, halfwidth=0
+            )
+            ref = normalized_dft(x)
+            err = float(np.max(np.abs(got - ref)))
+            bound = fused_total_uniform_error_bound(x, rank, g, 0)
+            robust_fused.append({
+                "N": n,
+                "rank": rank,
+                "rows": rows,
+                "g": g,
+                "case": name,
+                "error": err,
+                "theorem_bound": bound,
+                "ratio": err / max(bound, 1e-300),
+            })
+    payload["robust_fused"] = robust_fused
+
+    fused_variance = []
+    for n in [31, 61, 127]:
+        q = next_power_of_two(n)
+        block = choose_dyadic_block(q)
+        rank = 10
+        halfwidth = 0
+        for name in ["random_phase", "spike"]:
+            x = make_cases(n, rng)[name]
+            center = exact_lift_with_addition_fusion(x, rank, block, halfwidth)
+            samples = []
+            for _ in range(500):
+                state = core.draw_state(q, rng)
+                samples.append(
+                    fused_addition_bessel_chirp_row(
+                        x, rank, block, state, halfwidth
+                    )
+                )
+            stack = np.asarray(samples)
+            empirical = np.mean(np.abs(stack - center[None, :]) ** 2, axis=0)
+            bound = fused_one_row_variance_bound(x, rank, block, halfwidth)
+            fused_variance.append({
+                "N": n,
+                "M": block,
+                "rank": rank,
+                "halfwidth": halfwidth,
+                "case": name,
+                "max_empirical_variance": float(np.max(empirical)),
+                "theorem_bound": float(bound),
+                "ratio": float(np.max(empirical) / max(bound, 1e-300)),
+            })
+    payload["fused_variance"] = fused_variance
+
+    bit_budget = []
+    for exp in [20, 40, 80, 120, 160]:
+        n = (1 << exp) - 1
+        q = 1 << exp
+        block = choose_dyadic_block(q)
+        rank = bessel_rank_for_tail(n ** (-1 / 3))
+        g_five_rows = n ** (1 / 6)
+        bits = sufficient_mantissa_bits(n, rank, block, g_five_rows)
+        old_compression = rank * q
+        new_compression = q + rank * (q // block)
+        bit_budget.append({
+            "log2_N_approx": exp,
+            "M": block,
+            "rank": rank,
+            "g_five_rows_proxy": g_five_rows,
+            "sufficient_bits_conditional": bits,
+            "bits_over_log2N": bits / exp,
+            "old_ranked_input_work": old_compression,
+            "fused_input_work": new_compression,
+            "fused_over_old": new_compression / old_compression,
+        })
+    payload["bit_budget_and_fusion_work"] = bit_budget
+
+    allocation = []
+    for exp in [20, 40, 80, 120]:
+        n = (1 << exp) - 1
+        rank = bessel_rank_for_tail(n ** (-1 / 3))
+        q = 1 << exp
+        block = choose_dyadic_block(q)
+        item = allocation_model(n, rank, block, 0)
+        item.update({"log2_N_approx": exp, "rank": rank, "M": block})
+        allocation.append(item)
+    payload["allocation_model"] = allocation
+
+    payload["summary"] = {
+        "max_streamed_equivalence_error": max(r["max_error"] for r in equivalence),
+        "max_selected_decoder_error": max(r["max_error"] for r in selected_decoder),
+        "max_addition_bound_ratio": max(r["ratio"] for r in addition),
+        "max_fp_bound_ratio": max(r["ratio"] for r in fp),
+        "max_fused_variance_ratio": max(r["ratio"] for r in fused_variance),
+        "max_robust_fused_ratio": max(r["ratio"] for r in robust_fused),
+        "bessel_l1_envelope": bessel_l1_envelope(),
+    }
+    return payload
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, default=Path("results.json"))
+    parser.add_argument("--seed", type=int, default=20261009)
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    payload = run_experiments(args.seed)
+    args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(json.dumps(payload["summary"], indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

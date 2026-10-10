@@ -1,0 +1,136 @@
+   1 """Focused full-prefix objective, construction, and metadata checks."""
+   2 from fractions import Fraction
+   3 import json
+   4 import math
+   5 from pathlib import Path
+   6 import random
+   7 from prefix_planner import plan_prefix, construct_surrogate
+   8 
+   9 
+  10 class NoDraws:
+  11     def random(self):
+  12         raise AssertionError('this branch must not draw randomness')
+  13 
+  14 
+  15 class RepeatedDraw:
+  16     def __init__(self):
+  17         self.calls = 0
+  18     def random(self):
+  19         self.calls += 1
+  20         return 0.0
+  21 
+  22 
+  23 def independent_oracle(x, epsilon, delta, cap):
+  24     mags = [Fraction(math.hypot(complex(v).real,complex(v).imag)) for v in x]
+  25     order = sorted((j for j,a in enumerate(mags) if a),key=lambda j:(-mags[j],j))
+  26     total, m = sum(mags,Fraction(0)),len(order)
+  27     factor = 4*Fraction(math.log(4*len(x))-math.log(delta))/Fraction(epsilon)**2
+  28     rows = []
+  29     for s in range(min(m,cap)+1):
+  30         tail = sum((mags[j] for j in order[s:]),Fraction(0))
+  31         if not total or tail <= Fraction(epsilon)*total:
+  32             k = 0
+  33         else:
+  34             value = factor*tail**2/total**2
+  35             k = (value.numerator+value.denominator-1)//value.denominator
+  36         support = min(m,s+k)
+  37         draws = 0 if s+k >= m else k
+  38         rows.append((support,draws,s,k,tail))
+  39     return order[:min(m,cap)],min(rows)
+  40 
+  41 
+  42 def rejects(call):
+  43     try:
+  44         call()
+  45     except ValueError:
+  46         return
+  47     raise AssertionError('invalid or stale input was accepted')
+  48 
+  49 
+  50 def main():
+  51     rng = random.Random(109)
+  52     cases = 0
+  53     for n in [1,2,4,8,16,32,64]:
+  54         for trial in range(4):
+  55             x = [complex(rng.choice([0,0,1,1,2,3,5]),rng.choice([0,0,1,-1]))
+  56                  for _ in range(n)]
+  57             epsilon,delta = rng.choice([0.125,0.25,0.6,0.9]),0.125
+  58             for cap in sorted({0,1,n//4,n//2,n,n+3}):
+  59                 plan = plan_prefix(x,epsilon,delta,max_head=cap)
+  60                 order, expected = independent_oracle(x,epsilon,delta,cap)
+  61                 assert list(plan.ordered_top_indices) == order
+  62                 got = plan.chosen
+  63                 assert (got.support_upper_bound,got.actual_draws_if_chosen,
+  64                         got.head_size,got.requested_samples,got.residual_mass)==expected
+  65                 assert len(plan.candidates)==plan.cap+1
+  66                 entries,meta = construct_surrogate(x,epsilon,delta,plan=plan,rng=rng)
+  67                 assert meta['realized_support']==len(entries)<=meta['support_upper_bound']
+  68                 assert meta['actual_draws']==got.actual_draws_if_chosen
+  69                 assert meta['selection_calls_during_construction']==0
+  70                 if got.method == 'exact-input':
+  71                     assert dict(entries)=={j:v for j,v in enumerate(x) if v}
+  72                 cases += 1
+  73     # A cutoff tie rho=epsilon must use zero samples and preserve the stored head.
+  74     x = [3,1]
+  75     plan = plan_prefix(x,0.25,0.125,max_head=1)
+  76     assert plan.chosen.method=='head-only' and plan.chosen.head_size==1
+  77     entries,meta = construct_surrogate(x,0.25,0.125,plan=plan,rng=NoDraws())
+  78     assert entries==[(0,3+0j)] and meta['requested_samples']==meta['actual_draws']==0
+  79     # Exact fallback precedes RNG use, even for an astronomically large budget.
+  80     exact = plan_prefix([1,2,3,4],1e-300,0.125,max_head=0)
+  81     _,exact_meta = construct_surrogate([1,2,3,4],1e-300,0.125,plan=exact,rng=NoDraws())
+  82     assert exact_meta['requested_samples']>10**500
+  83     assert exact_meta['actual_draws']==0 and exact_meta['copied_nonzeros']==4
+  84     # All-zero input also validates parameters, produces no draws, and copies nothing.
+  85     zero = plan_prefix([0]*8,0.5,0.125)
+  86     entries,zero_meta = construct_surrogate([0]*8,0.5,0.125,plan=zero,rng=NoDraws())
+  87     assert entries==[] and zero_meta['actual_draws']==zero_meta['copied_nonzeros']==0
+  88     # Draw count is distinct from coalesced support: all samples may hit one index.
+  89     sample = plan_prefix([1]*1024,0.9,0.5,max_head=0)
+  90     generator = RepeatedDraw()
+  91     entries,sample_meta = construct_surrogate([1]*1024,0.9,0.5,plan=sample,rng=generator)
+  92     assert sample.chosen.method=='sample-tail'
+  93     assert sample_meta['actual_draws']==generator.calls==sample_meta['requested_samples']
+  94     assert sample_meta['realized_support']==sample_meta['sampled_distinct_indices']==1
+  95     assert sample_meta['actual_draws']>1 and sample_meta['copied_nonzeros']==0
+  96     # Full prefixes strictly improve a geometric grid on its missed head-only cutoff.
+  97     compressible = [10]*3+[1/61]*61
+  98     prefix_plan = plan_prefix(compressible,.1,.125,max_head=4)
+  99     geometric = min((c for c in prefix_plan.candidates if c.head_size in (0,1,2,4)),
+ 100                     key=lambda c:(c.support_upper_bound,c.actual_draws_if_chosen,c.head_size))
+ 101     assert prefix_plan.chosen.head_size==3 and prefix_plan.chosen.support_upper_bound==3
+ 102     assert geometric.support_upper_bound==4
+ 103     # BFPRT tie order and extreme rank positions: verify against a full-sort oracle.
+ 104     selection_checks = []
+ 105     for family in [list(range(1024)),list(reversed(range(1024))),[1]*1024]:
+ 106         for cap in [1,17,128,1000]:
+ 107             checked = plan_prefix(family,0.6,0.125,max_head=cap)
+ 108             order,_ = independent_oracle(family,0.6,0.125,cap)
+ 109             assert list(checked.ordered_top_indices)==order
+ 110             selection_checks.append(dict(checked.selection_stats))
+ 111     invalid = 0
+ 112     for epsilon,delta in [(0,.5),(1,.5),(-1,.5),(math.nan,.5),(.5,0),(.5,1),(.5,math.inf),(None,.5)]:
+ 113         rejects(lambda:plan_prefix([0]*4,epsilon,delta)); invalid += 1
+ 114         rejects(lambda:construct_surrogate([0]*8,epsilon,delta,plan=zero,rng=NoDraws())); invalid += 1
+ 115     for cap in [-1,1.5,True]:
+ 116         rejects(lambda:plan_prefix([1]*4,.5,.5,max_head=cap)); invalid += 1
+ 117     for values in [[],[1,2,3],[math.inf,0],[complex(0,math.nan),0]]:
+ 118         rejects(lambda:plan_prefix(values,.5,.5)); invalid += 1
+ 119     for values,epsilon,delta in [([1,3],.25,.125),([3,1],.3,.125),([3,1],.25,.2),([3,1,0,0],.25,.125)]:
+ 120         rejects(lambda:construct_surrogate(values,epsilon,delta,plan=plan,rng=NoDraws())); invalid += 1
+ 121     report = {'status':'PASS','all_prefix_oracle_cases':cases,
+ 122               'focused_selection_cases':len(selection_checks),
+ 123               'invalid_or_stale_rejections':invalid,
+ 124               'cutoff_metadata':meta,'zero_metadata':zero_meta,
+ 125               'exact_fallback':{'requested_budget_decimal_digits':len(str(exact_meta['requested_samples'])),
+ 126                                 'actual_draws':exact_meta['actual_draws'],
+ 127                                 'copied_nonzeros':exact_meta['copied_nonzeros']},
+ 128               'coalescing_metadata':sample_meta,'selection_counts':selection_checks,
+ 129               'strict_geometric_improvement':{'full_prefix_support':3,'geometric_support':4},
+ 130               'scope':'Deterministic BFPRT and exact all-prefix optimum for the implemented numeric objective; not probability or floating-point certification.'}
+ 131     Path(__file__).with_name('results.json').write_text(json.dumps(report,indent=2)+'\n')
+ 132     print(json.dumps({k:v for k,v in report.items() if k!='selection_counts'},indent=2))
+ 133 
+ 134 
+ 135 if __name__=='__main__':
+ 136     main()

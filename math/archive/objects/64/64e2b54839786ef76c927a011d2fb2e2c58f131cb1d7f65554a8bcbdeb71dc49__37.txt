@@ -1,0 +1,64 @@
+1: """Exact reversible family reuse for the complete H_q(C) operator."""
+2: from dataclasses import dataclass
+3: from collections import Counter
+4: from fast_hc import Counted,apply_hc
+5: 
+6: 
+7: @dataclass
+8: class CovariancePlan:
+9:     fast: object
+10:     weights: list
+11:     preparation: dict
+12: 
+13: 
+14: def prepare_covariance(field,fast):
+15:     c=Counted(field)
+16:     n=len(fast.t)
+17:     weights=[c.sub(field.one,fast.forward.powers[j+1]) for j in range(n-1)]
+18:     weights.append(fast.kernel.fft.inverse_n)
+19:     return CovariancePlan(fast,weights,dict(c.count))
+20: 
+21: 
+22: def apply_s(field,plan,x):
+23:     """S=(I-A)^-1 Q: weighted prefix sums, N mul and N-1 add."""
+24:     n=len(plan.weights)
+25:     if len(x)!=n:
+26:         raise ValueError('wrong length')
+27:     c=Counted(field)
+28:     out=[c.mul(plan.fast.forward.powers[0],x[0])]
+29:     for j in range(1,n):
+30:         out.append(c.add(out[-1],c.mul(plan.fast.forward.powers[j],x[j])))
+31:     return out,dict(c.count)
+32: 
+33: 
+34: def apply_k(field,plan,x):
+35:     """K=-QB+(1/N)A^(N-1): weighted cyclic shift, exactly N mul."""
+36:     n=len(plan.weights)
+37:     if len(x)!=n:
+38:         raise ValueError('wrong length')
+39:     c=Counted(field)
+40:     out=[c.mul(plan.weights[j],x[(j+1)%n]) for j in range(n)]
+41:     return out,dict(c.count)
+42: 
+43: 
+44: def chain(field,plan,x,steps,cached):
+45:     """Return all exact H(C) outputs on S**j*x; input updates fully paid."""
+46:     if steps<0:
+47:         raise ValueError('negative steps')
+48:     y,detail=apply_hc(field,plan.fast,x)
+49:     counts=Counter(detail['field_operations'])
+50:     inputs,outputs=[list(x)],[y]
+51:     for _ in range(steps):
+52:         x,cost=apply_s(field,plan,x)
+53:         counts.update(cost)
+54:         if cached:
+55:             y,cost=apply_k(field,plan,y)
+56:             counts.update(cost)
+57:         else:
+58:             y,detail=apply_hc(field,plan.fast,x)
+59:             counts.update(detail['field_operations'])
+60:         inputs.append(x)
+61:         outputs.append(y)
+62:     return dict(inputs=inputs,outputs=outputs,field_operations=dict(counts),
+63:         full_output_writes=(steps+1)*len(x),related_input_writes=steps*len(x),
+64:         retained_field_elements=2*(steps+1)*len(x))

@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Newly authored exact controls for the common parity-cut proof."""
+from pathlib import Path
+import json
+import random
+
+HERE = Path(__file__).resolve().parent
+
+
+def parity(x):
+    return x.bit_count() & 1
+
+
+def nullvector(rows, k):
+    basis = {}
+    for row in rows:
+        while row:
+            pivot = row.bit_length() - 1
+            if pivot in basis:
+                row ^= basis[pivot]
+            else:
+                basis[pivot] = row
+                break
+    free = next(i for i in range(k) if i not in basis)
+    answer = 1 << free
+    for pivot in sorted(basis):
+        if parity(basis[pivot] & answer):
+            answer ^= 1 << pivot
+    assert answer and all(parity(row & answer) == 0 for row in rows)
+    return answer, len(basis)
+
+
+def random_invertible(k, rng):
+    cols = [1 << i for i in range(k)]
+    for _ in range(6 * k):
+        i, j = rng.sample(range(k), 2)
+        if rng.randrange(2):
+            cols[i] ^= cols[j]
+        else:
+            cols[i], cols[j] = cols[j], cols[i]
+    return cols
+
+
+def apply(cols, x):
+    y = 0
+    while x:
+        bit = x & -x
+        y ^= cols[bit.bit_length() - 1]
+        x ^= bit
+    return y
+
+
+def exact_crossings(g, k):
+    return (sum((1 << (k - h)) * parity(g & ((1 << h) - 1))
+                for h in range(1, k + 1)) + parity(g)) // 2
+
+
+def main():
+    rng = random.Random(9567764)
+    records = []
+    counts = {"affine_banks": 0, "affine_maps": 0, "direct_cycle_edges": 0,
+              "exhaustive_nonzero_parity_masks": 0}
+    for k in range(2, 13):
+        n, r = 1 << k, k // 2
+        m = 1 << r
+        for d in (1, 2, 3, 4, 8):
+            u = (k - r - 1) // d
+            for trial in range(3):
+                maps = [(random_invertible(k, rng), rng.randrange(n)) for _ in range(d)]
+                constraints = [1 << i for i in range(r)]
+                for cols, shift in maps:
+                    constraints.extend(cols[:u])
+                f, rank = nullvector(constraints, k)
+                assert len(constraints) == r + d * u <= k - 1
+                assert f & (m - 1) == 0
+                flags = bytearray(parity(v & f) == 0 for v in range(n))
+                assert sum(flags) == n // 2
+                assert all(flags[v] == flags[(v // m) * m] for v in range(n))
+                crossing_counts = []
+                for cols, shift in maps:
+                    g = sum(parity(f & col) << i for i, col in enumerate(cols))
+                    assert g and g & ((1 << u) - 1) == 0
+                    sigma = [apply(cols, v) ^ shift for v in range(n)]
+                    assert len(set(sigma)) == n
+                    direct = sum(not flags[sigma[v]] and flags[sigma[(v + 1) % n]]
+                                 for v in range(n))
+                    assert direct == exact_crossings(g, k)
+                    assert direct <= n // (1 << (u + 1))
+                    crossing_counts.append(direct)
+                    counts["affine_maps"] += 1
+                    counts["direct_cycle_edges"] += n
+                records.append({"k": k, "d": d, "trial": trial, "u": u,
+                                "constraint_count": len(constraints), "constraint_rank": rank,
+                                "parity_mask": f, "incoming_counts": crossing_counts,
+                                "per_order_bound": n // (1 << (u + 1))})
+                counts["affine_banks"] += 1
+    for k in range(1, 11):
+        n = 1 << k
+        for g in range(1, n):
+            direct = sum(parity(v & g) == 1 and parity(((v + 1) % n) & g) == 0
+                         for v in range(n))
+            assert direct == exact_crossings(g, k)
+            counts["exhaustive_nonzero_parity_masks"] += 1
+    data = {"status": "PASS", "provenance": "Newly authored standard-library checker; no uploaded code read or executed.",
+            "counts": counts, "controls": records}
+    (HERE / "AFFINE_BANK_CONTROLS.json").write_text(json.dumps(data, indent=2) + "\n")
+    print(json.dumps({"status": "PASS", "counts": counts}))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,108 @@
+   1	#!/usr/bin/env python3
+   2	"""Rigorous algebraic-seed rejection of an outer-only N64 correction law."""
+   3	from pathlib import Path
+   4	from fractions import Fraction as F
+   5	from math import lcm,isqrt
+   6	import json,sys,hashlib,time
+   7	import numpy as np
+   8	HERE=Path(__file__).resolve().parent;ROOT=HERE.parent
+   9	sys.path.insert(0,str(ROOT/'seed_compatibility_gate'))
+  10	from check_n16_outer_gate import LABELS
+  11	from check_lift_defects import cover_and_splice,project
+  12	from check_hierarchical_lift import lift
+  13	def cm(a,b):
+  14	 ar,ai=a;br,bi=b
+  15	 return ar@br-ai@bi,ar@bi+ai@br
+  16	def bounds(a,den):return [F(int(sum(abs(r)+abs(i) for r,i in zip(rr,ii))),den) for rr,ii in zip(*a)]
+  17	def frac(d):return F(int(d['numerator']),int(d['denominator']))
+  18	def show(x):return {'numerator':str(x.numerator),'denominator':str(x.denominator),'decimal':float(x)}
+  19	def input_path(name):
+  20	 p=HERE/name
+  21	 return p if p.exists() else ROOT/'n16_existence_milestone'/name
+  22	def propose():
+  23	 data=np.load(HERE/'PROPOSED_MINOR.npz');r=data['inverse'];p=80
+  24	 obj={'row':int(data['row']),'columns':data['columns'].tolist(),'dyadic_exponent':p,
+  25	      'inverse_real':[[int(round(float(v)*2**p)) for v in row] for row in r.real],
+  26	      'inverse_imag':[[int(round(float(v)*2**p)) for v in row] for row in r.imag]}
+  27	 (HERE/'EXACT_MINOR_CHART.json').write_text(json.dumps(obj,indent=2)+'\n')
+  28	def certify():
+  29	 started=time.monotonic()
+  30	 seed_path=input_path('DYADIC_AFFINE_CHART.json')
+  31	 assert hashlib.sha256(seed_path.read_bytes()).hexdigest()=='904d7d24bf3aeee0a7c206eb8fd98ee11045fbc22cc97a105511b51907e1b188'
+  32	 seed=json.loads(seed_path.read_text());old=json.loads(input_path('EXACT_CONTRACTION_CERTIFICATE.json').read_text())
+  33	 e,q=frac(old['residual_upper_bound']),frac(old['contraction_factor_bound'])
+  34	 rho=F(2,10**12)
+  35	 assert q<1 and e/(1-q)<rho
+  36	 # The accepted Banach proof gives ||y*|| <= e/(1-q), not just its original
+  37	 # radius 10^-9. This strictly smaller algebraic-root enclosure is derived,
+  38	 # never obtained by specializing the dyadic center modulo a prime.
+  39	 center=tuple(np.asarray(seed['center_'+part],dtype=object) for part in ('real','imag'))
+  40	 directions=tuple(np.asarray(seed['directions_'+part],dtype=object) for part in ('real','imag'))
+  41	 scale=1<<seed['dyadic_exponent'];poles=[(j+2)**64-1 for j in range(8)]
+  42	 assert all(d>0 for d in poles)
+  43	 L=lcm(*poles);D=L*scale;greens=np.zeros((8,64,64),dtype=object)
+  44	 for j,label in enumerate(LABELS):
+  45	  ts,ps,_=cover_and_splice(4,4,label);_,pl,_=lift(ts,ps,4,4,label);d=j+2
+  46	  for col in range(64):
+  47	   row=col
+  48	   for power in range(64):greens[j,row,col]=d**(64-power)*(L//poles[j]);row=pl[row]
+  49	 hs=[];ls=[]
+  50	 for layer in range(2):
+  51	  h=tuple(np.empty((64,64),dtype=object) for _ in range(2));largest=0
+  52	  for row in range(64):
+  53	   v=project(row,4,4)
+  54	   for part in range(2):h[part][row]=center[part][layer,v]@greens[:,row,:]
+  55	   # Stream the 256 chart-direction columns to avoid storing a large tensor.
+  56	   dparts=tuple(greens[:,row,:].T@directions[part][layer,v] for part in range(2))
+  57	   row_bound=int(sum(abs(r)+abs(i) for r,i in zip(dparts[0].ravel(),dparts[1].ravel())))
+  58	   largest=max(largest,row_bound)
+  59	  hs.append(h);ls.append(F(largest,D))
+  60	 hb=[max(bounds(h,D)) for h in hs]
+  61	 # Only the first Fourier row is tested, so its nine selected entries are
+  62	 # exactly 1. The only new algebraic enclosure needed is sqrt(2) in F8.
+  63	 Q=1<<160;s=isqrt(2*Q*Q);BD=2*Q
+  64	 b=(np.eye(64,dtype=object)*BD,np.zeros((64,64),dtype=object))
+  65	 values=[(BD,0),(s,s),(0,BD),(-s,s),(-BD,0),(-s,-s),(0,-BD),(s,-s)]
+  66	 for x in (0,1,4,5):
+  67	  for y in range(8):
+  68	   for z in range(8):b[0][8*x+y,8*x+z],b[1][8*x+y,8*x+z]=values[y*z%8]
+  69	 bank_error=F(8,Q)
+  70	 minor=json.loads((HERE/'EXACT_MINOR_CHART.json').read_text());assert minor['row']==0
+  71	 columns=minor['columns'];assert len(columns)==len(set(columns))==9 and all(0<=c<64 for c in columns)
+  72	 R=tuple(np.asarray(minor['inverse_'+part],dtype=object) for part in ('real','imag'))
+  73	 RS=1<<minor['dyadic_exponent']
+  74	 fg=tuple(part[:,:8]@greens[:,0,:] for part in R);FD=RS*L
+  75	 fbound=max(bounds(fg,FD))
+  76	 h0cols=tuple(part[:,columns] for part in hs[0])
+  77	 prefix=cm(cm(hs[1],b),h0cols)
+  78	 rm=cm(fg,prefix);den=FD*D*D*BD
+  79	 # The last augmented row is exactly all ones. Add R[:,8] times this row.
+  80	 for part in range(2):
+  81	  for i in range(9):
+  82	   for j in range(9):rm[part][i,j]+=R[part][i,8]*L*D*D*BD
+  83	 for i in range(9):rm[0][i,i]-=den
+  84	 center_defect=max(bounds(rm,den))
+  85	 # Exact matrix-infinity perturbation of H1(y*) B_true H0(y*) relative to
+  86	 # the dyadic-center product with B_approx. True bank norm is exactly 8.
+  87	 prefix_error=8*ls[1]*rho*(hb[0]+ls[0]*rho)+8*hb[1]*ls[0]*rho+hb[1]*bank_error*hb[0]
+  88	 # There are nine selected columns. Bound each output entry by the induced
+  89	 # row functional norm, then sum all nine for an infinity-norm bound.
+  90	 perturbation=9*fbound*prefix_error
+  91	 total=center_defect+perturbation
+  92	 assert total<1
+  93	 result={'status':'PASS_RIGOROUS_OUTER_ONLY_REJECTION','target_row':0,'minor_columns':columns,
+  94	         'accepted_seed_root_radius_used':show(rho),'derived_seed_root_bound':show(e/(1-q)),
+  95	         'inner_layer_center_bounds':[show(x) for x in hb],
+  96	         'inner_layer_direction_bounds':[show(x) for x in ls],
+  97	         'bank_enclosure_error_bound':show(bank_error),'preconditioned_Green_row_norm':show(fbound),
+  98	         'center_preconditioned_minor_defect':show(center_defect),'seed_and_bank_minor_perturbation':show(perturbation),
+  99	         'total_preconditioned_minor_defect':show(total),'fixed_large_inverse_guards':poles,
+ 100	         'free_outer_physical_coefficients':512,'frozen_inner_physical_coefficients':1024,
+ 101	         'exact_arithmetic':'Gaussian integers and rational fractions after reading proposed dyadic preconditioner',
+ 102	         'scope':'No outer endpoint choice can correct the two literal inner pullbacks of the accepted N16 seed. Full N64 family remains open.',
+ 103	         'elapsed_seconds':time.monotonic()-started}
+ 104	 (HERE/'OUTER_PREFIX_REJECTION_CERTIFICATE.json').write_text(json.dumps(result,indent=2)+'\n')
+ 105	 print(json.dumps({k:v for k,v in result.items() if k in ('status','elapsed_seconds','minor_columns') or isinstance(v,dict) and 'decimal' in v},indent=2),flush=True)
+ 106	if __name__=='__main__':
+ 107	 if '--propose' in sys.argv:propose()
+ 108	 certify()

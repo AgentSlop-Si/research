@@ -1,0 +1,186 @@
+0001 """Independent deterministic exact solver for a fixed band plus fixed entries.
+0002 
+0003 No imports from any submitted source. The modulus must be a known prime.
+0004 Field-operation complexity is linear in n when bandwidth and the number of
+0005 exceptional rows/entries are fixed. Factorization uses row pivoting; it does
+0006 not require the band-only matrix or any prescribed principal minor invertible.
+0007 """
+0008 from dataclasses import dataclass
+0009 
+0010 
+0011 @dataclass
+0012 class FrontierFactor:
+0013     p: int
+0014     pivots: list
+0015     max_active: int
+0016     max_row_nonzeros: int
+0017     elimination_updates: int
+0018 
+0019     def solve(self, rhs):
+0020         n = len(self.pivots)
+0021         if len(rhs) != n:
+0022             raise ValueError('RHS length mismatch')
+0023         b = [x % self.p for x in rhs]
+0024         for rid, inv, upper, eliminations in self.pivots:
+0025             for other, coefficient in eliminations:
+0026                 b[other] = (b[other] - coefficient * b[rid]) % self.p
+0027         x = [0] * n
+0028         for j in range(n - 1, -1, -1):
+0029             rid, inv, upper, eliminations = self.pivots[j]
+0030             val = b[rid]
+0031             for k, coefficient in upper:
+0032                 val = (val - coefficient * x[k]) % self.p
+0033             x[j] = val * inv % self.p
+0034         return x
+0035 
+0036 
+0037 def factor(rows, width, p):
+0038     """Factor a sparse square matrix supplied as row dictionaries.
+0039 
+0040     Rows containing any entry outside the declared symmetric band are
+0041     exceptional. Every exceptional row is activated initially. Ordinary rows
+0042     enter before column j when their original index is <= j + width. A pivot
+0043     must exist in this bounded frontier iff the square matrix is nonsingular.
+0044     Raises ArithmeticError on singularity. No dense fallback is used.
+0045     """
+0046     n = len(rows)
+0047     if width < 0 or p < 2:
+0048         raise ValueError('Bad width or prime')
+0049     a = []
+0050     for row in rows:
+0051         clean = {}
+0052         for k, v in row.items():
+0053             if not isinstance(k, int) or not 0 <= k < n:
+0054                 raise ValueError('Column index outside matrix')
+0055             if v % p:
+0056                 clean[k] = v % p
+0057         a.append(clean)
+0058     exceptional = {i for i, row in enumerate(a)
+0059                    if any(abs(i - j) > width for j in row)}
+0060     active = {i: a[i] for i in exceptional}
+0061     cursor = 0
+0062     pivots = []
+0063     max_active = len(active)
+0064     max_row_nonzeros = max((len(r) for r in a), default=0)
+0065     updates = 0
+0066     for j in range(n):
+0067         while cursor < n and cursor <= j + width:
+0068             if cursor not in exceptional:
+0069                 active[cursor] = a[cursor]
+0070             cursor += 1
+0071         max_active = max(max_active, len(active))
+0072         rid = next((i for i, row in active.items() if row.get(j, 0)), None)
+0073         if rid is None:
+0074             raise ArithmeticError(f'Singular matrix: no pivot in column {j}')
+0075         row = active.pop(rid)
+0076         inv = pow(row[j], -1, p)
+0077         upper = [(k, v) for k, v in row.items() if k > j]
+0078         eliminations = []
+0079         for other, target in active.items():
+0080             coefficient = target.pop(j, 0) * inv % p
+0081             if not coefficient:
+0082                 continue
+0083             eliminations.append((other, coefficient))
+0084             for k, v in upper:
+0085                 new = (target.get(k, 0) - coefficient * v) % p
+0086                 if new:
+0087                     target[k] = new
+0088                 else:
+0089                     target.pop(k, None)
+0090                 updates += 1
+0091             max_row_nonzeros = max(max_row_nonzeros, len(target))
+0092         pivots.append((rid, inv, upper, eliminations))
+0093     return FrontierFactor(p, pivots, max_active, max_row_nonzeros, updates)
+0094 
+0095 
+0096 def successor(order):
+0097     n = len(order)
+0098     seen = [False] * n
+0099     w = [0] * n
+0100     for t, j in enumerate(order):
+0101         if not isinstance(j, int) or not 0 <= j < n or seen[j]:
+0102             raise ValueError('Not a permutation')
+0103         seen[j] = True
+0104         w[j] = order[(t + 1) % n]
+0105     return w
+0106 
+0107 
+0108 def two_run(n, a):
+0109     return [(a * t) % n for t in range(n // 2)] + [
+0110         (-1 - a * t) % n for t in range(n // 2)]
+0111 
+0112 
+0113 def four_track(n):
+0114     return [j for t in range(n // 4)
+0115             for j in (2*t, 2*t+1, 2*t+n//2, 2*t+n//2+1)]
+0116 
+0117 
+0118 def sparse_denominator(n, alpha, beta, p, a=None):
+0119     if n < 16 or n & (n - 1):
+0120         raise ValueError('Dyadic n >= 16 required')
+0121     if a is None:
+0122         a = n // 2 + 2
+0123     w = successor(two_run(n, a))
+0124     order = four_track(n)
+0125     location = [0] * n
+0126     for j, old in enumerate(order):
+0127         location[old] = j
+0128     rows = [{i: 2 % p} for i in range(n)]
+0129     for old in range(n):
+0130         j = location[old]
+0131         for target, coefficient in ((w[old], -alpha), ((old+1) % n, -beta)):
+0132             i = location[target]
+0133             rows[i][j] = (rows[i].get(j, 0) + coefficient) % p
+0134     return rows, order
+0135 
+0136 
+0137 def green_apply(order, alpha, x, p):
+0138     n = len(order)
+0139     denominator = (1 - pow(alpha, n, p)) % p
+0140     if not denominator:
+0141         raise ArithmeticError('Singular cyclic resolvent')
+0142     # y[L[0]] = (x[L[0]] + sum_{t=1}^{n-1} alpha^(n-t)x[L[t]])/(1-alpha^n).
+0143     accumulator = 0
+0144     for t in range(1, n):
+0145         accumulator = alpha * (accumulator + x[order[t]]) % p
+0146     value = (x[order[0]] + accumulator) * pow(denominator, -1, p) % p
+0147     y = [0] * n
+0148     y[order[0]] = value
+0149     for t in range(1, n):
+0150         value = (x[order[t]] + alpha * value) % p
+0151         y[order[t]] = value
+0152     return y
+0153 
+0154 
+0155 def sparse_apply(order, alpha, x, p):
+0156     y = [v % p for v in x]
+0157     for t, j in enumerate(order):
+0158         i = order[(t+1) % len(order)]
+0159         y[i] = (y[i] - alpha*x[j]) % p
+0160     return y
+0161 
+0162 
+0163 @dataclass
+0164 class TwistedInverse:
+0165     n: int
+0166     alpha: int
+0167     beta: int
+0168     p: int
+0169     reordering: list
+0170     factors: FrontierFactor
+0171 
+0172     @classmethod
+0173     def create(cls, n, alpha, beta, p):
+0174         if pow(alpha, n, p) == 1 or pow(beta, n, p) == 1:
+0175             raise ArithmeticError('Singular cyclic resolvent')
+0176         rows, order = sparse_denominator(n, alpha, beta, p)
+0177         factors = factor(rows, 6, p)
+0178         return cls(n, alpha % p, beta % p, p, order, factors)
+0179 
+0180     def apply(self, x):
+0181         first = sparse_apply(two_run(self.n, self.n//2+2), self.alpha, x, self.p)
+0182         solved = self.factors.solve([first[i] for i in self.reordering])
+0183         original = [0] * self.n
+0184         for k, j in enumerate(self.reordering):
+0185             original[j] = solved[k]
+0186         return sparse_apply(list(range(self.n)), self.beta, original, self.p)

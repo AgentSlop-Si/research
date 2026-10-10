@@ -1,0 +1,294 @@
+   1 #!/usr/bin/env python3
+   2 """Independent mathematical checks. Never import or execute uploaded modules.
+   3 This intentionally uses Hankel solves rather than the source's BM implementation.
+   4 Its check-time complexity is not the optimized theorem's complexity.
+   5 """
+   6 import collections, itertools, json, math, pathlib, random
+   7 ROOT=pathlib.Path(__file__).resolve().parent
+   8 rng=random.Random(202610092330)
+   9 
+  10 def prime(p): return p>=2 and all(p%d for d in range(2,math.isqrt(p)+1))
+  11 def field(n):
+  12     k=4
+  13     while not prime(k*n+1): k+=1
+  14     p=k*n+1
+  15     factors=[q for q in range(2,n+1) if n%q==0 and prime(q)]
+  16     for g in range(2,p):
+  17         w=pow(g,k,p)
+  18         if pow(w,n,p)==1 and all(pow(w,n//q,p)!=1 for q in factors): return p,w
+  19     raise AssertionError('root')
+  20 def dft(r,w,p,count=None):
+  21     n=len(r)
+  22     return [sum(v*pow(w,j*k%n,p) for j,v in enumerate(r))%p for k in range(n if count is None else count)]
+  23 def idft(R,w,p): return [v*pow(len(R),-1,p)%p for v in dft(R,pow(w,-1,p),p)]
+  24 def conv(C,r,p): return [sum(c*r[(j-e)%len(r)] for e,c in C.items())%p for j in range(len(r))]
+  25 def spectrum(C,n,w,p): return [sum(c*pow(w,e*k%n,p) for e,c in C.items())%p for k in range(n)]
+  26 def residual_from_inverse(C,n,w,p):
+  27     values=spectrum(C,n,w,p)
+  28     if not all(values): return None
+  29     r=idft([pow(v,-1,p) for v in values],w,p)
+  30     assert conv(C,r,p)==[1]+[0]*(n-1)
+  31     return r
+  32 
+  33 def solve(A,b,p):
+  34     m=len(b); M=[list(row)+[value] for row,value in zip(A,b)]
+  35     for col in range(m):
+  36         pivot=next((i for i in range(col,m) if M[i][col]%p),None)
+  37         if pivot is None: return None
+  38         M[col],M[pivot]=M[pivot],M[col]
+  39         inv=pow(M[col][col],-1,p)
+  40         M[col]=[v*inv%p for v in M[col]]
+  41         for i in range(m):
+  42             if i!=col:
+  43                 factor=M[i][col]
+  44                 M[i]=[(a-factor*b)%p for a,b in zip(M[i],M[col])]
+  45     return [row[-1] for row in M]
+  46 
+  47 def inverse_proposal(r,s,w,p):
+  48     R=dft(r,w,p,2*s)
+  49     if not all(R): return None,'zero-probe'
+  50     b=[pow(v,-1,p) for v in R]
+  51     recurrence=None
+  52     for degree in range(1,s+1):
+  53         H=[[b[i+j] for j in range(degree)] for i in range(degree)]
+  54         a=solve(H,[-b[i+degree]%p for i in range(degree)],p)
+  55         if a is not None and all((b[i+degree]+sum(a[j]*b[i+j] for j in range(degree)))%p==0 for i in range(len(b)-degree)):
+  56             recurrence=a+[1];break
+  57     if recurrence is None:return None,'no-recurrence'
+  58     nodes=[(e,pow(w,e,p)) for e in range(len(r)) if sum(c*pow(w,e*j,p) for j,c in enumerate(recurrence))%p==0]
+  59     if len(nodes)!=degree:return None,'not-subgroup-roots'
+  60     a=solve([[pow(z,k,p) for _,z in nodes] for k in range(degree)],b[:degree],p)
+  61     if a is None or not all(a):return None,'degenerate'
+  62     return {e:c for (e,z),c in zip(nodes,a)},'proposal'
+  63 def recover(r,s,w,p):
+  64     C,reason=inverse_proposal(r,s,w,p)
+  65     if C is None:return None,reason
+  66     if conv(C,r,p)!=[1]+[0]*(len(r)-1):return None,'certificate-failed'
+  67     return C,'accepted'
+  68 
+  69 def graph_detect(r,p,K):
+  70     n=len(r)
+  71     if n<2*K+1 or not all(r):return None
+  72     ratios=collections.Counter(r[j]*pow(r[j-1],-1,p)%p for j in range(n))
+  73     if len(ratios)>2*K*K:return None
+  74     possible={0}
+  75     for count in ratios.values():possible|={x+count for x in tuple(possible)}
+  76     candidates=[1] if len(ratios)==1 else [pow(u,-1,n) for u in sorted(possible) if 0<u<n and math.gcd(u,n)==1]
+  77     for delta in candidates:
+  78         sample=collections.Counter(r[j]*pow(r[(j-delta)%n],-1,p)%p for j in range(2*K+1))
+  79         alpha=max(sample,key=sample.get)
+  80         h=[(r[j]-alpha*r[(j-delta)%n])%p for j in range(n)]
+  81         if sum(bool(v) for v in h)<=K:return delta,alpha,h
+  82     return None
+  83 
+  84 def binomial_signal(n,d,a,j,c,p):
+  85     assert math.gcd(n,d)==1 and pow(a,n,p)!=1
+  86     r=[0]*n
+  87     scale=c*pow((1-pow(a,n,p))%p,-1,p)%p
+  88     for t in range(n):r[(j+t*d)%n]=scale*pow(a,t,p)%p
+  89     return r
+  90 
+  91 def graph_decode(r,candidate,w,p):
+  92     d,a,h=candidate;n=len(r);H=dft(h,w,p);R=[]
+  93     for k in range(n):
+  94         den=(1-a*pow(w,k*d%n,p))%p
+  95         R.append(H[k]*pow(den,-1,p)%p if den else sum(r[j]*pow(w,k*j%n,p) for j in range(n))%p)
+  96     return R
+  97 
+  98 # Exhaustive independent classifications at GF(17)^4.
+  99 p,n,w=17,4,4
+ 100 all_count=nonzero=graph_yes=invertible=inverse_yes=0
+ 101 for r in itertools.product(range(p),repeat=n):
+ 102     all_count+=1
+ 103     if all(r):
+ 104         nonzero+=1
+ 105         oracle=any(sum((r[j]-a*r[(j-d)%n])%p!=0 for j in range(n))<=1 for d in (1,3) for a in range(1,p))
+ 106         found=graph_detect(r,p,1)
+ 107         assert bool(found)==oracle
+ 108         if found:
+ 109             graph_yes+=1
+ 110             assert graph_decode(r,found,w,p)==dft(r,w,p)
+ 111     R=dft(r,w,p)
+ 112     if all(R):
+ 113         invertible+=1
+ 114         C0=idft([pow(v,-1,p) for v in R],w,p)
+ 115         support={j:c for j,c in enumerate(C0) if c}
+ 116         eligible=len(support)<=2
+ 117     else:eligible=False;support={}
+ 118     C,reason=recover(r,2,w,p)
+ 119     assert (C is not None)==eligible
+ 120     if C is not None:
+ 121         inverse_yes+=1
+ 122         assert C==support
+ 123 assert (all_count,nonzero,graph_yes,invertible,inverse_yes)==(83521,65536,832,65536,1280)
+ 124 exhaustive={'field':17,'N':4,'vectors':all_count,'nowhere_zero_vectors':nonzero,'graph_eligible':graph_yes,'invertible_vectors':invertible,'inverse_sparse_eligible':inverse_yes,'misses':0,'false_acceptances':0}
+ 125 
+ 126 # Unknown shifts, including both orientation gauges and full Fourier decoding.
+ 127 graph_rows=[];orientation=None
+ 128 for n in (3,4,5,7,8,12,16,30,64,128):
+ 129     p,w=field(n);a=next(a for a in range(2,p) if pow(a,n,p)!=1)
+ 130     count=0
+ 131     for d in range(1,n):
+ 132         if math.gcd(d,n)!=1:continue
+ 133         for j in sorted({0,n//3,n-1}):
+ 134             r=binomial_signal(n,d,a,j,3,p)
+ 135             found=graph_detect(r,p,1);assert found is not None
+ 136             assert graph_decode(r,found,w,p)==dft(r,w,p)
+ 137             forward=[(r[q]-a*r[(q-d)%n])%p for q in range(n)]
+ 138             reverse=[(r[q]-pow(a,-1,p)*r[(q+d)%n])%p for q in range(n)]
+ 139             assert sum(map(bool,forward))==sum(map(bool,reverse))==1
+ 140             u=pow(d,-1,n);counts=sorted(collections.Counter(r[q]*pow(r[q-1],-1,p)%p for q in range(n)).values())
+ 141             assert counts==sorted([u,n-u])
+ 142             if n==7 and d==3 and j==0:orientation={'N':n,'p':p,'signal':r,'delay':d,'alpha':a,'reverse_delay':n-d,'reverse_alpha':pow(a,-1,p),'forward_defect':forward,'reverse_defect':reverse}
+ 143             count+=1
+ 144     # Zero-defect character needs exactly one direct-frequency repair.
+ 145     r=[pow(w,2*j,p) for j in range(n)]
+ 146     found=graph_detect(r,p,1);assert found and not any(found[2])
+ 147     assert graph_decode(r,found,w,p)==dft(r,w,p)
+ 148     graph_rows.append({'N':n,'p':p,'one_defect_inputs':count,'character_check':True})
+ 149 
+ 150 # Independent sparse inverse families, with actual support below/equal cap.
+ 151 inverse_rows=[];matrix_entries=0
+ 152 for n in (7,8,12,16,30,64,128,384):
+ 153     p,w=field(n);cap=min(8,n//2);count=0
+ 154     for t in range(1,min(6,cap)+1):
+ 155         for trial in range(4):
+ 156             for attempt in range(1000):
+ 157                 C={e:rng.randrange(1,p) for e in rng.sample(range(n),t)}
+ 158                 r=residual_from_inverse(C,n,w,p)
+ 159                 if r is not None:break
+ 160             assert r is not None
+ 161             recovered,reason=recover(r,cap,w,p)
+ 162             assert recovered==C
+ 163             got=[pow(v,-1,p) for v in spectrum(recovered,n,w,p)]
+ 164             assert got==dft(r,w,p)
+ 165             count+=1;matrix_entries+=n
+ 166     inverse_rows.append({'N':n,'p':p,'cap':cap,'inputs':count})
+ 167 
+ 168 # Complete hidden-factor families, unknown impulse location/scale and gauge.
+ 169 union_rows=[]
+ 170 for n in (17,30,64,128):
+ 171     p,w=field(n)
+ 172     ds=[next(d for d in range(n//2,n) if math.gcd(d,n)==1),n-1,1]
+ 173     alphas=[a for a in range(2,p) if all(pow(a,n//math.gcd(n,d),p)!=1 for d in ds)][:3]
+ 174     for m in (1,2,3):
+ 175         Q={0:1}
+ 176         for d,a in zip(ds[:m],alphas[:m]):
+ 177             new=collections.defaultdict(int)
+ 178             for e,c in Q.items():new[e]=(new[e]+c)%p;new[(e+d)%n]=(new[(e+d)%n]-a*c)%p
+ 179             Q={e:c for e,c in new.items() if c}
+ 180         for j in (0,n//3,n-1):
+ 181             c=3;C={(e-j)%n:a*pow(c,-1,p)%p for e,a in Q.items()}
+ 182             r=residual_from_inverse(C,n,w,p);assert r is not None
+ 183             recovered,reason=recover(r,2**m,w,p)
+ 184             assert recovered==C
+ 185             assert conv(Q,r,p)==[c if k==j else 0 for k in range(n)]
+ 186             assert dft(r,w,p)==[pow(z,-1,p) for z in spectrum(C,n,w,p)]
+ 187             matrix_entries+=n
+ 188         union_rows.append({'N':n,'p':p,'factors':m,'actual_inverse_taps':len(C),'positions':3})
+ 189 
+ 190 # Positive separated-wrap K=2,3 controls with explicitly verified hypotheses.
+ 191 bounded_rows=[]
+ 192 for n in (12,16,30,64,128):
+ 193     p,w=field(n);d=next(d for d in range(n//3+1,n) if math.gcd(d,n)==1);u=pow(d,-1,n)
+ 194     for K in (2,3):
+ 195         done=0
+ 196         for attempt in range(500):
+ 197             a=rng.randrange(2,p)
+ 198             if pow(a,n,p)==1:continue
+ 199             sites=[0]+rng.sample(range(1,n),K-1)
+ 200             h=[0]*n
+ 201             for t in sites:h[t*d%n]=rng.randrange(1,p)
+ 202             denom=[(1-a*pow(w,k*d,p))%p for k in range(n)]
+ 203             R=[v*pow(z,-1,p)%p for v,z in zip(dft(h,w,p),denom)]
+ 204             r=idft(R,w,p)
+ 205             if not all(r):continue
+ 206             wraps=collections.defaultdict(set)
+ 207             for j in range(n):
+ 208                 ratio=r[j]*pow(r[j-1],-1,p)%p
+ 209                 wraps[ratio].add(int((u*((j-1)%n))%n>=n-u))
+ 210             if any(len(types)>1 for types in wraps.values()):continue
+ 211             assert len(wraps)<=2*K*K
+ 212             found=graph_detect(r,p,K);assert found is not None
+ 213             assert graph_decode(r,found,w,p)==R
+ 214             done+=1
+ 215             if done==3:break
+ 216         assert done==3,(n,K,done)
+ 217         bounded_rows.append({'N':n,'p':p,'K':K,'separated_inputs':done})
+ 218 
+ 219 # Noncoprime filter unions are covered by inverse sparsity, not ratio completeness.
+ 220 noncoprime_unions=[]
+ 221 for n in (16,30,64):
+ 222     p,w=field(n);Q={0:1}
+ 223     for d in (n//2,2):
+ 224         a=next(a for a in range(2,p) if pow(a,n//math.gcd(n,d),p)!=1)
+ 225         new=collections.defaultdict(int)
+ 226         for e,c in Q.items():new[e]=(new[e]+c)%p;new[(e+d)%n]=(new[(e+d)%n]-a*c)%p
+ 227         Q={e:c for e,c in new.items() if c}
+ 228     r=residual_from_inverse(Q,n,w,p);assert r is not None
+ 229     assert recover(r,4,w,p)[0]==Q
+ 230     noncoprime_unions.append({'N':n,'p':p,'tap_count':len(Q)})
+ 231 
+ 232 # End-to-end Green identity with independent dense pivoted solves.
+ 233 green_rows=[]
+ 234 for n in (7,8,12,16,30):
+ 235     p,w=field(n)
+ 236     L=[[(7+pow(w,j,p) if j==k else 0)+(2 if k==(j-1)%n else 0) for k in range(n)] for j in range(n)]
+ 237     P=[[(7+2*pow(w,-j,p) if j==k else 0)+(1 if k==(j-1)%n else 0) for k in range(n)] for j in range(n)]
+ 238     checked=0
+ 239     for trial in range(4):
+ 240         while True:
+ 241             C={e:rng.randrange(1,p) for e in rng.sample(range(n),min(3,n//2))}
+ 242             r=residual_from_inverse(C,n,w,p)
+ 243             if r is not None:break
+ 244         x=solve(P,r,p)
+ 245         if x is None:continue
+ 246         C2,reason=recover(r,min(3,n//2),w,p);assert C2==C
+ 247         recovered_R=[pow(z,-1,p) for z in spectrum(C2,n,w,p)]
+ 248         y=solve(L,recovered_R,p);assert y==dft(x,w,p)
+ 249         checked+=1
+ 250     green_rows.append({'N':n,'p':p,'checks':checked,'solver':'independent dense pivoted Gaussian elimination'})
+ 251 
+ 252 # Adversarial short-probe alias: proposal unchanged, full certificate fails.
+ 253 n=128;p,w=field(n);C={2:2,7:3,64:5,127:7}
+ 254 while residual_from_inverse(C,n,w,p) is None:C[2]=(C[2]+1)%p or 1
+ 255 r=residual_from_inverse(C,n,w,p);s=4;k0=8
+ 256 mutation=[(r[j]+pow(n,-1,p)*pow(w,-k0*j,p))%p for j in range(n)]
+ 257 assert dft(r,w,p,8)==dft(mutation,w,p,8)
+ 258 assert dft(r,w,p)[8]!=dft(mutation,w,p)[8]
+ 259 assert inverse_proposal(mutation,s,w,p)[0]==C
+ 260 assert recover(mutation,s,w,p)==(None,'certificate-failed')
+ 261 mutation_record={'N':n,'p':p,'unchanged_probes':8,'changed_bin':8,'proposal_unchanged':True,'full_certificate_rejects':True}
+ 262 
+ 263 # Cross-wrap collision source control, independently built and rejected.
+ 264 p=2013265921;n=128;w=pow(31,(p-1)//n,p);d=63;a=pow(w,9,p)
+ 265 r=[0]*n
+ 266 for t in range(n):r[t*d%n]=pow(a,t,p)*(3 if t<17 else 5)%p
+ 267 assert sum((r[j]-a*r[(j-d)%n])%p!=0 for j in range(n))==2
+ 268 assert graph_detect(r,p,2) is None
+ 269 collision={'N':n,'p':p,'delta':d,'defects':2,'detector_rejects':True}
+ 270 assert graph_detect([1,1,16,16],17,1) is None
+ 271 assert conv({0:1,2:1},[1,1,16,16],17)==[0]*4
+ 272 
+ 273 # Scope and accounting controls based on exact arithmetic, not source execution.
+ 274 p=17;n=16;w=3
+ 275 ld=[(7+pow(w,j,p))%p for j in range(n)]
+ 276 pd=[(7+2*pow(w,-j,p))%p for j in range(n)]
+ 277 def det_cyclic(diag,b,p):return (math.prod(diag)-(-b)**len(diag))%p
+ 278 assert ld[3]==0 and pd[11]==0 and det_cyclic(ld,2,p)==det_cyclic(pd,1,p)==16
+ 279 precision=[]
+ 280 for n in (128,384,1024,4096):
+ 281     gram_off=2*math.cos(math.pi/n)
+ 282     cond=math.sqrt((2+gram_off)/(2-gram_off))
+ 283     formula=1/math.tan(math.pi/(2*n))
+ 284     assert abs(cond/formula-1)<1e-9
+ 285     precision.append({'N':n,'condition_number':formula})
+ 286 output={'exhaustive_GF17_N4':exhaustive,'unknown_graph_cases':graph_rows,'orientation_nonidentifiability':orientation,
+ 287         'bounded_separated_wrap_cases':bounded_rows,'noncoprime_inverse_unions':noncoprime_unions,'end_to_end_Green_cases':green_rows,'sparse_inverse_cases':inverse_rows,'unknown_union_cases':union_rows,'inverse_and_union_fourier_entries':matrix_entries,
+ 288         'unchanged_probe_mutation':mutation_record,'resonant_cross_wrap_counterexample':collision,
+ 289         'noncoprime_character_counterexample':True,'inherited_zero_diagonal_nonsingular_counterexample':True,'complex_two_node_conditioning':precision,
+ 290         'uploaded_code_executed':False,'source_modules_imported':False,'independent_recurrence_method':'Hankel-system enumeration, not uploaded BM',
+ 291         'scope':'Exact mathematical controls; not execution or timing certification of uploaded implementation.'}
+ 292 text=json.dumps(output,indent=2,sort_keys=True)+'\n'
+ 293 (ROOT/'INDEPENDENT_RESULTS.json').write_text(text)
+ 294 print(text,end='')

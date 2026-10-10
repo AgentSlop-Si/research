@@ -1,0 +1,105 @@
+Cancellation aware transform search
+
+Finite experiment 8 October 2026
+
+No cheaper circuit was found. The expanded search still matches the 16-addition staged baseline for the same eight-coordinate synthetic transform. Its best genuinely cancelling circuit costs 17 operations. The broader 15-operation solver attempt timed out, so this is not an optimality proof.
+
+What was tested
+
+The target is two consecutive normalized polynomial butterfly rounds on four records in Q[y]/(y² + 1), expanded into eight independent scalar inputs. Every compared circuit computes the same unnormalized matrix M, then applies the common output factor 1/4. An independent verifier reconstructs M from the polynomial rounds and checks every circuit exactly.
+
+The target is connected across all eight coordinates. It cannot be turned into two independent four-point Walsh–Hadamard blocks merely by signed row and column permutations.
+
+Charged result
+
+Circuit
+
+Additions
+
+Other scaling
+
+Total
+
+Staged baseline
+
+16
+
+8 output quarter-scalings
+
+24
+
+Best generated
+
+16
+
+8 output quarter-scalings
+
+24
+
+Best with cancellation
+
+16
+
+1 doubling and 8 quarter-scalings
+
+25
+
+Each signed addition/subtraction, doubling or exact dyadic scaling costs one operation. Shared values are read on every use. Baseline traffic is 40 scalar reads and 24 writes including output scaling; the cancelling candidate has 41 reads and 25 writes. Instruction fetches and physical routing are additional.
+
+Unary signs and permutations are operand metadata in this arithmetic model. The result does not claim minimum register use, faster wall-clock execution, free memory movement or free cleanup.
+
+Search coverage and its limits
+
+Shared subexpression search
+
+All 3,280 nonzero ternary anchors, modulo sign, were considered. Fixed output-mode policies and one-output bypass variants produced 37,144 circuits. A deterministic greedy procedure shared signed pairs, including anchor prefixes and correction terms, merged exact equal linear forms, and removed dead gates.
+
+Best cost: 16 additions. Best genuinely cancelling cost: 16 additions plus one doubling. Its emitted circuit contains an opposite-sign overlap that is independently checked. Every anchor was considered, but output-mode choices and pair-factorization orders were not exhaustively searched. This is a heuristic no-gain result, not a general lower bound.
+
+Exhaustive narrow template
+
+A separate exact search allows one signed ternary anchor, direct or ±anchor output representations, and shared doubled inputs. Each correction is summed afresh; proper subexpressions cannot be shared. At least one coordinate must genuinely cancel.
+
+It minimizes over all 3,280 anchors and all 3⁸ output-mode assignments per anchor, using dynamic programming. The minimum is 24 operations: 23 additions and one doubling. An independent, differently structured enumerator reproduces the entire cost histogram.
+
+This template excludes the baseline’s useful sharing. Its minimum therefore rules out only this template. It does not prove the 16-addition baseline optimal.
+
+Bounded general solver attempt
+
+The solver allows signed binary sums, doubling and exact halving, with intermediate coefficients on the half-integer grid in [−2, 2] and a 15-operation budget. A five-bit encoding is exact within those bounds; the permitted arithmetic cannot wrap. Common output normalization remains outside this budget.
+
+The initial 120-second attempt timed out. After fixing a model-request handling error, a 30-second rerun also returned unknown due to timeout. A pinned 16-operation baseline returns SAT as a positive encoding check. There is no UNSAT certificate and no shorter SAT witness.
+
+Known cancellation is a control
+
+The reproduced H4 common-sum identity uses seven additions and three doublings: ten total, versus eight ordinary additions. The literal published Alman–Rao H8 Algorithm 5 uses 22 additions, seven input doublings and one halving on ordinary inputs: 30 total, versus 24. The paper also describes a 29-operation unscaled variant. [1]
+
+Its 23-operation H8 kernel assumes seven inputs already arrive doubled. The published recursive scaling mechanism amortizes those costs. Treating the scaled kernel as a standalone 23-operation transform would silently omit work. No new algorithm or novelty is claimed here.
+
+Independent checks passed
+
+Ten emitted circuits were replayed with exact rational coefficient vectors. The verifier imports neither search implementation and reconstructs the synthetic target independently. Output signs, order and normalization, gate counts, operand reads, fanout and intermediate coefficient growth were checked.
+
+The three narrow-template cost histograms were recomputed independently. Nine deliberate sign, output and forward-reference corruptions were rejected. An independent count also confirms the heuristic’s 37,144 synthetic and 299 H4 constructions.
+
+For the best genuinely cancelling synthetic circuit, the maximum intermediate coefficient magnitude is 2, the maximum row absolute-sum is 4, and no intermediate fractional coefficients are needed. Thus inputs bounded by B yield generated values bounded by 4B before final normalization. This is a local exact bound, not a complete recursive numerical analysis.
+
+What this does not establish
+
+These circuits are ordinary out-of-place arithmetic DAGs. They do not supply dirty-scratch restoration, all-role endpoint identities, rational projector/frame assignments, a recursive child-rank histogram, or fixed-tape routing. The source weighted recurrence test is therefore not defined for them. The previous verified baseline dirty lift is unchanged.
+
+Exact matrix equality also does not preserve a program that truncates at every original round boundary. The previous rounding counterexample still applies. Dyadic operations in this experiment are exact; no new finite-precision or full-transform error proof is supplied.
+
+The bounded research pass is complete. It gives a reproducible negative search outcome and calibrated controls, with general cancellation-aware optimality left open.
+
+Reproduction and sources
+
+The accompanying source bundle contains the full technical note, search programs, solver inputs and logs, ten circuit certificates, independent verifier, audit report and file hashes. Enumeration and verification require Python 3.11+ and its standard library. Optional solver checks use libz3.so.4. No package installation was needed.
+
+Run anchor_search.py, heuristic_search.py, controls.py and audit_verify.py from the bundle directory. Optional checks are smt_search.py --gates 15 --timeout-ms 30000 and verify_smt_control.py. The README states every search restriction and the exact cost model.
+
+[1] Alman and Rao 2023  Sections 2.2 and 6  Published cancellation and scaling mechanisms
+
+[2] Pinned OpenAI synthetic transform specification  Target and normalization
+
+[3] Pinned CrocSwap weighted recurrence certificate  Downstream obligations

@@ -1,0 +1,16 @@
+"""Run exact positive/negative controls across all preserved research generations."""
+import subprocess,sys
+from pathlib import Path
+BASE=Path(__file__).resolve().parent
+TASKS=[
+    (BASE,[sys.executable,'-m','unittest','discover','-s','tests','-q']),
+    (BASE,[sys.executable,'verify_certificate.py']),
+    (BASE,[sys.executable,'search_strict_witness.py']),
+    (BASE/'prior_checkpoint',[sys.executable,'-m','unittest','discover','-s','tests','-q']),
+    (BASE/'prior_checkpoint'/'prior_checkpoint'/'fft_global_green_gauge',
+     [sys.executable,'-m','unittest','discover','-s','tests','-q']),
+]
+for folder,command in TASKS:
+    print('CHECK',str(folder.relative_to(BASE) if folder!=BASE else '.'),command[-1],flush=True)
+    subprocess.run(command,cwd=folder,check=True)
+print('ALL NEW+PRIOR REGRESSION TESTS PASSED')

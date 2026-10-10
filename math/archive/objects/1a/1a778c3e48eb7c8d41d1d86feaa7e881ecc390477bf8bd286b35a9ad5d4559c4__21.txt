@@ -1,0 +1,199 @@
+0001 #!/usr/bin/env python3
+0002 """Independent exact finite-field blocked rational-series Fourier baseline."""
+0003 from collections import Counter
+0004 import json, math, random, time
+0005 from pathlib import Path
+0006 
+0007 MOD = 998244353
+0008 GEN = 3
+0009 
+0010 def mul(a, b, c, key):
+0011     c[key] += 1
+0012     return a * b % MOD
+0013 
+0014 def mpow(a, e, c, key='power_modular_multiplications'):
+0015     r = 1
+0016     while e:
+0017         if e & 1: r = mul(r, a, c, key)
+0018         a = mul(a, a, c, key)
+0019         e >>= 1
+0020     return r
+0021 
+0022 def ntt(a, inverse=False, counts=None):
+0023     """Own in-place radix-two kernel; positive sign for forward transform."""
+0024     c = counts if counts is not None else Counter()
+0025     n = len(a)
+0026     assert n and n & (n - 1) == 0 and (MOD - 1) % n == 0
+0027     c['ntt_calls'] += 1
+0028     c['ntt_elements_processed'] += n
+0029     j = 0
+0030     for i in range(1, n):
+0031         bit = n >> 1
+0032         while j & bit:
+0033             j ^= bit
+0034             bit >>= 1
+0035         j ^= bit
+0036         if i < j: a[i], a[j] = a[j], a[i]
+0037     length = 2
+0038     while length <= n:
+0039         exponent = (MOD - 1) // length
+0040         wlen = mpow(GEN, (MOD - 1 - exponent) if inverse else exponent, c)
+0041         for base in range(0, n, length):
+0042             w = 1
+0043             for j in range(base, base + length // 2):
+0044                 u = a[j]
+0045                 v = mul(a[j + length // 2], w, c, 'butterfly_multiplications')
+0046                 a[j] = (u + v) % MOD
+0047                 a[j + length // 2] = (u - v) % MOD
+0048                 c['butterflies'] += 1
+0049                 c['butterfly_additions_subtractions'] += 2
+0050                 w = mul(w, wlen, c, 'twiddle_update_multiplications')
+0051         length <<= 1
+0052     if inverse:
+0053         inv = mpow(n, MOD - 2, c)
+0054         for i in range(n): a[i] = mul(a[i], inv, c, 'inverse_scale_multiplications')
+0055     return a
+0056 
+0057 def normalize(n, raw, c):
+0058     assert n >= 1 and n & (n - 1) == 0 and (MOD - 1) % n == 0
+0059     merged = {}
+0060     for j, a in raw:
+0061         j %= n
+0062         c['input_coefficients_read'] += 1
+0063         c['input_merge_additions'] += 1
+0064         merged[j] = (merged.get(j, 0) + a) % MOD
+0065     c['distinct_input_positions'] = len(merged)
+0066     return [(j, a) for j, a in merged.items() if a]
+0067 
+0068 def prepare(n, raw):
+0069     c = Counter()
+0070     support = normalize(n, raw, c)
+0071     k = len(support)
+0072     if not k: return {'k': 0, 'n': n, 'prep_counts': c}
+0073     zeta = mpow(GEN, (MOD - 1) // n, c)
+0074     za = [(mpow(zeta, j, c), a) for j, a in support]
+0075     q = [1]
+0076     for z, a in za:
+0077         nxt = q + [0]
+0078         for i, v in enumerate(q):
+0079             nxt[i + 1] = (nxt[i + 1] - mul(z, v, c, 'prep_multiplications')) % MOD
+0080             c['prep_additions_subtractions'] += 1
+0081         q = nxt
+0082     p = [0] * k
+0083     for z, a in za:
+0084         h = 1
+0085         for d in range(k):
+0086             if d:
+0087                 h = (q[d] + mul(z, h, c, 'prep_multiplications')) % MOD
+0088                 c['prep_additions_subtractions'] += 1
+0089             p[d] = (p[d] + mul(a, h, c, 'prep_multiplications')) % MOD
+0090             c['prep_additions_subtractions'] += 1
+0091     r = [1] + [0] * (k - 1)
+0092     for d in range(1, k):
+0093         for i in range(1, d + 1):
+0094             r[d] = (r[d] - mul(q[i], r[d - i], c, 'prep_multiplications')) % MOD
+0095             c['prep_additions_subtractions'] += 1
+0096     f = 1 << (2 * k - 1).bit_length()
+0097     qhat = ntt(q + [0] * (f - len(q)), counts=c)
+0098     rhat = ntt(r + [0] * (f - len(r)), counts=c)
+0099     return dict(k=k, n=n, f=f, p=p, qhat=qhat, rhat=rhat, prep_counts=c)
+0100 
+0101 def stream(prepared, counts=None):
+0102     """Yield output blocks; retained workspace O(k), excluding consumer output."""
+0103     c = counts if counts is not None else Counter()
+0104     k, n = prepared['k'], prepared['n']
+0105     if not k:
+0106         for _ in range(n):
+0107             c['output_coefficients'] += 1
+0108             yield [0]
+0109         return
+0110     f = prepared['f']
+0111     p = prepared['p'][:]
+0112     for offset in range(0, n, k):
+0113         c['blocks'] += 1
+0114         ahat = ntt(p + [0] * (f - k), counts=c)
+0115         for i in range(f): ahat[i] = mul(ahat[i], prepared['rhat'][i], c, 'pointwise_multiplications')
+0116         ntt(ahat, inverse=True, counts=c)
+0117         a = ahat[:k]
+0118         # Full transition is intentionally executed even for the final block.
+0119         bhat = ntt(a + [0] * (f - k), counts=c)
+0120         for i in range(f): bhat[i] = mul(bhat[i], prepared['qhat'][i], c, 'pointwise_multiplications')
+0121         ntt(bhat, inverse=True, counts=c)
+0122         assert bhat[:k] == p, 'Divisibility invariant failed'
+0123         p = [(-bhat[i]) % MOD for i in range(k, 2 * k)]
+0124         c['transition_negations'] += k
+0125         out = a[:min(k, n - offset)]
+0126         c['output_coefficients'] += len(out)
+0127         yield out
+0128 
+0129 def baseline(n, raw):
+0130     c = Counter()
+0131     support = normalize(n, raw, c)
+0132     c['dense_input_zero_initializations'] = n
+0133     x = [0] * n
+0134     for j, a in support:
+0135         x[j] = a
+0136         c['dense_input_assignments'] += 1
+0137     ntt(x, counts=c)
+0138     return x, c
+0139 
+0140 def direct(n, raw):
+0141     c = Counter()
+0142     supp = normalize(n, raw, c)
+0143     zeta = mpow(GEN, (MOD - 1) // n, c)
+0144     return [sum(a * mpow(zeta, j * m, c) for j, a in supp) % MOD for m in range(n)]
+0145 
+0146 def run_case(label, n, raw, use_direct=False):
+0147     start = time.perf_counter()
+0148     prep = prepare(n, raw)
+0149     pc = prep['prep_counts']
+0150     gc = Counter()
+0151     actual = [v for block in stream(prep, gc) for v in block]
+0152     stream_seconds = time.perf_counter() - start
+0153     start = time.perf_counter()
+0154     expected, bc = baseline(n, raw)
+0155     baseline_seconds = time.perf_counter() - start
+0156     assert actual == expected, (label, n, prep['k'])
+0157     if use_direct: assert actual == direct(n, raw)
+0158     k = prep['k']
+0159     if k:
+0160         f = prep['f']; blocks = (n + k - 1) // k
+0161         assert gc['ntt_calls'] == 4 * blocks
+0162         assert pc['ntt_calls'] == 2
+0163         assert gc['butterflies'] == 2 * blocks * f * (f.bit_length() - 1)
+0164         assert gc['pointwise_multiplications'] == 2 * blocks * f
+0165         assert pc['prep_multiplications'] == 3 * k * k - k
+0166     assert bc['butterflies'] == n * (n.bit_length() - 1) // 2
+0167     return dict(label=label, n=n, raw_entries=len(raw), active_k=k, convolution_length=prep.get('f'),
+0168                 direct_checked=use_direct, verified=True, preparation_counts=dict(pc),
+0169                 generation_counts=dict(gc), total_stream_counts=dict(pc + gc), full_ntt_counts=dict(bc),
+0170                 illustrative_seconds=dict(stream_including_preparation=stream_seconds, full_ntt=baseline_seconds))
+0171 
+0172 def main():
+0173     rng = random.Random(20261009)
+0174     results = []
+0175     def add(label, n, raw, d=False): results.append(run_case(label, n, raw, d))
+0176     add('empty', 1, [], True)
+0177     add('empty', 64, [], True)
+0178     add('all_zero_after_merging', 32, [(3, 7), (35, -7), (4, 0)], True)
+0179     add('duplicates_merged', 32, [(1, 5), (33, 9), (3, 2), (3, -1)], True)
+0180     for n in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]:
+0181         for k in sorted(set(x for x in [1, 2, 3, 4, 5, 7, 8, 16, 31, 32, 63, 64] if x <= n)):
+0182             indices = rng.sample(range(n), k)
+0183             raw = [(j, rng.randrange(1, MOD)) for j in indices]
+0184             add('random_support', n, raw, n <= 64)
+0185         if n <= 64: add('full_support', n, [(j, rng.randrange(1, MOD)) for j in range(n)], True)
+0186         for k in [2, 4, 8, 16, 32, 64]:
+0187             if k <= n:
+0188                 add('coset_support', n, [((1 + j * (n // k)) % n, rng.randrange(1, MOD)) for j in range(k)], n <= 64)
+0189     report = dict(modulus=MOD, primitive_root=GEN, seed=20261009, number_of_cases=len(results),
+0190                   all_verified=all(x['verified'] for x in results),
+0191                   direct_verified_cases=sum(x['direct_checked'] for x in results), cases=results)
+0192     path = Path(__file__).with_name('results.json')
+0193     path.write_text(json.dumps(report, indent=2) + '\n')
+0194     print(json.dumps({k: v for k, v in report.items() if k != 'cases'}, indent=2))
+0195     for n, k in [(4096, 1), (4096, 4), (4096, 16), (4096, 31), (4096, 64), (64, 64)]:
+0196         r = next(x for x in results if x['label'] == 'random_support' and x['n'] == n and x['active_k'] == k)
+0197         print(n, k, 'stream butterflies', r['total_stream_counts']['butterflies'], 'pointwise', r['generation_counts']['pointwise_multiplications'], 'prep scalar', r['preparation_counts']['prep_multiplications'], 'full butterflies', r['full_ntt_counts']['butterflies'])
+0198 
+0199 if __name__ == '__main__': main()

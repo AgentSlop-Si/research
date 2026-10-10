@@ -1,0 +1,22 @@
+65: def apply_mixed(x,p=MOD,reflect=True,phases=False):
+66:     """O(N) field arithmetic and O(N) memory, no dense matrix creation.
+67: 
+68:     We define S0[i,j]=G[order[i],order[j]]+G[i,j]/20.
+69:     A vector x is first scattered from new coordinates to old ones;
+70:     the output is gathered back after an O(N) tridiagonal solve.
+71:     """
+72:     n=len(x)
+73:     if phases:
+74:         left,right=phase_diagonals(n,p)
+75:         x=[a*b%p for a,b in zip(x,right)]
+76:     order=parity_order(n)
+77:     v=[0]*n
+78:     for i,old in enumerate(order):v[old]=x[i]
+79:     transformed=tridiagonal_solve(3,v,p=p)
+80:     term1=[transformed[old] for old in order]
+81:     term2=tridiagonal_solve(3,x,p=p)
+82:     eps=pow(20,-1,p)
+83:     combined=[(a+eps*b)%p for a,b in zip(term1,term2)]
+84:     out=householder_apply_mod(combined,p) if reflect else combined
+85:     if phases: out=[a*b%p for a,b in zip(out,left)]
+86:     return out

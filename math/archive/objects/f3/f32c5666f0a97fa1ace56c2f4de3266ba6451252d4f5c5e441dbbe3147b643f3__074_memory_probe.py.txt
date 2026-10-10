@@ -1,0 +1,54 @@
+"""Fresh-process peak RSS; distinct from numeric cache-payload accounting."""
+import json
+import os
+from pathlib import Path
+import resource
+import subprocess
+import sys
+import numpy as np
+
+ROOT=Path(__file__).resolve().parent
+
+
+def child(kind):
+    if kind in ('phase7','projected_graph'):
+        n,m,q=8192,128,64
+    else:
+        n,m,q=512,4096,64
+    rng=np.random.default_rng(444)
+    x=rng.normal(0,.001/np.sqrt(n),(m,n));x[:,0]+=1
+    bins=np.sort(rng.choice(n,q,replace=False))
+    if kind=='phase7':
+        sys.path.insert(0,str(ROOT/'baseline_phase7'))
+        from persistent_chain import ChainEngine
+        e=ChainEngine();v=e.chain([e.seed(a) for a in x]);v.frequencies(bins)
+        outputs=[v.edit(i%m,i%n,.001).frequencies(bins) for i in range(96)]
+        report=e.memory_report()
+    elif kind=='projected_graph':
+        from projected_circuit import ProjectedCircuit
+        e=ProjectedCircuit(n,bins);v=e.product([e.register(a) for a in x]);v.frequencies()
+        outputs=[v.edit(i%m,i%n,.001).frequencies() for i in range(96)]
+        report=e.memory_report()
+    else:
+        from benchmark_phase8 import projected_register
+        from range_product import FrozenProductIndex,SegmentProductIndex
+        projection=projected_register(x,bins)
+        cls=SegmentProductIndex if kind=='segment' else FrozenProductIndex
+        ix=cls(n,bins,projection);root=ix.branch()
+        outputs=[root.edit_many([(i%m,i%n,.001),((i+17)%m,(i+1)%n,.002)]).query('range') for i in range(96)]
+        report=ix.memory_report()
+    return {'kind':kind,'n':n,'m':m,'q':q,'peak_rss_bytes':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*1024,
+            'retained_output_bytes':sum(a.nbytes for a in outputs),'numeric_payload':report,
+            'includes_interpreter_libraries_inputs_workspaces_and_outputs':True}
+
+
+if __name__=='__main__':
+    if len(sys.argv)>1:
+        print(json.dumps(child(sys.argv[1])))
+    else:
+        rows=[]
+        for kind in ('phase7','projected_graph','segment','disjoint'):
+            env=dict(os.environ,OPENBLAS_NUM_THREADS='1',OMP_NUM_THREADS='1')
+            p=subprocess.run([sys.executable,__file__,kind],capture_output=True,text=True,env=env,check=True)
+            rows.append(json.loads(p.stdout));print(rows[-1],flush=True)
+        (ROOT/'results/memory.json').write_text(json.dumps(rows,indent=2)+'\n')

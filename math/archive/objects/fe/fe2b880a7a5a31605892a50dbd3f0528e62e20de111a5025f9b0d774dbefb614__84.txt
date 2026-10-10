@@ -1,0 +1,42 @@
+1: """Independent exact complex-symbolic check of user's x-k rewriting idea."""
+2: from pathlib import Path
+3: import json
+4: import sympy as sp
+5: 
+6: 
+7: def run():
+8:     I=sp.I
+9:     x=sp.symbols('x0:4')
+10:     n=4
+11:     omega=sp.exp(-2*sp.pi*I/n)
+12:     f=sp.Matrix([[sp.expand(omega**(j*k)) for j in range(n)] for k in range(n)])
+13:     original=f*sp.Matrix(x)
+14:     # This k depends NONLINEARLY on x; the identity must still hold.
+15:     k=x[0]*x[1]+x[2]**2
+16:     residual=sp.Matrix([x[0]-k,*x[1:]])
+17:     rewritten=f*residual+k*sp.ones(n,1)  # F*e0 = all-ones vector
+18:     symbolic_diff=[sp.expand(z) for z in rewritten-original]
+19:     if any(z!=0 for z in symbolic_diff):
+20:         raise AssertionError(symbolic_diff)
+21:     jac=rewritten.jacobian(x)
+22:     checked=all(sp.simplify(jac[i,j]-f[i,j])==0 for i in range(n) for j in range(n))
+23:     if not checked:
+24:         raise AssertionError('Jacobian differs from Fourier matrix')
+25:     # A rational nonlinear generic branch has the same rational function.
+26:     denominator=1+x[0]*x[1]
+27:     rational=[sp.cancel(v*denominator/denominator) for v in original]
+28:     if any(sp.simplify(a-b) for a,b in zip(rational,original)):
+29:         raise AssertionError('Generic rational branch differs')
+30:     # All facts are identities of functions on C^4 (except the rational
+31:     # representation at points where its denominator vanishes).
+32:     report={'n':4,'field':'C','matrix_entries_exactly_verified':16,
+33:         'nonlinear_k':'x0*x1 + x2^2','polynomial_identity':True,
+34:         'global_jacobian_identity':True,
+35:         'rational_generic_branch_identity':True,
+36:         'note':'Symbolic identities are classical algebra; no speedup is proved.'}
+37:     Path(__file__).with_name('symbolic_complex_certificate.json').write_text(json.dumps(report,indent=2)+'\n')
+38:     print('EXACT SYMBOLIC COMPLEX AUDIT PASSED')
+39:     print('4x4 Fourier matrix: nonlinear k decomposition and all 16 Jacobian entries verified identically')
+40:     return report
+41: 
+42: if __name__=='__main__':run()

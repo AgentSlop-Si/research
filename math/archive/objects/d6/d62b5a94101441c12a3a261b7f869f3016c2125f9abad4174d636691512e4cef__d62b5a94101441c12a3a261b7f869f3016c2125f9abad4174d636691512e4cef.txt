@@ -1,0 +1,284 @@
+"""Exact spectral-gauge Newton-Union over a finite field.
+
+New continuation after Spectral Newton-Union. A moving frame removes unknown
+scalar geometric drift and cyclic shear. The unknown (a, mu) is RECOVERED from
+the raw first two rows by a charged deterministic O(M^2) radix-sort + pair-
+majority spectral consensus. The recovered frame's d-th backward differences
+must contain at most R=O(Q) Fourier modes overall, checked from raw input.
+
+Input x[t + Q*u], N=Q*M with Q,M balanced. Gauge:
+    v_t[u] = mu^(-t) * x[t+Q*((u+a*t) mod M)]
+Then C_t[h] (raw) = (mu eta^(-a*h))^t * D_t[h] (gauged).
+Output bin k=h+M*s equals Newton coefficients on the gauged sequence at
+    z_{k,h} = mu * omega^(-(k+Q*a*h)).
+The O(N) decoder uses precomputed roots, mu powers, batch inverses and
+fixed-degree truncated binomial-geometric kernels.
+
+All work is charged and all exact output bins are emitted ON ACCEPTED INPUTS.
+No universal O(N) DFT claim, floating-point guarantee, or novelty claim.
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+from math import gcd, comb
+from typing import Optional, Sequence
+import phase_union_general as phase
+from delta_graph import balanced_q, direct_row_dft
+from newton_union import (NewtonCertificate, recognize as recognize_newton,
+                          truncated_binomial_geometric)
+
+
+def radix_sort_nonnegative_records(records: list[tuple[int,int,int]], maximum: int,
+                                   base: int) -> list[tuple[int,int,int]]:
+    """Stable counting radix sort; O(len(records)*ceil(log_base(maximum+1)) + base*digits).
+
+    In the word-RAM model p=N^O(1), base=M=Theta(sqrt(N)), so the number
+    of radix passes is constant and list size O(M^2)=O(N).
+    Record key is the first integer. The other two fields are payloads.
+    """
+    if base<2:raise ValueError('base>=2')
+    arr=records
+    place=1
+    while place<=maximum:
+        counts=[0]*base
+        for key,_,_ in arr:counts[(key//place)%base]+=1
+        running=0
+        for i,count in enumerate(counts):
+            counts[i]=running
+            running+=count
+        nxt=[None]*len(arr)
+        for item in arr:
+            digit=(item[0]//place)%base
+            position=counts[digit]
+            nxt[position]=item
+            counts[digit]=position+1
+        arr=nxt
+        place*=base
+    return arr
+
+
+@dataclass(frozen=True)
+class GaugeRecovery:
+    a:int
+    mu:int
+    channels:int
+    emitted_pairs:int
+    agreeing_pairs:int
+    agreeing_channels:int
+
+
+def discover_shear_scale(x:Sequence[int], p:int, omega:int, q:int,
+                         roots:Optional[Sequence[int]]=None) -> Optional[GaugeRecovery]:
+    """Recover an unknown (shift a mod M, nonzero field scalar mu).
+
+    First two row spectra obey C1[h] = mu*eta^(-a*h)*C0[h] except for e
+    'corrupt' frequencies. If ALL C0[h] != 0 and e<M/4, this recovers
+    (a,mu) deterministically, despite e adversarial Fourier errors.
+
+    There are M*phi(M)/2 unit-spaced pairs of spectral channels. Each
+    corrupt channel touches phi(M) such pairs. Thus >half of all valid
+    pairs consist of uncorrupted channels when e<M/4. Each good pair
+    votes for the correct (a,mu). A radix-sort join of field ratios with
+    precomputed eta powers avoids any uncharged hash oracle / discrete log.
+
+    Complexity O(M^2+M log p+M log M) field/word operations with p=N^O(1).
+    """
+    n=len(x)
+    if q<2 or n%q:raise ValueError('q>=2 dividing n required')
+    m=n//q
+    if m<2:return None
+    if roots is None:roots=phase.phase_table(n,p,omega)
+    eta=roots[q%n]
+    subroots=phase.phase_table(m,p,eta)
+    row0=[x[q*u]%p for u in range(m)]
+    row1=[x[1+q*u]%p for u in range(m)]
+    c0=direct_row_dft(row0,p,subroots)
+    c1=direct_row_dft(row1,p,subroots)
+    # Only nonzero ratios carry useful information.
+    observations=[]
+    for h in range(m):
+        if c0[h]%p and c1[h]%p:
+            rho=c1[h]*pow(c0[h],-1,p)%p
+            observations.append((h,rho,pow(rho,-1,p)))
+    if len(observations)<2:return None
+
+    # Inverse residues for every allowed unit difference (preparation O(M log M)).
+    inverse_delta=[0]*m
+    for d in range(1,m):
+        if gcd(d,m)==1:inverse_delta[d]=pow(d,-1,m)
+
+    # Tag = -1 for a root, else observation index i, with second payload j.
+    # Each pair is one candidate root-quotient lookup to perform after sorting.
+    records=[(val,-1,e) for e,val in enumerate(subroots)]
+    for i,(hi,rhoi,irhoi) in enumerate(observations):
+        for j in range(i+1,len(observations)):
+            hj,rhoj,_=observations[j]
+            if not inverse_delta[(hj-hi)%m]:continue
+            value=rhoj*irhoi%p
+            records.append((value,i,j))
+
+    # Integer-key join via deterministic constant-pass radix sorting.
+    ordered=radix_sort_nonnegative_records(records,p-1,m)
+    candidates=[]
+    current_root_key=None
+    current_root_log=None
+    for value,i,j in ordered:
+        if i==-1:
+            current_root_key=value
+            current_root_log=j
+        elif value==current_root_key:
+            hi,rhoi,_=observations[i]
+            hj,_,_=observations[j]
+            delta=(hj-hi)%m
+            a=(-current_root_log*inverse_delta[delta])%m
+            mu=rhoi*subroots[(a*hi)%m]%p
+            candidates.append((a,mu))
+    if not candidates:return None
+    # A majority vote finds the right pair in O(M^2) deterministic operations.
+    majority=None;vote_count=0
+    for candidate in candidates:
+        if vote_count==0:majority=candidate;vote_count=1
+        elif candidate==majority:vote_count+=1
+        else:vote_count-=1
+    agreeing_pairs=sum(1 for item in candidates if item==majority)
+    if agreeing_pairs*2<=len(candidates):return None
+    a,mu=majority
+    agreeing_channels=0
+    for h,rho,_ in observations:
+        if rho==mu*subroots[(-a*h)%m]%p:agreeing_channels+=1
+    return GaugeRecovery(a,mu,len(observations),len(candidates),
+                         agreeing_pairs,agreeing_channels)
+
+
+def inverse_for_scaled_roots(roots:Sequence[int],mu:int,p:int):
+    """Compute inv[ell]=(1-mu*omega^(-ell))^-1, except zeros, in O(N).
+
+    The single batch inverse includes all nonzero denominators. The sole
+    possible zero denominator receives 0 and is handled as a limit by
+    truncated_binomial_geometric when z=1.
+    """
+    n=len(roots)
+    inv=[0]*n
+    prefix=[];indices=[];prod=1
+    for ell in range(n):
+        diff=(1-mu*roots[-ell%n])%p
+        if diff:
+            indices.append(ell)
+            prefix.append(prod)
+            prod=prod*diff%p
+    if len(indices)<n-1:raise ValueError('nonprimitive roots or zero mu')
+    last=pow(prod,-1,p)
+    for t in range(len(indices)-1,-1,-1):
+        ell=indices[t]
+        diff=(1-mu*roots[-ell%n])%p
+        inv[ell]=last*prefix[t]%p
+        last=last*diff%p
+    return inv
+
+
+@dataclass(frozen=True)
+class ShearNewtonCertificate:
+    base:NewtonCertificate
+    shear:int
+    scalar:int
+    recovery:GaugeRecovery
+
+
+def gauge_signal(x:Sequence[int],p:int,q:int,a:int,mu:int)->list[int]:
+    n=len(x);m=n//q
+    if n%q or not mu%p:raise ValueError('bad factors or scalar')
+    gauged=[0]*n
+    mu_inv=pow(mu,-1,p)
+    power=1
+    for t in range(q):
+        shift=(a*t)%m
+        for u in range(m):
+            gauged[t+q*u]=power*x[t+q*((u+shift)%m)]%p
+        power=power*mu_inv%p
+    return gauged
+
+
+def recognize(x:Sequence[int],p:int,omega:int,order:int=1,total_modes:Optional[int]=None,
+              q:Optional[int]=None,balance_bound:int=4)->Optional[ShearNewtonCertificate]:
+    n=len(x)
+    q=balanced_q(n,balance_bound) if q is None else q
+    if q is None or q<2 or n%q:return None
+    m=n//q
+    if m<2 or q<order or m*m>balance_bound*n or q*q>balance_bound*n:
+        return None
+    roots=phase.phase_table(n,p,omega)
+    rec=discover_shear_scale(x,p,omega,q,roots)
+    if rec is None:return None
+    gauged=gauge_signal(x,p,q,rec.a,rec.mu)
+    base=recognize_newton(gauged,p,omega,order,total_modes,q,balance_bound)
+    return None if base is None else ShearNewtonCertificate(base,rec.a,rec.mu,rec)
+
+
+def transform_certified(cert:ShearNewtonCertificate,with_counters=False):
+    base=cert.base
+    n,q,m,p,d=base.n,base.q,base.m,base.p,base.order
+    a,mu=cert.shear,cert.scalar
+    roots=phase.phase_table(n,p,base.omega)
+    inv=inverse_for_scaled_roots(roots,mu,p)
+    mu_powers=[1]*(q+1)
+    for t in range(q):mu_powers[t+1]=mu_powers[t]*mu%p
+    difference=[]
+    for j in range(d):
+        difference.append([sum((-1)**(j-i)*comb(j,i)*base.baseline_spectra[i][h]
+                               for i in range(j+1))%p for h in range(m)])
+    out=[0]*n
+    baseline_ops=0;event_ops=0
+    # Special h-dependent phase index. This is NOT in general a permutation
+    # of a standard length-N Fourier spectrum when Q is not divisible by M.
+    for h in range(m):
+        for s in range(q):
+            k=h+m*s
+            ell=(k+q*a*h)%n
+            z=mu*roots[-ell%n]%p
+            value=0
+            for j in range(d):
+                amplitude=difference[j][h]
+                if amplitude:
+                    L=q-j
+                    zL=mu_powers[L]*roots[(-ell*L)%n]%p
+                    tr=truncated_binomial_geometric(z,L,j+1,p,inv[ell],zL)
+                    zj=mu_powers[j]*roots[(-ell*j)%n]%p
+                    value+=amplitude*zj*tr
+                baseline_ops+=1
+            out[k]=value%p
+    for e in base.events:
+        L=q-e.t
+        for s in range(q):
+            k=e.h+m*s
+            ell=(k+q*a*e.h)%n
+            z=mu*roots[-ell%n]%p
+            zL=mu_powers[L]*roots[(-ell*L)%n]%p
+            tr=truncated_binomial_geometric(z,L,d,p,inv[ell],zL)
+            zt=mu_powers[e.t]*roots[(-ell*e.t)%n]%p
+            out[k]=(out[k]+m*e.c*zt*tr)%p
+            event_ops+=1
+    if with_counters:
+        return out,{'n':n,'q':q,'m':m,'d':d,'shear':a,'scalar':mu,
+                    'events':len(base.events),'initial_dft_ops':d*m*m,
+                    'phase_baseline_terms':baseline_ops,'phase_event_terms':event_ops,
+                    'pair_votes':cert.recovery.emitted_pairs,'pair_agreement':cert.recovery.agreeing_pairs,
+                    'charged_gauge_detection':'O(M^2) deterministic radix join'}
+    return out
+
+
+def transform_if_recognized(x,p,omega,order=1,total_modes=None,q=None,balance_bound=4):
+    cert=recognize(x,p,omega,order,total_modes,q,balance_bound)
+    return (None,None) if cert is None else (transform_certified(cert),cert)
+
+
+def synthesize_from_gauged(v:Sequence[int],p:int,q:int,a:int,mu:int)->list[int]:
+    """Test-only: build a sheared/scaled raw input from a gauged sequence."""
+    n=len(v)
+    if n%q:raise ValueError('q divides N')
+    m=n//q
+    out=[0]*n
+    mupow=1
+    for t in range(q):
+        for u in range(m):
+            out[t+q*u]=mupow*v[t+q*((u-a*t)%m)]%p
+        mupow=mupow*mu%p
+    return out

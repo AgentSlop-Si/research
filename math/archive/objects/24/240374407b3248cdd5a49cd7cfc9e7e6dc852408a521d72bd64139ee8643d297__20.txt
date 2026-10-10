@@ -1,0 +1,192 @@
+0001 """Exact finite-field tests of Boolean spectral completion.
+0002 
+0003 Objective: fresh binary x; all N Fourier bins; no cached answers.
+0004 All operations are in an odd-characteristic prime field containing Nth roots.
+0005 """
+0006 from __future__ import annotations
+0007 from collections import OrderedDict
+0008 from itertools import combinations_with_replacement
+0009 from math import comb
+0010 
+0011 
+0012 def primitive_root(n: int, p: int) -> int:
+0013     if n < 2 or n & (n - 1) or (p - 1) % n:
+0014         raise ValueError("n must be a power of 2 dividing p-1")
+0015     for base in range(2, p):
+0016         r = pow(base, (p - 1)//n, p)
+0017         if pow(r, n//2, p) != 1 and pow(r, n, p) == 1:
+0018             return r
+0019     raise ValueError("primitive Nth root not found")
+0020 
+0021 
+0022 def dft(x: list[int] | tuple[int,...], p: int, root: int | None = None) -> tuple[int, ...]:
+0023     n = len(x)
+0024     w = primitive_root(n, p) if root is None else root
+0025     return tuple(sum(int(value)*pow(w, (k*j)%n,p) for j,value in enumerate(x)) % p
+0026                  for k in range(n))
+0027 
+0028 
+0029 def all_binary(n: int):
+0030     for code in range(1<<n):
+0031         yield tuple((code>>i)&1 for i in range(n))
+0032 
+0033 
+0034 def spectrum_self_convolution(x_bins: list[int] | tuple[int,...], p:int) -> tuple[int,...]:
+0035     n=len(x_bins)
+0036     return tuple(sum(x_bins[a]*x_bins[(k-a)%n] for a in range(n))%p for k in range(n))
+0037 
+0038 
+0039 def recover_one_from_others(spectrum: list[int] | tuple[int,...], k:int, p:int):
+0040     """Computes X[k] from every other X[a] and X[0], if 0 != k and N-2X[0]!=0.
+0041     Does not read X[k]; unlike k=0, it has no hidden input dependence.
+0042     """
+0043     n=len(spectrum)
+0044     if k <= 0 or k>=n:
+0045         raise ValueError("only nonzero missing frequencies")
+0046     divisor=(n-2*spectrum[0])%p
+0047     if not divisor:
+0048         return None
+0049     numerator=sum(spectrum[a]*spectrum[(k-a)%n]
+0050                   for a in range(n) if a!=0 and a!=k) %p
+0051     return numerator*pow(divisor,-1,p)%p
+0052 
+0053 
+0054 def signature_collision(n:int, seen_indices:tuple[int,...], missing_index:int, p:int):
+0055     """Exact injectivity counterexample. 2^n brute-force only for small n."""
+0056     if n>16:raise ValueError("n>16 requires exponential enumeration")
+0057     w=primitive_root(n,p)
+0058     seen={}
+0059     for x in all_binary(n):
+0060         f=dft(x,p,w)
+0061         key=tuple(f[i] for i in seen_indices)
+0062         prev=seen.get(key)
+0063         if prev is None:
+0064             seen[key]=(x, f[missing_index])
+0065         elif prev[1]!=f[missing_index]:
+0066             return {"x":list(prev[0]), "y":list(x), "same_bins":list(seen_indices),
+0067                     "missing":missing_index,"x_missing":prev[1],"y_missing":f[missing_index]}
+0068     return None
+0069 
+0070 
+0071 def _monomial_indice_tuples(q:int,max_degree:int):
+0072     yield ()
+0073     for degree in range(1,max_degree+1):
+0074         yield from combinations_with_replacement(range(q),degree)
+0075 
+0076 
+0077 def _field_eliminate(col:list[int], coeffs:dict[int,int], pivots:OrderedDict,
+0078                      p:int):
+0079     """Elimination with algebraic combination trace for independent certificates."""
+0080     c=col[:]
+0081     combo=coeffs.copy()
+0082     for pivot,(basis,bcomb) in pivots.items():
+0083         x=c[pivot]
+0084         if not x:continue
+0085         c=[(a-x*b)%p for a,b in zip(c,basis)]
+0086         for idx,mul in bcomb.items():
+0087             combo[idx]=(combo.get(idx,0)-x*mul)%p
+0088             if combo[idx]==0:del combo[idx]
+0089     lead=next((i for i,v in enumerate(c) if v),None)
+0090     if lead is None:return None
+0091     inv=pow(c[lead],-1,p)
+0092     norm=([(v*inv)%p for v in c], {i:(v*inv)%p for i,v in combo.items()})
+0093     pivots[lead]=norm
+0094     return lead
+0095 
+0096 
+0097 def _try_reduce_goal(goal:list[int],pivots:OrderedDict,p:int):
+0098     v=goal[:]
+0099     solution={}
+0100     for lead,(base,combo) in pivots.items():
+0101         x=v[lead]
+0102         if not x:continue
+0103         v=[(a-x*b)%p for a,b in zip(v,base)]
+0104         for idx,coef in combo.items():
+0105             solution[idx]=(solution.get(idx,0)+x*coef)%p
+0106             if solution[idx]==0:del solution[idx]
+0107     return solution if not any(v) else None
+0108 
+0109 
+0110 def exact_poly_completion(n:int,p:int,known_modes:tuple[int,...],missing:int,max_degree:int=3):
+0111     """Small exhaustive Boolean cube polynomial synthesis and rank certificates.
+0112 
+0113     Returns a polynomial in the known DFT bins if possible, with exact coefficients.
+0114     The computational search grows exponentially with n. This is NOT a fast FFT.
+0115     """
+0116     if n>8:raise ValueError("exhaustive witness generation limited to n<=8")
+0117     if missing in known_modes or not known_modes:raise ValueError("invalid source/target")
+0118     if len(set(known_modes))!=len(known_modes):raise ValueError("duplicate source")
+0119     w=primitive_root(n,p)
+0120     vectors=list(all_binary(n))
+0121     full=[dft(x,p,w) for x in vectors]
+0122     obs=[tuple(f[s] for s in known_modes) for f in full]
+0123     goal=[f[missing] for f in full]
+0124     pivots=OrderedDict()
+0125     mons=[];stats=[];winner=None
+0126     for degree in range(max_degree+1):
+0127         for indexset in ( [()] if degree==0 else combinations_with_replacement(range(len(known_modes)),degree) ):
+0128             mons.append(indexset)
+0129             col=[1]*len(vectors)
+0130             for t in indexset:
+0131                 col=[(a*v[t])%p for a,v in zip(col,obs)]
+0132             _field_eliminate(col,{len(mons)-1:1},pivots,p)
+0133         winner=_try_reduce_goal(goal,pivots,p)
+0134         stats.append({"degree":degree,"features":len(mons),"rank":len(pivots),"recoverable":winner is not None})
+0135         if winner is not None:break
+0136     witness=[] if winner is None else [ (tuple(known_modes[t] for t in mons[idx]),coef)
+0137                                        for idx,coef in sorted(winner.items()) ]
+0138     return {"n":n,"p":p,"known_modes":known_modes,"missing_mode":missing,
+0139             "rank_audit":stats,"witness":witness,"found":winner is not None}
+0140 
+0141 
+0142 def evaluate_witness(spectrum, witness, p:int):
+0143     out=0
+0144     for modes,coef in witness:
+0145         x=coef
+0146         for m in modes:x=x*spectrum[m]%p
+0147         out=(out+x)%p
+0148     return out
+0149 
+0150 
+0151 def witness_upper_operation_count(witness):
+0152     """Naive scalar-arithmetic gate count, assuming source frequency values given.
+0153     Nonunit coefficients are one multiplication. Summation of terms takes T-1 adds.
+0154     """
+0155     mul=sum(max(0,len(modes)-1)+(coef not in (0,1)) for modes,coef in witness)
+0156     add=max(0,len(witness)-1)
+0157     return {"multiplications":mul,"additions":add,"total":mul+add,
+0158             "nonzero_monomials":len(witness)}
+0159 
+0160 
+0161 def sumset_access(n:int,source_modes:tuple[int,...],depth:int)->set[int]:
+0162     """Necessary one-hot Fourier-character frequency support for degree<=depth."""
+0163     reach={0}
+0164     for _ in range(depth):
+0165         reach|={(a+b)%n for a in tuple(reach) for b in source_modes}
+0166     return reach
+0167 
+0168 
+0169 def quadratic_rigidity_theorem(n:int,source_modes:tuple[int,...],target:int):
+0170     """Returns theorem applicability, NOT a numerical proof of complexity.
+0171     Any quadratic P of the known modes representing target on Boolean cube
+0172     would have A^T C A diagonal; its diagonal must vanish because the proper
+0173     Fourier rowspace contains no coordinate basis vector.
+0174     """
+0175     if len(set(source_modes))!=len(source_modes) or target in source_modes:
+0176         raise ValueError("target must be unseen, source modes distinct")
+0177     if any(k<0 or k>=n for k in source_modes):raise ValueError("out of range")
+0178     return {"n":n,"proper_subset":len(source_modes)<n,
+0179             "no_degree_le_2_completion":len(source_modes)<n,
+0180             "proof":"Any quadratic term A^T C A with zero off-diagonal has diagonal image in span(F_S). An N-point Fourier rowspace omitting any frequency contains no standard basis vector, hence the diagonal is zero and no new frequency is generated."}
+0181 
+0182 
+0183 def half_complement_family(n:int):
+0184     """2^(N/2) fresh binary inputs with identical even frequency spectra."""
+0185     if n%2 or n>24:raise ValueError
+0186     h=n//2
+0187     for bits in all_binary(h):
+0188         yield tuple(bits)+tuple(1-b for b in bits)
+0189 
+0190 
+0191 def balance_failure_fraction(n):
+0192     return (comb(n,n//2),1<<n) if n%2==0 else (0,1<<n)

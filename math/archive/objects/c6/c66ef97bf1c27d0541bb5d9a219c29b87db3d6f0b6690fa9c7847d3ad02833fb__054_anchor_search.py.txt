@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Exact enumeration in an explicitly restricted cancellation template.
+One ternary signed common anchor. Each output independently uses direct sum,
+anchor + residual, or -anchor + residual. Each residual is summed afresh;
+only individual doubled inputs and the complete anchor are shared.
+All sums/subtractions and all doublings cost one. Signs use signed operands.
+Dynamic programming exactly minimizes cost over output mode/doubling choices.
+"""
+from itertools import product
+from collections import Counter
+from pathlib import Path
+from fractions import Fraction as Q
+import json, time
+from smt_search import TARGET
+
+def canonical(v):
+ for x in v:
+  if x:return x>0
+ return False
+
+def options(row,anchor):
+ opts=[{'mode':0,'residual':row,'adds':sum(x!=0 for x in row)-1,'doubles':0,'cancellation':False}]
+ for sign in [1,-1]:
+  r=[x-sign*y for x,y in zip(row,anchor)]
+  opts.append({'mode':sign,'residual':r,'adds':sum(x!=0 for x in r),'doubles':sum(1<<j for j,x in enumerate(r) if abs(x)==2),'cancellation':any(sign*a*b<0 for a,b in zip(anchor,r))})
+ return opts
+
+def optimize(rows,anchor):
+ # State (mask,used_anchor): (additions, mode choices). Exact dominance only
+ # within equal masks, so sharing of doubled inputs is fully accounted.
+ dp={(0,False,False):(0,[])}
+ for row in rows:
+  nxt={}
+  for (mask,used,cancel),(cost,choices) in dp.items():
+   for opt in options(row,anchor):
+    key=(mask|opt['doubles'],used or opt['mode']!=0,cancel or opt['cancellation'])
+    cand=(cost+opt['adds'],choices+[opt['mode']])
+    if key not in nxt or cand<nxt[key]:nxt[key]=cand
+  dp=nxt
+ out=[]
+ for (mask,used,cancel),(adds,modes) in dp.items():
+  if not (used and cancel):continue
+  adds+=sum(bool(x) for x in anchor)-1
+  out.append((adds+mask.bit_count(),adds,mask.bit_count(),tuple(modes),mask))
+ return min(out)
+
+class Circuit:
+ def __init__(self,n):self.n=n;self.gates=[]
+ def gate(self,op,terms):
+  i=self.n+len(self.gates);self.gates.append({'op':op,'terms':terms});return [i,1]
+ def sum(self,refs):
+  if not refs:raise ValueError('empty sum')
+  z=refs[0]
+  for y in refs[1:]:z=self.gate('add',[z,y])
+  return z
+ def payload(self,outputs,target,name):return {'name':name,'n_inputs':self.n,'gates':self.gates,'outputs':outputs,'target':target,'normalization':'1/4' if name.startswith('synthetic') else '1'}
+
+def make(rows,anchor,modes,name):
+ c=Circuit(len(anchor));s=c.sum([[i,a] for i,a in enumerate(anchor) if a]);doubles={}
+ outs=[]
+ for row,mode in zip(rows,modes):
+  residual=row if mode==0 else [a-mode*b for a,b in zip(row,anchor)]
+  refs=[]
+  for i,v in enumerate(residual):
+   if not v:continue
+   if abs(v)==2:
+    if i not in doubles:doubles[i]=c.gate('double',[[i,1]])
+    refs.append([doubles[i][0],1 if v>0 else -1])
+   else:refs.append([i,v])
+  if mode:refs.append([s[0],mode*s[1]])
+  outs.append(c.sum(refs))
+ return c.payload(outs,rows,name)
+
+def run(rows,name):
+ t=time.monotonic();n=len(rows[0]);hist=Counter();best=None;num=0
+ for anchor in product([-1,0,1],repeat=n):
+  if not canonical(anchor):continue
+  opt=optimize(rows,anchor);num+=1;hist[opt[0]]+=1
+  candidate=opt+(anchor,)
+  if best is None or candidate<best:best=candidate
+ total,adds,doubles,modes,mask,anchor=best
+ cert=make(rows,anchor,modes,name)
+ summary={'name':name,'anchors_enumerated':num,'minimum_total_operations_in_template':total,'additions':adds,'doublings':doubles,'anchor':anchor,'modes':modes,'operation_histogram':dict(sorted(hist.items())),'elapsed_seconds':time.monotonic()-t,'coverage':'All nonzero ternary anchors modulo global sign; all 3^m output direct/+anchor/-anchor choices optimized by exact DP; each correction summed afresh; input doublings shared; at least one output has a genuinely cancelling anchor/correction coordinate; no sharing proper subexpressions.'}
+ return summary,cert
+if __name__=='__main__':
+ p=Path('results');p.mkdir(exist_ok=True)
+ h4=[[1 if (i&j).bit_count()%2==0 else -1 for j in range(4)] for i in range(4)]
+ h8=[[1 if (i&j).bit_count()%2==0 else -1 for j in range(8)] for i in range(8)]
+ all=[]
+ for rows,name in [(h4,'h4_anchor_control'),(TARGET,'synthetic_anchor'),(h8,'h8_anchor_control')]:
+  summary,cert=run(rows,name);all.append(summary);(p/(name+'_certificate.json')).write_text(json.dumps(cert,indent=2));print(json.dumps(summary),flush=True)
+ (p/'anchor_summary.json').write_text(json.dumps(all,indent=2))

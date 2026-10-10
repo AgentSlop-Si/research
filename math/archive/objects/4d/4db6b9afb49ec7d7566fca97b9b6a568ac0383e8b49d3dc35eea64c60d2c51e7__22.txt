@@ -1,0 +1,101 @@
+1: import collections
+2: import unittest
+3: import numpy as np
+4: from arbitrary_output import ArbitraryBinsDFTPlan, AutoOutputPlan, ProductiveProjectionPlanner
+5: from multi_view import SharedProjectedFourierStore, union_frequency_sets
+6: from modular_phase import phase_row
+7: 
+8: 
+9: class CountDeque(collections.deque):
+10:     visited = 0
+11:     def __iter__(self):
+12:         for row in super().__iter__():
+13:             self.visited += 1
+14:             yield row
+15:     def __reversed__(self):
+16:         for row in super().__reversed__():
+17:             self.visited += 1
+18:             yield row
+19: 
+20: 
+21: class TestHardening(unittest.TestCase):
+22:     def test_phase_reduction_cancellation(self):
+23:         n = 65536
+24:         got = ArbitraryBinsDFTPlan(n, [n-1]).execute(np.ones(n))
+25:         self.assertLess(abs(got[0]), 1e-8)
+26: 
+27:     def test_phase_reduction_above_int64_product(self):
+28:         n = 10**12 + 39
+29:         bins = np.array([0, 1, n//2, n-2, n-1], dtype=np.int64)
+30:         j = n-3
+31:         want = np.array([np.exp(-2j*np.pi*((j*int(k)) % n)/n) for k in bins])
+32:         np.testing.assert_allclose(phase_row(n, j, bins), want, rtol=1e-14, atol=1e-14)
+33:         for prepared in (None, [j]):
+34:             st = SharedProjectedFourierStore(n, bins, np.empty((0, len(bins))),
+35:                                             {'v': bins}, prepared_positions=prepared)
+36:             st.add_point(j, 1)
+37:             np.testing.assert_allclose(st.query('v'), want, rtol=1e-14, atol=1e-14)
+38: 
+39:     def test_different_or_mutated_calibration_sample(self):
+40:         rng = np.random.default_rng(71)
+41:         a = rng.normal(size=128)
+42:         bins = [0, 17, 127]
+43:         p = AutoOutputPlan(128, bins, sample=a, reps=1)
+44:         b = rng.normal(size=128)
+45:         np.testing.assert_allclose(p.project_stream_with_sample(b, [a])[0], np.fft.fft(b)[bins], atol=1e-9)
+46:         a[:] += 4
+47:         np.testing.assert_allclose(p.project_stream_with_sample(a, [])[0], np.fft.fft(a)[bins], atol=1e-9)
+48: 
+49:     def test_zero_productive_trials(self):
+50:         p = ProductiveProjectionPlanner(128, [1], max_pruned_trials=0)
+51:         p.project([np.ones(128), np.ones(128)], expected_count=2)
+52:         self.assertEqual(len(p.stats.trials), 1)
+53: 
+54:     def test_recent_suffix_only(self):
+55:         st = SharedProjectedFourierStore(8, [0], np.ones((2, 1)), {'v': [0]})
+56:         for _ in range(10000): st.add_coefficient(0, 1)
+57:         st.query('v')
+58:         st.events = CountDeque(st.events)
+59:         st.add_coefficient(0, 1)
+60:         self.assertEqual(st.query('v')[0], 10001)
+61:         self.assertLessEqual(st.events.visited, 2)
+62: 
+63:     def test_replay_preserves_chronological_order(self):
+64:         # A reversed AXPY sequence gives 0 instead of 1 in this example.
+65:         st = SharedProjectedFourierStore(8, [0], np.ones((4, 1)), {'v': [0]})
+66:         for d in (1e16, -1e16, 1): st.add_coefficient(0, d)
+67:         self.assertEqual(st.query('v')[0], 1)
+68: 
+69:     def test_fusion_accounts_for_lost_history(self):
+70:         st = SharedProjectedFourierStore(8, [0], np.ones((10, 1)), {'a': [0], 'b': [0]}, event_capacity=0)
+71:         st.add_coefficient(0, 1)
+72:         result = st.query_many(['a', 'b'])
+73:         self.assertEqual(result['a'][0], 1)
+74:         self.assertEqual(st.views['a'].strategy, 'batch_rebuild')
+75: 
+76:     def test_fusion_omits_current_bins(self):
+77:         st = SharedProjectedFourierStore(8, list(range(8)), np.ones((4,8)),
+78:                                         {'a':[0], 'b':[0], 'current':list(range(8))}, event_capacity=0)
+79:         st.add_coefficient(0, 1)
+80:         st.query('current')
+81:         result = st.query_many(['a', 'b', 'current'])
+82:         self.assertEqual(st.views['a'].strategy, 'batch_rebuild')
+83:         np.testing.assert_array_equal(result['current'], np.ones(8))
+84: 
+85:     def test_projection_owns_compact_storage(self):
+86:         full = np.ones(65536, np.complex128)
+87:         proj = full[:4][None, :]
+88:         st = SharedProjectedFourierStore(65536, [0,1,2,3], proj, {'v':[0]}, [1])
+89:         self.assertTrue(st.projection.flags.owndata)
+90:         full[:] = 100
+91:         st.add_coefficient(0, 1)
+92:         self.assertEqual(st.query('v')[0], 2)
+93: 
+94:     def test_numeric_payload_counts_events(self):
+95:         st = SharedProjectedFourierStore(8, [0], np.ones((1,1)), {'v':[0]})
+96:         before = st.storage_bytes
+97:         for _ in range(20): st.add_coefficient(0, 1)
+98:         self.assertGreater(st.storage_bytes, before)
+99: 
+100: 
+101: if __name__ == '__main__': unittest.main()

@@ -1,0 +1,155 @@
+0001 #!/usr/bin/env python3
+0002 """Held-out correctness, safety, API, and performance evaluation of adaptive FFT."""
+0003 import os
+0004 for name in ('OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS'):
+0005     os.environ[name]='1'
+0006 import argparse
+0007 import ctypes as ct
+0008 import json
+0009 import math
+0010 from pathlib import Path
+0011 import platform
+0012 import random
+0013 import time
+0014 import numpy as np
+0015 from adaptive_fft import BinaryFFTPlan,METHODS,get_plan,binary_fft,clear_plan_cache,cache_info,_library
+0016 
+0017 HERE=Path(__file__).resolve().parent
+0018 
+0019 def stat(values):
+0020     a=np.asarray(values);m=float(np.median(a))
+0021     return {'median_us':m*1e6,'p10_us':float(np.percentile(a,10))*1e6,
+0022             'p90_us':float(np.percentile(a,90))*1e6,
+0023             'relative_mad':float(np.median(abs(a-m))/m),'samples_us':(a*1e6).tolist()}
+0024 
+0025 def expect_error(fn,kind):
+0026     try:fn()
+0027     except kind:return True
+0028     raise AssertionError('Expected '+str(kind))
+0029 
+0030 def ordinary_setup(lib,n):
+0031     lib.fft_plan_create.argtypes=[ct.c_size_t];lib.fft_plan_create.restype=ct.c_void_p
+0032     lib.fft_plan_destroy.argtypes=[ct.c_void_p]
+0033     times=[]
+0034     for _ in range(9):
+0035         start=time.perf_counter();p=lib.fft_plan_create(n);elapsed=time.perf_counter()-start
+0036         assert p;lib.fft_plan_destroy(p);times.append(elapsed)
+0037     return stat(times)
+0038 
+0039 def benchmark_heldout(plan,pool,rounds=13,target_ms=20):
+0040     out=np.empty(plan.n,np.complex128);methods=list(METHODS)+['selected'];samples={m:[] for m in methods};repeats={}
+0041     for m in methods:
+0042         estimate=plan.benchmark(m,pool,out,len(pool)*2)
+0043         repeats[m]=max(len(pool),math.ceil(target_ms/1000/estimate/len(pool))*len(pool))
+0044     rng=random.Random(0x9182817+plan.n)
+0045     for _ in range(rounds):
+0046         rng.shuffle(methods)
+0047         for m in methods:samples[m].append(plan.benchmark(m,pool,out,repeats[m]))
+0048     return {m:dict(stat(s),transforms_per_sample=repeats[m]) for m,s in samples.items()}
+0049 
+0050 def benchmark_public(plan,pool,rounds=7,target_ms=12):
+0051     out=np.empty(plan.n,np.complex128)
+0052     calls={'plan_execute_out':lambda x:plan.execute(x,out=out),
+0053            'plan_execute_allocating':lambda x:plan.execute(x),
+0054            'cached_binary_fft_allocating':lambda x:binary_fft(x)}
+0055     repeats={};samples={m:[] for m in calls}
+0056     for m,f in calls.items():
+0057         start=time.perf_counter()
+0058         for x in pool:f(x)
+0059         est=(time.perf_counter()-start)/len(pool)
+0060         repeats[m]=max(len(pool),math.ceil(target_ms/1000/est/len(pool))*len(pool))
+0061     rng=random.Random(0x238123+plan.n);order=list(calls)
+0062     for _ in range(rounds):
+0063         rng.shuffle(order)
+0064         for m in order:
+0065             start=time.perf_counter()
+0066             for r in range(repeats[m]):calls[m](pool[r%len(pool)])
+0067             samples[m].append((time.perf_counter()-start)/repeats[m])
+0068     return {m:dict(stat(s),transforms_per_sample=repeats[m]) for m,s in samples.items()}
+0069 
+0070 def main():
+0071     ap=argparse.ArgumentParser();ap.add_argument('--output',type=Path,default=HERE/'adaptive_results.json');args=ap.parse_args()
+0072     affinity=sorted(os.sched_getaffinity(0));os.sched_setaffinity(0,{affinity[0]})
+0073     lib=_library();results={'methodology':{
+0074         'candidates':METHODS,'lookup_margin':0.08,'paired_lookup_win_requirement':'At least 75% of randomized calibration rounds',
+0075         'calibration':'Nine randomized rounds, target 8 ms per candidate sample, four seeded random inputs; correctness checked before selection.',
+0076         'heldout':'13 independent randomized rounds, target 20 ms per candidate sample, eight new random seeds, fresh input pool; same reused plan.',
+0077         'timed_c_work':'Binary-value validation, input gathers, arithmetic or key packing and full table copies, upper merges. Selected path dispatches once through a C function pointer.',
+0078         'public_api':'Includes dtype/shape/contiguity checks, C binary validation, ctypes overhead, and output allocation where labeled. No input conversion/copy.',
+0079         'overhead':'Ordinary shared plan setup, adaptive plan setup (including tiny tables), and calibration reported separately. Compilation/import excluded.',
+0080         'break_even':'Only positive held-out measured savings yield break-even; otherwise null. Benchmarks are noisy VM observations, not guaranteed crossovers.',
+0081         'cache':'Bounded process-local LRU keyed by N and uint8/bool dtype, capacity eight. Retuning explicit only.'},
+0082         'metadata':{'platform':platform.platform(),'pinned_cpu':affinity[0],'numpy':np.__version__},'sizes':[]}
+0083     for n in [4096,16384,65536,262144,1048576]:
+0084         setup=ordinary_setup(lib,n)
+0085         start=time.perf_counter();plan=get_plan(n,np.uint8);first_plan_ms=(time.perf_counter()-start)*1000
+0086         selected=plan.method
+0087         seeds=[700000+n+j*103 for j in range(8)]
+0088         pool=np.stack([np.random.default_rng(seed).integers(0,2,n,dtype=np.uint8) for seed in seeds])
+0089         errs=[];count=plan.calibration_count
+0090         for x in pool:
+0091             y=plan.execute(x);ref=np.fft.fft(x);errs.append(float(np.max(abs(y-ref))))
+0092             np.testing.assert_allclose(y,ref,atol=2e-9,rtol=2e-11)
+0093         # Verify repeated execution owns independent outputs and never recalibrates.
+0094         saved=plan.execute(pool[0]);saved_copy=saved.copy();other=plan.execute(pool[1])
+0095         assert not np.shares_memory(saved,other);np.testing.assert_array_equal(saved,saved_copy)
+0096         assert get_plan(n,np.uint8) is plan and plan.calibration_count==count
+0097         out=np.empty(n,np.complex128);assert plan.execute(pool[0],out=out) is out
+0098         held=benchmark_heldout(plan,pool);public=benchmark_public(plan,pool)
+0099         assert plan.calibration_count==count and plan.method==selected
+0100         fastest=min(METHODS,key=lambda m:held[m]['median_us'])
+0101         bestarith=min(METHODS[:4],key=lambda m:held[m]['median_us'])
+0102         selected_us=held['selected']['median_us'];extra_setup_us=max(0,plan.setup_seconds*1e6-setup['median_us'])
+0103         tune_us=plan.calibration['elapsed_ms']*1000
+0104         break_even={}
+0105         for m in ['radix2_fused2','codelet8',bestarith]:
+0106             delta=held[m]['median_us']-selected_us
+0107             break_even[m]={'savings_per_fft_us':delta,'calibration_only_calls':math.ceil(tune_us/delta) if delta>0 else None,
+0108                            'calibration_plus_extra_setup_calls':math.ceil((tune_us+extra_setup_us)/delta) if delta>0 else None}
+0109         record={'n':n,'dtype':'uint8','method':selected,'ordinary_plan_setup':setup,
+0110                 'adaptive_plan_setup_us':plan.setup_seconds*1e6,'first_get_plan_total_ms':first_plan_ms,
+0111                 'calibration':plan.calibration,'heldout_seeds':seeds,'correctness_max_abs_error':max(errs),
+0112                 'cached_identity_reused':True,'calibration_count_after_repeated_execution':plan.calibration_count,
+0113                 'heldout':held,'public_api':public,'heldout_fastest':fastest,'heldout_best_arithmetic':bestarith,
+0114                 'selected_dispatch_excess_us':selected_us-held[selected]['median_us'],
+0115                 'regret_vs_fastest_percent':100*(selected_us/held[fastest]['median_us']-1),
+0116                 'candidate_choice_regret_percent':100*(held[selected]['median_us']/held[fastest]['median_us']-1),
+0117                 'break_even':break_even}
+0118         results['sizes'].append(record);args.output.write_text(json.dumps(results,indent=2)+'\n')
+0119         print(f'N={n} selected={selected} cal={plan.calibration["elapsed_ms"]:.1f}ms; heldout selected={selected_us:.2f}us fastest={fastest} {held[fastest]["median_us"]:.2f}us; regret={record["regret_vs_fastest_percent"]:.1f}%',flush=True)
+0120     # Safety and lifecycle checks on cached 4096 plan.
+0121     p=get_plan(4096,np.uint8);x=np.zeros(4096,np.uint8);out=np.full(4096,123+2j,np.complex128)
+0122     invalid=x.copy();invalid[-1]=2
+0123     expect_error(lambda:p.execute(invalid,out=out),ValueError);assert np.all(out==123+2j)
+0124     expect_error(lambda:p.execute(x.astype(np.float64)),TypeError)
+0125     expect_error(lambda:binary_fft(np.array([0.5]*4096)),TypeError)
+0126     expect_error(lambda:binary_fft(np.array([256]*4096,dtype=np.int64)),TypeError)
+0127     expect_error(lambda:get_plan(4095),ValueError);expect_error(lambda:get_plan(8),ValueError)
+0128     expect_error(lambda:get_plan(4096.0),ValueError);expect_error(lambda:get_plan(True),ValueError)
+0129     expect_error(lambda:p.execute(np.zeros(8192,np.uint8)[::2]),ValueError)
+0130     expect_error(lambda:p.execute(np.zeros((64,64),np.uint8)),ValueError)
+0131     expect_error(lambda:p.execute(x,out=np.empty(4096,np.complex64)),ValueError)
+0132     unaligned=np.ndarray((4096,),dtype=np.complex128,buffer=bytearray(4096*16+1),offset=1)
+0133     expect_error(lambda:p.execute(x,out=unaligned),ValueError)
+0134     readonly=np.empty(4096,np.complex128);readonly.flags.writeable=False
+0135     expect_error(lambda:p.execute(x,out=readonly),ValueError)
+0136     overlapping=np.zeros(4096,np.complex128)
+0137     expect_error(lambda:p.execute(overlapping.view(np.uint8)[:4096],out=overlapping),ValueError)
+0138     # bool plans are cached separately and use no conversion.
+0139     b=get_plan(4096,np.bool_);assert b is get_plan(4096,np.bool_) and b is not p
+0140     bx=np.random.default_rng(5111).integers(0,2,4096,dtype=np.uint8).view(np.bool_)
+0141     np.testing.assert_allclose(b.execute(bx),np.fft.fft(bx),atol=2e-9,rtol=2e-11)
+0142     own=BinaryFFTPlan(16,rounds=3,target_ms=1,pool_count=1);own.close();own.close()
+0143     expect_error(lambda:own.execute(np.zeros(16,np.uint8)),RuntimeError)
+0144     # Explicit retune changes the counter, unlike normal calls.
+0145     before=b.calibration_count;b.retune(rounds=3,target_ms=1,pool_count=1,seed=1234567)
+0146     assert b.calibration_count==before+1
+0147     results['api_checks']={'passed':True,'input_rejection':True,'invalid_input_preserves_out':True,'independent_outputs':True,
+0148                            'out_reuse':True,'overlap_rejection':True,'closed_plan_rejection':True,'double_close_safe':True,
+0149                            'dtype_specific_cache':True,'explicit_retune_only':True,'cache_info':str(cache_info())}
+0150     clear_plan_cache();assert not p.closed # user-held reference remains valid
+0151     np.testing.assert_allclose(p.execute(x),np.zeros(4096,np.complex128))
+0152     p.close();b.close();results['api_checks']['clear_cache_preserves_owned_references']=True
+0153     args.output.write_text(json.dumps(results,indent=2)+'\n');print('All API/safety checks passed. Saved',args.output,flush=True)
+0154 
+0155 if __name__=='__main__':main()

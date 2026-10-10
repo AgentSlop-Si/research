@@ -1,0 +1,43 @@
+# HERO #17 — RECOVER HERE after Phase 11
+
+**Date:** October 10, 2026  
+**Bundle:** `fft_hero17_phase11_lazy_union_green_rank_gate_2026-10-10.zip`
+
+## Primary objective — NOT SOLVED
+
+Exact full DFT for every arbitrary fresh length-N input in **O(N)** sequential arithmetic with preparation, memory, addressing, coefficient recovery and all N outputs accounted for. Do not call structured-input updates, partial Fourier outputs, projector applications, or an uncharged table a solution. The published 2026 exact-complex result is uniform `O(N(log N)^(1-10^-13))`, not `O(N)`.
+
+## What was established and tested this phase
+
+1. `LazySpectralUnion`: all frequency-residue projectors at a fixed `d` can be held in exactly `N` quotient coordinates, and refined with `N/2` butterflies per level. Final outputs are the exact DFT, `O(N)` retained field storage, `O(Nlog N)` fully charged arithmetic. `N=65536`: `524288` butterflies, `1572864` online field operations, `1638432` field ops including primitive-root validation / root table; **exactly the same** counts as independent Phase10 classical FFT.
+2. Symbolic uniqueness: every quotient node at every level is a distinct formal linear expression; no hash-consable identities, no scalar-equivalent nodes. Every level has rank `N`. True only of the specified dyadic quotient circuit, not an unrestricted FFT lower bound.
+3. For a spectral mask `K` and a bounded-degree rational local cyclic Green filter `R(S)=p(S)/q(S)`, either `R=0`/`I` with correction rank `|K|`/`N-|K|`, or rank of `P_K-R(S)` is at least `N-2d`, where `d=max(deg p,deg q)` and all denominators are nonzero on Fourier roots. The latter bound is **sharp** for `1<=d<=min(|K|,N-|K|)`; polynomial witnesses and exact rank checks provided.
+4. For balanced `|K|=N/2`, `d<=N/4`, best rank among **all** such rational filters is `N/2` (trivial 0/I filters). Therefore a short local Green solve plus rank-o(N) correction cannot exactly implement a balanced projector in this restricted commuting model. A sparse high-degree shift `(I+S^(N/2))/2` **does** implement the even-mask projector in linear work and escapes the theorem; do not generalize the rank gate beyond its hypotheses.
+5. An exactly computable dense Green inverse `G=(I-alpha*S)^-1` has rank `N` distance from every Fourier spectral projector. Yet both `G` and `P_even-G` can be applied to arbitrary fresh inputs in `O(N)` work. **Do not use correction rank as a standalone arithmetic lower bound.** This closes an important rank-to-cost inference trap.
+6. Distinct binary mask signatures can label N frequencies with log N bits, but one scalar per mask yields only log N linear measurements; arbitrary Fourier amplitudes cannot be recovered without sufficient additional computation/information.
+
+## Reproduced evidence
+
+- Phase11 tests 16/16; predecessor Phase10 14/14; Phase9 15/15.
+- `42` full direct DFTs / `1524` bins, `65536` full-size coefficients checked against independent FFT and `41` direct bins, `189` sharp rational witnesses with `69` explicit matrix-rank confirmations, `768` distinct formal nodes, `20` rank-N state matrices.
+- Complete degree-one rational search `N=8, F17`: unrestricted optimum rank 4, nontrivial rational optimum rank 6, as predicted.
+- `AUDIT_RESULTS.json` contains operation counts and all quantitative audit summaries.
+
+## Do not repeat
+
+- Do not rematerialize every spectral projector as length-N output to claim a memory obstacle solved: the quotient hierarchy already fixes it and is ordinary radix-2 FFT.
+- Do not present a low-rank *symbolic representation* as a low-cost full numerical executor without charging the coordinate basis transforms.
+- Do not claim the local rational root-count barrier rules out high-degree sparse shifts or noncommuting Green products.
+- Do not use random binary data collisions or actual finite-field output equality to stand in for symbolic all-input sharing.
+- Do not confuse `P_K x` (filtered time-domain vector) with `F_N x` (full frequency list).
+
+## Next target
+
+Construct an **input-independent, globally shared full-spectrum evaluator** using *noncommuting long-range sparse shifts plus Green solves*, or a new finite linear gate whose reusable cross-level expressions reduce the **complete** circuit cost. Require:
+
+- explicit operations and schedule for all arbitrary input vectors;
+- charged preparation, root generation, indexing, memory, and output;
+- equality on all standard basis vectors (exact linear circuit), random dense vectors, and explicit adversaries;
+- proof the improvement is asymptotic and not radix-2, split-radix, Good–Thomas, sparse filtering, uncharged table lookup, or the existing #130 construction renamed.
+
+Source: `phase11.py`, `test_phase11.py`, `independent_audit.py`.  Documentation: `PROOF_CERTIFICATE.md`, `RESEARCH.md`. Run `python -m unittest -v test_phase11` and `python independent_audit.py` from the package directory.

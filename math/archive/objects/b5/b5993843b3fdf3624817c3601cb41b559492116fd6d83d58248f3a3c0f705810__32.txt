@@ -1,0 +1,113 @@
+1: import unittest,random,sys,pathlib
+2: sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]))
+3: from boolean_overlap import Circuit,P,direct_dft,fft_circuit,nonlinear_fft_case,experiment
+4: 
+5: class TestBooleanOverlap(unittest.TestCase):
+6:     def test_product_onehot_correction(self):
+7:         c=Circuit(4)
+8:         x=c.inputs
+9:         a=c.add(c.add(x[0],x[1]),c.const(3))
+10:         b=c.sub(c.add(x[1],x[2]),c.const(5))
+11:         y=c.mul(a,b)
+12:         au=c.onehot_audit()
+13:         self.assertEqual(au['base'][y],-15%P)
+14:         self.assertEqual(au['delta'][y][1],(3-5+1)%P)
+15:         self.assertEqual(au['overlap'],1)
+16:         q,ids=c.project_linear([y])
+17:         self.assertTrue(q.check_linear())
+18:         for i in range(4):
+19:             v=[0]*4;v[i]=1
+20:             self.assertEqual(q.eval(v,ids),c.eval(v,[y]))
+21:         for _ in range(20):
+22:             v=[random.randrange(P) for _ in range(4)]
+23:             expected=au['base'][y]+sum(au['delta'][y].get(i,0)*v[i] for i in range(4))
+24:             self.assertEqual(q.eval(v,ids)[0],expected%P)
+25:     def test_x_square_zero_tangent_not_zero_boolean(self):
+26:         c=Circuit(1)
+27:         y=c.mul(c.inputs[0],c.inputs[0])
+28:         a=c.onehot_audit()
+29:         self.assertEqual(a['delta'][y],{0:1})
+30:         self.assertEqual(a['overlap'],1)
+31:         q,out=c.project_linear([y]);self.assertTrue(q.check_linear())
+32:         self.assertEqual(q.eval([3],out),[3])
+33:         self.assertEqual(c.eval([3],[y]),[9])
+34:     def test_syntactic_disjoint_support(self):
+35:         c=Circuit(4)
+36:         x=c.inputs
+37:         f=c.mul(c.add(x[0],x[1]),c.add(x[2],x[3]))
+38:         au=c.onehot_audit()
+39:         self.assertEqual(au['overlap'],0)
+40:         self.assertEqual(au['delta'][f],{})
+41:         q,o=c.project_linear([f]);self.assertTrue(q.check_linear())
+42:         for i in range(4):
+43:             v=[j==i for j in range(4)]
+44:             self.assertEqual(c.eval(v,[f]),[0])
+45:             self.assertEqual(q.eval(v,o),[0])
+46:         self.assertNotEqual(c.eval([1,0,1,0],[f]),q.eval([1,0,1,0],o))
+47:     def test_dense_overlap_gate(self):
+48:         n=32;c=Circuit(n)
+49:         s=c.const(0)
+50:         for t in c.inputs:s=c.add(s,t)
+51:         y=c.mul(s,s)
+52:         audit=c.onehot_audit();self.assertEqual(audit['overlap'],n)
+53:         self.assertEqual(len(audit['delta'][y]),n)
+54:         q,o=c.project_linear([y]);self.assertTrue(q.check_linear())
+55:         for _ in range(15):
+56:             v=[random.randrange(P) for _ in range(n)]
+57:             self.assertEqual(q.eval(v,o)[0],sum(v)%P)
+58:     def test_nonzero_constant_affine_output(self):
+59:         c=Circuit(2)
+60:         x0,x1=c.inputs
+61:         t=c.mul(c.add(x0,c.const(2)),c.sub(x1,c.const(3)))
+62:         audit=c.onehot_audit();q,out=c.project_linear([t]);self.assertTrue(q.check_linear())
+63:         for x in ([0,0],[1,0],[0,1],[4,7]):
+64:             expected=(audit['base'][t]+sum(audit['delta'][t].get(i,0)*x[i] for i in range(2)))%P
+65:             self.assertEqual(q.eval(x,out),[expected])
+66:     def test_full_fourier_matrix_all_variants(self):
+67:         for n in (2,4,8,16,32,64):
+68:             for variant in ('plain','squares','boolean_null','hybrid'):
+69:                 with self.subTest(n=n,variant=variant):
+70:                     c,out=nonlinear_fft_case(n,variant)
+71:                     q,z=c.project_linear(out)
+72:                     self.assertTrue(q.check_linear())
+73:                     for i in range(n):
+74:                         vec=[int(i==j) for j in range(n)]
+75:                         self.assertEqual(c.eval(vec,out),direct_dft(vec))
+76:                         self.assertEqual(q.eval(vec,z),direct_dft(vec))
+77:     def test_full_cube_n4(self):
+78:         n=4
+79:         for variant in ('plain','squares','boolean_null','hybrid'):
+80:             c,out=nonlinear_fft_case(n,variant)
+81:             for mask in range(1<<n):
+82:                 x=[mask>>i&1 for i in range(n)]
+83:                 self.assertEqual(c.eval(x,out),direct_dft(x))
+84:     def test_random_dags_independent_onehot(self):
+85:         rng=random.Random(223)
+86:         for n in (3,6,10):
+87:             c=Circuit(n)
+88:             for _ in range(100):
+89:                 a,b=rng.randrange(len(c.nodes)),rng.randrange(len(c.nodes))
+90:                 op=rng.choice(('add','sub','mul'))
+91:                 getattr(c,op)(a,b)
+92:             outs=list(range(len(c.nodes)))
+93:             au=c.onehot_audit()
+94:             q,ids=c.project_linear(outs,au)
+95:             self.assertTrue(q.check_linear())
+96:             v0=c.eval([0]*n,outs)
+97:             for i in range(n):
+98:                 v=[int(j==i) for j in range(n)]
+99:                 vi=c.eval(v,outs)
+100:                 for j in outs:
+101:                     self.assertEqual(au['delta'][j].get(i,0),(vi[j]-v0[j])%P)
+102:                 self.assertEqual(q.eval(v,ids),vi)
+103:     def test_invalid_data(self):
+104:         with self.assertRaises(ValueError):Circuit(0)
+105:         c=Circuit(4)
+106:         with self.assertRaises(ValueError):c.eval_all([1,2])
+107:         with self.assertRaises(ValueError):fft_circuit(c,c.inputs[:3])
+108:     def test_experiment(self):
+109:         rows=experiment((4,8),seed=55)
+110:         self.assertEqual(len(rows),8)
+111:         self.assertTrue(all(x['verified_columns']==x['n'] for x in rows))
+112: 
+113: if __name__=='__main__':unittest.main()

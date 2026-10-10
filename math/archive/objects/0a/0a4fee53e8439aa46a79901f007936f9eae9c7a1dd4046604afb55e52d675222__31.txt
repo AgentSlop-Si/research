@@ -1,0 +1,62 @@
+   1	"""Run four bounded issue repros against original or patched source.
+   2	
+   3	python reproduce_cases.py --source '/path/to/cost_aware_fft(1).py'
+   4	The included, unchanged Phase4 phase.py supplies the compatible dependency.
+   5	No performance benchmarking or source mutation is performed.
+   6	"""
+   7	import argparse
+   8	import importlib.util
+   9	import json
+  10	import sys
+  11	import tracemalloc
+  12	from pathlib import Path
+  13	
+  14	import numpy as np
+  15	from scipy import fft
+  16	
+  17	parser = argparse.ArgumentParser()
+  18	parser.add_argument('--source', type=Path, default=Path(__file__).with_name('cost_aware_fft.py'))
+  19	args = parser.parse_args()
+  20	spec = importlib.util.spec_from_file_location('review_target', args.source)
+  21	m = importlib.util.module_from_spec(spec)
+  22	sys.modules[spec.name] = m
+  23	spec.loader.exec_module(m)
+  24	
+  25	x = np.arange(8.)
+  26	want = fft.rfft(x + np.eye(1, 8, 1)[0]*2)
+  27	got = m.sparse_from_known_changes(fft.rfft(x), 8, [(1, 2.)], method='auto')
+  28	print('spectrum_only_auto', json.dumps({'dc_actual': got[0].real,
+  29	      'dc_expected': want[0].real, 'max_abs_error': float(np.max(np.abs(got-want)))}))
+  30	
+  31	e = m.RelationFFT(max_temp_bytes=256)
+  32	s = e.register(np.arange(16.)).edit(3, 1.)
+  33	try:
+  34	    p = e.calibrate(s, repeats=2)
+  35	    print('calibration', json.dumps({'completed': True, 'eligible_methods': list(p.median_seconds)}))
+  36	except MemoryError as exc:
+  37	    print('calibration', json.dumps({'completed': False, 'error': str(exc)}))
+  38	
+  39	e = m.RelationFFT(max_phase_bytes=32784)
+  40	p = e._phase_vector(4096, 7, 2049)
+  41	owner = p
+  42	while isinstance(owner.base, np.ndarray):
+  43	    owner = owner.base
+  44	print('phase_cache', json.dumps({'limit': e.max_phase_bytes,
+  45	      'reported': e.memory_report()['internal_phase_cache_bytes'],
+  46	      'cached': bool(e._phase), 'returned_phase_backing_bytes': owner.nbytes}))
+  47	
+  48	n, k = 65536, 8
+  49	e = m.RelationFFT(max_temp_bytes=16*n+8*(n//k), max_phase_bytes=0)
+  50	s = e.register(np.zeros(n))
+  51	for p in range(k):
+  52	    s.edit(p+1, p+.25)
+  53	tracemalloc.start()
+  54	try:
+  55	    got = s.spectrum(method='pruned')
+  56	    current, peak = tracemalloc.get_traced_memory()
+  57	    print('pruned_memory', json.dumps({'admitted': True, 'budget': e.max_temp_bytes,
+  58	          'peak_traced_bytes': peak, 'peak_minus_returned_output': peak-got.nbytes}))
+  59	except MemoryError as exc:
+  60	    print('pruned_memory', json.dumps({'admitted': False, 'budget': e.max_temp_bytes, 'error': str(exc)}))
+  61	finally:
+  62	    tracemalloc.stop()

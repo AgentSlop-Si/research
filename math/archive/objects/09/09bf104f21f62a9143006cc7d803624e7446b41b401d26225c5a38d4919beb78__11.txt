@@ -1,0 +1,272 @@
+   1 """FFT symmetry-cache research prototype.
+   2 
+   3 Illustrates how circular shifts, reversals, and binary complements can share
+   4 an FFT result. It is NOT a faster general FFT; canonicalization, lookup,
+   5 complex arithmetic, output materialization, and numerical precision cost time.
+   6 
+   7 Python >= 3.10, standard library only.
+   8 """
+   9 from __future__ import annotations
+  10 import cmath
+  11 import math
+  12 import random
+  13 import statistics
+  14 from time import perf_counter
+  15 
+  16 
+  17 def ordinary_fft(a):
+  18     n = len(a)
+  19     if n == 1: return (complex(a[0]),)
+  20     E=ordinary_fft(a[0::2]); O=ordinary_fft(a[1::2]); out=[0j]*n
+  21     for k in range(n//2):
+  22         v=cmath.exp(-2j*math.pi*k/n)*O[k]
+  23         out[k]=E[k]+v
+  24         out[k+n//2]=E[k]-v
+  25     return tuple(out)
+  26 
+  27 
+  28 def least_rotation(v):
+  29     """Booth algorithm: starting position of minimal cyclic rotation, O(m)."""
+  30     n=len(v)
+  31     if n==1:return 0
+  32     doubled=v+v
+  33     i,j,k=0,1,0
+  34     while i<n and j<n and k<n:
+  35         a=doubled[i+k]; b=doubled[j+k]
+  36         if a==b:
+  37             k+=1
+  38         elif a>b:
+  39             i=i+k+1
+  40             if i<=j:i=j+1
+  41             k=0
+  42         else:
+  43             j=j+k+1
+  44             if j<=i:j=i+1
+  45             k=0
+  46     return min(i,j)
+  47 
+  48 
+  49 def canonical_binary(v):
+  50     """Return (lexically minimal orbit representative, sign, shift, complement).
+  51 
+  52     Representative c[j] = (1 - v[(shift+sign*j)%m]) if complement else
+  53                        v[(shift+sign*j)%m].
+  54     sign is +1 or -1; use inverse DFT identity to get FFT(v) from FFT(c).
+  55     Symmetry group size <= 4m (shift, reversal, optional complement).
+  56     """
+  57     n=len(v)
+  58     v=tuple(v)
+  59     assert all(x in (0,1) for x in v)
+  60     best=None
+  61     info=None
+  62     for sign in (1,-1):
+  63         base=tuple(v[(sign*j)%n] for j in range(n))
+  64         for complement in (False,True):
+  65             arr=tuple(1-x for x in base) if complement else base
+  66             start=least_rotation(arr)
+  67             candidate=arr[start:]+arr[:start]
+  68             shift=(sign*start)%n
+  69             order=(bool(complement),sign==-1,shift)
+  70             if best is None or candidate<best or (candidate==best and order<info[3]):
+  71                 best=candidate
+  72                 info=(sign,shift,complement,order)
+  73     sign,shift,complement,_=info
+  74     return best,sign,shift,complement
+  75 
+  76 
+  77 def recover_fft(canonical_output, sign, shift, complement):
+  78     """Reconstruct FFT(v) from FFT(c), where c is an orbit transform of v."""
+  79     n=len(canonical_output)
+  80     if sign==1 and shift==0 and not complement:
+  81         return canonical_output
+  82     out=[]
+  83     z=1+0j
+  84     step=cmath.exp(-2j*math.pi*shift/n)
+  85     for k in range(n):
+  86         value=canonical_output[(sign*k)%n]
+  87         if complement:
+  88             value=(n if k==0 else 0)-value
+  89         out.append(z*value)
+  90         z*=step
+  91     return tuple(out)
+  92 
+  93 
+  94 class SymmetryFFT:
+  95     def __init__(self):
+  96         self.cache={}
+  97         self.hits=0
+  98         self.misses=0
+  99         self.butterflies=0
+ 100         self.reconstructed=0
+ 101         self.canonical_scanned=0
+ 102 
+ 103     def fft(self, v):
+ 104         n=len(v)
+ 105         if n==1:
+ 106             return (complex(v[0]),)
+ 107         key,sign,shift,comp=canonical_binary(v)
+ 108         self.canonical_scanned+=n
+ 109         cache_key=(n,key)
+ 110         F=self.cache.get(cache_key)
+ 111         if F is None:
+ 112             self.misses+=1
+ 113             even=self.fft(key[0::2]); odd=self.fft(key[1::2])
+ 114             out=[0j]*n
+ 115             for k in range(n//2):
+ 116                 w=cmath.exp(-2j*math.pi*k/n)*odd[k]
+ 117                 out[k]=even[k]+w
+ 118                 out[k+n//2]=even[k]-w
+ 119                 self.butterflies+=1
+ 120             F=tuple(out)
+ 121             self.cache[cache_key]=F
+ 122         else:
+ 123             self.hits+=1
+ 124         if sign!=1 or shift!=0 or comp:
+ 125             self.reconstructed+=n
+ 126         return recover_fft(F,sign,shift,comp)
+ 127 
+ 128 
+ 129 def interleaved_orbit_inputs(n, block_len=128, seed=7):
+ 130     """At radix-2 recursion depth, length-block_len children are orbit variants."""
+ 131     assert n%block_len==0
+ 132     rand=random.Random(seed)
+ 133     template=[rand.randrange(2) for _ in range(block_len)]
+ 134     groups=n//block_len
+ 135     vec=[0]*n
+ 136     for offset in range(groups):
+ 137         orientation=rand.choice((-1,1))
+ 138         shift=rand.randrange(block_len)
+ 139         comp=rand.randrange(2)
+ 140         for j in range(block_len):
+ 141             vec[offset+groups*j]=template[(shift+orientation*j)%block_len]^comp
+ 142     return vec
+ 143 
+ 144 
+ 145 def exact_tests():
+ 146     rng=random.Random(20261008)
+ 147     for n in (2,4,8,16,32,64,128):
+ 148         for t in range(8):
+ 149             seq=tuple(rng.randrange(2) for _ in range(n))
+ 150             canon,sgn,shift,comp=canonical_binary(seq)
+ 151             assert all(canon[j]==(seq[(shift+sgn*j)%n]^int(comp)) for j in range(n))
+ 152             naive=ordinary_fft(seq)
+ 153             improved=recover_fft(ordinary_fft(canon),sgn,shift,comp)
+ 154             err=max(abs(a-b) for a,b in zip(naive,improved))
+ 155             assert err<1e-7,(n,t,err)
+ 156             cached=SymmetryFFT().fft(seq)
+ 157             err=max(abs(a-b) for a,b in zip(naive,cached))
+ 158             assert err<1e-7,(n,t,err)
+ 159     print('PASS: 56 random binary inputs versus independent radix-2 FFT, length 2..128')
+ 160     for n in (8,16,64,128,512):
+ 161         src=tuple(rng.randrange(2) for _ in range(n))
+ 162         shift=rng.randrange(n); sgn=rng.choice((-1,1)); comp=rng.randrange(2)
+ 163         dest=tuple(src[(shift+sgn*j)%n]^comp for j in range(n))
+ 164         actual=ordinary_fft(dest)
+ 165         z=cmath.exp(-2j*math.pi*shift/n)
+ 166         f=ordinary_fft(src)
+ 167         prediction=[]
+ 168         # dest[j]=src[shift+sgn*j]^comp. FFT(dest)[k]=omega^(-sgn*shift*k)*(m*d0-F(src)[sgn*k])
+ 169         phase=1+0j
+ 170         step=cmath.exp(2j*math.pi*sgn*shift/n)
+ 171         for k in range(n):
+ 172             fval=f[(sgn*k)%n]
+ 173             if comp:fval=(n if k==0 else 0)-fval
+ 174             prediction.append(phase*fval)
+ 175             phase*=step
+ 176         err=max(abs(a-b) for a,b in zip(actual,prediction))
+ 177         # comment above intentionally isn't the core tested identity; test canonical recovery instead
+ 178         assert err<1e-7,(n,err)
+ 179     print('PASS: 5 shift / reversal / complement transformations against independent FFT')
+ 180 
+ 181 
+ 182 def experiment():
+ 183     print('N,case,standard_butterflies,cache_butterflies,arithmetic_saved_percent,lookup_hits,lookup_misses,canonical_scanned,reconstruction_entries,max_abs_error,normal_seconds,cache_seconds')
+ 184     for n in (1024,4096,16384):
+ 185         rr=random.Random(n+77)
+ 186         cases={
+ 187             'random_binary':[rr.randrange(2) for _ in range(n)],
+ 188             'period8':([1,0,0,1,1,0,1,0]*(n//8)),
+ 189             'orbit128':interleaved_orbit_inputs(n,128,seed=n+777),
+ 190         }
+ 191         for label,seq in cases.items():
+ 192             t=perf_counter(); standard=ordinary_fft(seq); t_std=perf_counter()-t
+ 193             solver=SymmetryFFT()
+ 194             t=perf_counter(); shared=solver.fft(seq); t_shared=perf_counter()-t
+ 195             err=max(abs(a-b) for a,b in zip(standard,shared))
+ 196             assert err<1e-6,(n,label,err)
+ 197             normal=n*int(math.log2(n))//2
+ 198             savings=100*(normal-solver.butterflies)/normal
+ 199             print(f'{n},{label},{normal},{solver.butterflies},{savings:.2f},{solver.hits},{solver.misses},{solver.canonical_scanned},{solver.reconstructed},{err:.4g},{t_std:.5f},{t_shared:.5f}')
+ 200 
+ 201 
+ 202 if __name__=='__main__':
+ 203     exact_tests()
+ 204     experiment()
+ 205 
+ 206 
+ 207 def affine_fft_from_base(base_fft, a, b, complement=False):
+ 208     """FFT of B[j]=A[(a*j+b)%m] xor complement (for binary A).
+ 209 
+ 210     Requires gcd(a,m)=1. Reconstruction is O(m) without recomputing an FFT.
+ 211     """
+ 212     n=len(base_fft)
+ 213     ainv=pow(a,-1,n)
+ 214     out=[]
+ 215     phase=1+0j
+ 216     step=cmath.exp(2j*math.pi*ainv*b/n)
+ 217     for k in range(n):
+ 218         value=phase*base_fft[(ainv*k)%n]
+ 219         if complement:
+ 220             value=(n if k==0 else 0)-value
+ 221         out.append(value)
+ 222         phase*=step
+ 223     return tuple(out)
+ 224 
+ 225 
+ 226 def sparse_edit_fft(base_fft, changes):
+ 227     """FFT of modified input using a list of (position, additive_delta).
+ 228 
+ 229     O(n * number_of_changes) operations plus O(n) output writes.
+ 230     """
+ 231     n=len(base_fft)
+ 232     out=list(base_fft)
+ 233     for pos,delta in changes:
+ 234         w=cmath.exp(-2j*math.pi*pos/n)
+ 235         z=1+0j
+ 236         for k in range(n):
+ 237             out[k]+=delta*z
+ 238             z*=w
+ 239     return tuple(out)
+ 240 
+ 241 
+ 242 def expanded_tests():
+ 243     rng=random.Random(73029)
+ 244     errors=[]
+ 245     count=0
+ 246     for n in (8,16,32,64,128,256):
+ 247         A=[rng.randrange(2) for _ in range(n)]
+ 248         FA=ordinary_fft(A)
+ 249         for _ in range(10):
+ 250             a=rng.randrange(n//2)*2+1 # odd, invertible mod power-of-two
+ 251             b=rng.randrange(n)
+ 252             complement=rng.randrange(2)
+ 253             B=[A[(a*j+b)%n]^complement for j in range(n)]
+ 254             expected=ordinary_fft(B)
+ 255             actual=affine_fft_from_base(FA,a,b,bool(complement))
+ 256             errors.append(max(abs(x-y) for x,y in zip(actual,expected)))
+ 257             count+=1
+ 258         for edits in (1,2,3):
+ 259             pos=rng.sample(range(n),edits)
+ 260             changes=[(j,(1 if A[j]==0 else -1)) for j in pos]
+ 261             B=A[:]
+ 262             for j,delta in changes:B[j]+=delta
+ 263             expected=ordinary_fft(B)
+ 264             actual=sparse_edit_fft(FA,changes)
+ 265             errors.append(max(abs(x-y) for x,y in zip(actual,expected)))
+ 266             count+=1
+ 267     assert max(errors)<1e-7,max(errors)
+ 268     print(f'PASS: {count} affine-index-permutation/complement or sparse-edit FFT reconstructions; max error {max(errors):.4g}')
+ 269 
+ 270 
+ 271 if __name__=='__main__':
+ 272     expanded_tests()

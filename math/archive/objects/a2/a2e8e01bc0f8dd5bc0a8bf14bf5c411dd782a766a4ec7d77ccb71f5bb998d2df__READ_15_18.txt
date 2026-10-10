@@ -1,0 +1,466 @@
+
+===== SOURCE 15 b6374f51a62c9e26957bebe8c862f062fbbfb901ecff632102dd1f3d6ed30200 fft_materials_extension_20261009/fft_polynomial_feedback_research/run_audit.py | 12125 bytes 226 lines =====
+   1 """Exact full-state circuit verification against an independent RN-by-RN solve."""
+   2 import json
+   3 import random
+   4 from pathlib import Path
+   5 from port_feedback import prepare_ports, closure_word, coupling_edit_word
+   6 from prior_affine_reuse import (prepare, execute, execute_scalar, expand_scalar,
+   7                                 inverse, charge, apply_t, apply_j)
+   8 
+   9 
+  10 def dense_inverse(matrix, p):
+  11     """Independent test oracle, not part of the compiler or its cost claim."""
+  12     n = len(matrix)
+  13     work = [row[:] + [int(i == j) for j in range(n)]
+  14             for i, row in enumerate(matrix)]
+  15     for j in range(n):
+  16         pivot = next((i for i in range(j,n) if work[i][j] % p), None)
+  17         if pivot is None:
+  18             raise ValueError('singular oracle matrix')
+  19         work[j], work[pivot] = work[pivot], work[j]
+  20         factor = pow(work[j][j], -1, p)
+  21         work[j] = [v*factor % p for v in work[j]]
+  22         for i in range(n):
+  23             if i != j:
+  24                 factor = work[i][j]
+  25                 work[i] = [(a-factor*b) % p for a,b in zip(work[i],work[j])]
+  26     return [row[n:] for row in work]
+  27 
+  28 
+  29 def system(plan, fb):
+  30     n, R, d, p = plan['n'], fb['batches'], fb['d'], plan['p']
+  31     matrix = [[int(i == j) for j in range(R*n)] for i in range(R*n)]
+  32     for i in range(n):
+  33         for j in range(n):
+  34             edge = sum(fb['u'][i][a]*fb['coupling'][a][b]*fb['v_rows'][b][j]
+  35                        for a in range(d) for b in range(d)) % p
+  36             matrix[i][(R-1)*n+j] = (matrix[i][(R-1)*n+j]-edge) % p
+  37     for r in range(1,R):
+  38         for i in range(n):
+  39             matrix[r*n+i][(r-1)*n+i] = -plan['diagonal'][i] % p
+  40             matrix[r*n+i][(r-1)*n+(i+1)%n] = -plan['weights'][i] % p
+  41     return matrix
+  42 
+  43 
+  44 def expected(plan, fb, injections, initial, base, full_inverse):
+  45     n, R, p = plan['n'], fb['batches'], plan['p']
+  46     forcing = [0]*(R*n)
+  47     for vertex, source in injections:
+  48         values = apply_t(plan, initial[source*n:(source+1)*n])
+  49         for i, value in enumerate(values):
+  50             forcing[vertex*n+i] = (forcing[vertex*n+i]+value) % p
+  51     solution = [sum(a*b for a,b in zip(row, forcing)) % p for row in full_inverse]
+  52     # Independently verify every block equation, including the actual closing edge.
+  53     lhs = [sum(a*b for a,b in zip(row,solution)) % p for row in system(plan,fb)]
+  54     assert lhs == forcing
+  55     result = initial[:]
+  56     for i, value in enumerate(solution):
+  57         result[base+i] = (result[base+i]+value) % p
+  58     return result
+  59 
+  60 
+  61 def pick_feedback(plan,R,d,ports,rng):
+  62     for _ in range(100):
+  63         u = [[rng.randrange(plan['p']) for j in range(d)] for i in range(plan['n'])]
+  64         coupling = [[rng.randrange(plan['p']) for j in range(d)] for i in range(d)]
+  65         try:
+  66             return prepare_ports(plan,R,u,coupling,ports)
+  67         except ValueError as error:
+  68             assert 'singular' in str(error)
+  69     raise AssertionError('could not choose a nonsingular test')
+  70 
+  71 
+  72 def pick_edit(plan,fb,injections,rng):
+  73     for _ in range(100):
+  74         a = [rng.randrange(plan['p']) for _ in range(fb['d'])]
+  75         b = [rng.randrange(plan['p']) for _ in range(fb['d'])]
+  76         try:
+  77             return coupling_edit_word(plan,fb,injections,a,b)
+  78         except ValueError as error:
+  79             assert 'singular' in str(error)
+  80     raise AssertionError('could not choose a nonsingular edit')
+  81 
+  82 
+  83 def main():
+  84     rng = random.Random(731111)
+  85     cases = []
+  86     basis_total = random_total = 0
+  87     for p in (65537,998244353):
+  88         for n in (2,4,8):
+  89             plan = prepare(n,p)
+  90             for R in (1,3):
+  91                 for d in (1,2,3):
+  92                     for port_kind in ('coordinate','shared_krylov'):
+  93                         ports = [(i % n,0) for i in range(d)] if port_kind == 'coordinate' else [(n-1,i) for i in range(d)]
+  94                         fb = pick_feedback(plan,R,d,ports,rng)
+  95                         oracle = dense_inverse(system(plan,fb),p)
+  96                         for mode,injections in (
+  97                                 ('one_root',[(0,0)]),
+  98                                 ('independent_roots',[(r,r) for r in range(R)]),
+  99                                 ('repeated_source',[(0,0),(R-1,0),(R//2,1)])):
+ 100                             word,cost = closure_word(plan,fb,injections)
+ 101                             scalar = expand_scalar(word,p)
+ 102                             assert len(scalar) == cost['scalar_instructions'] == charge(word)['expanded_scalar_instructions']
+ 103                             edit,new,ecost = pick_edit(plan,fb,injections,rng)
+ 104                             escalar = expand_scalar(edit,p)
+ 105                             assert len(escalar) == ecost['scalar_instructions']
+ 106                             new_oracle = dense_inverse(system(plan,new),p)
+ 107                             fresh_new = prepare_ports(plan,R,new['u'],new['coupling'],ports)
+ 108                             assert new['sinv'] == fresh_new['sinv']
+ 109                             assert new['effective'] == fresh_new['effective']
+ 110                             word2,new2,ecost2 = pick_edit(plan,new,injections,rng)
+ 111                             new2_oracle = dense_inverse(system(plan,new2),p)
+ 112                             new_closure,_ = closure_word(plan,new,injections)
+ 113                             base = cost['target_base']
+ 114                             size = base+R*n
+ 115                             for coordinate in range(size):
+ 116                                 initial = [int(i == coordinate) for i in range(size)]
+ 117                                 want = expected(plan,fb,injections,initial,base,oracle)
+ 118                                 got = execute(word,initial,p)
+ 119                                 assert got == want == execute_scalar(scalar,initial,p)
+ 120                                 assert got[:base] == initial[:base]
+ 121                                 assert execute(inverse(word,p),got,p) == initial
+ 122                                 new_want = expected(plan,new,injections,initial,base,new_oracle)
+ 123                                 assert execute(edit,got,p) == new_want == execute_scalar(escalar,got,p)
+ 124                                 assert execute(inverse(edit,p),new_want,p) == got
+ 125                                 assert execute(new_closure,initial,p) == new_want
+ 126                                 basis_total += 1
+ 127                             for _ in range(3):
+ 128                                 initial = [rng.randrange(p) for i in range(size)]
+ 129                                 want = expected(plan,fb,injections,initial,base,oracle)
+ 130                                 assert execute_scalar(scalar,initial,p) == want
+ 131                                 new_want = expected(plan,new,injections,initial,base,new_oracle)
+ 132                                 assert execute_scalar(escalar,want,p) == new_want
+ 133                                 second_want = expected(plan,new2,injections,initial,base,new2_oracle)
+ 134                                 assert execute(word2,new_want,p) == second_want
+ 135                                 random_total += 1
+ 136                             cases.append({'p':p,'n':n,'R':R,'d':d,'port_kind':port_kind,
+ 137                                           'mode':mode,'basis_vectors':size,
+ 138                                           'shared_orbit_steps':fb['shared_orbit_steps'],
+ 139                                           'unshared_orbit_steps':fb['unshared_orbit_steps'],
+ 140                                           'preparation':fb['coefficient_preparation'],
+ 141                                           'initial_cost':cost,'edit_cost':ecost})
+ 142     plan = prepare(4,65537)
+ 143     # Invertible S with a zero first pivot; a row swap is essential.
+ 144     u = [[1,0],[0,1],[0,0],[0,0]]
+ 145     fb = prepare_ports(plan,1,u,[[1,-1],[-1,1]],[(0,0),(1,0)])
+ 146     assert fb['preparation_row_swaps'] == 1
+ 147     singular_rejections = 0
+ 148     try:
+ 149         prepare_ports(plan,1,u,[[1,0],[0,1]],[(0,0),(1,0)])
+ 150     except ValueError as e:
+ 151         assert 'singular' in str(e)
+ 152         singular_rejections += 1
+ 153     else:
+ 154         raise AssertionError('singular initial loop accepted')
+ 155     fb = prepare_ports(plan,1,u,[[0,0],[0,0]],[(0,0),(1,0)])
+ 156     try:
+ 157         coupling_edit_word(plan,fb,[(0,0)],[1,0],[1,0])
+ 158     except ValueError as e:
+ 159         assert 'singular' in str(e)
+ 160         singular_rejections += 1
+ 161     else:
+ 162         raise AssertionError('singular edited loop accepted')
+ 163     invalid_rejections = 0
+ 164     for injections in ([],[(-1,0)],[(1,0)],[(0,-1)],[(0,1.5)]):
+ 165         for call in (lambda:closure_word(plan,fb,injections),
+ 166                      lambda:coupling_edit_word(plan,fb,injections,[0,0],[1,0])):
+ 167             try:
+ 168                 call()
+ 169             except ValueError:
+ 170                 invalid_rejections += 1
+ 171             else:
+ 172                 raise AssertionError('invalid injection accepted')
+ 173     assert coupling_edit_word(plan,fb,[(0,0)],[0,0],[1,0])[0] == []
+ 174     different_root_plan = prepare(4,65537,pow(3,-1,65537))
+ 175     for call in (lambda:closure_word(different_root_plan,fb,[(0,0)]),
+ 176                  lambda:coupling_edit_word(different_root_plan,fb,[(0,0)],[0,0],[1,0])):
+ 177         try:
+ 178             call()
+ 179         except ValueError as e:
+ 180             assert 'mismatch' in str(e)
+ 181         else:
+ 182             raise AssertionError('different-root plan accepted for cached coefficients')
+ 183     # Insertion order is intentionally not register order. A pivot may contain
+ 184     # zero; only its known coefficient is inverted by the reversible compiler.
+ 185     unsorted_fb = pick_feedback(plan,3,2,[(3,0),(3,1)],rng)
+ 186     unsorted_injections = [(2,3),(0,1),(1,3)]
+ 187     unsorted_word,unsorted_cost = closure_word(plan,unsorted_fb,unsorted_injections)
+ 188     unsorted_base = unsorted_cost['target_base']
+ 189     initial = [(17*i+3)%65537 for i in range(unsorted_base+12)]
+ 190     initial[4] = 0
+ 191     unsorted_want = expected(plan,unsorted_fb,unsorted_injections,initial,unsorted_base,
+ 192                             dense_inverse(system(plan,unsorted_fb),65537))
+ 193     assert execute_scalar(expand_scalar(unsorted_word,65537),initial,65537) == unsorted_want
+ 194     edit,unsorted_new,_ = pick_edit(plan,unsorted_fb,unsorted_injections,rng)
+ 195     unsorted_new_want = expected(plan,unsorted_new,unsorted_injections,initial,unsorted_base,
+ 196                                 dense_inverse(system(plan,unsorted_new),65537))
+ 197     assert execute_scalar(expand_scalar(edit,65537),unsorted_want,65537) == unsorted_new_want
+ 198     examples = []
+ 199     for n,R,d in ((32,4,2),(64,4,4),(128,8,4)):
+ 200         plan = prepare(n)
+ 201         ports = [(n-1,i) for i in range(d)]
+ 202         fb = pick_feedback(plan,R,d,ports,rng)
+ 203         for mode,injections in (('one_root',[(0,0)]),('independent_roots',[(r,r) for r in range(R)])):
+ 204             word,cost = closure_word(plan,fb,injections)
+ 205             update,new,ecost = pick_edit(plan,fb,injections,rng)
+ 206             assert cost['scalar_instructions'] == charge(word)['expanded_scalar_instructions']
+ 207             assert ecost['scalar_instructions'] == charge(update)['expanded_scalar_instructions']
+ 208             examples.append({'n':n,'R':R,'d':d,'mode':mode,
+ 209                              'preparation':fb['coefficient_preparation'],
+ 210                              'shared_orbit_steps':fb['shared_orbit_steps'],
+ 211                              'unshared_orbit_steps':fb['unshared_orbit_steps'],
+ 212                              'initial_cost':cost,'edit_cost':ecost})
+ 213     report = {'status':'PASS','cases':len(cases),'full_state_basis_vectors':basis_total,
+ 214               'edit_full_state_basis_vectors':basis_total,'random_full_states':random_total,
+ 215               'second_edit_random_states':random_total,'singular_rejections':singular_rejections,
+ 216               'invalid_injection_rejections':invalid_rejections,'pivot_swap_case':True,
+ 217               'different_root_plan_rejections':2,
+ 218               'unsorted_source_bank_and_zero_pivot_case':True,
+ 219               'scope':'Exact port-feedback reuse; first T calls and coefficient setup charged; no fresh FFT speedup.',
+ 220               'examples':examples,'cases_detail':cases}
+ 221     Path(__file__).with_name('results.json').write_text(json.dumps(report,indent=2)+'\n')
+ 222     print(json.dumps({k:v for k,v in report.items() if k not in ('examples','cases_detail')},indent=2))
+ 223 
+ 224 
+ 225 if __name__ == '__main__':
+ 226     main()
+
+===== SOURCE 16 66a0d95d8059695d66e997b3950602a2365a90eb515e514afe0a1930ed492c0c fft_materials_extension_20261009/fft_qlinear_recurrence_research/qlinear.py | 7059 bytes 147 lines =====
+   1 """Cold exact full DFT for detected first-order q-linear recurrences.
+   2 
+   3 Arithmetic model: exact field calls, including query-dependent inversions.
+   4 This adaptive structural fast path declines arbitrary unstructured inputs.
+   5 """
+   6 from collections import Counter
+   7 
+   8 
+   9 class Counted:
+  10     def __init__(self, field):
+  11         self.field=field; self.zero=field.zero; self.one=field.one
+  12         self.count=Counter()
+  13     def add(self,a,b): self.count['add']+=1; return self.field.add(a,b)
+  14     def sub(self,a,b): self.count['sub']+=1; return self.field.sub(a,b)
+  15     def mul(self,a,b): self.count['mul']+=1; return self.field.mul(a,b)
+  16     def neg(self,a): self.count['neg']+=1; return self.field.neg(a)
+  17     def inv(self,a): self.count['inverse']+=1; return self.field.inv(a)
+  18     def integer(self,a): self.count['integer_embed']+=1; return self.field.integer(a)
+  19 
+  20 
+  21 def stage(c,before):
+  22     return {k:v-before.get(k,0) for k,v in c.count.items() if v!=before.get(k,0)}
+  23 
+  24 
+  25 def null_relation(c,rows,width=4):
+  26     """Streaming elimination, storing at most four rows; returns one kernel."""
+  27     basis=[];seen=0
+  28     for values in rows:
+  29         seen+=1;row=list(values)
+  30         for pivot,known in basis:
+  31             factor=row[pivot]
+  32             if factor!=c.zero:
+  33                 for j in range(pivot,width):row[j]=c.sub(row[j],c.mul(factor,known[j]))
+  34         pivot=next((j for j,v in enumerate(row) if v!=c.zero),None)
+  35         if pivot is None:continue
+  36         scale=c.inv(row[pivot])
+  37         for j in range(pivot,width):row[j]=c.mul(row[j],scale)
+  38         basis.append((pivot,row));basis.sort(key=lambda item:item[0]) # size <=4
+  39         if len(basis)==width:return None,len(basis),seen
+  40     pivot_set={p for p,_ in basis}
+  41     free=next(j for j in range(width) if j not in pivot_set)
+  42     out=[c.zero]*width;out[free]=c.one
+  43     for pivot,row in reversed(basis):
+  44         value=c.zero
+  45         for j in range(pivot+1,width):value=c.add(value,c.mul(row[j],out[j]))
+  46         out[pivot]=c.neg(value)
+  47     return out,len(basis),seen
+  48 
+  49 
+  50 def cycle_solve(c,a,b,rhs):
+  51     """Solve a_i*y_i+b_i*y_(i+1)=rhs_i with <=1 free parameter.
+  52 
+  53 Requires b either identically zero or having at most one zero. In diagonal
+  54 mode a must have at most one zero. All exact degenerate cases are handled.
+  55 Returns particular solution and zero or one kernel vector.
+  56 """
+  57     n=len(a)
+  58     if len(b)!=n or len(rhs)!=n or n<2:raise ValueError('equal cycle lengths required')
+  59     zero_edges=[i for i,v in enumerate(b) if v==c.zero]
+  60     if len(zero_edges)==n:
+  61         out=[c.zero]*n;free=[]
+  62         for i in range(n):
+  63             if a[i]==c.zero:
+  64                 if rhs[i]!=c.zero:raise ValueError('inconsistent diagonal row')
+  65                 free.append(i)
+  66             else:out[i]=c.mul(rhs[i],c.inv(a[i]))
+  67         if len(free)>1:raise ValueError('nullity exceeds supported bound')
+  68         if not free:return out,[]
+  69         kernel=[c.zero]*n;kernel[free[0]]=c.one
+  70         return out,[kernel]
+  71     if len(zero_edges)>1:raise ValueError('more than one broken cycle edge')
+  72     start=(zero_edges[0]+1)%n if zero_edges else 0
+  73     order=[(start+j)%n for j in range(n)]
+  74     alpha=[c.zero]*n;beta=[c.zero]*n;alpha[start]=c.one
+  75     for i,j in zip(order,order[1:]):
+  76         inverse=c.inv(b[i])
+  77         alpha[j]=c.neg(c.mul(c.mul(a[i],alpha[i]),inverse))
+  78         beta[j]=c.mul(c.sub(rhs[i],c.mul(a[i],beta[i])),inverse)
+  79     last=order[-1]
+  80     coefficient=c.add(c.mul(a[last],alpha[last]),b[last])
+  81     constant=c.sub(rhs[last],c.mul(a[last],beta[last]))
+  82     if coefficient==c.zero:
+  83         if constant!=c.zero:raise ValueError('inconsistent cyclic closure')
+  84         return beta,[alpha]
+  85     parameter=c.mul(constant,c.inv(coefficient))
+  86     return [c.add(v,c.mul(u,parameter)) for u,v in zip(alpha,beta)],[]
+  87 
+  88 
+  89 def try_qlinear_fourier(field,n,q,query):
+  90     """Detect P(q^i)x_i+Q(q^i)x_(i+1)=0 for every i<N-1.
+  91 
+  92 P,Q have degree <=1 and are not both zero. All accepted full transforms are
+  93 computed from scratch, including singular transformed recurrence operators.
+  94 """
+  95     if not isinstance(n,int) or isinstance(n,bool) or n<4 or n&(n-1) or len(query)!=n:
+  96         raise ValueError('dyadic N>=4 and all N input coordinates required')
+  97     c=Counted(field);stages={}
+  98     powers=[field.one]
+  99     for _ in range(1,n):powers.append(c.mul(powers[-1],q))
+ 100     if c.mul(powers[-1],q)!=field.one or powers[n//2]==field.one:
+ 101         raise ValueError('q must be a primitive Nth root')
+ 102     stages['root_preparation_and_validation']=dict(c.count)
+ 103     before=dict(c.count)
+ 104     rows=([query[i],c.mul(powers[i],query[i]),query[i+1],c.mul(powers[i],query[i+1])]
+ 105           for i in range(n-1))
+ 106     parameters,rank,seen=null_relation(c,rows)
+ 107     stages['relation_discovery']=stage(c,before)
+ 108     meta=dict(accepted=False,relation_rank=rank,relation_rows_read=seen,
+ 109               stages=stages,field_operations=dict(c.count),full_output_writes=0,
+ 110               paid_anchor_transforms=0,ordinary_fft_calls=0)
+ 111     if parameters is None:
+ 112         meta['reason']='no_first_order_qlinear_relation';return None,meta
+ 113     p0,p1,q0,q1=parameters
+ 114     before=dict(c.count)
+ 115     source_a=[c.add(p0,c.mul(p1,v)) for v in powers]
+ 116     source_b=[c.add(q0,c.mul(q1,v)) for v in powers]
+ 117     residual=[c.add(c.mul(source_a[i],query[i]),c.mul(source_b[i],query[(i+1)%n]))
+ 118               for i in range(n)]
+ 119     if any(v!=field.zero for v in residual[:-1]):raise AssertionError('relation verification failed')
+ 120     # Only the cyclic endpoint can be nonzero; its full DFT is an explicit mode.
+ 121     forcing=[c.mul(residual[-1],powers[-k%n]) for k in range(n)]
+ 122     target_a=[c.add(p0,c.mul(q0,powers[-k%n])) for k in range(n)]
+ 123     target_b=[c.add(p1,c.mul(q1,powers[(-k-1)%n])) for k in range(n)]
+ 124     stages['operators_full_residual_and_forcing']=stage(c,before)
+ 125     before=dict(c.count)
+ 126     result,kernel=cycle_solve(c,target_a,target_b,forcing)
+ 127     stages['target_cyclic_solve']=stage(c,before)
+ 128     constraint_index=None
+ 129     if kernel:
+ 130         before=dict(c.count)
+ 131         _,source_kernel=cycle_solve(c,source_a,source_b,[field.zero]*n)
+ 132         if len(source_kernel)!=1:raise AssertionError('similar operators have different nullity')
+ 133         constraint_index=next(i for i,v in enumerate(source_kernel[0]) if v!=field.zero)
+ 134         h=kernel[0];base=field.zero;scale=field.zero
+ 135         for k in range(n):
+ 136             phase=powers[(-k*constraint_index)%n]
+ 137             base=c.add(base,c.mul(phase,result[k]))
+ 138             scale=c.add(scale,c.mul(phase,h[k]))
+ 139         if scale==field.zero:raise AssertionError('source coordinate fails to separate kernel')
+ 140         parameter=c.mul(c.sub(c.mul(c.integer(n),query[constraint_index]),base),c.inv(scale))
+ 141         result=[c.add(v,c.mul(parameter,u)) for v,u in zip(result,h)]
+ 142         stages['source_kernel_and_input_constraint']=stage(c,before)
+ 143     meta.update(accepted=True,parameters=parameters,field_operations=dict(c.count),
+ 144                 full_output_writes=n,endpoint_defect_nonzero=residual[-1]!=field.zero,
+ 145                 target_nullity=len(kernel),constraint_index=constraint_index,
+ 146                 full_source_rows_verified=n)
+ 147     return result,meta
+
+===== SOURCE 17 b7e8a5d7efba6336cc591f98b34f902336f6cf658a4cf42911aaa412ad99ccbc fft_materials_extension_20261009/fft_qlinear_recurrence_research/run_audit.py | 4262 bytes 87 lines =====
+   1 import json
+   2 from pathlib import Path
+   3 import random
+   4 
+   5 from exact_fields import PrimeField,CyclotomicField,fourier,mv
+   6 from qlinear import Counted,cycle_solve,try_qlinear_fourier
+   7 
+   8 
+   9 def encoded(field,v):
+  10     if isinstance(v,dict):return {k:encoded(field,x) for k,x in v.items()}
+  11     if isinstance(v,list):return [encoded(field,x) for x in v]
+  12     if isinstance(v,tuple):return field.encode(v)
+  13     return v
+  14 
+  15 
+  16 def main():
+  17     rng=random.Random(20261009);accepted=declined=singular=0;rows=[]
+  18     fields=[(PrimeField(p),n) for p in (97,65537,998244353) for n in (4,8,16,32)]
+  19     fields += [(CyclotomicField(n),n) for n in (4,8)]
+  20     for f,n in fields:
+  21         q=f.root(n);F=fourier(f,n)
+  22         fixtures=[('zero',[f.zero]*n)]
+  23         for j in range(n):
+  24             x=[f.zero]*n;x[j]=f.one;fixtures.append(('basis',x))
+  25         for t in range(min(n,5)):
+  26             fixtures.append(('geometric',[f.power(q,t*i) for i in range(n)]))
+  27         fixtures.append(('chirp',[f.power(q,i*(i-1)//2) for i in range(n)]))
+  28         for sample in range(5):
+  29             for attempt in range(100):
+  30                 pars=[f.integer(rng.randrange(1,40)) for _ in range(4)]
+  31                 den=[f.add(pars[2],f.mul(pars[3],f.power(q,i))) for i in range(n-1)]
+  32                 if all(v!=f.zero for v in den):break
+  33             x=[f.integer(sample+1)]
+  34             for i in range(n-1):
+  35                 a=f.add(pars[0],f.mul(pars[1],f.power(q,i)))
+  36                 x.append(f.neg(f.mul(f.mul(a,x[-1]),f.inv(den[i]))))
+  37             fixtures.append(('linear_fractional_ratio',x))
+  38         details=[]
+  39         for name,x in fixtures:
+  40             observed=Counted(f)
+  41             y,meta=try_qlinear_fourier(observed,n,q,x)
+  42             assert meta['accepted'] and y==mv(f,F,x),(n,name,meta)
+  43             assert dict(observed.count)==meta['field_operations']
+  44             summed={}
+  45             for ledger in meta['stages'].values():
+  46                 for key,val in ledger.items():summed[key]=summed.get(key,0)+val
+  47             assert summed==meta['field_operations']
+  48             accepted+=1;singular+=meta['target_nullity']
+  49             details.append(dict(kind=name,dense=all(v!=f.zero for v in x),metadata=encoded(f,meta)))
+  50         for _ in range(6):
+  51             x=[f.integer(rng.randrange(100)) for _ in range(n)]
+  52             observed=Counted(f)
+  53             y,meta=try_qlinear_fourier(observed,n,q,x)
+  54             assert dict(observed.count)==meta['field_operations']
+  55             if y is None:
+  56                 assert meta['relation_rank']==4;declined+=1
+  57             else:
+  58                 assert y==mv(f,F,x);accepted+=1;singular+=meta['target_nullity']
+  59         rows.append(dict(n=n,field=getattr(f,'p',f'Q(zeta_{n})'),cases=details))
+  60 
+  61     # Focused cycle edge controls, with an independent known solution.
+  62     f=PrimeField(97);c=Counted(f);n=8;x=list(range(1,n+1));cycle_cases=0
+  63     for a,b in [([1]*n,[2]*n),([1]*n,[96]*n),
+  64                 ([0]+[1]*(n-1),[2]*n),([1]*n,[0]+[2]*(n-1)),
+  65                 ([1]*n,[0]*n),([0]+[1]*(n-1),[0]*n),
+  66                 ([0]+[1]*(n-1),[0]+[2]*(n-1)),
+  67                 ([0]+[1]*(n-1),[2,0]+[2]*(n-2))]:
+  68         rhs=[f.add(f.mul(a[i],x[i]),f.mul(b[i],x[(i+1)%n])) for i in range(n)]
+  69         p,kernels=cycle_solve(c,a,b,rhs)
+  70         assert [f.add(f.mul(a[i],p[i]),f.mul(b[i],p[(i+1)%n])) for i in range(n)]==rhs
+  71         for h in kernels:assert all(f.add(f.mul(a[i],h[i]),f.mul(b[i],h[(i+1)%n]))==0 for i in range(n))
+  72         cycle_cases+=1
+  73     invalid=0
+  74     for n,q,x in [(2,96,[0]*2),(8,1,[0]*8),(8,2,[0]*8),(8,33,[0]*7)]:
+  75         try:try_qlinear_fourier(f,n,q,x)
+  76         except ValueError:invalid+=1
+  77         else:raise AssertionError('bad root/shape accepted')
+  78 
+  79     report=dict(status='PASS',accepted_exact_full_outputs=accepted,declined_unstructured=declined,
+  80                 singular_reconstructions=singular,cycle_edge_controls=cycle_cases,
+  81                 invalid_root_or_shape_controls=invalid,field_size_configurations=len(rows),cases=rows,
+  82                 scope='Fresh inputs with verified degree-one q-recurrence; adaptive exact-field model; no universal FFT improvement.')
+  83     Path(__file__).with_name('results.json').write_text(json.dumps(report,indent=2)+'\n')
+  84     print(json.dumps({k:v for k,v in report.items() if k!='cases'},indent=2))
+  85 
+  86 
+  87 if __name__=='__main__':main()

@@ -1,0 +1,206 @@
+"""Independent raw-signal construction and slow-reference audit for Hero #17.
+
+No call to the package's fixture generators or FFT/NTT algorithms in
+independent reference calculations. Tests are finite checks, NOT a proof
+of external algorithmic novelty or numerical stability.
+"""
+import json,random,time
+from math import comb,gcd
+from pathlib import Path
+import multishear_union as orbit
+import shear_gauge_union as gauge
+from delta_graph import direct_row_dft
+
+SEED=17172026
+rng=random.Random(SEED)
+HERE=Path(__file__).parent
+
+
+def primitive_n_root(n,p):
+    assert (p-1)%n==0
+    factors=[];v=n;i=2
+    while i*i<=v:
+        if v%i==0:
+            factors.append(i)
+            while v%i==0:v//=i
+        i+=1
+    if v>1:factors.append(v)
+    for b in range(2,p):
+        w=pow(b,(p-1)//n,p)
+        if pow(w,n,p)==1 and all(pow(w,n//f,p)!=1 for f in factors):return w
+    raise AssertionError('root missing')
+
+
+def roots_of_order(n,w,p):
+    roots=[1]*n
+    for i in range(1,n):roots[i]=roots[i-1]*w%p
+    assert roots[-1]*w%p==1
+    return roots
+
+
+def ref_dft(x,p,omega,selected=None):
+    n=len(x)
+    powers=roots_of_order(n,omega,p)
+    if selected is None:selected=range(n)
+    # Deliberately compute each k/j coefficient independently.
+    return {k:sum((x[j]%p)*powers[(-j*k)%n] for j in range(n))%p
+            for k in selected}
+
+
+def nondegenerate_base(m,p,eta):
+    powers=roots_of_order(m,eta,p)
+    for _ in range(1000):
+        b=[rng.randrange(p) for _ in range(m)]
+        if all(sum(b[u]*powers[(-h*u)%m] for u in range(m))%p
+               for h in range(m)):
+            return b
+    raise AssertionError('nondegenerate base impossible')
+
+
+def distinct_cosets(p,m,eta,g):
+    subgroup={pow(eta,e,p) for e in range(m)}
+    candidates=[]
+    for value in range(2,p):
+        if all(value*pow(previous,-1,p)%p not in subgroup for previous in candidates):
+            candidates.append(value)
+            if len(candidates)==g:return candidates
+    raise AssertionError('not enough cosets')
+
+
+def raw_multi_fixture(n,q,p,w,g):
+    m=n//q
+    eta=pow(w,q,p)
+    scalars=distinct_cosets(p,m,eta,g)
+    params=[(j+1,scalars[j],nondegenerate_base(m,p,eta)) for j in range(g)]
+    x=[0]*n
+    for t in range(q):
+        for u in range(m):
+            val=0
+            for a,mu,b in params:
+                val+=pow(mu,t,p)*b[(u-a*t)%m]
+            x[t+q*u]=val%p
+    return x,params
+
+
+def raw_shear_fixture(n,q,p,w,d,first_noise=1,after_noise=1):
+    m=n//q
+    eta=pow(w,q,p)
+    subroots=roots_of_order(m,eta,p)
+    a=rng.randrange(m)
+    mu=rng.randrange(1,p)
+    initial=[nondegenerate_base(m,p,eta)]
+    for t in range(1,d):
+        initial.append(initial[0][:] if t==1 else [rng.randrange(p) for _ in range(m)])
+    v=[row[:] for row in initial]
+    R=0
+    for t in range(d,q):
+        count=first_noise if t==1 else after_noise
+        frequencies=rng.sample(range(m),min(count,m))
+        events=[(h,rng.randrange(1,p)) for h in frequencies]
+        R+=len(events)
+        row=[]
+        for u in range(m):
+            delta=sum(c*subroots[(h*u)%m] for h,c in events)
+            history=sum((-1)**(j+1)*comb(d,j)*v[t-j][u]
+                        for j in range(1,d+1))
+            row.append((history+delta)%p)
+        v.append(row)
+    x=[0]*n
+    for t in range(q):
+        scale=pow(mu,t,p)
+        for u in range(m):
+            x[t+q*u]=scale*v[t][(u-a*t)%m]%p
+    return x,a,mu,R
+
+
+def main():
+    t0=time.perf_counter()
+    counts={k:0 for k in ('multi_full_vectors','multi_full_bins','gauge_full_vectors',
+                         'gauge_full_bins','random_dense_rejects','random_dense_checked',
+                         'large_spot_bins_multi','large_spot_bins_gauge')}
+    multi_cases=[(64,8,998244353),(72,8,1009),(144,12,1009),
+                 (256,16,998244353),(1024,32,998244353)]
+    # Many small full reference comparisons, not only spot checks.
+    for n,q,p in multi_cases:
+        w=primitive_n_root(n,p)
+        gs=[1,2,3] if q>=6 else [1,2]
+        repetitions=8 if n<=256 else 3
+        for g in gs:
+            for _ in range(repetitions):
+                x,params=raw_multi_fixture(n,q,p,w,g)
+                cert=orbit.recognize(x,p,w,g,q)
+                assert cert is not None,(n,q,g,'orbit rejected')
+                recovered={(o.shift,o.scalar):list(o.base) for o in cert.orbits}
+                for a,mu,b in params:assert recovered[(a,mu)]==b
+                out=orbit.transform_certified(cert)
+                ref=ref_dft(x,p,w)
+                assert all(out[k]==v for k,v in ref.items()),(n,g,'orbit mismatch')
+                counts['multi_full_vectors']+=1
+                counts['multi_full_bins']+=n
+    gauge_cases=[(64,8,998244353),(72,8,1009),(144,12,1009),
+                 (256,16,998244353),(1024,32,998244353)]
+    for n,q,p in gauge_cases:
+        w=primitive_n_root(n,p)
+        reps=8 if n<=256 else 3
+        for d in (1,2,3,4):
+            for _ in range(reps):
+                x,a,mu,R=raw_shear_fixture(n,q,p,w,d)
+                cert=gauge.recognize(x,p,w,d,max(q,R),q)
+                assert cert is not None,(n,d,'gauge rejected')
+                assert (cert.shear,cert.scalar)==(a,mu)
+                out=gauge.transform_certified(cert)
+                ref=ref_dft(x,p,w)
+                assert all(out[k]==v for k,v in ref.items()),(n,d,'gauge mismatch')
+                counts['gauge_full_vectors']+=1
+                counts['gauge_full_bins']+=n
+    # Dense unknown inputs: rejection is expected (but accepted must be correct).
+    for n,q,p in [(64,8,998244353),(72,8,1009),(256,16,998244353)]:
+        w=primitive_n_root(n,p)
+        for _ in range(100):
+            x=[rng.randrange(p) for _ in range(n)]
+            for g in [1,2,3]:
+                cert=orbit.recognize(x,p,w,g,q)
+                counts['random_dense_checked']+=1
+                if cert is None:counts['random_dense_rejects']+=1
+                else:
+                    res=orbit.transform_certified(cert)
+                    ref=ref_dft(x,p,w)
+                    assert all(res[k]==v for k,v in ref.items())
+
+    # Full explicit N=65536 outputs; independent direct checks of selected bins.
+    n=65536;q=256;p=998244353;w=primitive_n_root(n,p)
+    x,params=raw_multi_fixture(n,q,p,w,4)
+    cert=orbit.recognize(x,p,w,4,q)
+    assert cert is not None,'large multi rejected'
+    full,counters_multi=orbit.transform_certified(cert,True)
+    selected=[0,1,2,3,5,6,7,8,13,17,31,43,63,64,127,128,255,256,257,
+              511,512,513,1009,1023,1024,4095,4096,8191,10007,16383,16384,
+              32767,32768,50001,65534,65535]
+    independent=ref_dft(x,p,w,selected)
+    assert all(full[k]==v for k,v in independent.items())
+    counts['large_spot_bins_multi']=len(selected)
+
+    x,a,mu,R=raw_shear_fixture(n,q,p,w,3,first_noise=1,after_noise=1)
+    cert=gauge.recognize(x,p,w,3,q,q)
+    assert cert is not None,'large gauge rejected'
+    full,counters_gauge=gauge.transform_certified(cert,True)
+    independent=ref_dft(x,p,w,selected)
+    assert all(full[k]==v for k,v in independent.items())
+    counts['large_spot_bins_gauge']=len(selected)
+
+    output={
+        'seed':SEED,'date':'2026-10-10','model':'F_p, p>N, supplied primitive root',
+        'independent_checks':counts,'large_n_multi_counters':counters_multi,
+        'large_n_gauge_counters':counters_gauge,
+        'seconds_python':round(time.perf_counter()-t0,3),
+        'important_exclusions':[
+            'No all-input exact O(N) FFT','No faster arbitrary integer multiplication',
+            'No floating-point conditioning guarantee','No demonstrated novelty priority',
+            'No quantum classical-output acceleration','No uncharged lookup or oracle'],
+    }
+    (HERE/'AUDIT_RESULTS.json').write_text(json.dumps(output,indent=2)+'\n')
+    print(json.dumps(output,indent=2))
+    return output
+
+
+if __name__=='__main__':main()

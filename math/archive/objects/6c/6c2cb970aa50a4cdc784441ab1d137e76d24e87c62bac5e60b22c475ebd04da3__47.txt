@@ -1,0 +1,132 @@
+   1 #!/usr/bin/env python3
+   2 """Audit the tempting direct extension from prime powers to composite moduli.
+   3 
+   4 For N=K*M with K>=M, use the same unit-step row but draw a uniformly from
+   5 Z_N^*.  The decoder still has one cycle, but the covariance need not be a
+   6 scaled projector.  This script evaluates the exact normalized Ramanujan-sum
+   7 covariance and records counterexamples.
+   8 """
+   9 from __future__ import annotations
+  10 
+  11 import argparse
+  12 import json
+  13 import math
+  14 from pathlib import Path
+  15 
+  16 import numpy as np
+  17 
+  18 
+  19 def euler_phi(n: int) -> int:
+  20     result = n
+  21     x = n
+  22     p = 2
+  23     while p * p <= x:
+  24         if x % p == 0:
+  25             while x % p == 0:
+  26                 x //= p
+  27             result -= result // p
+  28         p += 1
+  29     if x > 1:
+  30         result -= result // x
+  31     return result
+  32 
+  33 
+  34 def mobius(n: int) -> int:
+  35     if n == 1:
+  36         return 1
+  37     x = n
+  38     count = 0
+  39     p = 2
+  40     while p * p <= x:
+  41         if x % p == 0:
+  42             x //= p
+  43             count += 1
+  44             if x % p == 0:
+  45                 return 0
+  46             while x % p == 0:
+  47                 x //= p
+  48         p += 1
+  49     if x > 1:
+  50         count += 1
+  51     return -1 if count % 2 else 1
+  52 
+  53 
+  54 def normalized_ramanujan(n: int, c: int) -> float:
+  55     g = math.gcd(n, c)
+  56     q = n // g
+  57     return mobius(q) / euler_phi(q)
+  58 
+  59 
+  60 def covariance(n: int, m: int) -> np.ndarray:
+  61     if n % m or n // m < m:
+  62         raise ValueError("need N=K*M and K>=M")
+  63     displacement = [{u - t for t in range(m) if t != u} for u in range(m)]
+  64     q = np.zeros((n, n), dtype=np.float64)
+  65     for i in range(n):
+  66         u = i % m
+  67         for j in range(n):
+  68             up = j % m
+  69             q[i, j] = sum(
+  70                 normalized_ramanujan(n, d * (j - i))
+  71                 for d in displacement[u].intersection(displacement[up])
+  72             ) / n
+  73     return q
+  74 
+  75 
+  76 def is_prime_power(n: int) -> bool:
+  77     for p in range(2, int(math.sqrt(n)) + 2):
+  78         if n % p:
+  79             continue
+  80         x = n
+  81         while x % p == 0:
+  82             x //= p
+  83         return x == 1
+  84     return True  # prime
+  85 
+  86 
+  87 def main() -> None:
+  88     parser = argparse.ArgumentParser()
+  89     parser.add_argument("--output", type=Path, default=Path("composite_modulus_results.json"))
+  90     args = parser.parse_args()
+  91 
+  92     cases = [(12, 2), (12, 3), (18, 3), (20, 4), (30, 3), (30, 5),
+  93              (36, 6), (42, 6), (45, 5), (60, 5), (60, 6), (72, 8)]
+  94     records: list[dict[str, object]] = []
+  95     for n, m in cases:
+  96         q = covariance(n, m)
+  97         eig = np.linalg.eigvalsh(q)
+  98         positive = eig[eig > 1e-10]
+  99         target = m / n
+ 100         records.append(
+ 101             {
+ 102                 "N": n,
+ 103                 "K": n // m,
+ 104                 "M": m,
+ 105                 "prime_power": is_prime_power(n),
+ 106                 "trace": float(eig.sum()),
+ 107                 "expected_trace": m - 1,
+ 108                 "operator_norm": float(eig[-1]),
+ 109                 "prime_power_target_M_over_N": target,
+ 110                 "norm_ratio_to_M_over_N": float(eig[-1] / target),
+ 111                 "positive_eigenvalue_min": float(positive.min()),
+ 112                 "positive_eigenvalue_max": float(positive.max()),
+ 113                 "positive_eigenvalue_spread": float(positive.max() - positive.min()),
+ 114                 "numerical_rank": int(positive.size),
+ 115             }
+ 116         )
+ 117 
+ 118     payload = {
+ 119         "status": "DIRECT_PROJECTOR_EXTENSION_REJECTED",
+ 120         "statement": (
+ 121             "For non-prime-power moduli the decoder remains one-cycle when a is a unit, "
+ 122             "but the covariance generally has several positive eigenvalues and its norm "
+ 123             "can exceed M/N."
+ 124         ),
+ 125         "records": records,
+ 126     }
+ 127     args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+ 128     print("PASS: recorded exact-Ramanujan composite counterexamples")
+ 129 
+ 130 
+ 131 if __name__ == "__main__":
+ 132     main()

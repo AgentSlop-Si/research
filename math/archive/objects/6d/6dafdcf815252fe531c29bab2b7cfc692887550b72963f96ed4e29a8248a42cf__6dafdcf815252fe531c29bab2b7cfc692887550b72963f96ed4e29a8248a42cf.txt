@@ -1,0 +1,35 @@
+"""Exact F_p covariance rank check for Fourier candidate S_N.
+
+If FZ=DF, covariance rank is zero. For an attempted rank-r correction E,
+rank(EZ-DE)<=2r, thus r>=ceil(rank(SZ-DS)/2). This certifies individual
+finite instances only; it does not bound products of stages.
+"""
+import json
+from unitary_mixer import MOD,rank_mod,UnitaryGreenMixer
+from haar_adapter_mod import HaarEscapeMixerMod
+
+
+def covariance_matrix(stage):
+    n=stage.n
+    assert (MOD-1)%n==0
+    omega=pow(3,(MOD-1)//n,MOD)
+    assert pow(omega,n,MOD)==1
+    a=stage.dense()
+    return [[(a[k][(j+1)%n]-pow(omega,k,MOD)*a[k][j])%MOD
+             for j in range(n)] for k in range(n)]
+
+
+def run():
+    rows=[]
+    for n in (8,16,32,64,128):
+        for variant in ('green_tree','haar_adapter'):
+            stage=(UnitaryGreenMixer(n,p=MOD,seed=5031+n) if variant=='green_tree'
+                   else HaarEscapeMixerMod(n,seed=5031+n))
+            D=covariance_matrix(stage)
+            r=rank_mod(D,MOD)
+            rows.append(dict(n=n,variant=variant,exact_covariance_rank=r,
+                             rank_correction_lower_bound=(r+1)//2,
+                             correction_is_for_this_one_stage_only=True))
+    return rows
+
+if __name__=='__main__':print(json.dumps(run(),indent=2))

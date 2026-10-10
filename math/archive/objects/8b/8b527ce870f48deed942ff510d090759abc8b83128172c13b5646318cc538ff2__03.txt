@@ -1,0 +1,34 @@
+   1 #!/usr/bin/env python3
+   2 """Data-only integrity checks. No uploaded Python is imported or executed."""
+   3 from pathlib import Path
+   4 import hashlib,json,zipfile
+   5 H=Path(__file__).resolve().parent
+   6 S=H/'extracted'/'fft_hero0_phase10_learned_rational'
+   7 def digest(b): return hashlib.sha256(b).hexdigest()
+   8 records=[]
+   9 for name,meta in json.loads((S/'SHA256SUMS.json').read_text()).items():
+  10     b=(S/name).read_bytes()
+  11     assert len(b)==meta['bytes'] and digest(b)==meta['sha256'],name
+  12     records.append({'file':name,'bytes':len(b),'sha256':digest(b)})
+  13 identities=json.loads((H/'SOURCE_IDENTITIES.json').read_text())
+  14 for item in identities:
+  15     b=(H/'originals'/item['filename']).read_bytes()
+  16     assert len(b)==item['bytes'] and digest(b)==item['sha256']
+  17 assert (H/'originals/THEOREMS.md').read_bytes()==(S/'THEOREMS.md').read_bytes()==(H/'THEOREMS.md').read_bytes()
+  18 prior=(S/'prior_phase9_bundle.zip').read_bytes()
+  19 assert prior==(H/'inherited_reference/prior_phase9_bundle.zip').read_bytes()
+  20 assert digest(prior)=='30de2a8cdef3d1d03f76b4bc271c9bbf993650e3dc88d464ee43fb6687a836ff'
+  21 with zipfile.ZipFile(H/'originals/fft_hero0_phase10_learned_rational_2026-10-10.zip') as z:
+  22     members=0
+  23     for i in z.infolist():
+  24         if i.is_dir():continue
+  25         p=Path(i.filename)
+  26         assert not p.is_absolute() and '..' not in p.parts
+  27         assert z.read(i)==(H/'extracted'/p).read_bytes()
+  28         members+=1
+  29 out={'source_manifest_files_verified':len(records),'archive_members_verified':members,
+  30      'text_byte_identical':True,'inherited_phase9_byte_identical':True,
+  31      'inherited_phase9_sha256':digest(prior),'manifest_records':records,
+  32      'uploaded_code_executed':False}
+  33 (H/'INTEGRITY_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+  34 print(json.dumps({k:v for k,v in out.items() if k!='manifest_records'},indent=2))

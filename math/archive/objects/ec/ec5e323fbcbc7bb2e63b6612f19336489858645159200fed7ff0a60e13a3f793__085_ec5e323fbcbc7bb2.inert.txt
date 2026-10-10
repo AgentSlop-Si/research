@@ -1,0 +1,38 @@
+Focused prior-art check: cross-block recurrence batching
+Checked 2026-10-09. Exact field-arithmetic model; all N outputs, k = Theta(log N), preprocessing charged.
+
+Bottom line
+The checked structured-matrix batching theorems do not supply the requested o(N log k) bound. This is a statement about the particular theorems below, not an impossibility result or a novelty claim. An exact match exists for the proposed missing-half-grid operator: standard FFT doubling, explicitly used by Bostan–Mori.
+
+1. Bostan–Jeannerod–Mouilleron–Schost (2017), On matrices with displacement structure: generalized operators and faster algorithms
+Primary full paper: https://mathexp.eu/bostan/publications/BoJeMoSc17.pdf
+Theorem 1.1, pp. 740–741 (PDF pp. 8–9), treats A in F^(m x n) from a displacement generator of length a, multiplied by B in F^(n x b). The operator is invertible and built from block-companion families of monic, nonconstant polynomials, pairwise coprime within each family. Define p=max(m,n), a'=min(a,b), b'=max(a,b). Its bound is
+O((b'/a') M'_mat(p/a',a') + D(P,Q) + b' C(P,Q)).
+For a=1, M'_mat(p,1)=M(p), leaving b M(p) plus conversion/setup terms. Thus its matrix-multiplication acceleration does not gain an asymptotic factor just by increasing b in the rank-one case. Theorem 1.2 simplifies conversion costs for its special geometric/binomial operator configurations; even the simplified bound is O(b M(p)) at a=1. Lemmas 2.1–2.2 explicitly charge preprocessing of CRT/recombination maps.
+Application is an inference: block multiplication by a fixed Toeplitz convolution operator has constant displacement rank, so these formulas do not remove the per-block M(k) term. Arbitrary subsets of N-th roots should not be confused with a consecutively indexed geometric progression of k nodes.
+
+2. De Sa–Gu–Puttagunta–Ré–Rudra, A Two-Pronged Progress in Structured Dense Matrix-Vector Multiplication (SODA 2018)
+Primary full paper: https://arxiv.org/pdf/1611.01569
+Theorem 1.5 / 4.4: recurrence width t admits O(t^omega M(n) log n) preprocessing and O(t^2 M(n) log n) matrix-vector work. Section 5.4 / Corollary 5.2 handles rectangular matrices and explicitly separates recurrence-side work from Krylov multiplication. Section 5.6 specifically discusses batching A^T B: replace the t^2 factor by the cost of t x t by t x b matrix multiplication. Its stated amortized improvement is from t^2 to about t^(omega-1) per vector for large b. At constant width, that removes no logarithmic transform factor; preprocessing also remains explicit. This source therefore supplies relevant batching machinery, but its displayed bounds do not establish the target.
+
+3. Bostan–Mori, A Simple and Fast Algorithm for Computing the N-th Term of a Linearly Recurrent Sequence (2020 preprint / 2021 publication)
+Primary full paper: https://specfun.inria.fr/bostan/BoMo20.pdf
+Exact relevant location: section 4.3, Algorithm 10 (PDF pp. 23–24); section 4.4 (pp. 24–25).
+Algorithm UP takes only a length-n DFT of a polynomial of degree < n. It computes IDFT_n, twists coefficient i by omega_(2n)^(-i), computes DFT_n, then interleaves the original values with the new half-grid values. The stated cost is 2 E(n)+n. Section 4.4 obtains an even/odd child's shorter spectrum in O(n), then applies UP to recover the needed full spectrum. Their footnote calls this FFT doubling and does not confidently attribute its original invention.
+Inference: the operator derived in this pass F_L diag(alpha^j) F_L^-1 is this half-grid-extension step, up to sign convention. The dense-circulant formula and E^2 shift identity may be useful algebraic rewritings, but the operation itself is established prior art. No evidence was found here for a batched UP bound below O(b L log L).
+
+4. Joris van der Hoeven, Optimizing the half-gcd algorithm
+Primary paper: https://www.texmacs.org/joris/gcd/gcd.pdf
+Section 2.1 (PDF p. 3) names FFT doubling explicitly. If coefficients of P and its half-length transform are available, the missing values are the half-length DFT of P(omega_n x) mod (x^(n/2)-1), taking F(n/2)+O(n). This is not inconsistent with Bostan–Mori's 2E(n)+n: the latter starts from the spectrum alone and first recovers coefficients.
+
+5. Joris van der Hoeven, Newton's method and FFT trading (2010)
+Primary author version: https://www.texmacs.org/joris/fnewton/fnewton_bis.html
+DOI: https://doi.org/10.1016/j.jsc.2010.03.005
+FFT trading means replacing later Newton steps with lazy/relaxed work on FFT-transformed blocks, exploiting reuse. The paper distinguishes the related term FFT caching (Bernstein). It gives improved constants and order dependence for formal-series operations. Do not use “FFT trading” as a synonym for the specific UP/half-grid extension above.
+
+Thin rectangular multiplication caveat
+Brockett–Dobkin's 1976 primary abstract states n^2+o(n^2) multiplications for n x p by p x n, p <= log_2 n, requiring multiplication/division by 2. It does not in that abstract promise total arithmetic cost.
+Original: https://epubs.siam.org/doi/10.1137/0205041
+1978 erratum exists: https://epubs.siam.org/doi/10.1137/0207021
+Coppersmith 1982 explicitly cites it as a tensor-rank result: https://theory.stanford.edu/~virgi/cs367/papers/copper-rect1.pdf
+A 2024 retrospective loosely describes it as arithmetic operations; do not accept that wording over the original without auditing additions. See BATCHING_COSTS.txt for the additional erratum check and the limits of the verified complexity statement. No sub-N log k total-operation realization is established here.

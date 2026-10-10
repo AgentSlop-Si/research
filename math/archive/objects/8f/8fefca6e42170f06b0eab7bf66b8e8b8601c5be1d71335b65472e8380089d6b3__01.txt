@@ -1,0 +1,95 @@
+1: from collections import deque
+2: import unittest
+3: from unittest.mock import patch
+4: import numpy as np
+5: from scipy import fft
+6: from projected_circuit import ProjectedCircuit
+7: from algebra_projection import import_algebra,prepare_projected_jet
+8: from baseline_sum_product_v8.algebra_fft import AlgebraFFT,DegreeExceeded
+9: from multi_view import SharedProjectedFourierStore
+10: from view_optimizer import AdaptiveSpectralOrganizer
+11: from test_replay_repairs import Counted
+12: 
+13: 
+14: class AlgebraIntegration(unittest.TestCase):
+15:     def test_import_and_repeated_leaf_jet_without_transforms(self):
+16:         rng=np.random.default_rng(929)
+17:         for n in (17,64):
+18:             x=rng.normal(size=n)*.01;x[0]+=1
+19:             b=rng.normal(size=n)*.01
+20:             src=AlgebraFFT(n)
+21:             a,bb=src.signal(x),src.signal(b)
+22:             root=src.add(src.mul(a,a,a),src.scale(src.mul(a,bb),2),src.impulse(5,.25))
+23:             bins=[0,1,n//2,n-1]
+24:             with (patch.object(fft,'rfft',side_effect=AssertionError('no forward transform')),
+25:                   patch.object(fft,'irfft',side_effect=AssertionError('no inverse transform'))):
+26:                 target=ProjectedCircuit(n,bins)
+27:                 node=import_algebra(src,[root],target)[0]
+28:                 jet=prepare_projected_jet(src,root,a,bins)
+29:             base=fft.fft(x)**3+2*fft.fft(x)*fft.fft(b)+.25*np.exp(-2j*np.pi*np.arange(n)*5/n)
+30:             np.testing.assert_allclose(target.query(node),base[bins],atol=2e-12)
+31:             self.assertEqual(jet.degree,3)
+32:             self.assertEqual(jet.coefficients.nbytes,4*len(bins)*16)
+33:             edits=[(3,.02),(7,-.01),(3,.01)]
+34:             revised=x.copy()
+35:             for p,d in edits:revised[p]+=d
+36:             expected=fft.fft(revised)**3+2*fft.fft(revised)*fft.fft(b)+.25*np.exp(-2j*np.pi*np.arange(n)*5/n)
+37:             np.testing.assert_allclose(jet.many(edits),expected[bins],atol=2e-12)
+38: 
+39:     def test_degree_guard_and_empty_edits(self):
+40:         src=AlgebraFFT(8);a=src.signal(np.arange(8)/8)
+41:         root=src.mul(a,a,a,a,a)
+42:         with self.assertRaises(DegreeExceeded):prepare_projected_jet(src,root,a,[0,1])
+43:         jet=prepare_projected_jet(src,root,a,[0,1],max_degree=5)
+44:         np.testing.assert_allclose(jet.many([]),fft.fft(np.arange(8)/8)[[0,1]]**5)
+45: 
+46: 
+47: class OptimizerRepairs(unittest.TestCase):
+48:     def make(self,budget=100000):
+49:         store=SharedProjectedFourierStore(32,[0,1,2],np.ones((8,3)),
+50:                      {'a':[0,1],'b':[1,2]},promote_after=None)
+51:         opt=AdaptiveSpectralOrganizer(store,max_group_cache_bytes=budget,partition_history_limit=3)
+52:         opt.groups.clear();opt.member_group.clear()
+53:         g=opt._install_group(('a','b'),sync=1,overlap=4/3,benefit=4/3)
+54:         opt._all_singletons=False;opt._seed_from_member_caches(g);opt._touch_group_cache(g)
+55:         return store,opt,g
+56: 
+57:     def test_group_reads_only_unread_tail(self):
+58:         s,o,g=self.make()
+59:         for _ in range(10000):s.add_coefficient(0,.125)
+60:         o._group_query(g,'a')
+61:         s.events=Counted(s.events)
+62:         s.add_coefficient(0,1)
+63:         np.testing.assert_allclose(o._group_query(g,'a'),[1251,1251])
+64:         self.assertEqual(s.events.visits,1)
+65: 
+66:     def test_group_publishes_only_requested_view(self):
+67:         s,o,g=self.make();s.add_coefficient(0,1)
+68:         o._group_query(g,'a')
+69:         self.assertEqual(o.stats.published_bins,2)
+70:         self.assertNotEqual(s.views['b'].version,s.version)
+71:         o._group_query(g,'b')
+72:         self.assertEqual(o.stats.published_bins,4)
+73:         np.testing.assert_allclose(s.views['b'].cached,[1,1])
+74: 
+75:     def test_zero_budget_fallback_and_bounded_diagnostics(self):
+76:         s,o,g=self.make(0)
+77:         for _ in range(20):
+78:             o.add_coefficient(0,.125);np.testing.assert_allclose(o.query('a'),s.query('a'))
+79:             o.replan()
+80:         self.assertEqual(o.memory_report()['group_cache_bytes'],0)
+81:         self.assertLessEqual(len(o.stats.partitions),3)
+82:         self.assertGreater(o.stats.planning_ns,0)
+83: 
+84:     def test_budget_eviction_and_missing_history(self):
+85:         s,o,g=self.make(48)
+86:         other=o._install_group(('a',),sync=1,overlap=1,benefit=1)
+87:         other.cached=np.ones(2,dtype=complex);other.version=s.version;o._touch_group_cache(other)
+88:         self.assertIsNone(g.cached)
+89:         self.assertLessEqual(o.memory_report()['group_cache_bytes'],48)
+90:         s.event_capacity=0;s.add_coefficient(0,2)
+91:         np.testing.assert_allclose(o._group_query(g,'a'),[2,2])
+92:         self.assertGreater(o.stats.group_rebuilds,0)
+93: 
+94: 
+95: if __name__=='__main__':unittest.main()

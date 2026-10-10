@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Independently authored Phase21 audit. Never imports uploaded source code.
+Run from any directory: python independent_checks.py
+Exact modular arithmetic uses signed int64 only for a single multiply/subtract;
+p<10^9 makes every such intermediate safely smaller than 2^63.
+"""
+import hashlib, json, math, pathlib, time
+import numpy as np
+OUT = pathlib.Path(__file__).resolve().parent
+P = 998244353
+
+def prime(p):
+    return p>=2 and all(p%d for d in range(2,math.isqrt(p)+1))
+def factors(n):
+    ans=[]; d=2
+    while d*d<=n:
+        if n%d==0:
+            ans.append(d)
+            while n%d==0:n//=d
+        d+=1
+    if n>1:ans.append(n)
+    return ans
+
+def root(n,p):
+    assert prime(p) and (p-1)%n==0
+    for a in range(2,p):
+        w=pow(a,(p-1)//n,p)
+        if all(pow(w,n//l,p)!=1 for l in factors(n)):
+            return pow(w,-1,p)
+    raise AssertionError('root unavailable')
+
+def coefficients(n,w,p):
+    return [pow(w,-j*(j-1)//2,p) for j in range(n+1)]
+
+def annihilator(n,w,p):
+    """Independent O(h) q-binomial recurrence, unlike source root multiplication."""
+    h=n//2; q=pow(w,-1,p); c=coefficients(n,w,p)
+    r=[pow(-1,h,p)*pow(q,h*(h-1)//2,p)%p]
+    for j in range(h):
+        r.append(-r[-1]*pow(q,-(h-j-1),p)*(1-pow(q,h-j,p))*pow(1-pow(q,j+1,p),-1,p)%p)
+    a=[r[j]*c[h]*pow(c[j],-1,p)%p for j in range(h+1)]
+    assert a[-1]==1 and a[0]!=0
+    if n<=128:
+        prod=[1]
+        for k in range(h):
+            b=[0]*(len(prod)+1)
+            for j,v in enumerate(prod):
+                b[j]=(b[j]-pow(q,k,p)*v)%p
+                b[j+1]=(b[j+1]+v)%p
+            prod=b
+        assert prod==r
+    # Evaluate R_h at the required nodes, without building a dense moment system.
+    for s in range(h):
+        x=pow(q,s,p); v=0
+        for z in reversed(r):v=(v*x+z)%p
+        assert v==0
+    if n<=256:
+        for s in range(h):assert sum(a[j]*c[s+j] for j in range(h+1))%p==0
+    return a
+
+def digest_poly(a):
+    return hashlib.sha256(np.asarray(a,dtype='<u4').tobytes()).hexdigest()
+
+def remainder(a,b,p):
+    a=np.asarray(a,dtype=np.int64).copy(); b=np.asarray(b,dtype=np.int64)
+    n=len(b); inv=pow(int(b[-1]),-1,p); k=len(a)
+    while k>=n:
+        s=int(a[k-1])*inv%p
+        if s:a[k-n:k]=(a[k-n:k]-s*b)%p
+        while k and a[k-1]==0:k-=1
+    return a[:k]
+
+def resultant_and_gcd(a,b,p):
+    """Exact Euclidean resultant; record every degree/leading coefficient/hash."""
+    a=np.array(a,dtype=np.int64);b=np.array(b,dtype=np.int64);res=1; trace=[]
+    while len(b)>1:
+        m,n=len(a)-1,len(b)-1
+        if m<n:
+            if m*n%2:res=-res%p
+            a,b=b,a;continue
+        r=remainder(a,b,p)
+        trace.append({'degrees':[m,n,len(r)-1], 'remainder_sha256':digest_poly(r)})
+        if not len(r):return {'gcd_degree':n,'resultant':0,'trace':trace}
+        k=len(r)-1
+        if m*n%2:res=-res%p
+        res=res*pow(int(b[-1]),m-k,p)%p
+        a,b=b,r
+    assert len(b)==1
+    res=res*pow(int(b[0]),len(a)-1,p)%p
+    return {'gcd_degree':0,'resultant':res,'trace':trace}
+
+def prony(n,p=P):
+    w=root(n,p);a=annihilator(n,w,p);d=[j*a[j]%p for j in range(1,len(a))]
+    f=[1]+[0]*(n-1)+[1]
+    s=resultant_and_gcd(a,d,p);t=resultant_and_gcd(a,f,p)
+    assert s['gcd_degree']==0 and t['gcd_degree']==0
+    return {'n':n,'p':p,'omega':w,'degree':len(a)-1,'coefficients':a,
+      'coefficients_u32le_sha256':digest_poly(a),'derivative':s,'forbidden':t}
+
+def rank(a,p):
+    a=[row[:] for row in a];m=len(a);n=len(a[0]) if m else 0;r=0
+    for j in range(n):
+        z=next((i for i in range(r,m) if a[i][j]%p),None)
+        if z is None:continue
+        a[r],a[z]=a[z],a[r];iv=pow(a[r][j],-1,p)
+        a[r]=[x*iv%p for x in a[r]]
+        for i in range(r+1,m):
+            z=a[i][j]
+            if z:a[i]=[(x-z*y)%p for x,y in zip(a[i],a[r])]
+        r+=1
+        if r==m:break
+    return r
+
+def eye(n):return [[int(j==k) for k in range(n)] for j in range(n)]
+def mul(a,b,p):
+    bt=list(zip(*b))
+    return [[sum(x*y for x,y in zip(row,col))%p for col in bt] for row in a]
+def add(a,b,p,scale=1):return [[(x+scale*y)%p for x,y in zip(u,v)] for u,v in zip(a,b)]
+def inverse(a,p):
+    n=len(a);b=[a[j][:]+eye(n)[j] for j in range(n)]
+    for k in range(n):
+        j=next(j for j in range(k,n) if b[j][k]%p)
+        b[k],b[j]=b[j],b[k];s=pow(b[k][k],-1,p);b[k]=[v*s%p for v in b[k]]
+        for j in range(n):
+            if j!=k:
+                s=b[j][k];b[j]=[(x-s*y)%p for x,y in zip(b[j],b[k])]
+    return [r[n:] for r in b]
+def cut(a,h):return [r[h:] for r in a[:h]]
+def weighted(n,w,perm=None):
+    if perm is None:perm=list(range(n))
+    s=[[0]*n for _ in range(n)]
+    for j in range(n):s[perm[j]][perm[(j-1)%n]]=w[j]
+    return s
+
+def matrix_checks():
+    p=20161; rows=[]
+    for n in [4,6,8,10,12,14,16,18,20,24,28,30,32,40,48,56,60,64]:
+        w=root(n,p);h=n//2;c=coefficients(n,w,p)
+        t=weighted(n,[pow(w,-j,p) for j in range(n)])
+        u=weighted(n,[pow(w,j-1,p) for j in range(n)])
+        power=eye(n);poly=[[0]*n for _ in range(n)]
+        for j in range(n):
+            poly=add(poly,power,p,c[j]);power=mul(t,power,p)
+        assert power==[[-z%p for z in r] for r in eye(n)]
+        f=[[pow(w,j*k,p) for k in range(n)] for j in range(n)]
+        lhs=[[pow(w,j*j,p)*v%p for v in poly[j]] for j in range(n)]
+        assert lhs==f
+        hankel=[[c[r+s] for s in range(h)] for r in range(h)]
+        assert rank(hankel,p)==h and rank(cut(f,h),p)==h
+        # Closing the wraparound minors forces rho^N=1 for outer-diagonal equivalence.
+        assert rank([[pow(w,(j-k)%n,p) for k in range(n)] for j in range(n)],p)==1
+        rho=next(z for z in range(2,p) if pow(z,n,p)!=1)
+        assert rank([[pow(rho,(j-k)%n,p) for k in range(n)] for j in range(n)],p)==n
+        g=inverse(add(eye(n),t,p,-1),p)
+        assert all(len({g[j][k]*pow(g[j][l],-1,p)%p for j in range(n)})==2 for k in range(n) for l in range(k+1,n))
+        k=inverse(add(eye(n),u,p,-2),p)
+        comm=add(mul(t,k,p),mul(k,t,p),p,-1)
+        tu=add(mul(t,u,p),mul(u,t,p),p,-1)
+        assert rank(comm,p)==n and comm==[[2*z%p for z in r] for r in mul(mul(k,tu,p),k,p)]
+        # Zero weights and singular masks are deliberately included.
+        gs=[]
+        for z in range(4):
+            weights=[((j+3)*(z+5)+7)%p for j in range(n)]
+            weights[(3*z+1)%n]=0
+            gs.append(inverse(add(eye(n),weighted(n,weights),p,-1),p))
+            assert rank(cut(gs[-1],h),p)<=1
+        s1=add(gs[0],gs[1],p);s2=add(gs[2],gs[3],p)
+        mask=[pow(w,j*j,p) if j%5 else 0 for j in range(n)]
+        mid=[[mask[j]*v%p for v in s1[j]] for j in range(n)]
+        circ=mul(s2,mid,p);cr=rank(cut(circ,h),p);assert cr<=4
+        # General cycle order: inverse cut rank equals the nonzero crossing count.
+        orders=[list(range(n)),list(reversed(range(n))),list(range(0,n,2))+list(range(1,n,2)),[z for j in range(h) for z in (j,j+h)]]
+        cross=[]
+        for order in orders:
+            weights=[j+2 for j in range(n)];weights[1]=0
+            shift=weighted(n,weights,order);a=add(eye(n),shift,p,-1);inv=inverse(a,p)
+            r1=rank(cut(a,h),p);r2=rank(cut(inv,h),p)
+            assert r1==r2
+            cross.append(r2)
+        rows.append({'n':n,'chirp':True,'hankel_rank':h,'commutator_rank':n,'masked_4_term_cut_rank':cr,'order_cut_ranks':cross})
+    return rows
+
+def spectral_checks():
+    rows=[]
+    for n in [4,6,8,10,12,16,24,32,48,64,96,128,192,256,512]:
+        h=n//2;r=np.arange(h);k=np.arange(h,n)
+        c=np.exp(-2j*np.pi*np.outer(r,k)/n)/math.sqrt(n)
+        sv=np.linalg.svd(c,compute_uv=False);ev=sv*sv
+        v=(2/n**2)*sum(d/math.sin(math.pi*d/n)**2 for d in range(1,h,2))+(h/n**2 if h%2 else 0)
+        trvar=float(np.sum(ev*(1-ev)))
+        assert abs(v-trvar)<1e-10
+        b=.5*sum(1/d for d in range(1,h,2))+(h/n**2 if h%2 else 0)
+        assert v<=b+1e-12
+        for q in range(math.ceil(n/4)):
+            if q>=n/4:continue
+            old=math.sqrt((n/4-q)/(n/2-q))
+            new=math.sqrt(max(0,1-v/(n/4-q)))
+            assert sv[q]+1e-10>=max(old,new)
+        q=n//16
+        rows.append({'n':n,'trace_variance':v,'harmonic_upper_bound':b,'q':q,'old_floor':math.sqrt((n/4-q)/(n/2-q)),'new_floor':math.sqrt(max(0,1-v/(n/4-q))),'actual_cut_singular_value':float(sv[q])})
+    return rows
+
+def main():
+    started=time.time();certs=[]
+    assert prime(P) and factors(P-1)==[2,7,17]
+    for n in [2**k for k in range(2,14)]:
+        c=prony(n);certs.append(c)
+        print('Certified dyadic Prony',n,flush=True)
+    # New finite checks beyond the supplied dyadic list; no universal inference.
+    extra=[]
+    for n in [6,10,12,14,18,20,24,28,30,36,40,42,48,56,60,84,90,120]:
+        p=20161
+        c=prony(n,p);extra.append(c)
+        print('Certified additional Prony',n,flush=True)
+    (OUT/'PRONY_CERTIFICATES.json').write_text(json.dumps({'dyadic':certs,'additional':extra},indent=2)+'\n')
+    result={'scope':'Independent code; uploaded code read as text only','field_certificate':{'p':P,'trial_division_prime':True,'p_minus_one_prime_factors':[2,7,17]},'dyadic_prony':[{k:c[k] for k in ['n','p','omega','degree','coefficients_u32le_sha256']}|{'derivative_resultant':c['derivative']['resultant'],'forbidden_resultant':c['forbidden']['resultant']} for c in certs],'additional_prony_lengths':[c['n'] for c in extra],'matrices':matrix_checks(),'spectral':spectral_checks()}
+    result['elapsed_seconds']=time.time()-started
+    (OUT/'CHECK_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+    print('All independent checks passed in',result['elapsed_seconds'],'seconds',flush=True)
+if __name__=='__main__':main()

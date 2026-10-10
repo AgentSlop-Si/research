@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""Independent exact controls; standard library only; no submitted code imported."""
+import itertools, json, random, sys
+from pathlib import Path
+
+def ident(n): return [[int(i==j) for j in range(n)] for i in range(n)]
+def zero(n,m=None): return [[0]*(n if m is None else m) for _ in range(n)]
+def mul(a,b,p):
+    out=zero(len(a),len(b[0]))
+    for i,row in enumerate(a):
+        for k,x in enumerate(row):
+            if x:
+                for j,y in enumerate(b[k]): out[i][j]=(out[i][j]+x*y)%p
+    return out
+def scale(a,c,p): return [[x*c%p for x in row] for row in a]
+def add(a,b,p): return [[(x+y)%p for x,y in zip(r,s)] for r,s in zip(a,b)]
+def sub(a,b,p): return add(a,scale(b,-1,p),p)
+def trans(a): return list(map(list,zip(*a)))
+def inv(a,p):
+    n=len(a); u=[[(x%p) for x in a[i]]+ident(n)[i] for i in range(n)]
+    for j in range(n):
+        k=next(k for k in range(j,n) if u[k][j]); u[j],u[k]=u[k],u[j]
+        u[j]=[x*pow(u[j][j],-1,p)%p for x in u[j]]
+        for k in range(n):
+            if k!=j:
+                c=u[k][j]; u[k]=[(x-c*y)%p for x,y in zip(u[k],u[j])]
+    return [r[n:] for r in u]
+def powmat(a,n,p):
+    z=ident(len(a))
+    while n:
+        if n&1:z=mul(z,a,p)
+        a=mul(a,a,p);n//=2
+    return z
+def root(n,p):
+    return next(w for w in range(1,p) if pow(w,n,p)==1 and all(pow(w,d,p)!=1 for d in range(1,n) if n%d==0))
+def fourier(n,p,w=None):
+    w=root(n,p) if w is None else w
+    return [[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+def shift(n):
+    z=zero(n)
+    for j in range(n): z[(j+1)%n][j]=1
+    return z
+def diag(v): return [[x if i==j else 0 for j in range(len(v))] for i,x in enumerate(v)]
+def blockdiag(blocks):
+    n=sum(map(len,blocks)); z=zero(n); offset=0
+    for b in blocks:
+        for i,row in enumerate(b):z[offset+i][offset:offset+len(b)]=row
+        offset+=len(b)
+    return z
+def kron(a,b): return [[x*y for x in ar for y in br] for ar in a for br in b]
+def stat(a):
+    rows=[sum(x!=0 for x in r) for r in a]; cols=[sum(x!=0 for x in r) for r in trans(a)]
+    return dict(nnz=sum(rows),max_row=max(rows),max_column=max(cols))
+def check(x,msg):
+    if not x: raise AssertionError(msg)
+
+def uncertainty():
+    out=[]
+    for m,p in [(2,3),(3,7),(4,5)]:
+        f=fourier(m,p); count=0; minimum=m*m
+        for v in itertools.product(range(p),repeat=m):
+            if not any(v):continue
+            fv=[sum(a*x for a,x in zip(row,v))%p for row in f]
+            prod=sum(x!=0 for x in v)*sum(x!=0 for x in fv)
+            check(prod>=m,'uncertainty');minimum=min(minimum,prod);count+=1
+        out.append(dict(m=m,p=p,nonzero_vectors=count,min_support_product=minimum))
+    # At equality, a subgroup indicator has nonzero supports of size sqrt(m).
+    f=fourier(4,5);v=[1,0,1,0]; fv=[sum(a*x for a,x in zip(r,v))%5 for r in f]
+    check(sum(bool(x) for x in v)==sum(bool(x) for x in fv)==2,'threshold equality')
+    return dict(exhaustive=out,equality_m4=dict(vector=v,transform=fv))
+
+def ct(m,q,p):
+    n=m*q; w=root(n,p);fm=fourier(m,p,pow(w,q,p)); fq=fourier(q,p,pow(w,m,p)); f=fourier(n,p,w)
+    Q=zero(n)
+    for b in range(q):
+        for t in range(m):Q[b*m+t][b+q*t]=1
+    active=set(range(max(1,q//2)))
+    B=blockdiag([fm if b in active else ident(m) for b in range(q)])
+    C=blockdiag([ident(m) if b in active else fm for b in range(q)])
+    tw=diag([pow(w,b*s,p) for b in range(q) for s in range(m)])
+    P=mul(mul(kron(fq,ident(m)),tw,p),C,p)
+    check(mul(mul(P,B,p),Q,p)==f,'CT factorization')
+    S=shift(n);D=diag([pow(w,j,p) for j in range(n)]);Pi=inv(P,p);Qi=trans(Q)
+    As=mul(mul(Pi,D,p),P,p);Ts=mul(mul(Q,S,p),Qi,p)
+    Ad=mul(mul(Pi,inv(S,p),p),P,p);Td=mul(mul(Q,D,p),Qi,p)
+    for A,T in [(As,Ts),(Ad,Td)]:check(mul(A,B,p)==mul(B,T,p),'interface')
+    check(stat(As)['nnz']==n+2*m*(m-1),'boundary nnz')
+    check(stat(As)['max_row']==stat(As)['max_column']==m,'boundary degrees')
+    for z in [Ts,Ad,Td]:check(stat(z)['nnz']==n and stat(z)['max_row']==stat(z)['max_column']==1,'monomial')
+    blocks=[]
+    for b in range(q):
+        for c in range(q):
+            z=[r[c*m:(c+1)*m] for r in As[b*m:(b+1)*m]]
+            if stat(z)['nnz']: blocks.append(dict(row_block=b,column_block=c,**stat(z)))
+    return dict(N=n,m=m,q=q,p=p,active=sorted(active),A_S=stat(As),T_S=stat(Ts),A_D=stat(Ad),T_D=stat(Td),nonzero_A_S_blocks=blocks)
+
+def weyl():
+    out=[]
+    for m,p in [(3,7),(4,17),(8,17)]:
+        eta=root(m,p);f=fourier(m,p,eta);fi=inv(f,p);S=shift(m);D=diag([pow(eta,j,p) for j in range(m)])
+        for a in range(m):
+            for b in range(m):
+                lhs=mul(mul(f,mul(powmat(D,a,p),powmat(S,b,p),p),p),fi,p)
+                rhs=scale(mul(powmat(D,b,p),powmat(S,(-a)%m,p),p),pow(eta,a*b,p),p)
+                check(lhs==rhs,'positive Weyl convention')
+        out.append(dict(m=m,p=p,checked_pairs=m*m))
+    return out
+
+def one_sided():
+    m=8;p=17;f=fourier(m,p);rng=random.Random(15081)
+    while True:
+        v=[rng.randrange(1,p) for _ in range(m)]
+        fv=[sum(x*y for x,y in zip(row,v))%p for row in f]
+        if all(fv):break
+    B=blockdiag([f,ident(m)]);A=ident(2*m);T=ident(2*m)
+    for i in range(m):A[i][m]=fv[i];T[i][m]=v[i]
+    check(mul(A,B,p)==mul(B,T,p),'row-only intertwiner')
+    check(stat(A)['max_row']==stat(T)['max_row']==2,'row-only bound')
+    # Lower mixed block gives the transpose-direction control.
+    C=ident(2*m);U=ident(2*m)
+    for i in range(m):C[m][i]=v[i];U[m][i]=fv[i]
+    check(mul(C,B,p)==mul(B,U,p),'column-only intertwiner')
+    check(stat(C)['max_column']==stat(U)['max_column']==2,'column-only bound')
+    return dict(m=m,p=p,d=2,d_squared=4,row_only_A=stat(A),row_only_T=stat(T),column_only_A=stat(C),column_only_T=stat(U),remaining_mixed_block_is_nonzero=True,not_a_Weyl_pair=True)
+
+def lift():
+    n=8;p=17;f=fourier(n,p);E=ident(n)+f
+    R=zero(n)
+    for j in range(n):R[(-j)%n][j]=n%p
+    L=zero(2*n)
+    for i in range(n):
+        L[i][n+i]=1
+        for j in range(n):L[n+i][j]=R[i][j]
+    check(mul(L,E,p)==mul(E,f,p),'lift equation')
+    return dict(N=n,p=p,true_Fourier=stat(f),lift=stat(L),encoding_contains_Fourier=True)
+
+def state_lift():
+    n=4;p=17;h=14;nstate=n*h;Ks=ident(nstate);Z=6;W=7
+    def put(a,b,mat):
+        for i,row in enumerate(mat):
+            Ks[a*n+i][b*n:(b+1)*n]=row
+    stages=[(0,1,2,3),(3,4,5,6),(7,8,9,10),(10,11,12,13)]
+    for stage,(inp,y0,y1,out) in enumerate(stages):
+        for r,y in enumerate([y0,y1]):
+            c=[2,3,5,6][(stage+r)%4]
+            put(y,y,sub(ident(n),scale(shift(n),c,p),p))
+            put(y,inp,scale(ident(n),-(r+1),p))
+            put(out,y,scale(ident(n),-(stage+r+1),p))
+    B=blockdiag([fourier(2,p),ident(2)])
+    K=[r[:] for r in Ks]
+    for i in range(n):
+        for j in range(n):K[W*n+i][Z*n+j]=-B[i][j]%p
+    stateS=add(diag([(i%13)+1 for i in range(nstate)]),shift(nstate),p)
+    stateR=add(diag([((3*i)%13)+1 for i in range(nstate)]),trans(shift(nstate)),p)
+    C=sub(mul(Ks,stateS,p),mul(stateR,Ks,p),p)
+    residual=sub(mul(K,stateS,p),mul(stateR,K,p),p)
+    expected=[r[:] for r in C]
+    for i in range(n):
+        for j in range(nstate):
+            expected[W*n+i][j]=(expected[W*n+i][j]-sum(B[i][k]*stateS[Z*n+k][j] for k in range(n)))%p
+    for i in range(nstate):
+        for j in range(n):
+            expected[i][Z*n+j]=(expected[i][Z*n+j]+sum(stateR[i][W*n+k]*B[k][j] for k in range(n)))%p
+    check(residual==expected,'state residual expansion')
+    def block(a,b,M):return [r[b*n:(b+1)*n] for r in M[a*n:(a+1)*n]]
+    check(block(W,Z,C)==sub(block(W,Z,stateS),block(W,Z,stateR),p),'central forcing')
+    check(stat(Ks)['max_row']<=3 and stat(Ks)['max_column']<=3,'Ks degree')
+    incident=[block(W,b,C) for b in range(h) if b!=Z]+[block(a,Z,C) for a in range(h) if a!=W]
+    check(all(stat(v)['max_row']<=8 and stat(v)['max_column']<=8 for v in incident),'4d incident bound')
+    return dict(wires=h,N=n,p=p,K_s=stat(Ks),state_S=stat(stateS),state_R=stat(stateR),residual_expansion=True,central_forcing=True,incident_4d_bound=True)
+
+def main():
+    result=dict(status='PASS',arithmetic='exact prime fields',uncertainty=uncertainty(),positive_Weyl=weyl(),cooley_tukey=[ct(2,2,5),ct(4,4,17),ct(8,8,193)],one_sided_controls=one_sided(),enlarged_state_control=lift(),fourteen_wire_control=state_lift())
+    target=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).with_name('INDEPENDENT_RESULTS.json')
+    target.write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
+if __name__=='__main__':main()

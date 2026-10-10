@@ -1,0 +1,129 @@
+   1 #!/usr/bin/env python3
+   2 """Exact bounded witness checks, not a full Lean theorem verification.
+   3 Source: OpenAI math fd4aeeb2ee4fc729c18d98444fed42fd0529eeeb,
+   4 preprints/An-explicit-power-saving-for-the-exact-discrete-Fourier-transform-
+   5 September-25-2026/build/sections/network.tex.
+   6 Candidate modification: use h incidence centers, eliminating total-sum center.
+   7 """
+   8 from math import comb
+   9 from fractions import Fraction as F
+  10 from decimal import Decimal, localcontext
+  11 from itertools import combinations
+  12 import json
+  13 from pathlib import Path
+  14 
+  15 OUT=Path(__file__).resolve().parent
+  16 
+  17 def params(h,q=3):
+  18     t=(q-1)//2; v=comb(h,q); rho=comb(h,t)
+  19     d=sum(comb(q,s)*comb(h-q,q-s) for s in range(0,q,2) if q-s<=h-q)
+  20     m=h**3; I=3*v*v; W=2*v**3+I*(v*d+rho)
+  21     D=2*v*v*(v-3*h*rho); star=1<<(W-1).bit_length()
+  22     with localcontext() as ctx:
+  23         ctx.prec=70
+  24         eps=Decimal(D)/Decimal(m*star)
+  25         gain=-(1-eps).ln()/Decimal(m).ln() if D>0 else Decimal(0)
+  26     return dict(h=h,q=q,t=t,v=v,rho=rho,neighbors=d,m=m,invocations=I,
+  27                 W=W,Wstar=star,padding=star-W,Delta=D,S=m*star-D,
+  28                 critical_gain_decimal=str(gain))
+  29 
+  30 p=params(24)
+  31 assert p['v']==2024 and p['rho']==24 and p['neighbors']==1393
+  32 assert p['W']==34666930287616 and p['Delta']==2425172992
+  33 assert p['Wstar']==2**45 and p['m']==13824
+  34 assert 0 < p['Delta'] < p['m']*p['Wstar']
+  35 # Exhaust all input/output triple pairs. Use scale 6 so no floating point.
+  36 # 6*RG = 3*intersection-3; 6*JV is its negative on even intersections.
+  37 triples=[sum(1<<j for j in T) for T in combinations(range(24),3)]
+  38 pairs=0
+  39 for S in triples:
+  40     degree=0
+  41     for T in triples:
+  42         s=(S&T).bit_count()
+  43         rg6=3*s-3
+  44         jv6=-rg6 if s%2==0 else 0
+  45         assert rg6+jv6 == (6 if S==T else 0)
+  46         degree += (s%2==0)
+  47         pairs+=1
+  48     assert degree==p['neighbors']
+  49 # Exact critical exponent bound: log(m)<191/20=9.55, proved using a
+  50 # rational lower Taylor sum for exp(191/20). And Delta/(m W*)>
+  51 # (26/50_000_000_000)*(191/20), so theta<1-5.2e-10.
+  52 x=F(191,20); term=F(1); exp_lower=F(1)
+  53 for j in range(1,41):
+  54     term*=x/j; exp_lower+=term
+  55 assert exp_lower > p['m']
+  56 critical_bound=F(26,50_000_000_000)
+  57 normalized=F(p['Delta'],p['m']*p['Wstar'])
+  58 assert normalized > critical_bound*x
+  59 # For any fixed logarithmic-logarithmic exponent, choose the smaller
+  60 # eventual all-length exponent saving 5e-10; gap is strictly positive.
+  61 final_bound=F(1,2_000_000_000)
+  62 assert critical_bound>final_bound
+  63 # Signed dimension accounting for arbitrary role values, once the
+  64 # paper's nested-label lemma is transferred to h=24: only each center's
+  65 # one h-dimensional decrease is charged. Auxiliaries are all included.
+  66 N=p['v']**3
+  67 s=p['W']*p['m']-2*N+2*p['invocations']*p['rho']*24
+  68 assert p['W']*p['m']-s==p['Delta']
+  69 assert s+p['padding']*p['m']==p['S']
+  70 assert 24>2*3 # coordinate unit outside union of two triple supports
+  71 # Bounded generic odd-subset scan; numbers are candidates only until
+  72 # the rank factorization and residual basis conditions are justified.
+  73 scan=[params(h,q) for q in (3,5,7,9) for h in range(2*q+1,129)]
+  74 valid=[z for z in scan if z['Delta']>0]
+  75 valid.sort(key=lambda z:Decimal(z['critical_gain_decimal']),reverse=True)
+  76 report=dict(candidate=p,pairs_checked=pairs,
+  77     checks=['RG+JV=I for all 4,096,576 triple pairs',
+  78             'Every triple has exactly 1,393 even-intersection neighbors',
+  79             'Signed residual sum and power-of-two padding agree exactly',
+  80             'Rational Taylor/log bound proves theta < 1 - 5.2e-10'],
+  81     critical_bound=str(critical_bound),eventual_all_length_bound=str(final_bound),
+  82     exponent_exact_margin=str(normalized-critical_bound*x),
+  83     scan_count=len(scan),scan_positive_count=len(valid),scan_top5=valid[:5],
+  84     limitations=['No Lean build or proof kernel validation performed',
+  85       'No complete astronomical network enumerated',
+  86       'Label transfer, arbitrary-register identity, indexing and recurrence verified by mathematical reduction, not full end-to-end executable',
+  87       'No numerical stability, finite precision, crossover or practical speed claim',
+  88       'Novelty beyond pinned source snapshot not established'])
+  89 (OUT/'certificate_results.json').write_text(json.dumps(report,indent=2)+'\n')
+  90 
+  91 # Formal noncommutative-polynomial verification of all eight scalar rows.
+  92 # A word ('R','G','x') represents R G x; the dictionary is an exact
+  93 # integer linear combination of such words. No numeric values assumed.
+  94 def add(a,b,scale=1):
+  95     out=dict(a)
+  96     for w,c in b.items():
+  97         out[w]=out.get(w,0)+scale*c
+  98         if not out[w]: del out[w]
+  99     return out
+ 100 def op(symbol,a): return {(symbol,)+w:c for w,c in a.items()}
+ 101 x0={('x',):1}; y0={('y',):1}; A0={('A',):1}; c0={('c',):1}
+ 102 x,y,A,c=x0,y0,A0,c0
+ 103 y=add(y,op('J',A),-1)
+ 104 y=add(y,op('R',c),-1)
+ 105 A=add(A,op('V',x))
+ 106 c=add(c,op('G',x))
+ 107 y=add(y,op('R',c))
+ 108 y=add(y,op('J',A))
+ 109 c=add(c,op('G',x),-1)
+ 110 A=add(A,op('V',x),-1)
+ 111 assert x==x0 and A==A0 and c==c0
+ 112 assert y=={('y',):1,('R','G','x'):1,('J','V','x'):1}
+ 113 report['checks'].append('Formal eight-row replay restores arbitrary A and c; y changes by (RG+JV)x')
+ 114 # Three scalar bank stages after the certified RG+JV=I identity.
+ 115 X={('X',):1};Y={('Y',):1}
+ 116 Y=add(Y,X);X=add(X,Y,-1);Y=add(Y,X)
+ 117 assert X=={('Y',):-1} and Y=={('X',):1}
+ 118 report['checks'].append('Three logical stages give signed bank exchange (X,Y)->(-Y,X)')
+ 119 # Explicit charge for straightforward pointwise scalar implementation:
+ 120 # J costs 2 scalar gates per shear, V/G add/subtract cost 1, R costs2.
+ 121 vd=p['v']*p['neighbors']
+ 122 scalar_per_invocation=6*vd+(4*p['h']+6)*p['v']
+ 123 shears_per_invocation=4*vd+(2*p['h']+6)*p['v']
+ 124 report['pointwise_cost']=dict(scalar_gates_per_invocation=scalar_per_invocation,
+ 125     scalar_gates_network=p['invocations']*scalar_per_invocation,
+ 126     shears_per_invocation=shears_per_invocation,
+ 127     C_calls_to_replace_all_pointwise_shears=3*p['invocations']*shears_per_invocation)
+ 128 (OUT/'certificate_results.json').write_text(json.dumps(report,indent=2)+'\n')
+ 129 print(json.dumps(report,indent=2))

@@ -1,0 +1,132 @@
+# Audit of the October 9 interleaved-scan FFT archive
+
+## Verdict
+
+The attachment contains a valid new restricted-model rejection theorem, not a fresh sub-N log N FFT construction. Its main addition is a scan–broadcast rank tradeoff. The ordinary FFT control is algebraically correct. The bidirectional-sum example correctly invalidates an inverse-sparsity extension, but does not certify a fast Fourier factorization or separation from every sparse-plus-low-rank representation.
+
+I read all archive text and source. I did not run or import the uploaded programs. The independent checks described below were written separately for this audit.
+
+## 1. What is genuinely added
+
+The new factorization model allows invertible one-way scans, arbitrary interleaved monomial factors, and invertible updates I+UV^T. Let t count scans and B be the sum of update-rank budgets. Removing the broadcast inverses from the inverse product gives
+
+F_N^(-1) = S + E,
+
+where each row of S has at most 2^t nonzeros and rank(E) ≤ B. Both assertions survive arbitrary internal shuffles.
+
+For any s-row-sparse S, select q=floor(N/(s+1)) consecutive rows beginning with row zero. At most qs columns contain any S entry in these rows. At least q columns therefore remain untouched. The corresponding Fourier minor is a Vandermonde matrix on distinct roots and has rank q. Hence
+
+rank(F_N − S) ≥ floor(N/(s+1)).
+
+This proves
+
+B ≥ floor(N/(2^t+1)), equivalently (B+1)(2^t+1)>N.
+
+The stated field hypotheses are adequate: a primitive Nth root exists, its powers are distinct, and the field characteristic does not divide N. The inverse DFT only contributes an invertible scalar and root inversion. The proof does not depend on conditioning, bounded constants, floating-point approximations, or a prime transform length.
+
+The support-mass argument in the archive is also correct, but weaker than the earlier boundary-row argument described next.
+
+## 2. Sharper scan-only statement
+
+For every N≥2, the serial pure-scan model satisfies
+
+t ≥ 1 + ceil(log2 N).
+
+To see this, write its inverse product from left to right, absorbing all monomial factors between scans. The leftmost inverse scan has a singleton boundary row. A preceding monomial factor merely permutes and scales that row. Choose that output row; every remaining inverse scan can at most double its support. Therefore this row of the full inverse has support at most 2^(t−1). Every Fourier-inverse row has support N.
+
+This works for arbitrary N, not only powers of two. The archive's boundary support-mass refinement proves the weaker presentation t≥log2 N+1 specifically at powers of two.
+
+Do not replace the uniform row bound 2^t in the broadcast proof by 2^(t−1): the boundary argument only gives one such sparse row, while the Vandermonde argument requires a block of consecutive rows. No such strengthened general tradeoff has been established here.
+
+## 3. Cost consequence that can be stated explicitly
+
+The archive discusses sublogarithmic t and large B but does not state the clean combined pass-cost corollary.
+
+Let K=t+B. For nonnegative integers t,B, with K≥1,
+
+(B+1)(2^t+1) ≤ 2^K+2.
+
+For B=0 this is immediate. For B≥1, the difference between the right and left sides is
+
+2^t(2^B−B−1)−(B−1) ≥ 2^B−2B ≥ 0.
+
+Thus the strict tradeoff implies N≤2^K+1, and for N≥3,
+
+t+B ≥ ceil(log2(N−1)).
+
+In particular, at N=2^L≥4, t+B≥L. If every scan and every scalar rank-one broadcast is actually evaluated as a full Θ(N)-cost pass, total cost remains Ω(N log N), even when the missing scan passes are replaced by broadcasts.
+
+Scope matters: this does not prove Ω(NB) work for an arbitrary rank-B structured operator. A representation that evaluates a high-rank update more cheaply must be analyzed on its own. Sparse passes and skipped inactive positions also require a genuine operation count. B is a sum of rank budgets, not a universal measure of time.
+
+## 4. Bidirectional-sum evidence and its limit
+
+The uploaded example forms H=L+U from forward and backward scans of the same input. Its inverse is fully dense at N=4,8,16,32. Independent checks extend that finite observation to N=64. This is a valid counterexample to the claim that a sum of scan outputs inherits the sparse inverse of a composition of pure scans.
+
+The reported full rank of H^(-1) minus its own diagonal is not a certificate of distance from all diagonal-plus-low-rank matrices. A simple counterexample is
+
+H=I+11^T, H^(-1)=I−11^T/(N+1).
+
+This inverse is a rank-one perturbation of I, but subtracting its own diagonal yields (I−11^T)/(N+1), which has full rank N in characteristic zero and in the tested fields. Therefore a full-rank own-diagonal residual does not establish the proposed high-rank escape.
+
+For the archive's particular numerical matrices, the independent tests also found rank(H^(-1)−I)=N through N=64. More importantly, a separate independent audit repairs the diagonal diagnostic: the even-row/odd-column submatrix of H^(-1) has rank N/2 at N=4,8,16,32,64 over 998244353. Every diagonal matrix vanishes on this disjoint submatrix, so rank(H^(-1)−D)≥N/2 for EVERY diagonal D at these tested sizes. This is a genuine finite certificate against diagonal-plus-small-rank representations. It still does not handle arbitrary monomial or row-sparse corrections, short scan products, or an all-N distance theorem.
+
+A useful structural identity is available. If L=A^(-1) and U=C^(-1), with A,C the respective bidiagonal inverse scans, then
+
+L+U = L(A+C)U.
+
+Here A+C is tridiagonal. More generally L+U+D = L(A+C+ADC)U, and ADC is tridiagonal for diagonal D. Thus the suggested family is not an unstructured dense primitive: it has an explicit scan–tridiagonal–scan factorization. This identity does not place it inside the original pure-scan model, because a tridiagonal multiplication is not generally a bounded product of pure scans. It may be useful for developing the next invariant.
+
+No Fourier identity is offered for this family. Dense inverse support alone is evidence that one proof fails, not evidence of an FFT speedup.
+
+## 5. FFT control and accounting
+
+The two-shear identity is correct:
+
+(a,b) → (a,−2wb) → (a+wb,−2wb) → (a+wb,a−wb).
+
+Applying the independent pair operation after bit reversal and the standard radix-two pairing schedule yields the complete DFT. There are 2log2 N scans and Θ(N log N) work.
+
+The mathematical operation counts are reasonable as an optimized algebraic count, but they are not literal instrumentation of the submitted Python execution:
+
+- scan_vector still evaluates multiplications by zero and one, and adds zero at boundaries or inactive positions.
+- The expression −2*twiddle*data executes two multiplications, while the data-path counter charges one combined-constant multiplication. This can be repaired without changing the asymptotic bound: tabulate the scaled coefficients −2w^j directly, beginning with −2, using the same recurrence length as the original twiddle table.
+- moved_words counts the explicit bit reversal and pair permutations. It omits the scans' own input/output traffic, temporary-array traffic, coefficient-array creation, and twiddle traffic. The prose mostly scopes this correctly; it must not be relabeled total traffic.
+- The bit-reversal implementation uses length-log N strings per index; its actual preprocessing is not just a word movement count. A conventional iterative implementation removes that distraction.
+- Root generation and exact coefficient representation remain part of the model. A fixed modular prime supports only finitely many radix-two lengths, so these tests cannot establish an unbounded bit-complexity theorem.
+
+The JSON field minimal_scan_count is wrong or misleading: it records log2 N, although the archive's own scan-only theorem requires log2 N+1. Rename it basic_row_support_lower_bound or update it to the proved bound. It is not an attained minimum.
+
+RESEARCH.md describes basis tests through N=64, whereas run_audit.py and its stored count of 254 cover N=2,4,...,128. This is an under-description rather than a correctness problem.
+
+## 6. Independent evidence
+
+All checks below use the newly written independent_check.py, not the uploaded code:
+
+- All 10 listed SHA-256 hashes match their extracted archive files.
+- All 254 complete basis columns for N=2,4,...,128 pass the separately implemented two-scan transform over each of 998244353 and 2013265921: 508 total basis columns.
+- 248 independently generated untouched-column Vandermonde witnesses have the predicted full rank across the same two fields and N=4,8,16,32,64.
+- The bidirectional-sum inverse is fully dense for N=4,8,16,32,64, with verified inverse multiplication identities.
+- At those sizes its own-diagonal and identity residuals are full rank.
+- The I+11^T counterexample independently verifies full own-diagonal residual rank despite identity residual rank one.
+- A separate independent extension audit verifies 240 random scan–tridiagonal reductions, 231 invertible inverse identities, and the even-row/odd-column rank-N/2 diagonal-distance certificates just described. Its source and results are in the accompanying bidirectional_extension work folder.
+- Exact minimization of the stated rank tradeoff together with the stronger scan-only bound permits no t+B below log2 N for N=2,4,...,65536. This is a necessary bound, not evidence that every permitted pair is realizable.
+
+Full numeric results for this audit are in independent_check_results.json; the independent extension certificate is in ../bidirectional_extension/results.json.
+
+## 7. Citation correction
+
+Reference [1] is misattributed. Fourier and Circulant Matrices Are Not Rigid (CCC 2019) is by Zeev Dvir and Allen Liu, not Alman–Williams. Alman and Williams are cited predecessors for Hadamard non-rigidity. Verified against the publisher's record:
+
+https://doi.org/10.4230/LIPIcs.CCC.2019.17
+
+Reference [2], Computing with quasiseparable matrices, is correctly attributed to Clément Pernet:
+
+https://arxiv.org/abs/1602.01246
+
+These checks do not establish originality or priority for the new restricted-model tradeoff.
+
+## 8. Decision for the research goal
+
+Accept the scan–broadcast theorem as a useful restricted-model rejection result. Preserve the earlier stronger all-N pure-scan lower bound. Add the combined explicit-pass cost corollary and repair the accounting labels.
+
+For progress toward a fresh exact all-output sub-N log N transform, the remaining deliverable is still missing: an infinite-family Fourier factorization in a broader model, with every stage's coefficient preparation, arithmetic, scratch, routing, precision, and all-output cost charged. The bidirectional-sum example identifies a place where the present proof stops. It does not supply that construction.

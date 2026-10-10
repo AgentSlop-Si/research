@@ -1,0 +1,46 @@
+# Bounded implementation audit
+
+## Phase 10: valid dynamic extension, remaining exactness issue
+
+The two-factor identity is valid in a commutative convolution ring. For F=A*A*B+A*B+B*B+C*D, the mixed coefficients include K11=2A+e0 and K21=e0. Simultaneous edits therefore require mixed contributions; two independently added single-edit formulas are insufficient.
+
+The implementation adds offline-generated native code and two edited inputs. It remains a prepared, related-version workload. It does not provide a fresh arbitrary-input DFT algorithm, and its output is a time-domain convolution expression, not a full Fourier transform.
+
+### Confirmed or source-reviewed limitations
+
+1. **Symbolic exactness is overstated.** `algebra_fft.py` is byte-identical to the earlier Phase 9 module. Scalar collection uses floats and removes zero-valued accumulated coefficients (`add`, original lines 203–225). The exact identity `(2^53)A + A − (2^53)A = A` collapses to zero before an FFT is evaluated. The affine optimization likewise combines/prunes float weights. Consequently “exact graph operations” describes the abstract formula, not unrestricted coefficient processing in this code.
+2. **Numerical modular checks are limited.** The upstream 384 modular cases first evaluate in floating point, round, then reduce modulo a prime. They provide useful small-input regression coverage, not an exact finite-field backend or general exactness certificate.
+3. **Cold timing is in-process setup timing.** The source's repeated benchmark iterations share cached library loads. The median does not independently charge a fresh library load each time. It still charges graph/array preparation. Fresh-process timing would be required to validate a strict startup claim.
+4. **Literal output costs include the baseline.** If D counts only dense corrections, the full-output and storage bound is O(N(D+1)+S), including the baseline, rather than O(ND+S) when D=0. Selected output similarly includes reading Q baseline entries.
+5. **Native packaging is not a hardened ABI.** Source review shows that an incompatible existing library can raise instead of falling back. Manifest/signature matching trusts the manifest rather than checking the binary's embedded signature; manually constructed invalid plans can violate pointer-buffer assumptions. Normal factory-generated plans were not shown to fail. No native binary was executed here.
+
+The optional NumPy reproduction covers the showcased polynomial, same/different edit positions, positive/negative/zero edits, and repeated selected indices. It is deliberately narrower than the full upstream suite and does not validate AOT speed.
+
+## Phase 11: exact fresh structured convolution
+
+The identity A·B=(Q_A A)(Q_B B)/(Q_A Q_B), interpreted as formal-power-series reconstruction, is valid when both filter constant terms are one. The code retains trailing boundary coefficients, forms sparse products, and recovers the requested output exactly over integers or the supported prime fields. Random and adversarial-size tests found no output mismatch within the tested scope.
+
+A short recurrence is a property of the current fresh input, not a cached transform. A length-n operand of recurrence order d has at most 2d filtered nonzero coefficients, including both boundaries. With bounded d, convolution with an arbitrary other operand is linear in the output length in the field/ring-operation model. That statement does not imply linear integer bit complexity; the size of coefficients and intermediate integers must be charged.
+
+The exact modular fallback is an ordinary NTT. The selected prime must support the required transform length. The finite set of bundled primes does not furnish an unrestricted all-length asymptotic theorem. Exact integer reconstruction uses CRT only where the available prime product certifies the signed coefficient bound, otherwise it uses schoolbook convolution. Decimal digit extraction/reconstruction in `multiply_int` also has costs beyond a unit-cost digit-operation model.
+
+### Reporting correction
+
+Original `convolve` chose a plan, then overrode the executed strategy for explicit `mode`, but returned the original plan unchanged (`fresh_factor.py`, original lines 318–326). The derivative uses `dataclasses.replace` to make `Plan.method` agree with the selected top-level strategy. It preserves mathematical kernels and cost estimates. Three regressions cover both override directions and automatic selection.
+
+The exact-CRT strategy's internal schoolbook fallback is still intentionally reported within the top-level `ntt` strategy, and this is now documented. The patch does not promise that the method field is a low-level operation trace.
+
+### Restricted barrier
+
+The map A ↦ Q·A mod z^n is an invertible lower-triangular binary map when Q(0)=1. Thus a uniform random binary A stays uniform after each fixed filter. Union-bounding over all degree-at-most-d binary filters gives the stated probability bound 2^d exp(−n/18) for a transformed prefix of weight at most n/3. The result allows choosing the filter adaptively from that entire family. It is a barrier for this short-filter sparsity approach, not a general FFT or multiplication lower bound.
+
+## Relation to earlier research
+
+- Phases 7–9 and Phase 10 obtain savings from cached state or known edits. Phase 11 changes that assumption by processing fresh but structured inputs.
+- The new full-DFT demonstration addresses actual Fourier output, rather than only convolution output. Its savings still require a small filtered representation. It supplies no general fresh-input speedup or novelty claim.
+- The earlier exact-width H16 target asks for at most 31 two-register calls instead of the standard 32, together with a completely exact matrix certificate. These uploads contain no such certificate. The previous delete-one/up-to-two-rewirings result excludes only its searched family (210,833,760 labels; 556 support survivors rejected by rank cuts), not every 31-call word.
+- A finite-field structured algorithm and a universal exact-complex DFT theorem use different assumptions. Any proposed transfer must charge discovery, preparation, arithmetic, root/scalar access, and all output production in the target model.
+
+## Verification scope
+
+All supplied Phase 11 source and test files used here were read before execution. Checks were bounded and offline. No originals were modified, no shipped executable/native library was run, no package was installed, and no research was published. Upstream benchmark data are retained as historical evidence only. The report distinguishes proved identities, source-only observations, numerical tests and exact comparisons; tests alone do not prove general correctness or establish priority.

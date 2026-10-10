@@ -1,0 +1,519 @@
+   1	"""Phase 7: persistent, relation-aware circular convolution chains.
+   2	
+   3	Exact identities; numerical execution uses float64 / scipy.fft and is not
+   4	an exact integer multiplication or general sub-NlogN Fourier algorithm.
+   5	
+   6	Factor = gain * circular_shift(immutable_seed, shift) + sparse impulses.
+   7	An immutable balanced product DAG represents convolution of many factors.
+   8	Full dense computation uses optimized real FFT, while sparse forks can reuse
+   9	base and leave-one-factor-out time-domain convolutions with O(k*N) work.
+  10	Frequency-bin queries reuse partial spectral products in a bounded LRU.
+  11	"""
+  12	from __future__ import annotations
+  13	
+  14	import math
+  15	import cmath
+  16	import weakref
+  17	from collections import OrderedDict, Counter
+  18	from dataclasses import dataclass
+  19	from typing import Iterable
+  20	import numpy as np
+  21	try:
+  22	    from scipy import fft as _fft
+  23	except ImportError:
+  24	    from numpy import fft as _fft
+  25	
+  26	
+  27	def _real(x):
+  28	    y = float(x)
+  29	    if not math.isfinite(y):
+  30	        raise ValueError('finite real scalars required')
+  31	    return y
+  32	
+  33	
+  34	def _indices(n, pos):
+  35	    j = int(pos)
+  36	    if not 0 <= j < n:
+  37	        raise IndexError(f'index {j} must be between 0 and {n-1}')
+  38	    return j
+  39	
+  40	
+  41	def _phase(n, k, shift):
+  42	    # Reduction modulo n avoids enormous arguments to the exponential.
+  43	    return cmath.exp((-2j * math.pi / n) * ((int(k) * int(shift)) % n))
+  44	
+  45	
+  46	def _phase_half(n, shift):
+  47	    # Moderate-size, vectorized phase construction. Output is not cached.
+  48	    j = np.arange(n//2 + 1, dtype=np.int64)
+  49	    return np.exp((-2j * np.pi / n) * ((j * (int(shift) % n)) % n))
+  50	
+  51	
+  52	@dataclass(eq=False, frozen=True)
+  53	class Seed:
+  54	    id: int
+  55	    signal: np.ndarray
+  56	    half_spectrum: np.ndarray
+  57	
+  58	    @property
+  59	    def n(self):
+  60	        return self.signal.size
+  61	
+  62	
+  63	@dataclass(frozen=True)
+  64	class Factor:
+  65	    """Persistent signal represented relative to one immutable seed.
+  66	
+  67	    Every edit is an impulse in the CURRENT signal coordinates, not in the
+  68	    coordinates of the original seed. Repeated edits at a position are merged.
+  69	    """
+  70	    seed: Seed
+  71	    shift: int = 0
+  72	    gain: float = 1.0
+  73	    edits: tuple[tuple[int, float], ...] = ()
+  74	
+  75	    @property
+  76	    def n(self):
+  77	        return self.seed.n
+  78	
+  79	    def edit(self, position: int, delta: float):
+  80	        position = _indices(self.n, position)
+  81	        delta = _real(delta)
+  82	        if not delta:
+  83	            return self
+  84	        d = dict(self.edits)
+  85	        x = _real(d.get(position, 0.0) + delta)
+  86	        if x == 0.0:
+  87	            d.pop(position, None)
+  88	        else:
+  89	            d[position] = x
+  90	        return Factor(self.seed, self.shift, self.gain, tuple(sorted(d.items())))
+  91	
+  92	    def shifted(self, amount: int):
+  93	        s = int(amount) % self.n
+  94	        if s == 0:
+  95	            return self
+  96	        changes = tuple(sorted(((p+s) % self.n, d) for p,d in self.edits))
+  97	        return Factor(self.seed, (self.shift+s)%self.n, self.gain, changes)
+  98	
+  99	    def scaled(self, scalar: float):
+ 100	        c = _real(scalar)
+ 101	        if c == 1.0:
+ 102	            return self
+ 103	        return Factor(self.seed, self.shift, _real(self.gain*c),
+ 104	                      tuple((p, _real(d*c)) for p,d in self.edits if d*c != 0))
+ 105	
+ 106	    def values(self):
+ 107	        out = self.gain * np.roll(self.seed.signal, self.shift)
+ 108	        for pos, value in self.edits:
+ 109	            out[pos] += value
+ 110	        return out
+ 111	
+ 112	    def bin(self, k: int):
+ 113	        k = _indices(self.n, k)
+ 114	        half = self.seed.half_spectrum
+ 115	        if k <= self.n//2:
+ 116	            base = half[k]
+ 117	        else:
+ 118	            base = np.conj(half[self.n-k])
+ 119	        v = self.gain * _phase(self.n, k, self.shift) * base
+ 120	        for pos, delta in self.edits:
+ 121	            v += delta * _phase(self.n, k, pos)
+ 122	        return complex(v)
+ 123	
+ 124	    def spectrum_half(self):
+ 125	        v = self.seed.half_spectrum * (self.gain * _phase_half(self.n, self.shift))
+ 126	        for pos,delta in self.edits:
+ 127	            v += delta * _phase_half(self.n, pos)
+ 128	        return v
+ 129	
+ 130	    def is_base(self):
+ 131	        return (self.shift == 0 and self.gain == 1.0 and not self.edits)
+ 132	
+ 133	
+ 134	class _Node:
+ 135	    __slots__ = ('uid', 'left', 'right', 'factor', 'size', '__weakref__')
+ 136	    def __init__(self, uid, left=None, right=None, factor=None):
+ 137	        self.uid = uid
+ 138	        self.left = left
+ 139	        self.right = right
+ 140	        self.factor = factor
+ 141	        self.size = 1 if factor is not None else left.size + right.size
+ 142	
+ 143	
+ 144	class ChainEngine:
+ 145	    """Owns immutable seeds, persistent nodes, and bounded caches.
+ 146	
+ 147	    Supports many *related versions* of the same circular-convolution chain.
+ 148	    Baselines and complement convolutions are computed lazily and charged.
+ 149	    No division by Fourier bins (zeros are safe).
+ 150	    """
+ 151	    def __init__(self, max_complement_bytes=128*1024**2, max_bin_cache=200000,
+ 152	                 max_base_bytes=128*1024**2):
+ 153	        self.max_complement_bytes = int(max_complement_bytes)
+ 154	        self.max_bin_cache = int(max_bin_cache)
+ 155	        self.max_base_bytes = int(max_base_bytes)
+ 156	        if self.max_complement_bytes < 0 or self.max_bin_cache < 0 or self.max_base_bytes < 0:
+ 157	            raise ValueError('cache budgets must not be negative')
+ 158	        self._seeds = []
+ 159	        self._external_bases = {}  # phase-5 immutable basis identity -> imported seed
+ 160	        self._uid = 0
+ 161	        self._intern = weakref.WeakValueDictionary()
+ 162	        self._bins = OrderedDict()
+ 163	        self._complements = OrderedDict()
+ 164	        self._complement_bytes = 0
+ 165	        self._root_products = OrderedDict()
+ 166	        self._base_bytes = 0
+ 167	        self.stats = Counter()
+ 168	
+ 169	    def seed(self, data):
+ 170	        x = np.asarray(data, dtype=np.float64)
+ 171	        if x.ndim != 1 or not x.size or not np.all(np.isfinite(x)):
+ 172	            raise ValueError('seed must be a nonempty finite real vector')
+ 173	        x = x.copy()
+ 174	        x.flags.writeable = False
+ 175	        spectrum = np.asarray(_fft.rfft(x), dtype=np.complex128)
+ 176	        spectrum.flags.writeable = False
+ 177	        seed = Seed(len(self._seeds), x, spectrum)
+ 178	        self._seeds.append(seed)
+ 179	        self.stats['seed_ffts'] += 1
+ 180	        return Factor(seed)
+ 181	
+ 182	    def from_phase5(self, states):
+ 183	        """Import Phase-5 SpectralState metadata without detecting relations.
+ 184	
+ 185	        For an existing single basis term we import the immutable base's
+ 186	        already-computed rFFT and keep shift/scale/sparse edits symbolically.
+ 187	        For multi-basis combinations, fall back to materializing that input
+ 188	        once and registering it as a new seed. This keeps the API exact while
+ 189	        the general multi-basis symbolic transfer remains future work.
+ 190	        """
+ 191	        factors=[]
+ 192	        for state in states:
+ 193	            if not hasattr(state,'terms') or not hasattr(state,'edits') or not hasattr(state,'signal'):
+ 194	                raise TypeError('expected Phase-5 SpectralState instances')
+ 195	            if len(state.terms)==1:
+ 196	                (external, shift),gain=next(iter(state.terms.items()))
+ 197	                key=id(external)
+ 198	                prior=self._external_bases.get(key)
+ 199	                if prior is None or prior[0] is not external:
+ 200	                    a=np.asarray(external.signal)
+ 201	                    spec=np.asarray(external.spectrum)
+ 202	                    if a.ndim!=1 or spec.size!=a.size//2+1 or                       a.dtype!=np.float64 or spec.dtype!=np.complex128 or                       a.flags.writeable or spec.flags.writeable:
+ 203	                        raise ValueError('import requires immutable Phase-5 float64 base and rFFT')
+ 204	                    seed=Seed(len(self._seeds),a,spec)
+ 205	                    self._seeds.append(seed)
+ 206	                    self._external_bases[key]=(external,seed)
+ 207	                    self.stats['imported_phase5_bases']+=1
+ 208	                else:
+ 209	                    seed=prior[1]
+ 210	                edits=tuple(sorted((int(p), _real(d)) for p,d in state.edits.items() if d))
+ 211	                factors.append(Factor(seed,int(shift)%seed.n,_real(gain),edits))
+ 212	            else:
+ 213	                # Multi-term states are preserved mathematically, although
+ 214	                # the general symbolic basis representation is not imported.
+ 215	                factors.append(self.seed(state.signal()))
+ 216	                self.stats['materialized_phase5_states']+=1
+ 217	        return self.chain(factors)
+ 218	
+ 219	    def _intern_node(self, left=None, right=None, factor=None):
+ 220	        if factor is not None:
+ 221	            key = ('leaf', factor.seed.id, factor.shift, factor.gain, factor.edits)
+ 222	        else:
+ 223	            key = ('prod', left.uid, right.uid)
+ 224	        obj = self._intern.get(key)
+ 225	        if obj is not None:
+ 226	            self.stats['intern_hits'] += 1
+ 227	            return obj
+ 228	        self._uid += 1
+ 229	        obj = _Node(self._uid, left, right, factor)
+ 230	        self._intern[key] = obj
+ 231	        self.stats['new_nodes'] += 1
+ 232	        return obj
+ 233	
+ 234	    def chain(self, factors: Iterable[Factor]):
+ 235	        factors = tuple(factors)
+ 236	        if not factors:
+ 237	            raise ValueError('at least one factor is required')
+ 238	        n = factors[0].n
+ 239	        if any(not isinstance(f, Factor) or f.n != n or
+ 240	               f.seed not in self._seeds for f in factors):
+ 241	            raise ValueError('all factors must have equal lengths and belong to this engine')
+ 242	        def build(start, end):
+ 243	            if end-start == 1:
+ 244	                return self._intern_node(factor=factors[start])
+ 245	            mid=(start+end)//2
+ 246	            return self._intern_node(build(start,mid),build(mid,end))
+ 247	        return ChainVersion(self, build(0,len(factors)), n,
+ 248	                            tuple(f.seed.id for f in factors), frozenset(j for j,f in enumerate(factors) if not f.is_base()))
+ 249	
+ 250	    def _rewrite(self, node, index, new_factor):
+ 251	        if node.factor is not None:
+ 252	            assert index == 0
+ 253	            return self._intern_node(factor=new_factor)
+ 254	        if index < node.left.size:
+ 255	            return self._intern_node(self._rewrite(node.left,index,new_factor),node.right)
+ 256	        return self._intern_node(node.left,self._rewrite(node.right,index-node.left.size,new_factor))
+ 257	
+ 258	    def _factor(self, node, index):
+ 259	        if node.factor is not None:
+ 260	            assert index == 0
+ 261	            return node.factor
+ 262	        if index < node.left.size:
+ 263	            return self._factor(node.left,index)
+ 264	        return self._factor(node.right,index-node.left.size)
+ 265	
+ 266	    def _all_factors(self, root):
+ 267	        stack = [root]
+ 268	        while stack:
+ 269	            node = stack.pop()
+ 270	            if node.factor is not None:
+ 271	                yield node.factor
+ 272	            else:
+ 273	                stack.append(node.right)
+ 274	                stack.append(node.left)
+ 275	
+ 276	    def _cache_bin(self, key, producer):
+ 277	        if key in self._bins:
+ 278	            self._bins.move_to_end(key)
+ 279	            self.stats['bin_hits']+=1
+ 280	            return self._bins[key]
+ 281	        value=producer()
+ 282	        self.stats['bin_misses']+=1
+ 283	        if self.max_bin_cache:
+ 284	            self._bins[key]=value
+ 285	            while len(self._bins)>self.max_bin_cache:
+ 286	                self._bins.popitem(last=False)
+ 287	                self.stats['bin_evictions']+=1
+ 288	        return value
+ 289	
+ 290	    def _seed_bin(self, sid, k):
+ 291	        seed=self._seeds[sid]
+ 292	        if k<=seed.n//2:
+ 293	            return complex(seed.half_spectrum[k])
+ 294	        return complex(np.conj(seed.half_spectrum[seed.n-k]))
+ 295	
+ 296	    def _fixed_product_bin(self, seed_ids, k, exclude=None):
+ 297	        key=('base-bin',seed_ids,k) if exclude is None else ('except-bin',seed_ids,exclude,k)
+ 298	        def evaluate():
+ 299	            val=1+0j
+ 300	            for j,sid in enumerate(seed_ids):
+ 301	                if j!=exclude:
+ 302	                    val*=self._seed_bin(sid,k)
+ 303	            return val
+ 304	        return self._cache_bin(key,evaluate)
+ 305	
+ 306	    def _bin_value(self, node, k):
+ 307	        key=('node',node.uid,k)
+ 308	        def evaluate():
+ 309	            if node.factor is not None:
+ 310	                return node.factor.bin(k)
+ 311	            return self._bin_value(node.left,k)*self._bin_value(node.right,k)
+ 312	        return self._cache_bin(key,evaluate)
+ 313	
+ 314	    def _base(self, root, seed_ids=None):
+ 315	        # This is a seed-only reference for the tree's factor positions.
+ 316	        seeds=(tuple(seed_ids) if seed_ids is not None else
+ 317	               tuple(f.seed.id for f in self._all_factors(root)))
+ 318	        key=seeds
+ 319	        found=self._root_products.get(key)
+ 320	        if found is not None:
+ 321	            self.stats['base_product_hits'] += 1
+ 322	            self._root_products.move_to_end(key)
+ 323	            return found
+ 324	        n=self._all_factors(root)
+ 325	        first=next(n)
+ 326	        half=np.ones(first.n//2+1, dtype=np.complex128)
+ 327	        for f in self._all_factors(root):
+ 328	            half *= f.seed.half_spectrum
+ 329	        out=np.asarray(_fft.irfft(half,n=first.n), dtype=np.float64)
+ 330	        out.flags.writeable = False
+ 331	        if out.nbytes <= self.max_base_bytes:
+ 332	            self._root_products[key]=(seeds,out)
+ 333	            self._base_bytes+=out.nbytes
+ 334	            while self._base_bytes > self.max_base_bytes:
+ 335	                _,old=self._root_products.popitem(last=False)
+ 336	                self._base_bytes-=old[1].nbytes
+ 337	                self.stats['base_evictions']+=1
+ 338	        self.stats['base_product_builds']+=1
+ 339	        return seeds,out
+ 340	
+ 341	    def _leave_one_out(self, base_seeds, at):
+ 342	        key=(base_seeds, at)
+ 343	        if key in self._complements:
+ 344	            self._complements.move_to_end(key)
+ 345	            self.stats['complement_hits'] += 1
+ 346	            return self._complements[key]
+ 347	        n=self._seeds[base_seeds[0]].n
+ 348	        half=np.ones(n//2+1,dtype=np.complex128)
+ 349	        for j, sid in enumerate(base_seeds):
+ 350	            if j != at:
+ 351	                half *= self._seeds[sid].half_spectrum
+ 352	        out=np.asarray(_fft.irfft(half,n=n),dtype=np.float64)
+ 353	        out.flags.writeable=False
+ 354	        self.stats['complement_builds'] += 1
+ 355	        if out.nbytes <= self.max_complement_bytes:
+ 356	            self._complements[key]=out
+ 357	            self._complement_bytes += out.nbytes
+ 358	            while self._complement_bytes > self.max_complement_bytes:
+ 359	                _,ev=self._complements.popitem(last=False)
+ 360	                self._complement_bytes -= ev.nbytes
+ 361	                self.stats['complement_evictions']+=1
+ 362	        return out
+ 363	
+ 364	    def memory_report(self):
+ 365	        seed_bytes=sum(s.signal.nbytes+s.half_spectrum.nbytes for s in self._seeds)
+ 366	        base_bytes=self._base_bytes
+ 367	        return dict(seeds=len(self._seeds), seed_bytes=seed_bytes,
+ 368	                    base_products=len(self._root_products), base_bytes=base_bytes,
+ 369	                    base_budget=self.max_base_bytes,
+ 370	                    complements=len(self._complements), complement_bytes=self._complement_bytes,
+ 371	                    complement_budget=self.max_complement_bytes,
+ 372	                    bin_cache_entries=len(self._bins), bin_cache_budget=self.max_bin_cache,
+ 373	                    live_interned_nodes=len(self._intern))
+ 374	
+ 375	
+ 376	class ChainVersion:
+ 377	    __slots__=('engine','root','n','_seed_ids','_modified')
+ 378	    def __init__(self, engine, root, n, seed_ids=None, modified=None):
+ 379	        self.engine,self.root,self.n=engine,root,n
+ 380	        self._seed_ids=(tuple(seed_ids) if seed_ids is not None else
+ 381	                        tuple(f.seed.id for f in engine._all_factors(root)))
+ 382	        self._modified=(frozenset(modified) if modified is not None else
+ 383	                        frozenset(j for j,f in enumerate(engine._all_factors(root)) if not f.is_base()))
+ 384	
+ 385	    def factor(self, at):
+ 386	        at=_indices(self.root.size,at)
+ 387	        return self.engine._factor(self.root,at)
+ 388	
+ 389	    def with_factor(self, at, new_factor):
+ 390	        at=_indices(self.root.size,at)
+ 391	        if new_factor.n != self.n or new_factor.seed not in self.engine._seeds:
+ 392	            raise ValueError('factor incompatible with engine or length')
+ 393	        if self.factor(at) == new_factor:
+ 394	            return self
+ 395	        updated_seeds=(self._seed_ids if new_factor.seed.id==self._seed_ids[at] else
+ 396	                       self._seed_ids[:at]+(new_factor.seed.id,)+self._seed_ids[at+1:])
+ 397	        updated_modified=(self._modified-{at}) if new_factor.is_base() else (self._modified|{at})
+ 398	        return ChainVersion(self.engine,self.engine._rewrite(self.root,at,new_factor),self.n,
+ 399	                            updated_seeds,updated_modified)
+ 400	
+ 401	    def edit(self, at, pos, delta):
+ 402	        return self.with_factor(at,self.factor(at).edit(pos,delta))
+ 403	
+ 404	    def shift(self, at, amount):
+ 405	        return self.with_factor(at,self.factor(at).shifted(amount))
+ 406	
+ 407	    def scale(self, at, amount):
+ 408	        return self.with_factor(at,self.factor(at).scaled(amount))
+ 409	
+ 410	    def convolve_with(self, other):
+ 411	        if not isinstance(other,ChainVersion) or other.engine is not self.engine or other.n != self.n:
+ 412	            raise ValueError('can only convolve matching versions in one engine')
+ 413	        return ChainVersion(self.engine,self.engine._intern_node(self.root,other.root),self.n,
+ 414	                            self._seed_ids+other._seed_ids,
+ 415	                            self._modified|{j+self.root.size for j in other._modified})
+ 416	
+ 417	    def frequencies(self, bins):
+ 418	        ks=np.atleast_1d(np.asarray(bins,dtype=np.int64))
+ 419	        if np.any((ks<0)|(ks>=self.n)):
+ 420	            raise IndexError('frequency outside [0,n)')
+ 421	        if not self._modified:
+ 422	            out=[self.engine._fixed_product_bin(self._seed_ids,int(k)) for k in ks]
+ 423	        elif len(self._modified)==1:
+ 424	            at=next(iter(self._modified))
+ 425	            f=self.factor(at)
+ 426	            out=[]
+ 427	            for k in ks:
+ 428	                k=int(k)
+ 429	                base=self.engine._fixed_product_bin(self._seed_ids,k)
+ 430	                # Gain and shift are applied to the one modified seed term.
+ 431	                gainshift=f.gain*_phase(self.n,k,f.shift)
+ 432	                corr=0j
+ 433	                for p,d in f.edits:
+ 434	                    corr+=d*_phase(self.n,k,p)
+ 435	                if f.edits:
+ 436	                    except_bin=self.engine._fixed_product_bin(self._seed_ids,k,exclude=at)
+ 437	                    out.append(gainshift*base + corr*except_bin)
+ 438	                else:
+ 439	                    out.append(gainshift*base)
+ 440	        else:
+ 441	            out=[self.engine._bin_value(self.root,int(k)) for k in ks]
+ 442	        return np.asarray(out,dtype=np.complex128)
+ 443	
+ 444	    def spectral_half(self):
+ 445	        result=np.ones(self.n//2+1,dtype=np.complex128)
+ 446	        for f in self.engine._all_factors(self.root):
+ 447	            result *= f.spectrum_half()
+ 448	        return result
+ 449	
+ 450	    def _one_changed(self):
+ 451	        if len(self._modified)!=1:
+ 452	            return None
+ 453	        at=next(iter(self._modified))
+ 454	        return at,self.factor(at)
+ 455	
+ 456	    def time(self, indices):
+ 457	        """Selected time-domain coefficients. Single changed factor has a
+ 458	        fast exact algebraic formula, other cases compute a full result.
+ 459	        """
+ 460	        idx=np.atleast_1d(np.asarray(indices,dtype=np.int64))
+ 461	        if np.any((idx<0)|(idx>=self.n)):
+ 462	            raise IndexError('time index outside [0,n)')
+ 463	        changed=self._one_changed()
+ 464	        if changed is None:
+ 465	            if not self._modified:
+ 466	                return self.engine._base(self.root,self._seed_ids)[1][idx].copy()
+ 467	            return self.dense()[idx].copy()
+ 468	        at,f=changed
+ 469	        seeds, base=self.engine._base(self.root,self._seed_ids)
+ 470	        result=f.gain*base[(idx-f.shift)%self.n]
+ 471	        if f.edits:
+ 472	            other=self.engine._leave_one_out(seeds,at)
+ 473	            for t,delta in f.edits:
+ 474	                result=result+delta*other[(idx-t)%self.n]
+ 475	        return np.asarray(result,dtype=np.float64)
+ 476	
+ 477	    def dense(self, method='auto'):
+ 478	        """Return full circular convolution. Methods: auto, sparse, native.
+ 479	
+ 480	        Sparse method supports arbitrary shift/scale plus impulse edits to
+ 481	        ONE factor. More changed factors use a factored Fourier evaluation.
+ 482	        """
+ 483	        if method not in ('auto','sparse','native'):
+ 484	            raise ValueError('method must be auto, sparse or native')
+ 485	        changed=self._one_changed()
+ 486	        if method=='sparse' and changed is None:
+ 487	            if not self._modified:
+ 488	                return self.engine._base(self.root,self._seed_ids)[1].copy()
+ 489	            raise ValueError('sparse path requires exactly one modified factor')
+ 490	        if changed is not None and (method=='sparse' or (method=='auto' and len(changed[1].edits)<=4)):
+ 491	            at,f=changed
+ 492	            seeds, base=self.engine._base(self.root,self._seed_ids)
+ 493	            result=f.gain*np.roll(base,f.shift)
+ 494	            if f.edits:
+ 495	                other=self.engine._leave_one_out(seeds,at)
+ 496	                for t,delta in f.edits:
+ 497	                    result+=delta*np.roll(other,t)
+ 498	            self.engine.stats['sparse_materializations']+=1
+ 499	            return result
+ 500	        if method=='auto' and not self._modified:
+ 501	            return self.engine._base(self.root,self._seed_ids)[1].copy()
+ 502	        self.engine.stats['native_materializations'] += 1
+ 503	        return np.asarray(_fft.irfft(self.spectral_half(),n=self.n),dtype=np.float64)
+ 504	
+ 505	    def count_reused_nodes(self, other):
+ 506	        """Diagnostic counts by object identity, including shared leaves."""
+ 507	        def walk(n):
+ 508	            nodes=set()
+ 509	            stack=[n]
+ 510	            while stack:
+ 511	                x=stack.pop()
+ 512	                if x.uid in nodes: continue
+ 513	                nodes.add(x.uid)
+ 514	                if x.factor is None:
+ 515	                    stack.extend((x.left,x.right))
+ 516	            return nodes
+ 517	        a,b=walk(self.root),walk(other.root)
+ 518	        return dict(left_nodes=len(a),right_nodes=len(b),shared_nodes=len(a&b),
+ 519	                    new_nodes=len(b-a))

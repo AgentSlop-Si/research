@@ -1,0 +1,36 @@
+"""Quick demonstration of the adaptive dispatcher."""
+import numpy as np
+from scipy import fft
+from cost_aware_fft import RelationFFT
+
+eng=RelationFFT(max_cache_bytes=32*1024**2)
+n=16384
+rng=np.random.default_rng(7)
+root=eng.register(rng.normal(size=n),cache_exact=True)
+
+# Different branches keep the same base FFT.
+a=root.fork().edit(37,1.25)
+b=root.fork().edit(37,-0.75)
+c=a.shift(5).edit(14,0.5)
+
+# Lazy only: no full FFT for one bin.
+print('frequency bin 7:',c.bin(7))
+print('did not materialize spectrum:',c._cached_output is None)
+
+for label,state in [('edit +1.25',a),('edit -0.75',b),('shifted/edit',c)]:
+    z=state.spectrum()
+    np.testing.assert_allclose(z,fft.rfft(state.signal()),atol=1e-7,rtol=1e-9)
+    print(label,'strategy',eng.last_method,'max amplitude',np.max(abs(z)))
+
+# r basis vectors, M different spectra; no M forward FFTs.
+basis=rng.normal(size=(2,n))
+coeffs=rng.normal(size=(12,2))
+family=eng.states_from_bases(basis,coeffs)
+np.testing.assert_allclose(family[0].spectrum(),fft.rfft(coeffs[0]@basis),atol=1e-7)
+print('family FFTs:',len(family),'computed from',basis.shape[0],'base transforms')
+
+# Hardware calibration: first invocation intentionally benchmarks strategies.
+profile=eng.calibrate(a,repeats=3)
+print('measured strategy:',profile.best_method,
+      {k:round(v*1000,3) for k,v in profile.median_seconds.items()},'ms')
+print('memory report:',eng.memory_report())

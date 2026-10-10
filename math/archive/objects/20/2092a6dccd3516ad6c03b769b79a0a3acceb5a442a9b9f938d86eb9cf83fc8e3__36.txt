@@ -1,0 +1,38 @@
+0001 """Independent all-a reduced-period construction test, using previously verified recurrence."""
+0002 from pathlib import Path
+0003 import math,json
+0004 import numpy as np
+0005 OUT=Path(__file__).resolve().parent
+0006 # Standalone recurrence, rather than import a script that runs its experiment.
+0007 def reduced_table(M,K,a,b):
+0008  N=M*K; h=math.gcd(a,M); L=M//h; J=K*h; aa=a//h
+0009  Q=np.empty(N,complex); t=np.arange(L)
+0010  if L==1: Q[:]=1
+0011  else:
+0012   g=math.gcd(2*aa,L)
+0013   for p in range(J):
+0014    H=np.zeros(L,complex)
+0015    for seed in range(g):
+0016     H[seed]=np.sum(np.exp(-2j*np.pi*((aa*t*t)%L)/L-2j*np.pi*(p+J*seed)*t/N))
+0017     q=seed
+0018     for _ in range(L//g-1):
+0019      qn=(q+2*aa)%L
+0020      H[qn]=np.exp(2j*np.pi*p/N+2j*np.pi*((aa+q)%L)/L)*(H[q]+np.exp(-2j*np.pi*p/J)-1)
+0021      q=qn
+0022    Q[p+J*np.arange(L)]=H
+0023  n=(np.arange(N)+b*K)%N
+0024  D=np.empty(N,complex); special=n%J==0
+0025  D[special]=h
+0026  D[~special]=(1-np.exp(-2j*np.pi*(n[~special]%K)/K))/(1-np.exp(-2j*np.pi*(n[~special]%J)/J))
+0027  return Q[n]*D
+0028 results=[]
+0029 for M,K in [(8,2),(16,4),(32,8),(31,4)]:
+0030  for a in range(M):
+0031   for b in [0,3,M-1]:
+0032    t=np.arange(M); N=M*K
+0033    direct=np.array([np.sum(np.exp(-2j*np.pi*((a*t*t+b*t)%M)/M-2j*np.pi*m*t/N)) for m in range(N)])
+0034    err=float(np.max(abs(reduced_table(M,K,a,b)-direct)))
+0035    results.append({'M':M,'K':K,'a':a,'b':b,'max_absolute_error':err})
+0036 assert max(r['max_absolute_error'] for r in results)<1e-9
+0037 (OUT/'reduced_chirp_verification.json').write_text(json.dumps({'results':results},indent=2))
+0038 print('all-a chirp cases',len(results),'max error',max(r['max_absolute_error'] for r in results))

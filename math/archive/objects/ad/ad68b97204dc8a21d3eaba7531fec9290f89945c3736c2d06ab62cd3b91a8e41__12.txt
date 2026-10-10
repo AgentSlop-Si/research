@@ -1,0 +1,158 @@
+1: """Tiny exact-integer audit, independent of every uploaded implementation.
+2: 
+3: Run: python verify_fixed_pair_kernels.py
+4: Only Python's standard library is used. These are circular convolutions;
+5: the script proves no asymptotic novelty and measures no production speed.
+6: """
+7: from __future__ import annotations
+8: 
+9: import json
+10: import random
+11: 
+12: 
+13: def circular(a, b):
+14:     n = len(a)
+15:     assert len(b) == n
+16:     return [sum(a[i] * b[(j - i) % n] for i in range(n)) for j in range(n)]
+17: 
+18: 
+19: def product(signals, n):
+20:     out = [1] + [0] * (n - 1)
+21:     for signal in signals:
+22:         out = circular(out, signal)
+23:     return out
+24: 
+25: 
+26: def transform(x, gain, shift, edits):
+27:     n = len(x)
+28:     out = [gain * x[(j - shift) % n] for j in range(n)]
+29:     for position, delta in edits.items():
+30:         out[position % n] += delta
+31:     return out
+32: 
+33: 
+34: def sparse_convolve(edits, kernel):
+35:     n = len(kernel)
+36:     return [sum(delta * kernel[(j - position) % n]
+37:                 for position, delta in edits.items()) for j in range(n)]
+38: 
+39: 
+40: def combine(kernel, gain, shift, edits, complement):
+41:     """Fresh result, so a fork cannot mutate any parent kernel."""
+42:     n = len(kernel)
+43:     return [gain * kernel[(j - shift) % n] + value
+44:             for j, value in enumerate(sparse_convolve(edits, complement))]
+45: 
+46: 
+47: def initialize(a, b, rest):
+48:     n = len(a)
+49:     r = product(rest, n)
+50:     u = circular(b, r)  # Excludes editable a.
+51:     v = circular(a, r)  # Excludes editable b.
+52:     y = circular(a, u)
+53:     return r, u, v, y
+54: 
+55: 
+56: def revise_pair(state, a_change, b_change):
+57:     """Two sequential edits, using updated v in the second y update.
+58: 
+59:     Each change is (gain, circular shift, sparse additive residual).
+60:     r never changes; u/v/y are independently allocated to preserve forks.
+61:     """
+62:     r, u, v, y = state
+63:     ga, sa, da = a_change
+64:     gb, sb, db = b_change
+65:     y_after_a = combine(y, ga, sa, da, u)
+66:     v_after_a = combine(v, ga, sa, da, r)
+67:     y_after_b = combine(y_after_a, gb, sb, db, v_after_a)
+68:     u_after_b = combine(u, gb, sb, db, r)
+69:     return r, u_after_b, v_after_a, y_after_b
+70: 
+71: 
+72: def explicit_cross_term(state, a_change, b_change):
+73:     r, u, v, y = state
+74:     ga, sa, da = a_change
+75:     gb, sb, db = b_change
+76:     n = len(r)
+77:     cross = {}
+78:     for pa, va in da.items():
+79:         for pb, vb in db.items():
+80:             p = (pa + pb) % n
+81:             cross[p] = cross.get(p, 0) + va * vb
+82:     first = combine(y, ga * gb, sa + sb, {}, r)
+83:     second = sparse_convolve(da, transform(u, gb, sb, {}))
+84:     third = sparse_convolve(db, transform(v, ga, sa, {}))
+85:     fourth = sparse_convolve(cross, r)
+86:     return [sum(parts) for parts in zip(first, second, third, fourth)]
+87: 
+88: 
+89: def random_change(rng, n):
+90:     edits = {}
+91:     for _ in range(rng.randrange(5)):
+92:         p = rng.randrange(n)
+93:         edits[p] = edits.get(p, 0) + rng.randrange(-3, 4)
+94:     edits = {p: delta for p, delta in edits.items() if delta}
+95:     return rng.randrange(-2, 3), rng.randrange(-3 * n, 3 * n + 1), edits
+96: 
+97: 
+98: def test():
+99:     rng = random.Random(20261008)
+100:     independent_cases = 0
+101:     stream_steps = 0
+102:     for n in range(1, 13):
+103:         for trial in range(60):
+104:             signals = [[rng.randrange(-3, 4) for _ in range(n)]
+105:                        for _ in range(rng.randrange(2, 7))]
+106:             if trial % 10 == 0:
+107:                 signals[0] = [0] * n
+108:             a, b, *rest = signals
+109:             state = initialize(a, b, rest)
+110:             original = tuple(tuple(v) for v in state)
+111:             ca, cb = random_change(rng, n), random_change(rng, n)
+112:             updated = revise_pair(state, ca, cb)
+113:             expected = initialize(transform(a, *ca), transform(b, *cb), rest)
+114:             assert updated == expected, (n, trial, "fork")
+115:             assert updated[-1] == explicit_cross_term(state, ca, cb)
+116:             assert tuple(tuple(v) for v in state) == original, "parent mutated"
+117:             assert updated[0] is state[0], "constant complement not shared"
+118:             independent_cases += 1
+119: 
+120:             # Accumulating stream, plus a sibling branch at every step.
+121:             for step in range(5):
+122:                 ca, cb = random_change(rng, n), random_change(rng, n)
+123:                 before = tuple(tuple(v) for v in state)
+124:                 sibling = revise_pair(state, (1, 0, {}), cb)
+125:                 sibling_expected = initialize(a, transform(b, *cb), rest)
+126:                 assert sibling == sibling_expected, (n, trial, step, "sibling")
+127:                 assert tuple(tuple(v) for v in state) == before
+128:                 state = revise_pair(state, ca, cb)
+129:                 a, b = transform(a, *ca), transform(b, *cb)
+130:                 assert state == initialize(a, b, rest), (n, trial, step, "stream")
+131:                 stream_steps += 1
+132: 
+133:     # Omission of the bilinear term has a visible, exact counterexample.
+134:     state = initialize([1, 0, 0, 0], [1, 0, 0, 0], [])
+135:     change = (1, 0, {1: 1})
+136:     exact = revise_pair(state, change, change)[-1]
+137:     without_cross_term = [1, 2, 0, 0]
+138:     assert exact == [1, 2, 1, 0] and exact != without_cross_term
+139: 
+140:     return {
+141:         "arithmetic": "unbounded Python integers, no FFT or floating point",
+142:         "periods": list(range(1, 13)),
+143:         "independent_fork_cases": independent_cases,
+144:         "accumulating_stream_steps": stream_steps,
+145:         "sibling_fork_checks": stream_steps,
+146:         "includes": ["negative gains", "zero gains", "circular shifts",
+147:                      "zero factors", "support collisions", "immutable parents",
+148:                      "empty fixed complement", "explicit cross-term comparison"],
+149:         "cross_term_counterexample": {
+150:             "correct": exact, "omitting_cross_term": without_cross_term
+151:         },
+152:         "passed": True,
+153:         "scope": "finite exact tests of derived identity; no production performance claim"
+154:     }
+155: 
+156: 
+157: if __name__ == "__main__":
+158:     print(json.dumps(test(), indent=2))

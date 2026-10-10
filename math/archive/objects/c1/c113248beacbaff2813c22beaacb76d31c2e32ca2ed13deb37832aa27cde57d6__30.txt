@@ -1,0 +1,211 @@
+   1 #!/usr/bin/env python3
+   2 """Independent finite-field controls and symbolic boundary factorization.
+   3 
+   4 Only inert JSON certificate data is read. No uploaded source is executed.
+   5 The rank inequalities are proved in the report; finite tests are controls.
+   6 """
+   7 from pathlib import Path
+   8 from itertools import combinations
+   9 from random import Random
+  10 import json, math, time
+  11 
+  12 HERE = Path(__file__).resolve().parent
+  13 started = time.monotonic()
+  14 rng = Random(10101827)
+  15 
+  16 
+  17 def rank(A, p):
+  18     if not A:
+  19         return 0
+  20     M = [[x % p for x in row] for row in A]
+  21     r = 0
+  22     for c in range(len(M[0])):
+  23         pivot = next((i for i in range(r, len(M)) if M[i][c]), None)
+  24         if pivot is None:
+  25             continue
+  26         M[r], M[pivot] = M[pivot], M[r]
+  27         inv = pow(M[r][c], -1, p)
+  28         M[r] = [x * inv % p for x in M[r]]
+  29         for i in range(r + 1, len(M)):
+  30             f = M[i][c]
+  31             if f:
+  32                 M[i] = [(a - f * b) % p for a, b in zip(M[i], M[r])]
+  33         r += 1
+  34         if r == len(M):
+  35             break
+  36     return r
+  37 
+  38 
+  39 def det(A, p):
+  40     M = [[x % p for x in row] for row in A]
+  41     result = 1
+  42     for c in range(len(M)):
+  43         pivot = next((i for i in range(c, len(M)) if M[i][c]), None)
+  44         if pivot is None:
+  45             return 0
+  46         if pivot != c:
+  47             M[c], M[pivot] = M[pivot], M[c]
+  48             result = -result
+  49         value = M[c][c]
+  50         result = result * value % p
+  51         inv = pow(value, -1, p)
+  52         for i in range(c + 1, len(M)):
+  53             f = M[i][c] * inv % p
+  54             if f:
+  55                 M[i] = [(a - f * b) % p for a, b in zip(M[i], M[c])]
+  56     return result % p
+  57 
+  58 
+  59 def multiply(A, B, p):
+  60     columns = list(zip(*B))
+  61     return [[sum(x * y for x, y in zip(row, col)) % p for col in columns] for row in A]
+  62 
+  63 
+  64 def is_prime(p):
+  65     return p >= 2 and all(p % d for d in range(2, math.isqrt(p) + 1))
+  66 
+  67 
+  68 def primitive_root_of_order(n, p):
+  69     assert is_prime(p) and (p - 1) % n == 0
+  70     for a in range(2, p):
+  71         z = pow(a, (p - 1) // n, p)
+  72         if pow(z, n, p) == 1 and all(pow(z, d, p) != 1 for d in range(1, n) if n % d == 0):
+  73             return z
+  74     raise AssertionError((n, p))
+  75 
+  76 
+  77 def field_for(n):
+  78     k = (1000 + n - 1) // n
+  79     while not is_prime(k * n + 1):
+  80         k += 1
+  81     p = k * n + 1
+  82     return p, primitive_root_of_order(n, p)
+  83 
+  84 
+  85 def transpose(A):
+  86     return [list(row) for row in zip(*A)]
+  87 
+  88 
+  89 results = []
+  90 counts = {'kernel_annihilation': 0, 'kernel_restriction_ranks': 0,
+  91           'fullrank_space_inequalities': 0, 'spectral_complement_identities': 0,
+  92           'spectral_tail_map_invertibility': 0, 'spectral_space_ranks': 0}
+  93 for n in list(range(2, 19)) + [24, 32, 64]:
+  94     p, z = field_for(n)
+  95     F = [[pow(z, i * k, p) for k in range(n)] for i in range(n)]
+  96     ts = list(range(1, n)) if n <= 18 else sorted({1, 2, 3, 4, n // 2, n - 2, n - 1})
+  97     for t in ts:
+  98         high = [[pow(z, r * k, p) for r in range(1, t + 1)] for k in range(n)]
+  99         low = [[pow(z, (-r * k) % n, p) for r in range(t)] for k in range(n)]
+ 100         assert not any(any(row) for row in multiply(F[:n - t], high, p))
+ 101         assert not any(any(row) for row in multiply(F[t:], low, p))
+ 102         counts['kernel_annihilation'] += 2
+ 103         for a in range(n):
+ 104             assert rank(high[a + 1:], p) == min(t, n - 1 - a)
+ 105             assert rank(low[:a], p) == min(t, a)
+ 106             counts['kernel_restriction_ranks'] += 2
+ 107         for rep in range(4):
+ 108             X = [[rng.randrange(p) for _ in range(t)] for _ in range(n)]
+ 109             if rank(X, p) < t:
+ 110                 continue
+ 111             a = rng.randrange(n)
+ 112             assert rank(multiply(F[:n - t], X, p), p) + rank(X[a + 1:], p) >= min(t, n - 1 - a)
+ 113             assert rank(multiply(F[t:], X, p), p) + rank(X[:a], p) >= min(t, a)
+ 114             counts['fullrank_space_inequalities'] += 2
+ 115     bs = list(range(1, n // 2 + 1)) if n <= 18 else sorted({1, 2, 3, n // 2})
+ 116     for b in bs:
+ 117         # The tail -> initial-output map is square. Check its invertibility.
+ 118         square = [row[b:] for row in F[:n - b]]
+ 119         assert rank(square, p) == n - b
+ 120         counts['spectral_tail_map_invertibility'] += 1
+ 121         tail_exp = [[pow(z, r * k, p) for r in range(1, b + 1)] for k in range(b, n)]
+ 122         low_chars = [[pow(z, i * j, p) for j in range(b)] for i in range(n - b)]
+ 123         coeffs = [[-pow(z, r * j, p) % p for r in range(1, b + 1)] for j in range(b)]
+ 124         assert multiply(square, tail_exp, p) == multiply(low_chars, coeffs, p)
+ 125         assert rank(tail_exp, p) == rank(low_chars, p) == rank(coeffs, p) == b
+ 126         counts['spectral_complement_identities'] += 1
+ 127         counts['spectral_space_ranks'] += 3
+ 128     results.append({'N': n, 'prime': p, 'root': z, 't_values': ts, 'b_values': bs})
+ 129 print('All-length Fourier rank and spectral-complement controls passed.', flush=True)
+ 130 
+ 131 # Independent all-length boundary-lock controls, including N=9 (first valid
+ 132 # six-row case), non-power-of-two lengths and deliberate zero branches.
+ 133 boundary_cases = []
+ 134 for n in (8, 9, 10, 11, 12, 15, 16, 24, 32, 64):
+ 135     p, z = field_for(n)
+ 136     counts_here = {'rank_equivalences': 0, 'determinant_factorizations': 0,
+ 137                    'zero_boundary_cases': 0, 'N8_exceptions': 0}
+ 138     ratios = set()
+ 139     for rep in range(40):
+ 140         alpha = [rng.randrange(p) for _ in range(3)]
+ 141         U = [rng.randrange(p) for _ in range(n)]
+ 142         L = [sum(alpha[r - 1] * pow(z, r * k, p) for r in (1, 2, 3)) % p for k in range(n)]
+ 143         if rep % 4 == 0:
+ 144             alpha = [0, 0, 0]
+ 145             L = [0] * n
+ 146             U[3] = U[4] = 0
+ 147         elif rep % 4 == 1:
+ 148             scale = rng.randrange(p)
+ 149             U[3], U[4] = scale * L[3] % p, scale * L[4] % p
+ 150         M = [[1, pow(z, i, p), pow(z, 2 * i, p), pow(z, 5 * i, p),
+ 151               sum(U[k] * pow(z, i * k, p) for k in range(5)) % p,
+ 152               sum(L[k] * pow(z, i * k, p) for k in range(6, n)) % p]
+ 153              for i in range(n - 3)]
+ 154         D = (U[3] * L[4] - U[4] * L[3]) % p
+ 155         if n >= 9:
+ 156             boundary_rank = rank([[U[3], -L[3]], [U[4], -L[4]]], p)
+ 157             assert rank(M, p) == 4 + boundary_rank
+ 158             assert (rank(M, p) <= 5) == (D == 0)
+ 159             vand = math.prod((pow(z, j, p) - pow(z, i, p)) % p for i, j in combinations(range(6), 2)) % p
+ 160             assert vand
+ 161             assert det(M[:6], p) == -D * vand % p
+ 162             counts_here['rank_equivalences'] += 1
+ 163             counts_here['determinant_factorizations'] += 1
+ 164             if D:
+ 165                 ratios.add(det(M[:6], p) * pow(D, -1, p) % p)
+ 166             else:
+ 167                 counts_here['zero_boundary_cases'] += 1
+ 168         else:
+ 169             assert rank(M, p) <= 5
+ 170             if D:
+ 171                 assert rank(M, p) == 5
+ 172                 counts_here['N8_exceptions'] += 1
+ 173     boundary_cases.append({'N': n, 'prime': p, 'root': z, **counts_here, 'nonzero_ratios': sorted(ratios)})
+ 174 
+ 175 # Reproduce every numerical constant in the supplied boundary certificate
+ 176 # without recreating its random sample stream.
+ 177 original_boundary = json.loads((HERE / 'input_data' / 'BOUNDARY_LOCK_TESTS.json').read_text())
+ 178 source_ratios = []
+ 179 for row in original_boundary:
+ 180     n, p, z = row['n'], row['p'], row['z']
+ 181     assert pow(z, n, p) == 1 and all(pow(z, d, p) != 1 for d in range(1, n) if n % d == 0)
+ 182     if n >= 9:
+ 183         ratio = -math.prod((pow(z, j, p) - pow(z, i, p)) % p for i, j in combinations(range(6), 2)) % p
+ 184         assert ratio == row['determinant_ratio']
+ 185         source_ratios.append({'N': n, 'prime': p, 'root': z, 'ratio': ratio})
+ 186 
+ 187 tail_witnesses = []
+ 188 for n, p, z, expected in [(16, 12289, 4134, 1099), (16, 65537, 64, 121),
+ 189                            (32, 12289, 5860, 2858), (64, 12289, 7311, 4461)]:
+ 190     value = det([[pow(z, r * k, p) for r in (1, 2, 3)] for k in (6, 7, 8)], p)
+ 191     assert value == expected
+ 192     tail_witnesses.append({'N': n, 'prime': p, 'root': z, 'determinant': value})
+ 193 
+ 194 # Exact symbolic N=8 exception: alpha=(1,0,0), U3=1,U4=0 gives D=z^4=-1.
+ 195 # Verify it over a fresh finite field as a control of the general proof.
+ 196 p, z = 17, 9
+ 197 L = [pow(z, k, p) for k in range(8)]
+ 198 M = [[1, pow(z, i, p), pow(z, 2*i, p), pow(z, 5*i, p), pow(z, 3*i, p),
+ 199       sum(L[k] * pow(z, i*k, p) for k in range(6, 8)) % p] for i in range(5)]
+ 200 assert L[4] == p - 1 and rank(M, p) == 5
+ 201 print('Boundary identity and rank criterion passed, with explicit N=8 exception.', flush=True)
+ 202 
+ 203 out = {'uploaded_code_executed': False, 'seed': 10101827, 'rank_and_spectral_checks': counts,
+ 204        'rank_and_spectral_fields': results, 'boundary_checks': boundary_cases,
+ 205        'source_boundary_ratios_reproduced': source_ratios,
+ 206        'source_tail_determinants_reproduced': tail_witnesses,
+ 207        'explicit_N8_exception': {'prime': 17, 'root': 9, 'alpha': [1, 0, 0],
+ 208                                 'U3': 1, 'U4': 0, 'D': 16, 'rank': 5},
+ 209        'elapsed_seconds': round(time.monotonic() - started, 3)}
+ 210 (HERE / 'modular_results.json').write_text(json.dumps(out, indent=2) + '\n')
+ 211 print(json.dumps({'counts': counts, 'elapsed_seconds': out['elapsed_seconds']}, indent=2), flush=True)

@@ -1,0 +1,95 @@
+"""Produce independently checkable nonzero Fourier minors (mod two primes).
+
+A nonzero determinant after specializing the cyclotomic integer ring at a
+primitive Nth root modulo q proves the corresponding complex minor is nonzero.
+"""
+from pathlib import Path
+import json
+from two_stage_ct import P,root
+from cut_rank_gate import bitrev
+
+Q2=2013265921
+ROOT2=31
+
+def pivots_and_minor(A,p):
+    """Return (rank, original chosen rows, columns); validate pivot minor."""
+    m=[row[:] for row in A]
+    original_rows=list(range(len(A)))
+    pivcols=[];pivrows=[];r=0
+    if not A or not A[0]:return 0,[],[]
+    for c in range(len(A[0])):
+        i=next((i for i in range(r,len(m)) if m[i][c]%p),None)
+        if i is None:continue
+        m[r],m[i]=m[i],m[r]
+        original_rows[r],original_rows[i]=original_rows[i],original_rows[r]
+        pivrows.append(original_rows[r]);pivcols.append(c)
+        pivot=m[r][c]%p
+        inv=pow(pivot,-1,p)
+        for j in range(r+1,len(m)):
+            coeff=m[j][c]*inv%p
+            if coeff:
+                for z in range(c,len(A[0])):m[j][z]=(m[j][z]-coeff*m[r][z])%p
+        r+=1
+        if r==len(m):break
+    minor=[[A[i][j] for j in pivcols] for i in pivrows]
+    assert determinant_mod(minor,p)!=0
+    return r,pivrows,pivcols
+
+def determinant_mod(M,p):
+    if not M:return 1
+    n=len(M); assert all(len(row)==n for row in M)
+    A=[list(map(lambda x:x%p,row)) for row in M]
+    d=1
+    for c in range(n):
+        i=next((i for i in range(c,n) if A[i][c]),None)
+        if i is None:return 0
+        if i!=c:
+            A[c],A[i]=A[i],A[c]
+            d=-d
+        pivot=A[c][c]
+        d=d*pivot%p
+        inv=pow(pivot,-1,p)
+        for j in range(c+1,n):
+            factor=A[j][c]*inv%p
+            if factor:
+                for k in range(c,n):A[j][k]=(A[j][k]-factor*A[c][k])%p
+    return d%p
+
+def certify_64():
+    data=json.load(open(str(Path(__file__).resolve().parent/'rank_profiles_results.json')))
+    opt=next(d for d in data if d['n']==64 and d['endpoints']=='bitrev_both')
+    perm=opt['optimized_shuffle']; order=bitrev(64)
+    k=6; m=11; L=32
+    row_orig=[order[i] for i in range(k,k+L)]
+    col_orig=[order[j] for j in range(m,m+L)]
+    overlap=sum(m<=perm[i]<m+L for i in range(k,k+L))
+    assert overlap==14,overlap
+    result={'n':64,'output_order':'bitrev','input_order':'bitrev','internal_shuffle':perm,
+       'output_interval':[k,k+L],'input_interval':[m,m+L],
+       'physical_output_indices':row_orig,'physical_input_indices':col_orig,
+       'middle_overlap':overlap,'interval_boundary_counts':[2,2],
+       'field_evidence':[]}
+    for prime, generator in [(P,3),(Q2,ROOT2)]:
+        assert pow(generator,(prime-1),prime)==1
+        alpha=pow(generator,(prime-1)//64,prime)
+        assert pow(alpha,64,prime)==1 and pow(alpha,32,prime)!=1
+        powers=[pow(alpha,i,prime) for i in range(64)]
+        A=[[powers[i*j%64] for j in col_orig] for i in row_orig]
+        rank,rr,cc=pivots_and_minor(A,prime)
+        minor=[[A[i][j] for j in cc] for i in rr]
+        delta=determinant_mod(minor,prime)
+        result['field_evidence'].append({'prime':prime,'generator':generator,'root64':alpha,
+                'rank':rank,'minor_dimension':rank,'minor_output_indices':[row_orig[i] for i in rr],
+                'minor_input_indices':[col_orig[j] for j in cc],'det_mod_prime':delta})
+    assert all(x['rank']>=21 for x in result['field_evidence'])
+    result['complex_rank_at_least']=min(x['rank'] for x in result['field_evidence'])
+    result['required_rank_sum_at_least']=(result['complex_rank_at_least']-overlap+1)//2
+    assert result['required_rank_sum_at_least']==4
+    with open(str(Path(__file__).resolve().parent/'minor_certificate_N64.json'),'w') as f:json.dump(result,f,indent=2)
+    print('CERTIFICATE',{'n':64,'overlap':overlap,
+         'rank_two_fields':[x['rank'] for x in result['field_evidence']],
+         'nonzero_determinants':[x['det_mod_prime'] for x in result['field_evidence']],
+         'complex_stage_rank_sum_bound':result['required_rank_sum_at_least']})
+    return result
+
+if __name__=='__main__':certify_64()

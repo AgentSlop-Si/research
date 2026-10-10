@@ -1,0 +1,379 @@
+   1 """Phase 11: fresh, exact convolution via sparse annihilating filters.
+   2 
+   3 No cached Fourier spectra or multiple threads. The structured algorithm is
+   4 exact over integers and finite fields, based on Q(z)A(z) and Q(z)B(z).
+   5 The modular fallback uses an NTT and handles arbitrary fresh inputs.
+   6 """
+   7 from __future__ import annotations
+   8 from dataclasses import dataclass
+   9 from math import prod
+  10 from typing import Sequence
+  11 
+  12 PRIMES = ((998244353, 3, 23), (469762049, 3, 26),
+  13           (167772161, 3, 25), (1224736769, 3, 24),
+  14           (1004535809, 3, 21))
+  15 
+  16 
+  17 def filters(max_degree: int = 3) -> list[tuple[int, ...]]:
+  18     """A modest input-independent family; not a magical dictionary of answers."""
+  19     if max_degree < 0:
+  20         raise ValueError('max_degree must be nonnegative')
+  21     seq = [(1,)]
+  22     def mul(p, q):
+  23         y = [0] * (len(p) + len(q) - 1)
+  24         for i, a in enumerate(p):
+  25             for j, b in enumerate(q):
+  26                 y[i+j] += a*b
+  27         return tuple(y)
+  28     for lam in (1, -1, 2, -2):
+  29         q = (1,)
+  30         for degree in range(1, min(max_degree,3)+1):
+  31             q = mul(q, (1, -lam))
+  32             seq.append(q)
+  33     if max_degree >= 2:
+  34         seq += [(1,-1,-1), (1,0,-1), (1,0,1), (1,-2,-1)]
+  35     if max_degree >= 3:
+  36         seq += [(1,-1,-1,-1), (1,-1,0,-1)]
+  37     # Deduplicate and remove trailing zeros.
+  38     return list(dict.fromkeys(seq))
+  39 
+  40 
+  41 def filter_signal(a: Sequence[int], q: Sequence[int], mod: int | None = None) -> list[int]:
+  42     """Coefficients of Q(z)A(z); Q[0] must be exactly one."""
+  43     if not a or not q or q[0] != 1:
+  44         raise ValueError('Nonempty sequence and Q[0]=1 required')
+  45     out = [0]*(len(a)+len(q)-1)
+  46     for j, coef in enumerate(q):
+  47         if coef:
+  48             for i, val in enumerate(a):
+  49                 out[i+j] += coef * int(val)
+  50     if mod is not None:
+  51         out = [v % mod for v in out]
+  52     return out
+  53 
+  54 
+  55 def sparse_terms(a: Sequence[int], mod: int | None = None) -> list[tuple[int,int]]:
+  56     if mod is None:
+  57         return [(i, int(x)) for i,x in enumerate(a) if x]
+  58     return [(i, int(x)%mod) for i,x in enumerate(a) if int(x)%mod]
+  59 
+  60 
+  61 def find_recurrence(a: Sequence[int], max_degree: int = 3, p: int = 998244353,
+  62                     integer_lift: bool = False) -> tuple[int, ...] | None:
+  63     """Bounded Berlekamp--Massey: find Q(0)=1 with Q*a zero in the interior.
+  64 
+  65     Over F_p, this is exact. For Z-valued a, optionally lift residues to
+  66     centered integer representatives and check the relation in Z; no incorrect
+  67     recurrence is ever accepted. None signals that no short recurrence was
+  68     found. This routine does not presume a previously cached transform.
+  69     """
+  70     if max_degree < 0:
+  71         raise ValueError('max_degree must be nonnegative')
+  72     seq=[int(x)%p for x in a]
+  73     c=[1]; old=[1]
+  74     L=0; shift=1; discrepancy_old=1
+  75     for n in range(len(seq)):
+  76         discrepancy=0
+  77         for j in range(L+1):
+  78             discrepancy+=c[j]*seq[n-j]
+  79         discrepancy%=p
+  80         if discrepancy==0:
+  81             shift+=1
+  82             continue
+  83         old_c=c[:]
+  84         scale=discrepancy*pow(discrepancy_old,-1,p)%p
+  85         need=len(old)+shift
+  86         if len(c)<need:
+  87             c.extend([0]*(need-len(c)))
+  88         for j,x in enumerate(old):
+  89             c[j+shift]=(c[j+shift]-scale*x)%p
+  90         if 2*L<=n:
+  91             L=n+1-L
+  92             old=old_c
+  93             discrepancy_old=discrepancy
+  94             shift=1
+  95         else:
+  96             shift+=1
+  97         if L>max_degree:
+  98             return None
+  99     c=c[:L+1]
+ 100     if integer_lift:
+ 101         lifted=tuple(x if x<=p//2 else x-p for x in c)
+ 102         # A finite polynomial Q*A may have nonzero values near both ends,
+ 103         # but its n-th interior through n-1 must vanish for recurrence order L.
+ 104         for j in range(L,len(a)):
+ 105             value=sum(lifted[t]*int(a[j-t]) for t in range(L+1))
+ 106             if value!=0:
+ 107                 return None
+ 108         return lifted
+ 109     return tuple(c)
+ 110 
+ 111 
+ 112 def coeff_recover(a: list[int], q: Sequence[int], mod: int | None = None) -> list[int]:
+ 113     """Find C such that Q(z)C(z)=a(z), modulo z^len(a)."""
+ 114     if q[0] != 1:
+ 115         raise ValueError('Q[0] must be one')
+ 116     result = [0]*len(a)
+ 117     for i in range(len(a)):
+ 118         value = a[i]
+ 119         for j in range(1, min(i,len(q)-1)+1):
+ 120             value -= q[j]*result[i-j]
+ 121         result[i] = value if mod is None else value%mod
+ 122     return result
+ 123 
+ 124 
+ 125 def sparse_product_and_recover(a: Sequence[int], b: Sequence[int], qa: Sequence[int], qb: Sequence[int],
+ 126                                mod: int | None = None) -> list[int]:
+ 127     """Exact linear convolution using filtered sparse products and inverse recurrences."""
+ 128     length=len(a)+len(b)-1
+ 129     da=sparse_terms(filter_signal(a,qa,mod),mod)
+ 130     db=sparse_terms(filter_signal(b,qb,mod),mod)
+ 131     h=[0]*length
+ 132     for ia,va in da:
+ 133         for ib,vb in db:
+ 134             j=ia+ib
+ 135             if j<length:
+ 136                 h[j]+=va*vb
+ 137     if mod is not None:
+ 138         h=[x%mod for x in h]
+ 139     # Invert Qa first and Qb second, using forward substitution in Z[[z]].
+ 140     return coeff_recover(coeff_recover(h, qa, mod), qb, mod)
+ 141 
+ 142 
+ 143 @dataclass(frozen=True)
+ 144 class Plan:
+ 145     qa: tuple[int, ...]
+ 146     qb: tuple[int, ...]
+ 147     nnz_a: int
+ 148     nnz_b: int
+ 149     multiply_pairs: int
+ 150     recovery_work: int
+ 151     detection_work_bound: int
+ 152     estimate: int
+ 153     baseline_estimate: int
+ 154     method: str
+ 155 
+ 156 
+ 157 def choose_plan(a: Sequence[int], b: Sequence[int], mod: int | None = None,
+ 158                 max_degree: int = 3, minimum_ratio: float = 0.65,
+ 159                 discover_recurrences: bool = True) -> Plan:
+ 160     """Conservative mathematical work estimator, not a calibrated timing predictor."""
+ 161     if not a or not b:
+ 162         raise ValueError('nonempty inputs required')
+ 163     n,m=len(a),len(b)
+ 164     length=n+m-1
+ 165     base=filters(max_degree)
+ 166     # Sample only the *interior* where a short annihilator predicts zeros.
+ 167     # This is a heuristic for plan discovery ONLY; any chosen filter is exact
+ 168     # even if the sample happened to give a misleading prediction.
+ 169     def candidates(values):
+ 170         chosen=[(1,)]
+ 171         bm=None
+ 172         if discover_recurrences:
+ 173             bm=find_recurrence(values,max_degree,integer_lift=(mod is None),
+ 174                                p=mod if mod is not None else 998244353)
+ 175             if bm is not None and bm not in chosen:
+ 176                 chosen.append(bm)
+ 177         samples=48
+ 178         size=len(values)
+ 179         for q in base[1:]:
+ 180             if q in chosen or size < 16:
+ 181                 continue
+ 182             lo=len(q)-1
+ 183             span=size-lo
+ 184             idx={lo+(span-1)*j//max(1,samples-1) for j in range(min(samples,span))}
+ 185             if not idx:
+ 186                 continue
+ 187             zeros=0
+ 188             for i in idx:
+ 189                 val=sum(q[j]*int(values[i-j]) for j in range(len(q)))
+ 190                 if mod is not None:
+ 191                     val%=mod
+ 192                 zeros+=(val==0)
+ 193             if zeros/len(idx)>=0.8:
+ 194                 chosen.append(q)
+ 195         return chosen
+ 196     fa=candidates(a)
+ 197     fb=candidates(b)
+ 198     # Full, exact support counts only for promising filters. Filters are
+ 199     # reverified before use; sample false negatives impact speed, not answers.
+ 200     scan=sum(len(q)*n+n for q in fa)+sum(len(q)*m+m for q in fb)
+ 201     scan+=sum(len(q)*48*2 for q in base)
+ 202     if discover_recurrences:
+ 203         # Upper-bound recognition work (actual BM can abort after O(d) points).
+ 204         scan+=(n+m)*(max_degree+1)
+ 205     oa=[len(sparse_terms(filter_signal(a,q,mod),mod)) for q in fa]
+ 206     ob=[len(sparse_terms(filter_signal(b,q,mod),mod)) for q in fb]
+ 207     # NTT root-length with conservative proportional estimated operations.
+ 208     size=1<<(length-1).bit_length()
+ 209     baseline_est=12*size*(size.bit_length()-1)+8*size
+ 210     best=None
+ 211     for i,qa in enumerate(fa):
+ 212         for j,qb in enumerate(fb):
+ 213             sa,sb=oa[i],ob[j]
+ 214             pairs=sa*sb
+ 215             recovery=length*(len(qa)+len(qb)-2)  # upper bound with all q terms nonzero
+ 216             work=pairs+recovery+length+scan
+ 217             if best is None or work<best.estimate:
+ 218                 best=Plan(qa,qb,sa,sb,pairs,recovery,scan,work,baseline_est,'structured')
+ 219     assert best is not None
+ 220     if best.estimate >= minimum_ratio*baseline_est:
+ 221         return Plan(best.qa,best.qb,best.nnz_a,best.nnz_b,best.multiply_pairs,best.recovery_work,
+ 222                     best.detection_work_bound,best.estimate,baseline_est,'ntt')
+ 223     return best
+ 224 
+ 225 
+ 226 def naive(a: Sequence[int],b: Sequence[int],mod: int|None=None) -> list[int]:
+ 227     c=[0]*(len(a)+len(b)-1)
+ 228     for i,u in enumerate(a):
+ 229         for j,v in enumerate(b):
+ 230             c[i+j]+=int(u)*int(v)
+ 231     return [x%mod for x in c] if mod is not None else c
+ 232 
+ 233 
+ 234 def _ntt(a: list[int], p: int, primitive_root: int, inverse: bool) -> None:
+ 235     n=len(a);j=0
+ 236     for i in range(1,n):
+ 237         bit=n>>1
+ 238         while j&bit:
+ 239             j^=bit
+ 240             bit>>=1
+ 241         j^=bit
+ 242         if i<j:
+ 243             a[i],a[j]=a[j],a[i]
+ 244     step=2
+ 245     while step<=n:
+ 246         root=pow(primitive_root,(p-1)//step,p)
+ 247         if inverse:
+ 248             root=pow(root,p-2,p)
+ 249         half=step>>1
+ 250         for start in range(0,n,step):
+ 251             w=1
+ 252             for i in range(start,start+half):
+ 253                 u=a[i]
+ 254                 v=a[i+half]*w%p
+ 255                 a[i]=(u+v)%p
+ 256                 a[i+half]=(u-v)%p
+ 257                 w=w*root%p
+ 258         step<<=1
+ 259     if inverse:
+ 260         inv=pow(n,p-2,p)
+ 261         for i in range(n):
+ 262             a[i]=a[i]*inv%p
+ 263 
+ 264 
+ 265 def ntt_convolution(a: Sequence[int],b: Sequence[int],p: int=998244353,root: int=3) -> list[int]:
+ 266     nout=len(a)+len(b)-1
+ 267     size=1<<(nout-1).bit_length()
+ 268     if (p-1)%size:
+ 269         raise ValueError('transform size does not divide p-1')
+ 270     x=[int(t)%p for t in a]+[0]*(size-len(a))
+ 271     y=[int(t)%p for t in b]+[0]*(size-len(b))
+ 272     _ntt(x,p,root,False)
+ 273     _ntt(y,p,root,False)
+ 274     for i in range(size):
+ 275         x[i]=x[i]*y[i]%p
+ 276     _ntt(x,p,root,True)
+ 277     return x[:nout]
+ 278 
+ 279 
+ 280 def exact_crt(a: Sequence[int],b: Sequence[int]) -> list[int]:
+ 281     """Exact signed integer convolution via enough modular NTT primes;
+ 282     falls back to schoolbook for coefficients not covered by listed primes.
+ 283     """
+ 284     nout=len(a)+len(b)-1
+ 285     size=1<<(nout-1).bit_length()
+ 286     bound=min(len(a),len(b))*max(abs(int(x)) for x in a)*max(abs(int(y)) for y in b)
+ 287     if bound==0:
+ 288         return [0]*nout
+ 289     chosen=[]; product=1
+ 290     for p,root,k in PRIMES:
+ 291         if size <= (1<<k):
+ 292             chosen.append((p,root))
+ 293             product*=p
+ 294             if product>2*bound:
+ 295                 break
+ 296     if product<=2*bound:
+ 297         return naive(a,b)
+ 298     x=[0]*nout
+ 299     P=1
+ 300     for p,root in chosen:
+ 301         residues=ntt_convolution(a,b,p,root)
+ 302         inv=pow(P%p,-1,p)
+ 303         for j,res in enumerate(residues):
+ 304             h=((res-x[j])%p)*inv%p
+ 305             x[j]+=P*h
+ 306         P*=p
+ 307     return [v if 2*v<=P else v-P for v in x]
+ 308 
+ 309 
+ 310 def convolve(a: Sequence[int],b: Sequence[int],mod: int | None =None, mode: str ='auto',
+ 311              max_degree:int=3) -> tuple[list[int],Plan]:
+ 312     """Fresh-input exact convolution. mode: auto / structured / ntt.
+ 313     mod=None -> exact signed integers with CRT when required.
+ 314     mod=998244353 -> exact modular (prime supports power-of-two NTT).
+ 315     """
+ 316     if mod is not None and mod not in {item[0] for item in PRIMES}:
+ 317         raise ValueError('modulus must be one of the NTT primes; use mod=None for exact integer')
+ 318     plan=choose_plan(a,b,mod,max_degree=max_degree)
+ 319     if mode not in ('auto','structured','ntt'):
+ 320         raise ValueError('invalid mode')
+ 321     method=plan.method if mode=='auto' else ('structured' if mode=='structured' else 'ntt')
+ 322     if method=='structured':
+ 323         return sparse_product_and_recover(a,b,plan.qa,plan.qb,mod),plan
+ 324     if mod is None:
+ 325         return exact_crt(a,b),plan
+ 326     return ntt_convolution(a,b,mod,3),plan
+ 327 
+ 328 
+ 329 def integer_digits(value:int,base:int=10)->list[int]:
+ 330     if value<0 or base<2:
+ 331         raise ValueError('nonnegative integer and radix >= 2 required')
+ 332     if value==0:
+ 333         return [0]
+ 334     out=[]
+ 335     while value:
+ 336         value,r=divmod(value,base)
+ 337         out.append(r)
+ 338     return out
+ 339 
+ 340 
+ 341 def multiply_int(a:int,b:int,base:int=10,max_degree:int=3)->tuple[int,Plan]:
+ 342     if a<0 or b<0:
+ 343         raise ValueError('nonnegative integer arguments required')
+ 344     aa=integer_digits(a,base)
+ 345     bb=integer_digits(b,base)
+ 346     coeff,plan=convolve(aa,bb,mod=None,max_degree=max_degree)
+ 347     result=0
+ 348     for v in reversed(coeff):
+ 349         result=result*base+v
+ 350     return result,plan
+ 351 
+ 352 
+ 353 def multiply_near_power(a:int,b:int,delta_bits:int=16)->tuple[int,str]:
+ 354     """Your (A-k)B+kB trick, with k=2**t so kB is a shift.
+ 355 
+ 356     If the residual has at most `delta_bits` bits, we use a bounded-width
+ 357     multiply. Otherwise the algorithm selects Python's exact general
+ 358     multiplication; it makes no new worst-case asymptotic claim.
+ 359     """
+ 360     if a<0 or b<0 or delta_bits<0:
+ 361         raise ValueError('only nonnegative operands, nonnegative delta_bits')
+ 362     def candidate(value):
+ 363         if value==0:
+ 364             return None
+ 365         n=value.bit_length()
+ 366         choices=[]
+ 367         for t in (n-1,n):
+ 368             delta=value-(1<<t)
+ 369             if abs(delta).bit_length()<=delta_bits:
+ 370                 choices.append((abs(delta),t,delta))
+ 371         return min(choices) if choices else None
+ 372     ca,cb=candidate(a),candidate(b)
+ 373     if ca is not None and (cb is None or ca[0]<=cb[0]):
+ 374         _,t,delta=ca
+ 375         return (b<<t)+delta*b, f'(2^{t} + {delta}) * B'
+ 376     if cb is not None:
+ 377         _,t,delta=cb
+ 378         return (a<<t)+delta*a, f'A * (2^{t} + {delta})'
+ 379     return a*b,'general multiplication fallback'

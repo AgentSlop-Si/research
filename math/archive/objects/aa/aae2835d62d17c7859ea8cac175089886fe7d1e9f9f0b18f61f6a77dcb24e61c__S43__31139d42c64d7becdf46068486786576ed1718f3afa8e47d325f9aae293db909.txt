@@ -1,0 +1,65 @@
+   1 #!/usr/bin/env python3
+   2 """Own exact Q(w) arithmetic. No source code imported. w^2+w+1=0."""
+   3 from fractions import Fraction as Q
+   4 from pathlib import Path
+   5 import json,sys,cmath
+   6 class E:
+   7  def __init__(self,a=0,b=0):
+   8   if isinstance(a,E): self.a,self.b=a.a,a.b
+   9   else:self.a,self.b=Q(a),Q(b)
+  10  def __add__(self,y):
+  11   y=E(y);return E(self.a+y.a,self.b+y.b)
+  12  __radd__=__add__
+  13  def __neg__(self):return E(-self.a,-self.b)
+  14  def __sub__(self,y):return self+-E(y)
+  15  def __rsub__(self,y):return E(y)+-self
+  16  def __mul__(self,y):
+  17   y=E(y);return E(self.a*y.a-self.b*y.b,self.a*y.b+self.b*y.a-self.b*y.b)
+  18  __rmul__=__mul__
+  19  def inverse(self):
+  20   n=self.a*self.a-self.a*self.b+self.b*self.b
+  21   assert n;return E((self.a-self.b)/n,-self.b/n)
+  22  def __truediv__(self,y):return self*E(y).inverse()
+  23  def __pow__(self,n):
+  24   if n<0:return self.inverse()**(-n)
+  25   out=E(1);a=self
+  26   while n:
+  27    if n&1:out=out*a
+  28    a=a*a;n//=2
+  29   return out
+  30  def __eq__(self,y):y=E(y);return self.a==y.a and self.b==y.b
+  31  def encode(self):return [str(self.a),str(self.b)]
+  32 def mm(a,b):return [[sum((x*y for x,y in zip(row,col)),E()) for col in zip(*b)] for row in a]
+  33 def eye(n):return [[E(i==j) for j in range(n)] for i in range(n)]
+  34 def inverse(a):
+  35  n=len(a);z=[row[:]+eye(n)[i] for i,row in enumerate(a)]
+  36  for j in range(n):
+  37   k=next(k for k in range(j,n) if z[k][j]!=0);z[j],z[k]=z[k],z[j];c=z[j][j].inverse();z[j]=[x*c for x in z[j]]
+  38   for k in range(n):
+  39    if k!=j:
+  40     c=z[k][j];z[k]=[x-c*y for x,y in zip(z[k],z[j])]
+  41  return [row[n:] for row in z]
+  42 def main():
+  43  w=E(0,1);F=[[w**(i*j) for j in range(3)] for i in range(3)];A=[[w**(2*i*i) if i==j else E() for j in range(3)] for i in range(3)];Fi=inverse(F);X=[[A[i][j]+Fi[i][j] for j in range(3)] for i in range(3)];B=inverse(X)
+  44  den=4+26*w;d=(-17-16*w)/den;e=(1-4*w)/den;b=w*e;a=w*w*d
+  45  target=[[a,b,b],[b,d,e],[b,e,d]];assert B==target
+  46  assert d!=0 and e!=0 and e/d!=1 and e/d!=E(Q(-1,2))
+  47  # Formal quadratic quotient t^2+t=s. Coefficients are in Q(w).
+  48  s=2*e/d
+  49  def mul(x,y):return (x[0]*y[0]+s*x[1]*y[1],x[0]*y[1]+x[1]*y[0]-x[1]*y[1])
+  50  t=(E(),E(1));t2=mul(t,t);t3=mul(t2,t);one_minus=(E(1)-t3[0],-t3[1]);assert (t[0]+t2[0],t[1]+t2[1])==(s,E())
+  51  # Norm of 1-t^3 in the quadratic algebra detects guard for both roots.
+  52  # Conjugation maps t to -1-t.
+  53  conj=(one_minus[0]-one_minus[1],-one_minus[1]);norm=mul(one_minus,conj);assert norm[1]==0 and norm[0]!=0
+  54  # Numerator of each Green inverse is I+tP+t^2P^2; pair has
+  55  # diagonal 2 and off diagonal t+t^2=s. Scaling cancels denominator.
+  56  unscaled=[[d if i==j else e for j in range(3)] for i in range(3)];D=[w,E(1),E(1)];sand=[[D[i]*unscaled[i][j]*D[j] for j in range(3)] for i in range(3)];assert sand==B
+  57  # Numerical supplementary control for BOTH roots and BOTH primitive roots.
+  58  residuals=[]
+  59  for wc in [complex(-.5,3**.5/2),complex(-.5,-3**.5/2)]:
+  60   dc=(-17-16*wc)/(4+26*wc);ec=(1-4*wc)/(4+26*wc);disc=cmath.sqrt(1+8*ec/dc)
+  61   for tc in [(-1+disc)/2,(-1-disc)/2]:
+  62    kc=dc*(1-tc**3)/2;res=abs(kc*(tc+tc**2)/(1-tc**3)-ec);assert abs(1-tc**3)>1e-8 and res<1e-12;residuals.append(res)
+  63  out=dict(status='PASS',field='Q(w), w^2+w+1=0',target_entries=[[v.encode() for v in row] for row in B],d=d.encode(),e=e.encode(),e_over_d=(e/d).encode(),quadratic_s=s.encode(),guard_norm=norm[0].encode(),matrix_entry_checks=9,both_quadratic_roots_covered=True,complex_controls=len(residuals),uploaded_or_constructor_code_executed=False)
+  64  p=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).with_name('INDEPENDENT_RESULTS.json');p.write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))
+  65 if __name__=='__main__':main()

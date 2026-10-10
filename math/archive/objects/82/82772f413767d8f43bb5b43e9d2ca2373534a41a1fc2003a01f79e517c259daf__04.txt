@@ -1,0 +1,187 @@
+   1 #include <algorithm>
+   2 #include <array>
+   3 #include <chrono>
+   4 #include <cmath>
+   5 #include <complex>
+   6 #include <cstdint>
+   7 #include <iomanip>
+   8 #include <iostream>
+   9 #include <random>
+  10 #include <stdexcept>
+  11 #include <string>
+  12 #include <vector>
+  13 
+  14 extern "C" {
+  15 typedef double fftw_complex[2];
+  16 typedef struct fftw_plan_s *fftw_plan;
+  17 fftw_plan fftw_plan_dft_r2c_1d(int n, double *in, fftw_complex *out, unsigned flags);
+  18 void fftw_execute_dft_r2c(const fftw_plan p, double *in, fftw_complex *out);
+  19 void fftw_destroy_plan(fftw_plan p);
+  20 }
+  21 static constexpr unsigned FFTW_ESTIMATE_ = (1u << 6);
+  22 using C = std::complex<double>;
+  23 using Clock = std::chrono::steady_clock;
+  24 
+  25 static double ms_since(Clock::time_point t0) {
+  26     return std::chrono::duration<double, std::milli>(Clock::now()-t0).count();
+  27 }
+  28 
+  29 static bool is_pow2(size_t n){ return n && ((n & (n-1))==0); }
+  30 static unsigned ilog2_pow2(size_t n){ unsigned r=0; while((size_t(1)<<r)<n) ++r; return r; }
+  31 static size_t bit_reverse(size_t x, unsigned bits){
+  32     size_t y=0;
+  33     for(unsigned i=0;i<bits;i++){ y=(y<<1)|(x&1); x>>=1; }
+  34     return y;
+  35 }
+  36 
+  37 class FFTWReal {
+  38     int n_;
+  39     std::vector<double> scratch_;
+  40     std::vector<std::array<double,2>> out_;
+  41     fftw_plan plan_{};
+  42 public:
+  43     explicit FFTWReal(int n):n_(n),scratch_(n),out_(n/2+1){
+  44         plan_=fftw_plan_dft_r2c_1d(n_, scratch_.data(), reinterpret_cast<fftw_complex*>(out_.data()), FFTW_ESTIMATE_);
+  45         if(!plan_) throw std::runtime_error("fftw plan failed");
+  46     }
+  47     ~FFTWReal(){ if(plan_) fftw_destroy_plan(plan_); }
+  48     void run(const std::vector<double>& x){
+  49         fftw_execute_dft_r2c(plan_, const_cast<double*>(x.data()), reinterpret_cast<fftw_complex*>(out_.data()));
+  50     }
+  51     const std::vector<std::array<double,2>>& out() const { return out_; }
+  52 };
+  53 
+  54 struct UpdateStats {
+  55     uint64_t butterflies=0;
+  56     uint64_t complex_outputs=0;
+  57     double ms=0;
+  58 };
+  59 
+  60 class LayeredDynamicFFT {
+  61     size_t n_;
+  62     unsigned L_;
+  63     std::vector<double> input_;
+  64     std::vector<std::vector<C>> stage_; // stage 0 bit-reversed leaves; stage L full DFT
+  65     std::vector<std::vector<C>> tw_;    // tw_[s][j], s>=1
+  66     std::vector<int> mark_;
+  67     int epoch_=1;
+  68 public:
+  69     explicit LayeredDynamicFFT(const std::vector<double>& x):n_(x.size()),L_(ilog2_pow2(x.size())),input_(x),stage_(L_+1,std::vector<C>(n_)),tw_(L_+1),mark_(n_,0){
+  70         if(!is_pow2(n_)) throw std::invalid_argument("N must be power of two");
+  71         for(size_t i=0;i<n_;++i) stage_[0][bit_reverse(i,L_)] = C(x[i],0.0);
+  72         constexpr double PI=3.141592653589793238462643383279502884;
+  73         for(unsigned s=1;s<=L_;++s){
+  74             size_t len=size_t(1)<<s, half=len>>1;
+  75             tw_[s].resize(half);
+  76             for(size_t j=0;j<half;++j) tw_[s][j]=std::polar(1.0,-2.0*PI*double(j)/double(len));
+  77             auto &prev=stage_[s-1]; auto &cur=stage_[s];
+  78             for(size_t block=0;block<n_;block+=len){
+  79                 for(size_t j=0;j<half;++j){
+  80                     C u=prev[block+j]; C v=prev[block+j+half]*tw_[s][j];
+  81                     cur[block+j]=u+v; cur[block+j+half]=u-v;
+  82                 }
+  83             }
+  84         }
+  85     }
+  86     const std::vector<double>& input() const { return input_; }
+  87     const std::vector<C>& spectrum() const { return stage_[L_]; }
+  88 
+  89     UpdateStats add_deltas(const std::vector<std::pair<size_t,double>>& edits){
+  90         auto t0=Clock::now();
+  91         std::vector<size_t> dirty;
+  92         dirty.reserve(edits.size());
+  93         ++epoch_; if(epoch_==0){ std::fill(mark_.begin(),mark_.end(),0); epoch_=1; }
+  94         for(auto [idx,delta]:edits){
+  95             if(idx>=n_) throw std::out_of_range("edit idx");
+  96             input_[idx]+=delta;
+  97             size_t p=bit_reverse(idx,L_);
+  98             stage_[0][p] += C(delta,0.0);
+  99             if(mark_[p]!=epoch_){ mark_[p]=epoch_; dirty.push_back(p); }
+ 100         }
+ 101         UpdateStats st;
+ 102         for(unsigned s=1;s<=L_;++s){
+ 103             size_t len=size_t(1)<<s, half=len>>1;
+ 104             ++epoch_; if(epoch_==0){ std::fill(mark_.begin(),mark_.end(),0); epoch_=1; }
+ 105             std::vector<size_t> butterflies; butterflies.reserve(dirty.size());
+ 106             for(size_t idx:dirty){
+ 107                 size_t block=idx & ~(len-1);
+ 108                 size_t local=idx-block;
+ 109                 size_t j=local % half;
+ 110                 size_t key=block+j; // first output position identifies butterfly
+ 111                 if(mark_[key]!=epoch_){ mark_[key]=epoch_; butterflies.push_back(key); }
+ 112             }
+ 113             auto &prev=stage_[s-1]; auto &cur=stage_[s];
+ 114             std::vector<size_t> next; next.reserve(butterflies.size()*2);
+ 115             for(size_t key:butterflies){
+ 116                 size_t block=key & ~(len-1);
+ 117                 size_t j=key-block;
+ 118                 C u=prev[key]; C v=prev[key+half]*tw_[s][j];
+ 119                 cur[key]=u+v; cur[key+half]=u-v;
+ 120                 next.push_back(key); next.push_back(key+half);
+ 121             }
+ 122             st.butterflies += butterflies.size();
+ 123             st.complex_outputs += 2*butterflies.size();
+ 124             dirty.swap(next);
+ 125         }
+ 126         st.ms=ms_since(t0);
+ 127         return st;
+ 128     }
+ 129 };
+ 130 
+ 131 static double max_err_half(const LayeredDynamicFFT& inc, const FFTWReal& ref){
+ 132     const auto &a=inc.spectrum(); const auto &b=ref.out();
+ 133     double e=0;
+ 134     for(size_t k=0;k<b.size();++k){
+ 135         C z(b[k][0],b[k][1]); e=std::max(e,std::abs(a[k]-z));
+ 136     }
+ 137     return e;
+ 138 }
+ 139 
+ 140 static uint64_t predicted_nodes(size_t n,size_t k){
+ 141     // Upper bound on dirty complex outputs across radix-2 stages.
+ 142     uint64_t total=0;
+ 143     for(size_t width=2;width<=n;width<<=1){
+ 144         uint64_t v=std::min<uint64_t>(n, uint64_t(k)*uint64_t(width));
+ 145         total += v;
+ 146     }
+ 147     return total;
+ 148 }
+ 149 
+ 150 int main(int argc,char**argv){
+ 151     std::vector<size_t> Ns={65536,262144};
+ 152     int reps=9;
+ 153     if(argc>1) Ns={size_t(std::stoull(argv[1]))};
+ 154     if(argc>2) reps=std::stoi(argv[2]);
+ 155     std::mt19937_64 rng(0xDA70BEEF1234ULL);
+ 156     std::normal_distribution<double> normal(0.0,1.0);
+ 157     std::uniform_real_distribution<double> delta(-0.25,0.25);
+ 158     std::cout << "N,k,inc_ms,fftw_ms,speedup,dirty_outputs,predicted_upper,max_err\n";
+ 159     for(size_t n:Ns){
+ 160         std::vector<double> x(n); for(double &v:x) v=normal(rng);
+ 161         LayeredDynamicFFT inc(x);
+ 162         FFTWReal fftw((int)n); fftw.run(inc.input());
+ 163         double initial_err=max_err_half(inc,fftw);
+ 164         if(initial_err>1e-7) throw std::runtime_error("initial correctness failure err="+std::to_string(initial_err));
+ 165         std::vector<size_t> ks;
+ 166         for(size_t k=1;k<=std::min<size_t>(4096,n/2);k<<=1) ks.push_back(k);
+ 167         for(size_t k:ks){
+ 168             std::vector<double> inc_times, fftw_times; std::vector<uint64_t> dirty_counts; double maxe=0;
+ 169             inc_times.reserve(reps); fftw_times.reserve(reps);
+ 170             for(int r=0;r<reps;++r){
+ 171                 std::vector<std::pair<size_t,double>> edits; edits.reserve(k);
+ 172                 // Deterministic distinct indices spaced by an odd stride; random start.
+ 173                 size_t start=(size_t)(rng()%n), stride=(size_t)((rng()%(n/2))*2+1);
+ 174                 std::vector<char> used; // avoid O(N) clear: k small; use modular unique sequence if n power-of-two & stride odd.
+ 175                 for(size_t j=0;j<k;++j){ size_t idx=(start+j*stride)&(n-1); edits.push_back({idx,delta(rng)}); }
+ 176                 auto st=inc.add_deltas(edits); inc_times.push_back(st.ms); dirty_counts.push_back(st.complex_outputs);
+ 177                 auto t=Clock::now(); fftw.run(inc.input()); fftw_times.push_back(ms_since(t));
+ 178                 maxe=std::max(maxe,max_err_half(inc,fftw));
+ 179                 if(maxe>2e-6) throw std::runtime_error("correctness failure n="+std::to_string(n)+" k="+std::to_string(k)+" err="+std::to_string(maxe));
+ 180             }
+ 181             auto median=[](std::vector<double> v){ std::sort(v.begin(),v.end()); return v[v.size()/2]; };
+ 182             auto medi_u=[](std::vector<uint64_t> v){ std::sort(v.begin(),v.end()); return v[v.size()/2]; };
+ 183             double ti=median(inc_times), tf=median(fftw_times);
+ 184             std::cout<<n<<","<<k<<","<<std::fixed<<std::setprecision(6)<<ti<<","<<tf<<","<<(tf/ti)<<","<<medi_u(dirty_counts)<<","<<predicted_nodes(n,k)<<","<<std::scientific<<maxe<<"\n";
+ 185         }
+ 186     }
+ 187 }

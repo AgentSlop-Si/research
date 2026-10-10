@@ -1,0 +1,142 @@
+0001 #!/usr/bin/env python3
+0002 """Independent modular witness reconstruction with exact structural-zero audit."""
+0003 from pathlib import Path
+0004 from itertools import combinations
+0005 from collections import Counter
+0006 import hashlib,json,time
+0007 HERE=Path(__file__).resolve().parent
+0008 SRC=HERE.parent.parent/'joint_orbit'/'iteration_6_phase_grid'/'PHASE_GRID_COMPATIBILITY.json'
+0009 P=97;Q=8;N=16;M=4
+0010 assert pow(Q,8,P)==P-1 and pow(Q,16,P)==1
+0011 
+0012 def poly_power(e):
+0013     k=e%16;v=[0]*8;v[k%8]=1 if k<8 else -1;return v
+0014 
+0015 def path_polynomial(i,j,sgn):
+0016     t,u=divmod(i,M);tt,uu=divmod(j,M);dt=t-tt;du=u-uu
+0017     if min(dt,du)<0:return [0]*8
+0018     out=[0]*8
+0019     # Enumerate weighted lattice paths directly instead of solving any recurrence.
+0020     for vertical in combinations(range(dt+du),dt):
+0021         vset=set(vertical);col=uu;exponent=0
+0022         for step in range(dt+du):
+0023             if step in vset:exponent+=col
+0024             else:col+=1
+0025         for k,c in enumerate(poly_power(sgn*exponent)):out[k]+=c
+0026     return out
+0027 
+0028 def eval97(v):return sum(c*pow(Q,i,P) for i,c in enumerate(v))%P
+0029 
+0030 def rev(j):
+0031     out=0
+0032     for k in range(4):out|=((j>>k)&1)<<(3-k)
+0033     return out
+0034 
+0035 def routed(A,s):
+0036     pi=[(rev(j)+s)%N for j in range(N)]
+0037     out=[[None]*N for _ in range(N)]
+0038     for i in range(N):
+0039         for j in range(N):out[pi[i]][pi[j]]=A[i][j]
+0040     return out
+0041 plus=[[path_polynomial(i,j,1) for j in range(N)] for i in range(N)]
+0042 minus=[[path_polynomial(i,j,-1) for j in range(N)] for i in range(N)]
+0043 rightJ=routed(minus,11);leftJ=routed(plus,7)
+0044 for A in [plus,minus]:
+0045     for i in range(N):
+0046         for j in range(N):
+0047             structural=i//M>=j//M and i%M>=j%M
+0048             assert any(A[i][j])==structural
+0049             assert (eval97(A[i][j])!=0)==structural
+0050 support=[j for j in range(N) if any(minus[1][j]) or any(leftJ[1][j])]
+0051 assert support==[0,1,7,9,15]
+0052 G=[[eval97(v) for v in r] for r in plus];J=[[eval97(v) for v in r] for r in rightJ]
+0053 w=[eval97(poly_power(-j)) for j in range(N)]
+0054 
+0055 def detmod(A):
+0056     a=[list(r) for r in A];d=1;n=len(a)
+0057     for col in range(n):
+0058         pivot=next((k for k in range(col,n) if a[k][col]%P),None)
+0059         if pivot is None:return 0
+0060         if pivot!=col:a[col],a[pivot]=a[pivot],a[col];d=-d
+0061         v=a[col][col]%P;d=d*v%P;iv=pow(v,-1,P)
+0062         for r in range(col+1,n):
+0063             factor=a[r][col]*iv%P
+0064             if factor:
+0065                 a[r]=[(a[r][j]-factor*a[col][j])%P for j in range(n)]
+0066     return d%P
+0067 
+0068 def det_integer_bareiss(A):
+0069     # Fraction-free integer determinant: independent arithmetic for resultants.
+0070     a=[list(r) for r in A];n=len(a);sgn=1;previous=1
+0071     for k in range(n-1):
+0072         if a[k][k]==0:
+0073             pivot=next((r for r in range(k+1,n) if a[r][k]),None)
+0074             if pivot is None:return 0
+0075             a[k],a[pivot]=a[pivot],a[k];sgn=-sgn
+0076         v=a[k][k]
+0077         for i in range(k+1,n):
+0078             for j in range(k+1,n):
+0079                 numerator=v*a[i][j]-a[i][k]*a[k][j]
+0080                 assert numerator%previous==0
+0081                 a[i][j]=numerator//previous
+0082         for i in range(k+1,n):a[i][k]=0
+0083         previous=v
+0084     return sgn*a[-1][-1]
+0085 
+0086 def full_resultant(P1,P2):
+0087     # Retain degree five even when affine leading coefficients vanish.
+0088     d=len(P1)-1;S=[]
+0089     for co in [P1,P2]:
+0090         for shift in range(d):S.append([0]*shift+co[::-1]+[0]*(d-1-shift))
+0091     return det_integer_bareiss(S)%P
+0092 
+0093 def minor_coefficients(rs,cs):
+0094     # Determinant multilinearity, 2^5 pure-row choices; no interpolation.
+0095     coeff=[0]*6
+0096     for mask in range(32):
+0097         A=[[(J if (mask>>k)&1 else G)[r][j] for j in cs] for k,r in enumerate(rs)]
+0098         A.append([w[j] for j in cs])
+0099         degree=mask.bit_count();coeff[degree]=(coeff[degree]+detmod(A))%P
+0100     return coeff
+0101 
+0102 # Homogeneous endpoint and common-root controls.
+0103 assert full_resultant([1,0,0,0,0,0],[0,0,0,0,0,1])==P-1
+0104 assert full_resultant([1,1,0,0,0,0],[2,0,1,0,0,0])==0 # common infinity
+0105 assert full_resultant([P-1,0,0,0,0,1],[P-1,0,0,0,0,1])==0
+0106 assert det_integer_bareiss([[2,3],[5,7]])==-1
+0107 
+0108 cert=json.loads(SRC.read_text());assert cert['left_row_structural_support']==support
+0109 assert cert['N']==N and cert['M']==M and cert['p']==P and cert['omega_mod_p']==Q
+0110 seen=set();counts=Counter();nonzero_residues=Counter();endpoint_degree_counts=Counter();start=time.time()
+0111 for ix,c in enumerate(cert['certificates']):
+0112     rs=tuple(c['rows']);assert len(rs)==5 and rs==tuple(sorted(set(rs))) and all(0<=r<N for r in rs)
+0113     assert rs not in seen;seen.add(rs)
+0114     if 'missing' in c:
+0115         j=c['missing'];assert 0<=j<N
+0116         assert all(not any(A[r][j]) for A in (plus,rightJ) for r in rs)
+0117         assert w[j]!=0;counts['exact_structural_missing_coordinate']+=1
+0118     else:
+0119         rebuilt=[]
+0120         for n in [1,2]:
+0121             cs=c[f'columns{n}'];assert len(cs)==6 and len(set(cs))==6 and all(0<=j<N for j in cs)
+0122             coeff=minor_coefficients(rs,cs)
+0123             assert coeff==c[f'minor{n}'],(rs,n,coeff,c[f'minor{n}'])
+0124             rebuilt.append(coeff)
+0125         res=full_resultant(*rebuilt)
+0126         assert res==c['homogeneous_resultant_mod_p'] and res!=0
+0127         nonzero_residues[res]+=1;counts['nonzero_homogeneous_resultant']+=1
+0128         endpoint_degree_counts[str(tuple(bool(p[5]) for p in rebuilt))]+=1
+0129     if ix%750==0:print('verified',ix,'seconds',round(time.time()-start,3),flush=True)
+0130 assert seen==set(combinations(range(N),5)) and len(seen)==4368
+0131 assert not cert['unresolved'] and cert['certified']==len(seen)
+0132 result={'source':str(SRC.relative_to(HERE.parent.parent)),'source_sha256':hashlib.sha256(SRC.read_bytes()).hexdigest(),
+0133         'N':N,'p':P,'zeta_residue':Q,'cyclotomic_relation_verified':'8^8=-1 mod 97',
+0134         'exact_left_row_union_support':support,'left_row_component_exact_vectors':{'G_minus':minus[1],'route7_G_plus':leftJ[1]},
+0135         'all_five_row_subsets_verified':len(seen),'certificate_counts':dict(counts),
+0136         'minor_method':'32 determinant-multilinearity row choices, not interpolation',
+0137         'resultant_method':'10 by 10 fixed-degree Sylvester determinant by integer Bareiss, then mod 97',
+0138         'leading_coefficient_patterns':dict(endpoint_degree_counts),'resultant_residue_histogram':dict(nonzero_residues),
+0139         'missing_coordinate_method':'Exact integer cyclotomic path polynomials, not modular zeros',
+0140         'complete_projective_coverage':True}
+0141 (HERE/'INDEPENDENT_RESULTS.json').write_text(json.dumps(result,indent=2)+'\n')
+0142 print(json.dumps({k:v for k,v in result.items() if k not in ['left_row_component_exact_vectors','resultant_residue_histogram']},indent=2))

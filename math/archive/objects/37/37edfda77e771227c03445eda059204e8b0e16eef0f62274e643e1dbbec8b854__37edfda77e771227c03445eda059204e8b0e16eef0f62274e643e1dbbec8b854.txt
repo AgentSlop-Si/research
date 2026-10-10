@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+import os, pathlib, subprocess, sys
+ROOT=pathlib.Path(__file__).resolve().parent
+ENV=dict(os.environ);ENV.setdefault('OPENBLAS_NUM_THREADS','1')
+cmds=[
+ [sys.executable,'-m','unittest','-v','test_checkpoint'],
+ [sys.executable,'finite_field_polyphase_certificate.py'],
+ [sys.executable,'benchmark.py'],
+ [sys.executable,'verify_phase4.py'],
+ [sys.executable,'verify_exactness_barrier.py'],
+]
+for cmd in cmds:
+    cwd=ROOT/'phase4_source' if cmd[1].startswith('verify_') else ROOT
+    print('+',' '.join(cmd),'[cwd=',cwd,']',flush=True)
+    subprocess.run(cmd,cwd=cwd,env=ENV,check=True)

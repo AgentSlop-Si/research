@@ -1,0 +1,66 @@
+"""Regression tests for the algebraic FFT continuation (new research generation)."""
+import json
+import sys
+import unittest
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT))
+import ct_positive_control as ct
+import complex_solver as opt
+import fft_elimination_gate as elim
+import gauge_curvature as curv
+import curvature_minor as minor
+import jet_compatibility as jet
+import large_curvature_gate as large
+
+class AlgebraicGateTests(unittest.TestCase):
+    def test_exact_ct_positive_control_and_chart_boundary(self):
+        z,w=ct.audit()
+        self.assertEqual([v['n'] for v in z],[8,16,32])
+        self.assertEqual([(v['rank_stage_1'],v['rank_stage_2']) for v in z[:2]],[(1,1),(1,1)])
+        self.assertEqual(w['forced_nonzero_but_actual_zero'][-1],0)
+
+    def test_numeric_jacobian_and_recovery_positive(self):
+        answer=opt.solve(39,positive=True,max_calls=60,quiet=True)
+        self.assertLess(answer['normalized_residual'],1e-12)
+
+    def test_30_polynomial_exact_iff_first_prime(self):
+        ct.P=12289;elim.P=12289
+        x=elim.run()
+        self.assertEqual(x['number_nonzero_equations'] if 'number_nonzero_equations' in x else x['second_stage_membership_equations'],30)
+        self.assertEqual(x['fresh_exact_product_positive_controls'],20)
+
+    def test_30_polynomial_exact_iff_second_prime(self):
+        try:
+            ct.P=65537;elim.P=65537
+            x=elim.run()
+            self.assertEqual(x['fresh_exact_product_positive_controls'],20)
+        finally:
+            ct.P=12289;elim.P=12289
+
+    def test_exact_gauge_and_quadratic_term(self):
+        x=curv.check()
+        self.assertEqual(x['rank_J'],60)
+        self.assertEqual(x['gauge_rank'],20)
+        self.assertTrue(any(v!=0 for v in x['conormal_quadratic_half']))
+
+    def test_independent_61_minor(self):
+        z=minor.compute()
+        saved=json.loads((ROOT/'curvature_minor_certificate.json').read_text())
+        self.assertEqual(z,saved)
+        self.assertEqual(z['minor_determinant_mod_prime'],6913)
+
+    def test_exact_two_jet_lift(self):
+        z=jet.run()
+        self.assertEqual(z['random_realized_two_jets_accepted'],20)
+        self.assertTrue(z['straight_line_to_second_order_rejected'])
+        self.assertTrue(z['same_first_order_tangent_with_exact_curvature_accepted'])
+
+    def test_16_point_rank2_scaling(self):
+        got=large.run()
+        saved=json.loads((ROOT/'large_curvature_results.json').read_text())
+        self.assertEqual(got,saved)
+        self.assertEqual([g['jacobian_rank'] for g in got],[232,230])
+        self.assertEqual([g['directions_transverse'] for g in got],[16,16])
+
+if __name__=='__main__':unittest.main()

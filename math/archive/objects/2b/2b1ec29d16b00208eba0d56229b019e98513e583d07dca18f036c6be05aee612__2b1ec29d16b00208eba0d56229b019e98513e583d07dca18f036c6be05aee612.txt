@@ -1,0 +1,249 @@
+"""Hero #17 -- bounded-spectral-rank quadratic-phase full DFT.
+
+Exact modular certificate engine, not a general FFT speedup.
+
+Theorem (N >= 3r, r fixed, N|(p-1)): For promised primitive
+N-th root omega in F_p, exact worst-case O_r(N) field operations
+recognize *raw* input x as
+  x[j] = omega^(a*j*j) * sum_{ell=1}^s c_ell omega^(b_ell*j),
+0 <= s <= r, arbitrary a modulo N, distinct b_l modulo N, nonzero c_l;
+return a certificate and compute all N DFT outputs in O_r(N).
+
+For arbitrary inputs, recognition fails in O_r(N); fallback needed.
+No assertion of lower bounds or a uniform O(N) DFT for all inputs.
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+from itertools import permutations
+from math import comb, gcd
+from typing import Optional, Sequence
+
+
+@dataclass(frozen=True)
+class GeneralCertificate:
+    n: int
+    p: int
+    omega: int
+    a: int
+    modes: tuple[tuple[int, int], ...]
+    r_bound: int
+    witness_start: int
+    candidates_found: int
+
+
+def phase_table(n: int, p: int, omega: int) -> list[int]:
+    """Deterministic O(N) exact root-order check for the supplied omega."""
+    if n <= 0 or p <= n or omega % p == 0:
+        raise ValueError('Need positive N, p>N, nonzero omega; p must be prime')
+    v = 1
+    table = []
+    for k in range(n):
+        table.append(v)
+        v = v * omega % p
+        if v == 1 and k != n - 1:
+            raise ValueError('omega has order smaller than N')
+    if v != 1:
+        raise ValueError('omega^N != 1')
+    return table
+
+
+def phase_eliminant(x: Sequence[int], s: int, r: int, p: int) -> list[int]:
+    """Hankel phase-elimination polynomial; degree <= C(r+2,3).
+
+    The coefficient of t^0 is (-1)^(r(r+1)/2) x[s+r]^(r+1),
+    thus this polynomial is nonzero whenever its center is nonzero.
+    Complexity O((r+1)! r^2) independent of N.
+    """
+    m = r + 1
+    emin = m * r * (r - 1) // 2
+    degree = comb(r + 2, 3)
+    coefficients = [0] * (degree+1)
+    for sigma in permutations(range(m)):
+        inv = sum(sigma[i] > sigma[j] for i in range(m) for j in range(i + 1, m))
+        sign = -1 if inv & 1 else 1
+        exponent = sum((i + sigma[i]) * (i + sigma[i] - 1)//2 for i in range(m)) - emin
+        prod = sign
+        for i in range(m):
+            prod = prod * (x[s+i+sigma[i]] % p) % p
+        coefficients[exponent] = (coefficients[exponent] + prod) % p
+    return coefficients
+
+
+def evaluate_poly(coefficients: Sequence[int], z: int, p: int) -> int:
+    result = 0
+    for coefficient in reversed(coefficients):
+        result = (result * z + coefficient) % p
+    return result
+
+
+def bounded_bm(y: Sequence[int], p: int, r: int) -> Optional[list[int]]:
+    """Berlekamp-Massey, reject immediately if minimal complexity > r.
+
+    Work O(N*r); number of field inversions <= r, even on rejected data.
+    Returns recurrence C where sum_{i=0}^s C[i]*y[j-i] == 0.
+    """
+    C = [1] + [0] * r
+    B = C.copy()
+    length = 0
+    since = 1
+    inv_last = 1
+    for k in range(len(y)):
+        discrepancy = y[k] % p
+        for i in range(1,length+1):
+            discrepancy += C[i]*y[k-i]
+        discrepancy %= p
+        if discrepancy == 0:
+            since += 1
+            continue
+        increase = 2*length <= k
+        proposed = k+1-length if increase else length
+        if proposed > r:
+            return None
+        old = C.copy()
+        multiplier = discrepancy * inv_last % p
+        for i in range(since, r+1):
+            C[i] = (C[i] - multiplier*B[i-since]) % p
+        if increase:
+            length = proposed
+            B = old
+            inv_last = pow(discrepancy, -1, p)
+            since = 1
+        else:
+            since += 1
+    return C[:length+1]
+
+
+def _solve_modes(y: Sequence[int], root_table: Sequence[int], p: int, r: int):
+    """Exact root scan + tiny Vandermonde solve + full verification."""
+    recurrence = bounded_bm(y, p, r)
+    if recurrence is None:
+        return None
+    s = len(recurrence)-1
+    if s == 0:
+        return () if all(v%p == 0 for v in y) else None
+    roots = []
+    for b, z in enumerate(root_table):
+        if evaluate_poly(list(reversed(recurrence)), z, p) == 0:
+            roots.append((b,z))
+    if len(roots) != s:
+        return None
+    # Solve y[j] = sum c_l*z_l^j, j=0,...,s-1
+    mat = [[pow(z,j,p) for _, z in roots] + [y[j]%p] for j in range(s)]
+    for col in range(s):
+        pivot = next((row for row in range(col,s) if mat[row][col]%p), None)
+        if pivot is None:
+            return None
+        mat[col],mat[pivot]=mat[pivot],mat[col]
+        scale = pow(mat[col][col], -1, p)
+        for k in range(col,s+1):
+            mat[col][k] = mat[col][k]*scale%p
+        for row in range(s):
+            if row==col:continue
+            amount=mat[row][col]
+            if amount:
+                for k in range(col,s+1):
+                    mat[row][k]=(mat[row][k]-amount*mat[col][k])%p
+    weights = [mat[j][-1] for j in range(s)]
+    if any(c==0 for c in weights):return None
+    powers = [1]*s
+    for sample in y:
+        value=sum(c*powers[j] for j,c in enumerate(weights))%p
+        if sample%p!=value:
+            return None
+        for j,(_,z) in enumerate(roots):
+            powers[j]=powers[j]*z%p
+    return tuple((b,c) for (b,_),c in zip(roots,weights))
+
+
+def recognize(x: Sequence[int], p: int, omega: int, r: int = 3) -> Optional[GeneralCertificate]:
+    """O_r(N) worst-case, with r a specified fixed, not input-growing, bound."""
+    n=len(x)
+    if not (r>=1 and n>=3*r):
+        raise ValueError('Require fixed r>=1, n>=3r')
+    roots = phase_table(n, p, omega)
+    x = [v%p for v in x]
+    if not any(x):
+        return GeneralCertificate(n,p,omega,0,(),r,-1,0)
+    center = next((center for center in range(r,n-r) if x[center]),None)
+    if center is None:
+        # No <=r exponentials can have r consecutive zeros.
+        return None
+    start=center-r
+    coefficients=phase_eliminant(x,start,r,p)
+    assert coefficients[0] != 0
+    candidates=[]
+    # Union/canonicalize equivalent quadratic phases:
+    # for even N, a and a+N/2 differ only by the Fourier mode shift N/2,
+    # since j^2 == j mod 2. Hence one representative per class suffices.
+    for a in range(n//gcd(2,n)):
+        t=roots[(-2*a)%n]
+        if evaluate_poly(coefficients,t,p)==0:
+            candidates.append(a)
+    assert len(candidates)<=comb(r+2,3)
+    for a in candidates:
+        dechirped=[x[j]*roots[(-a*j*j)%n]%p for j in range(n)]
+        modes=_solve_modes(dechirped, roots, p, r)
+        if modes is not None:
+            return GeneralCertificate(n,p,omega,a,modes,r,start,len(candidates))
+    return None
+
+
+def transform_certified(cert: GeneralCertificate) -> list[int]:
+    """O_r(N) exact full DFT, all N and all quadratic a.
+
+    Includes even N, even reduced moduli and nonunit a via a single
+    generalized Gauss-sum base row and translation by a quadratic shift.
+    """
+    n,p,a=cert.n,cert.p,cert.a
+    powers=phase_table(n,p,cert.omega)
+    out=[0]*n
+    if not cert.modes:return out
+    d=gcd(a,n)
+    m=n//d
+    if m==1:
+        for b,c in cert.modes:
+            out[b]=(out[b]+n*c)%p
+        return out
+
+    a_reduced=a//d  # coprime to reduced modulus m
+    if m%2 == 1:
+        base=0
+        gauss=sum(powers[(d*a_reduced*j*j)%n] for j in range(m))%p
+        inverse=pow((4*a_reduced)%m, -1, m)
+        def phase_of(c_reduced):
+            exponent=(-inverse*c_reduced*c_reduced)%m
+            return powers[d*exponent]
+    else:
+        q=m//2
+        base=q%2
+        gauss=sum(powers[(d*(a_reduced*j*j+base*j))%n] for j in range(m))%p
+        inverse=pow(a_reduced%q, -1, q) if q>1 else 0
+        def phase_of(c_reduced):
+            if (c_reduced-base)%2: return 0
+            t=(((c_reduced-base)//2)*inverse)%q if q>1 else 0
+            exponent=(-a_reduced*t*t-base*t)%m
+            return powers[d*exponent]
+
+    for k in range(n):
+        accum=0
+        for b,c in cert.modes:
+            off=b-k
+            if off%d:continue
+            accum+=c*phase_of(off//d)
+        out[k]=d*gauss*accum%p
+    return out
+
+
+def transform_if_recognized(x: Sequence[int], p: int, omega: int, r:int=3):
+    cert=recognize(x,p,omega,r)
+    return (None,None) if cert is None else (transform_certified(cert), cert)
+
+
+def make_signal(n:int,p:int,omega:int,a:int,modes:Sequence[tuple[int,int]]):
+    roots=phase_table(n,p,omega)
+    return [sum(c*roots[(a*j*j+b*j)%n] for b,c in modes)%p for j in range(n)]
+
+
+def direct_dft(x:Sequence[int],p:int,omega:int):
+    roots=phase_table(len(x),p,omega)
+    return [sum(v*roots[(-j*k)%len(x)] for j,v in enumerate(x))%p for k in range(len(x))]

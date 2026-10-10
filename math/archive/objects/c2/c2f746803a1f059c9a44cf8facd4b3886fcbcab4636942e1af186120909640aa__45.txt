@@ -1,0 +1,176 @@
+0001 #!/usr/bin/env python3
+0002 """Replay the pair-assembly frame words, actual fixed profiles and assembly.
+0003 
+0004 Adapted from PR #57's verify_skip_frame.py and skip_frame_compose.py (eumemic,
+0005 with OpenAI Codex assistance), with the PR #57 compiler words replaced by the
+0006 pair-assembly words. Every XOR word, dirty basis column, frame incidence and
+0007 fixed-basis profile is checked; the unchanged data geometry and general
+0008 transfer proofs remain inherited dependencies, exactly as in PR #57.
+0009 Adapted with assistance from Claude (Anthropic).
+0010 Usage: python frame_verify.py [--record]
+0011 """
+0012 import sys
+0013 sys.dont_write_bytecode = True
+0014 from collections import Counter
+0015 from fractions import Fraction as Q
+0016 from hashlib import sha256
+0017 from math import comb
+0018 from pathlib import Path
+0019 import argparse
+0020 import gzip
+0021 import importlib.util
+0022 import json
+0023 import os
+0024 import shlex
+0025 import subprocess
+0026 import tempfile
+0027 
+0028 HERE = Path(__file__).resolve().parent
+0029 ROOT = HERE.parents[2]
+0030 EXP = ROOT/'scripts/experiments'
+0031 sys.path.insert(0, str(EXP))
+0032 import binary_frame_math as arithmetic
+0033 from binary_frame_profile_prepare import prepare
+0034 from binary_frame_replay import replay
+0035 
+0036 AB_S = 5101952
+0037 KAPPA_S = 5101691
+0038 WIRES_S = 137151806
+0039 MASS_S = 78860441550
+0040 INHERITED = ROOT/'references/frame-compiler/pr48'
+0041 OLD = INHERITED/'research/copied-fixed'
+0042 AB = Q(AB_S, 10**11)
+0043 KAPPA = Q(KAPPA_S, 10**11)
+0044 EXCLUDED_ABOVE = Q(AB_S+1, 10**11)
+0045 PLAIN_KAPPA = Q(4986133, 10**11)
+0046 PR57_KAPPA = Q(4669442391, 10**14)
+0047 PR53_KAPPA = Q(4498144, 10**11)
+0048 
+0049 spec = importlib.util.spec_from_file_location('pair_frame_balanced_assembly', OLD/'balanced_assembly.py')
+0050 balanced = importlib.util.module_from_spec(spec)
+0051 spec.loader.exec_module(balanced)
+0052 
+0053 
+0054 def check_sources():
+0055     document = json.loads((INHERITED/'SOURCE.json').read_text())
+0056     for name, digest in document['files'].items():
+0057         assert sha256((INHERITED/name).read_bytes()).hexdigest() == digest, name
+0058     record = json.loads((HERE/'frame-compiler.json').read_text())
+0059     graph = ROOT/record['source']['graph']
+0060     assert sha256(graph.read_bytes()).hexdigest() == record['source']['graph_sha256'], 'pair_graph.py changed'
+0061     return document, record
+0062 
+0063 
+0064 def profile(profiles, words):
+0065     a, b = 23, 25
+0066     m, N = a*b, comb(a, 3)*comb(b, 3)
+0067     W = 2*N + sum(N//f['v']*f['R'] for f in profiles)
+0068     L = sum(N//f['v']*f['loss'] for f in profiles)
+0069     parts = {'data': Counter({1: 18*N, 21: 2*N, 17: 2*N, 481: 2*N}),
+0070              'paid_endpoint_copy': Counter({1: N})}
+0071     for f in profiles:
+0072         h = f['h']
+0073         rep, bank = N//f['v'], N//f['v']*f['R']
+0074         replayed = words['axes'][str(h)]['replay']
+0075         assert f['R'] == replayed['roles']
+0076         assert f['v'] == comb(h, 3) and f['loss'] == h*(h-1)
+0077         assert f['crt_disagreements'] == 0 and f['field_prime'] == 2**61-1
+0078         assert sum(t*n for t, n in enumerate(f['blocks'])) == h*f['R']+f['loss'] == f['rank_sum'] == replayed['rank_mass']
+0079         assert f['blocks'][h] == 0  # Copied centers already included.
+0080         arithmetic.exactness(h)
+0081         parts[f'internal_{h}'] = Counter({t: n*rep for t, n in enumerate(f['blocks']) if t and n})
+0082         parts[f'exterior_{h}'] = Counter({h: bank, m-2*h: bank})
+0083         parts[f'data_growth_{h}'] = Counter({1: 2*N, h-2: 2*N})
+0084     rows = sum(parts.values(), Counter())
+0085     mass = sum(t*n for t, n in rows.items())
+0086     assert mass == m*W-N+L and max(rows) == 529 and all(0 < t < m for t in rows)
+0087     assert (W, mass, m*W-mass) == (WIRES_S, MASS_S, 1846900)
+0088     return dict(m=m, N=N, W=W, L=L, total_rank=mass, deficit=m*W-mass, maxchild=max(rows),
+0089                 child_multiplicities=dict(sorted(rows.items())), parts=parts, axes=profiles)
+0090 
+0091 
+0092 def compose(p, sources):
+0093     exact = arithmetic.moment(p['m'], p['W'], p['child_multiplicities'], AB)
+0094     excluded = arithmetic.moment(p['m'], p['W'], p['child_multiplicities'], EXCLUDED_ABOVE)
+0095     assert exact['strict_gap'] > 0 and excluded['lower'] > 1
+0096     controls = {}
+0097     for name in ('pr53', 'pr57'):
+0098         row = json.loads((HERE.parent/f'comparison-{name}.json').read_text())
+0099         rows = {int(t): n for t, n in row['child_multiplicities'].items()}
+0100         controls[name] = arithmetic.moment(row['m'], row['W'], rows, AB)['lower']
+0101         assert controls[name] > 1, name+' network not excluded at stacked saving'
+0102     prior = json.loads((OLD/'certificate.json').read_text())
+0103     bridge = prior['finite_bridge']
+0104     bridge['bit']['W'] = p['W']
+0105     assert p['W'].bit_length() == bridge['bit']['wire_bits']
+0106     assembled = balanced.assembly(bridge, AB, KAPPA, a_complex=Q(717, 10**7))
+0107     assert len(assembled['constraints']) == 47 and len(assembled['margins']) == 7
+0108     try:
+0109         balanced.assembly(bridge, AB, KAPPA+Q(1, 10**11), a_complex=Q(717, 10**7))
+0110         next_grid_fails = False
+0111     except AssertionError:
+0112         next_grid_fails = True
+0113     assert next_grid_fails
+0114     assert KAPPA > PLAIN_KAPPA > PR57_KAPPA > PR53_KAPPA > Q(1, 2**15) and KAPPA < Q(1, 2**14)
+0115     local = [HERE/name for name in ('frame_compile.py', 'frame_verify.py')]+[
+0116         EXP/name for name in ('binary_frame_compiler.py', 'binary_frame_math.py', 'binary_frame_replay.py',
+0117                               'binary_frame_profile_prepare.py', 'binary_frame_profiles.cpp')]
+0118     return dict(
+0119         status='Conditional exact fixed-basis moment and balanced assembly; inherited transfer hypotheses remain assumed',
+0120         kappa=KAPPA, bit_saving=AB, bit_saving_excluded_above=EXCLUDED_ABOVE,
+0121         bit=dict(p, moment=exact, excluded_above_lower=excluded['lower']),
+0122         controls=dict(PR53_bit_at_stacked_lower=controls['pr53'], PR57_bit_at_stacked_lower=controls['pr57']),
+0123         assembly=assembled, eventual_bounds=balanced.cutoffs(bridge, assembled), finite_bridge=bridge,
+0124         comparison=dict(plain_pair_assembly_kappa=PLAIN_KAPPA, ratio_plain=KAPPA/PLAIN_KAPPA,
+0125                         pr57_kappa=PR57_KAPPA, ratio_pr57=KAPPA/PR57_KAPPA,
+0126                         pr53_kappa=PR53_KAPPA, ratio_pr53=KAPPA/PR53_KAPPA, next_kappa_grid_fails=next_grid_fails),
+0127         exactness=[arithmetic.exactness(h) for h in (23, 25)], sources=sources,
+0128         local_source_sha256={str(x.relative_to(ROOT)): sha256(x.read_bytes()).hexdigest() for x in local},
+0129         scope='Pair-assembly graph compiled by PR #57\'s unchanged joint frame compiler. Ordered affine residual '
+0130               'compiler, fixed-tape recursion, finite scalar overhead, balanced transfer, analytic/routing/recovery '
+0131               'interfaces and PR #57\'s compiler argument remain inherited.')
+0132 
+0133 
+0134 def verify(record_mode=False):
+0135     inherited, words = check_sources()
+0136     profiles = []
+0137     with tempfile.TemporaryDirectory(prefix='pair-frame-verify-') as directory:
+0138         work = Path(directory)
+0139         profiler = work/'profiles'
+0140         subprocess.run([*shlex.split(os.environ.get('CXX', 'c++')), '-O3', '-std=c++17',
+0141                         '-I', str(INHERITED/'scripts/partial_swap'),
+0142                         str(EXP/'binary_frame_profiles.cpp'), '-o', str(profiler)], check=True)
+0143         for h in (23, 25):
+0144             word = HERE/f'frame-word-{h}.json.gz'
+0145             axis = words['axes'][str(h)]
+0146             packed = word.read_bytes()
+0147             assert sha256(packed).hexdigest() == axis['gzip_sha256']
+0148             assert sha256(gzip.decompress(packed)).hexdigest() == axis['word_sha256']
+0149             receipt = replay(word)
+0150             assert json.loads(json.dumps(receipt)) == axis['replay']
+0151             transitions = work/f'word{h}.bin'
+0152             prepared = json.loads(json.dumps(prepare(word, transitions)))
+0153             path = HERE/f'frame-transitions-{h}.json'
+0154             if record_mode:
+0155                 path.write_text(json.dumps(prepared, indent=2)+'\n')
+0156             assert prepared == json.loads(path.read_text())
+0157             subprocess.run([str(profiler), str(transitions)], check=True, capture_output=True, text=True)
+0158             prof = json.loads(Path(str(transitions)+'.profiles.json').read_text())
+0159             path = HERE/f'frame-profiles-{h}.json'
+0160             if record_mode:
+0161                 path.write_text(json.dumps(prof, indent=2)+'\n')
+0162             assert prof == json.loads(path.read_text())
+0163             profiles.append(prof)
+0164             print(f'PASS h={h}: full dirty basis, exact frame path, every fixed-basis profile', flush=True)
+0165     p = profile(profiles, words)
+0166     result = compose(p, dict(inherited=inherited, compiler_record=words['source']))
+0167     (HERE/'frame-certificate.json').write_text(json.dumps(arithmetic.js(result), indent=2, sort_keys=True)+'\n')
+0168     print('PASS conditional stacked kappa='+str(KAPPA)+'; bit saving='+str(AB), flush=True)
+0169     print('47 strict inequalities, seven margins, next grid values rejected, PR #53 and #57 excluded', flush=True)
+0170     return result
+0171 
+0172 
+0173 if __name__ == '__main__':
+0174     parser = argparse.ArgumentParser(description=__doc__)
+0175     parser.add_argument('--record', action='store_true')
+0176     verify(parser.parse_args().record)

@@ -1,0 +1,443 @@
+   1 #!/usr/bin/env python3
+   2 """Independent Phase18/17 audit. Uploaded Python is never imported or executed.
+   3 Run: OPENBLAS_NUM_THREADS=1 python independent_phase18.py [--output results.json]
+   4 Requires Python 3, NumPy, SymPy. All exact routines below are newly written.
+   5 Optional --source-root accepts an extracted Phase18 directory or its outer ZIP,
+   6 solely to hash and compare data. Mathematical checks require no source files.
+   7 """
+   8 from pathlib import Path
+   9 import argparse, collections, hashlib, io, itertools, json, math, random, zipfile
+  10 import numpy as np
+  11 import sympy as sp
+  12 
+  13 P = 998244353
+  14 
+  15 def eye(n):
+  16     return [[int(i == j) for j in range(n)] for i in range(n)]
+  17 
+  18 def product(a,b,p):
+  19     bt=list(zip(*b))
+  20     return [[sum(x*y for x,y in zip(row,col))%p for col in bt] for row in a]
+  21 
+  22 def add(a,b,p):
+  23     return [[(x+y)%p for x,y in zip(u,v)] for u,v in zip(a,b)]
+  24 
+  25 def inverse(a,p):
+  26     n=len(a); x=[[(v%p) for v in row]+ident for row,ident in zip(a,eye(n))]
+  27     for c in range(n):
+  28         r=next((r for r in range(c,n) if x[r][c]),None)
+  29         if r is None: raise ValueError('Singular modular matrix')
+  30         x[c],x[r]=x[r],x[c]
+  31         inv=pow(x[c][c],-1,p)
+  32         x[c]=[t*inv%p for t in x[c]]
+  33         for r in range(n):
+  34             if r!=c and x[r][c]:
+  35                 f=x[r][c]
+  36                 x[r]=[(u-f*v)%p for u,v in zip(x[r],x[c])]
+  37     return [r[n:] for r in x]
+  38 
+  39 def rank(a,p):
+  40     if not a:return 0
+  41     # Sparse online row elimination: useful for the commutant equations too.
+  42     pivots={}
+  43     for row in a:
+  44         row={j:int(x)%p for j,x in enumerate(row) if int(x)%p}
+  45         while row:
+  46             lead=min(row)
+  47             if lead not in pivots:
+  48                 scale=pow(row[lead],-1,p)
+  49                 pivots[lead]={j:x*scale%p for j,x in row.items()}
+  50                 break
+  51             scale=row[lead]
+  52             for j,v in pivots[lead].items():
+  53                 t=(row.get(j,0)-scale*v)%p
+  54                 if t:row[j]=t
+  55                 elif j in row:del row[j]
+  56     return len(pivots)
+  57 
+  58 def field(n):
+  59     if (P-1)%n==0:return P,pow(3,-((P-1)//n),P)
+  60     k=max(1,10000//n)
+  61     while not sp.isprime(k*n+1):k+=1
+  62     p=k*n+1;g=int(sp.primitive_root(p))
+  63     return p,pow(g,-k,p)
+  64 
+  65 def matvec(a,v,p):return [sum(x*y for x,y in zip(row,v))%p for row in a]
+  66 
+  67 def cut(a,r,c):return [[a[i][j] for j in c] for i in r]
+  68 
+  69 def sparse_step(h,v,p):
+  70     return [sum(x*v[j] for j,x in row)%p for row in h]
+  71 
+  72 def parity_audit(n):
+  73     p,w=field(n);half=n//2;W=[[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+  74     potentials=[(pow(w,i,p)+pow(w,-i,p))%p for i in range(n)]
+  75     H=[[((int((i-j)%n==1)+int((i-j)%n==n-1))+(potentials[i] if i==j else 0))%p for j in range(n)] for i in range(n)]
+  76     assert product(W,H,p)==product(H,W,p)
+  77     assert rank(H,p)==n-2
+  78     sectors=[]
+  79     for sign in (1,-1):
+  80         positions=list(range(half+1)) if sign==1 else list(range(1,half))
+  81         # Non-orthonormal real parity columns avoid all modular square roots.
+  82         cols=[]
+  83         for j in positions:
+  84             c=[0]*n;c[j]=1
+  85             if j not in (0,half):c[n-j]=sign%p
+  86             cols.append(c)
+  87         B=[list(row) for row in zip(*cols)]
+  88         HB=product(H,B,p);WB=product(W,B,p)
+  89         h=[HB[j] for j in positions];f=[WB[j] for j in positions]
+  90         assert product(B,h,p)==HB and product(B,f,p)==WB
+  91         assert rank(h,p)==len(h)-1
+  92         d=len(h);hs=[[(j,v) for j,v in enumerate(row) if v] for row in h]
+  93         # Fit from a cyclic column, then evaluate independently on every column.
+  94         e=[1]+[0]*(d-1);v=e[:];powers=[]
+  95         for k in range(d):powers.append(v);v=sparse_step(hs,v,p)
+  96         coeff=[0]*d
+  97         for row in range(d-1,-1,-1):
+  98             rhs=(f[row][0]-sum(coeff[k]*powers[k][row] for k in range(row+1,d)))%p
+  99             coeff[row]=rhs*pow(powers[row][row],-1,p)%p
+ 100         for j in range(d):
+ 101             v=[0]*d
+ 102             for c in coeff[::-1]:
+ 103                 v=sparse_step(hs,v,p);v[j]=(v[j]+c)%p
+ 104             assert v==[f[i][j] for i in range(d)]
+ 105         target=pow(2,-1,p) if sign==1 else (pow(w,half-1,p)-pow(w,-(half-1),p))%p
+ 106         assert coeff[-1]==target!=0
+ 107         # Jacobi null vector, then verify Fourier phase on that line.
+ 108         z=[1]+[0]*(d-1)
+ 109         for i in range(d-1):
+ 110             z[i+1]=(-sum(h[i][j]*z[j] for j in range(i+1))*pow(h[i][i+1],-1,p))%p
+ 111         assert matvec(h,z,p)==[0]*d
+ 112         wz=matvec(f,z,p);lam=wz[0]
+ 113         assert wz==[lam*x%p for x in z] and lam*lam%p==sign*n%p
+ 114         sectors.append({'parity':sign,'dimension':d,'degree':len(coeff)-1,'top_coefficient_unnormalized':coeff[-1], 'zero_line_fourier_eigenvalue_unnormalized':lam,'all_entries_equal':True})
+ 115     assert sectors[0]['zero_line_fourier_eigenvalue_unnormalized']!=sectors[1]['zero_line_fourier_eigenvalue_unnormalized']
+ 116     return {'n':n,'prime':p,'root':w,'harper_nullity':2,'sectors':sectors}
+ 117 
+ 118 def intertwiner_audit(n):
+ 119     p,w=field(n);phase=[(pow(w,i,p)+pow(w,-i,p))%p for i in range(n)]
+ 120     allowed=[(i,j) for i in range(n) for j in range(n) if phase[i]==phase[j]]
+ 121     assert set(allowed)=={(i,j) for i in range(n) for j in (i,(-i)%n)}
+ 122     equations=[[0]*len(allowed) for _ in range(n*n)]
+ 123     for col,(a,b) in enumerate(allowed):
+ 124         for k in ((b+1)%n,(b-1)%n):equations[a*n+k][col]+=1
+ 125         for k in ((a+1)%n,(a-1)%n):equations[k*n+b][col]-=1
+ 126     dim=len(allowed)-rank(equations,p);assert dim==2
+ 127     W=[[pow(w,i*j,p) for j in range(n)] for i in range(n)]
+ 128     def defects(M):
+ 129         return [sum((M[i][(j+1)%n]+M[i][(j-1)%n]-phase[i]*M[i][j])%p!=0 for i in range(n) for j in range(n)),sum((phase[j]*M[i][j]-M[(i+1)%n][j]-M[(i-1)%n][j])%p!=0 for i in range(n) for j in range(n))]
+ 130     FJ=[[W[i][(-j)%n] for j in range(n)] for i in range(n)]
+ 131     candidate=[[(3*W[i][j]+5*FJ[i][j])%p for j in range(n)] for i in range(n)]
+ 132     assert defects(W)==defects(FJ)==defects(candidate)==[0,0]
+ 133     assert rank([[W[i][1],FJ[i][1]] for i in range(n)],p)==2
+ 134     assert rank([[W[i][0],FJ[i][0]] for i in range(n)],p)==1
+ 135     return {'n':n,'prime':p,'commutant_dimension':dim,'e1_calibration_rank':2,'e0_calibration_rank':1}
+ 136 
+ 137 def invariant(a,p):
+ 138     return sorted(a[i][i] for i in range(len(a))),sorted(a[i][j]*a[j][i]%p for i in range(len(a)) for j in range(i))
+ 139 
+ 140 def diagonal_similarity(u,v,p):
+ 141     n=len(u);g=[[] for _ in u]
+ 142     for i in range(n):
+ 143         for j in range(n):
+ 144             a,b=u[i][j]%p,v[i][j]%p
+ 145             if (a==0)!=(b==0):return None
+ 146             if a:
+ 147                 r=a*pow(b,-1,p)%p
+ 148                 g[j].append((i,r));g[i].append((j,pow(r,-1,p)))
+ 149     q=[None]*n
+ 150     for s in range(n):
+ 151         if q[s] is not None:continue
+ 152         q[s]=1;queue=collections.deque([s])
+ 153         while queue:
+ 154             i=queue.popleft()
+ 155             for j,r in g[i]:
+ 156                 x=q[i]*r%p
+ 157                 if q[j] is None:q[j]=x;queue.append(j)
+ 158                 elif q[j]!=x:return None
+ 159     assert all(u[i][j]*q[j]%p==q[i]*v[i][j]%p for i in range(n) for j in range(n))
+ 160     return q
+ 161 
+ 162 def source_protocol_factor(n,rng,w):
+ 163     # Reconstruct only the published coefficient-generation protocol.
+ 164     # Solver below is independently written full pivoted elimination.
+ 165     total=[[0]*n for _ in range(n)]
+ 166     for _ in range(2):
+ 167         order=list(range(n));rng.shuffle(order)
+ 168         phase=[pow(w,(i*i+3*i+rng.randrange(n))%n,P) for i in range(n)]
+ 169         lo=[(1+pow(w,i+rng.randrange(n),P))%P for i in range(n-1)]
+ 170         hi=[(2+pow(w,2*i+rng.randrange(n),P))%P for i in range(n-1)]
+ 171         b=[[0]*n for _ in range(n)]
+ 172         for i in range(n):
+ 173             b[i][i]=(7+phase[i])%P
+ 174             if i+1<n:b[i+1][i]=lo[i];b[i][i+1]=hi[i]
+ 175         inv=inverse(b,P)
+ 176         left=[pow(w,rng.randrange(n),P) for _ in range(n)]
+ 177         right=[pow(w,rng.randrange(n),P) for _ in range(n)]
+ 178         for i in range(n):
+ 179             for j in range(n):total[order[i]][order[j]]=(total[order[i]][order[j]]+left[i]*inv[i][j]*right[j])%P
+ 180     return total
+ 181 
+ 182 def veto_audit(n):
+ 183     w=pow(3,-((P-1)//n),P);rng=random.Random(1817+n)
+ 184     a=source_protocol_factor(n,rng,w);b=source_protocol_factor(n,rng,w)
+ 185     ai=inverse(a,P);bi=inverse(b,P)
+ 186     assert product(a,ai,P)==eye(n) and product(b,bi,P)==eye(n)
+ 187     u=product(ai,[[pow(w,i,P)*x%P for x in row] for i,row in enumerate(a)],P)
+ 188     v=product([[row[(j+1)%n] for j in range(n)] for row in b],bi,P)
+ 189     iu,iv=invariant(u,P),invariant(v,P)
+ 190     matches=[iu[k]==iv[k] for k in (0,1)]
+ 191     assert matches==[False,False] and diagonal_similarity(u,v,P) is None
+ 192     m=product(a,b,P)
+ 193     defects=sum((m[i][(j+1)%n]-pow(w,i,P)*m[i][j])%P!=0 for i in range(n) for j in range(n))
+ 194     # Compact symmetric-polynomial witnesses, invariant under all permutations.
+ 195     powers=[]
+ 196     for k in range(1,5):
+ 197         su=sum(pow(x,k,P) for x in iu[0])%P;sv=sum(pow(x,k,P) for x in iv[0])%P
+ 198         if su!=sv:powers.append({'power':k,'U_diagonal_moment':su,'V_diagonal_moment':sv})
+ 199     assert powers
+ 200     return {'n':n,'prime':P,'omega':w,'diagonal_multiset_match':matches[0],'two_cycle_multiset_match':matches[1],'middle_diagonal_exists':False,'weyl_defect_nonzero_entries':defects,'short_diagonal_moment_witnesses':powers,'A_B_inverses_verified':True}
+ 201 
+ 202 def positive_gauge_controls():
+ 203     checks=[]
+ 204     p=1009;rng=random.Random(243)
+ 205     for n in (4,9,16):
+ 206         v=[[rng.randrange(1,p) for j in range(n)] for i in range(n)]
+ 207         q=[rng.randrange(1,p) for i in range(n)]
+ 208         u=[[q[i]*v[i][j]*pow(q[j],-1,p)%p for j in range(n)] for i in range(n)]
+ 209         recovered=diagonal_similarity(u,v,p)
+ 210         assert recovered and invariant(u,p)==invariant(v,p)
+ 211         assert len({recovered[i]*pow(q[i],-1,p)%p for i in range(n)})==1
+ 212         perm=list(range(n));rng.shuffle(perm)
+ 213         up=[[u[perm[i]][perm[j]] for j in range(n)] for i in range(n)]
+ 214         assert invariant(up,p)==invariant(v,p)
+ 215         checks.append({'n':n,'diagonal_recovered_up_to_scalar':True,'arbitrary_permutation_invariants_preserved':True})
+ 216     # Passing these short invariants is not sufficient: oriented 3-cycles.
+ 217     v=[[0,1,2],[3,0,4],[5,6,0]]
+ 218     # For generic dense matrices, transpose preserves diagonals and all 2-cycles.
+ 219     u=[list(r) for r in zip(*v)]
+ 220     assert invariant(u,p)==invariant(v,p) and diagonal_similarity(u,v,p) is None
+ 221     return {'positive':checks,'necessary_only_transpose_counterexample_fixed_permutation':True}
+ 222 
+ 223 def separator(orders):
+ 224     n=len(orders[0]);r=list(orders[0][:n//2]);c=list(orders[0][n-n//2:])
+ 225     for order in orders[1:]:
+ 226         rr=set(r);cc=set(c);selected=[x for x in order if x in rr or x in cc]
+ 227         left=set(selected[:len(r)]);right=set(selected[len(r):])
+ 228         options=[([x for x in r if x in left],[x for x in c if x in right]),([x for x in r if x in right],[x for x in c if x in left])]
+ 229         r,c=max(options,key=lambda pair:len(pair[0]))
+ 230     assert len(r)==len(c)
+ 231     for order in orders:
+ 232         pos={x:i for i,x in enumerate(order)}
+ 233         assert max(pos[x] for x in r)<min(pos[x] for x in c) or max(pos[x] for x in c)<min(pos[x] for x in r)
+ 234     return r,c
+ 235 
+ 236 def sharper_size(n,q):
+ 237     divisor=2**(q-1)
+ 238     return (n//2+divisor-1)//divisor
+ 239 
+ 240 def separator_checks():
+ 241     rng=random.Random(6003);count=0;prime=[]
+ 242     for n in range(2,66):
+ 243         for q in range(1,7):
+ 244             orders=[]
+ 245             for _ in range(q):
+ 246                 a=list(range(n));rng.shuffle(a);orders.append(a)
+ 247             r,c=separator(orders);assert len(r)>=sharper_size(n,q);count+=1
+ 248     # Exhaust all second orders at N=7: no prime-full-spark assumption involved.
+ 249     minimum=7
+ 250     for second in itertools.permutations(range(7)):
+ 251         r,c=separator([list(range(7)),second]);minimum=min(minimum,len(r));count+=1
+ 252     assert minimum==2
+ 253     # The uploaded adversarial construction need not be globally extremal.
+ 254     orders=[list(range(8)),[0,4,1,5,2,6,3,7]]
+ 255     r,c=separator(orders);assert len(r)==2
+ 256     better_r=[0,1,4];better_c=[5,6,7]
+ 257     for order in orders:
+ 258         pos={x:i for i,x in enumerate(order)}
+ 259         assert max(pos[x] for x in better_r)<min(pos[x] for x in better_c)
+ 260     # Exact nonzero minors for illustrative prime cases, not a finite-field full-spark theorem.
+ 261     for n,q in [(11,2),(13,2),(17,2),(29,3),(67,4)]:
+ 262         p,w=field(n);orders=[]
+ 263         for k in range(q):
+ 264             order=list(range(n));rng.shuffle(order);orders.append(order)
+ 265         r,c=separator(orders);r=r[:q+1];c=c[:q+1]
+ 266         assert len(r)>q
+ 267         minor=[[pow(w,i*j,p) for j in c] for i in r]
+ 268         rk=rank(minor,p);assert rk==q+1
+ 269         prime.append({'n':n,'q':q,'W':q,'new_necessary_upper_bound':2**q*q+1,'rows':r,'columns':c,'prime_modulus':p,'modular_minor_rank':rk})
+ 270     return {'separator_cases':count,'all_second_orders_at_N7':5040,'N7_minimum_greedy_size':minimum,'nonsharpness_counterexample':{'N':8,'orders':[list(range(8)),[0,4,1,5,2,6,3,7]],'greedy_size':2,'better_R':better_r,'better_C':better_c},'prime_characteristic_zero_theorem_controls':prime}
+ 271 
+ 272 def new_green(order,rng,p):
+ 273     n=len(order);b=[[0]*n for _ in range(n)]
+ 274     for i in range(n):
+ 275         b[i][i]=rng.randrange(7,15)
+ 276         if i+1<n:b[i][i+1]=rng.randrange(1,3);b[i+1][i]=rng.randrange(1,3)
+ 277     inv=inverse(b,p);out=[[0]*n for _ in range(n)]
+ 278     left=[rng.randrange(1,11) for _ in range(n)];right=[rng.randrange(1,11) for _ in range(n)]
+ 279     for i in range(n):
+ 280         for j in range(n):out[order[i]][order[j]]=left[i]*inv[i][j]*right[j]%p
+ 281     return out
+ 282 
+ 283 def rank_escape(n):
+ 284     p,w=field(n);rng=random.Random(8971+n);orders=[]
+ 285     for _ in range(4):
+ 286         order=list(range(n));rng.shuffle(order);orders.append(order)
+ 287     r,c=separator(orders[:2]);terms=[new_green(o,rng,p) for o in orders]
+ 288     a=add(terms[0],terms[1],p);b=add(terms[2],terms[3],p);ab=product(a,b,p)
+ 289     termranks=[rank(cut(t,r,c),p) for t in terms[:2]]
+ 290     ar=rank(cut(a,r,c),p);abr=rank(cut(ab,r,c),p)
+ 291     defect=[[(ab[i][(j+1)%n]-pow(w,i,p)*ab[i][j])%p for j in range(n)] for i in range(n)]
+ 292     dr=rank(defect,p)
+ 293     assert max(termranks)<=1 and ar<=2 and abr>2 and dr>0
+ 294     # Nullity identity is valid even if principal blocks are singular.
+ 295     swap=[[0,1],[1,0]];assert inverse(swap,p)==swap
+ 296     return {'n':n,'prime':p,'selected_size':len(r),'term_cut_ranks':termranks,'sum_cut_rank':ar,'product_cut_rank':abr,'Fourier_covariance_defect_rank':dr,'singular_principal_block_control_passed':True}
+ 297 
+ 298 def chirp_rank(n):
+ 299     p,xi=field(2*n);w=xi*xi%p;m=n//2
+ 300     c=[pow(xi,-k*k,p) for k in range(n)]
+ 301     assert all(pow(xi,-(k+n)*(k+n),p)==c[k] for k in range(n))
+ 302     for i in range(n):
+ 303         for j in range(n):assert pow(w,i*j,p)==pow(xi,i*i,p)*c[(i-j)%n]*pow(xi,j*j,p)%p
+ 304     hrank=rank([[c[i+j] for j in range(m)] for i in range(m)],p)
+ 305     assert hrank==m
+ 306     return {'n':n,'prime':p,'chirp_Hankel_rank':hrank,'Bluestein_identity_all_entries':True}
+ 307 
+ 308 def numerical_checks():
+ 309     spectral=[];gaps=[]
+ 310     for n in (4,8,12,16,20,28,32,64,128):
+ 311         ix=np.arange(n);F=np.exp(-2j*np.pi*((ix[:,None]*ix[None,:])%n)/n)/np.sqrt(n)
+ 312         z=np.roll(np.eye(n),1,axis=0);h=z+z.T+np.diag(2*np.cos(2*np.pi*ix/n))
+ 313         blocks=[]
+ 314         for sign in (1,-1):
+ 315             pos=range(n//2+1) if sign==1 else range(1,n//2)
+ 316             B=np.zeros((n,len(pos)))
+ 317             for k,j in enumerate(pos):
+ 318                 if j in (0,n//2):B[j,k]=1
+ 319                 else:B[j,k]=1/np.sqrt(2);B[n-j,k]=sign/np.sqrt(2)
+ 320             _,u=np.linalg.eigh(B.T@h@B);blocks.append(B@u)
+ 321         O=np.column_stack(blocks);lambdas=np.diag(O.T@F@O)
+ 322         allowed=np.array([1,-1,1j,-1j]);phases=allowed[np.argmin(abs(lambdas[:,None]-allowed[None,:]),axis=1)]
+ 323         err=float(np.max(abs((O*phases)@O.T-F)));orth=float(np.max(abs(O.T@O-np.eye(n))))
+ 324         assert err<1e-10 and orth<1e-10
+ 325         spectral.append({'n':n,'max_entry_error':err,'orthogonality_error':orth,'pair_gate_lower_bound':n*math.log2(n)/4})
+ 326     rng=random.Random(217)
+ 327     for n,q in [(64,2),(128,2),(256,3)]:
+ 328         orders=[]
+ 329         for k in range(q):
+ 330             a=list(range(n));rng.shuffle(a);orders.append(a)
+ 331         r,c=separator(orders);m=sharper_size(n,q);r=r[:m];c=c[:m]
+ 332         X=np.exp(-2j*np.pi*((np.outer(r,c))%n)/n)/np.sqrt(n)
+ 333         s=np.linalg.svd(X,compute_uv=False)
+ 334         bound=math.sqrt((m*m/n-q)/(m-q)) if m*m>q*n else 0
+ 335         assert abs(float(np.linalg.norm(X,'fro')**2)-m*m/n)<1e-9
+ 336         assert s[0]<=1+1e-10 and s[q]>=bound-1e-10
+ 337         gaps.append({'n':n,'q':q,'m_star':m,'spectral_gap_lower_bound':bound,'selected_Fourier_block_sigma_W_plus_1':float(s[q])})
+ 338     return {'real_orthogonal_four_phase_controls':spectral,'robust_gap_controls':gaps}
+ 339 
+ 340 def read_source_tree(path):
+ 341     out={}
+ 342     def walk_zip(raw,prefix):
+ 343         with zipfile.ZipFile(io.BytesIO(raw)) as z:
+ 344             for inf in z.infolist():
+ 345                 if inf.is_dir():continue
+ 346                 b=z.read(inf);name=prefix+inf.filename;out[name]=b
+ 347                 if inf.filename.lower().endswith('.zip'):walk_zip(b,name+'!/')
+ 348     path=Path(path)
+ 349     if path.is_file():walk_zip(path.read_bytes(),'')
+ 350     else:
+ 351         for p in sorted(path.rglob('*')):
+ 352             if not p.is_file():continue
+ 353             b=p.read_bytes();name=p.relative_to(path).as_posix();out[name]=b
+ 354             if p.suffix.lower()=='.zip':walk_zip(b,name+'!/')
+ 355     return out
+ 356 
+ 357 def source_check(path):
+ 358     tree=read_source_tree(path);expected=json.loads(Path(__file__).with_name('source_inventory.json').read_text())
+ 359     found={hashlib.sha256(b).hexdigest() for b in tree.values()}
+ 360     missing=[r['member'] for r in expected['members'] if r['sha256'] not in found]
+ 361     assert not missing,missing
+ 362     # Validate embedded checksum files without executing any uploaded module.
+ 363     manifests=[]
+ 364     for name,raw in tree.items():
+ 365         if not name.endswith(('SHA256SUMS.txt','MANIFEST.sha256')):continue
+ 366         prefix=name.rsplit('/',1)[0]+'/' if '/' in name else ''
+ 367         count=0
+ 368         for line in raw.decode().splitlines():
+ 369             if not line.strip() or line.startswith('#'):continue
+ 370             fields=line.split(maxsplit=1)
+ 371             if len(fields)!=2 or len(fields[0])!=64:continue
+ 372             rel=fields[1].lstrip('*').removeprefix('./')
+ 373             container=name.rsplit('!/',1)[0]+'!/' if '!/' in name else ''
+ 374             choices=[prefix+rel,container+rel]
+ 375             targets=[t for t in choices if t in tree]
+ 376             assert targets,('Missing checksum target',name,rel)
+ 377             assert any(hashlib.sha256(tree[t]).hexdigest()==fields[0] for t in targets),(name,rel)
+ 378             count+=1
+ 379         manifests.append({'member':name,'entries_checked':count})
+ 380     return {'expected_content_occurrences':len(expected['members']),'all_expected_contents_found':True,'embedded_manifests':manifests,'phase16_archive_matches_master_1520':expected['phase16_archive_unchanged']}
+ 381 
+ 382 def independent_separator(row_orders,column_orders):
+ 383     n=len(row_orders[0]);I=list(range(n));J=list(range(n))
+ 384     for ro,co in zip(row_orders,column_orders):
+ 385         rp={label:i for i,label in enumerate(ro)};cp={label:i for i,label in enumerate(co)}
+ 386         rr=sorted(I,key=rp.__getitem__);cc=sorted(J,key=cp.__getitem__);k=len(I)//2
+ 387         if not k:return [],[]
+ 388         if rp[rr[k-1]]<cp[cc[-k]]:I,J=rr[:k],cc[-k:]
+ 389         else:
+ 390             assert cp[cc[k-1]]<rp[rr[-k]]
+ 391             I,J=rr[-k:],cc[:k]
+ 392     for ro,co in zip(row_orders,column_orders):
+ 393         rp={label:i for i,label in enumerate(ro)};cp={label:i for i,label in enumerate(co)}
+ 394         assert max(rp[x] for x in I)<min(cp[x] for x in J) or max(cp[x] for x in J)<min(rp[x] for x in I)
+ 395     return I,J
+ 396 
+ 397 def independent_order_checks():
+ 398     # Exhaustive local split lemma, allowing arbitrary overlap of row/column positions.
+ 399     local=0
+ 400     for m in range(2,7):
+ 401         k=m//2
+ 402         for r in itertools.combinations(range(6),m):
+ 403             for c in itertools.combinations(range(6),m):
+ 404                 assert r[k-1]<c[m-k] or c[k-1]<r[m-k]
+ 405                 local+=1
+ 406     rng=random.Random(41319);cases=0;overlaps=0
+ 407     for n in range(2,66):
+ 408         for q in range(1,7):
+ 409             rows=[];cols=[]
+ 410             for _ in range(q):
+ 411                 a=list(range(n));b=list(range(n));rng.shuffle(a);rng.shuffle(b);rows.append(a);cols.append(b)
+ 412             I,J=independent_separator(rows,cols)
+ 413             assert len(I)==len(J)==n//2**q
+ 414             overlaps+=bool(set(I)&set(J));cases+=1
+ 415     exact=[]
+ 416     for n,q in ((13,2),(37,3),(83,4),(64,2)):
+ 417         p,w=field(n);rows=[];cols=[];terms=[]
+ 418         for _ in range(q):
+ 419             ro=list(range(n));co=list(range(n));rng.shuffle(ro);rng.shuffle(co);rows.append(ro);cols.append(co)
+ 420             # Generate a conjugately ordered term, then independently relabel columns.
+ 421             G=new_green(ro,rng,p);term=[[0]*n for _ in range(n)]
+ 422             for i in range(n):
+ 423                 for j in range(n):term[i][co[j]]=G[i][ro[j]]
+ 424             terms.append(term)
+ 425         I,J=independent_separator(rows,cols)
+ 426         ranks=[rank(cut(t,I,J),p) for t in terms]
+ 427         total=[[sum(t[i][j] for t in terms)%p for j in range(n)] for i in range(n)]
+ 428         sr=rank(cut(total,I,J),p)
+ 429         fr=rank([[pow(w,i*j,p) for j in J] for i in I],p)
+ 430         assert max(ranks)<=1 and sr<=q
+ 431         if sp.isprime(n):assert fr==len(I)>q
+ 432         exact.append({'n':n,'q':q,'prime_modulus':p,'rectangle_size':len(I),'term_ranks':ranks,'sum_rank':sr,'Fourier_minor_rank':fr,'original_label_overlap':len(set(I)&set(J)),'prime_N_necessary_upper_bound':2**q*(q+1)-1 if sp.isprime(n) else None})
+ 433     return {'local_split_exhaustive_cases':local,'random_full_separator_cases':cases,'cases_with_overlapping_original_labels':overlaps,'exact_Green_controls':exact,'scope':'Independent row and column permutations per term. Guaranteed rectangle floor(N/2^q), not the conjugate-order ceiling bound.'}
+ 434 
+ 435 def main():
+ 436     ap=argparse.ArgumentParser();ap.add_argument('--source-root');ap.add_argument('--output',default=str(Path(__file__).with_name('independent_phase18_results.json')));args=ap.parse_args()
+ 437     result={'audit_kind':'Independent exact mathematical controls and separately labelled numerical controls; no uploaded code run or imported','normalization':'Exact Harper checks use W=sqrt(N)F to avoid modular square roots. Divide coefficients/eigenvalues by sqrt(N) in characteristic zero.','harper':[parity_audit(n) for n in (4,8,12,16,20,28,32,36,60,64,128)],'joint_commutant':[intertwiner_audit(n) for n in (4,6,8,10,12,16,20,32,64)],'source_fixed_factors':[veto_audit(n) for n in (8,16,32,64)],'monomial_controls':positive_gauge_controls(),'phase17_separator':separator_checks(),'independent_row_column_permutations':independent_order_checks(),'new_product_escape_controls':[rank_escape(n) for n in (16,32,64)],'chirp_Hankel':[chirp_rank(n) for n in (8,16,32,64,128)],'numerical':numerical_checks()}
+ 438     if args.source_root:result['source_verification']=source_check(args.source_root)
+ 439     result['all_checks_passed']=True
+ 440     Path(args.output).write_text(json.dumps(result,indent=2)+'\n')
+ 441     print(json.dumps({'all_checks_passed':True,'output':str(Path(args.output).resolve()),'harper_sizes':[r['n'] for r in result['harper']],'new_prime_necessary_bound':'N <= 2^q W + 1, for prime N over C','fixed_factor_veto_sizes':[r['n'] for r in result['source_fixed_factors']]},indent=2))
+ 442 
+ 443 if __name__=='__main__':main()

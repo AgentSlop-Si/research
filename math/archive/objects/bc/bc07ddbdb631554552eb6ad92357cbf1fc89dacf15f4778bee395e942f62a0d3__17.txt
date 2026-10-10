@@ -1,0 +1,132 @@
+0001 #!/usr/bin/env python3
+0002 """Independent, bounded Phase 5 audit. Uploaded programs are never imported or executed."""
+0003 import hashlib, itertools, json, math, pathlib, random, zipfile, stat
+0004 import numpy as np
+0005 ROOT=pathlib.Path(__file__).resolve().parents[1]
+0006 SRC=ROOT/'extracted'/'fft_hero0_phase5_joint_frame_2026-10-10'
+0007 
+0008 def provenance():
+0009     m=json.loads((SRC/'SHA256SUMS.json').read_text())['artifacts']
+0010     for a in m:
+0011         d=(SRC/a['name']).read_bytes()
+0012         assert len(d)==a['size_bytes'] and hashlib.sha256(d).hexdigest()==a['sha256']
+0013     archive=SRC/'prior_phase4_bundle.zip'
+0014     ancestor=ROOT/'audit'/'prior_evidence'/'approved_phase4_archive.zip'
+0015     assert archive.read_bytes()==ancestor.read_bytes()
+0016     members=[]
+0017     with zipfile.ZipFile(archive) as z:
+0018         for i in z.infolist():
+0019             p=pathlib.PurePosixPath(i.filename)
+0020             assert not p.is_absolute() and '..' not in p.parts and '\\' not in i.filename
+0021             assert not stat.S_ISLNK(i.external_attr>>16) and not (i.flag_bits&1)
+0022             assert i.file_size<20_000_000
+0023             if not i.is_dir():
+0024                 data=z.read(i);members.append({'path':i.filename,'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()})
+0025     return {'verified_source_manifest_entries':len(m),'ancestor_byte_identical':True,'nested_inventory':members}
+0026 
+0027 def prime(n):
+0028     return n>=2 and all(n%d for d in range(2,math.isqrt(n)+1))
+0029 def divisors(n):
+0030     return [d for d in range(2,n+1) if n%d==0 and prime(d)]
+0031 def field(q):
+0032     p=2*q+1
+0033     while not prime(p):p+=2*q
+0034     v=next(g for g in range(2,p) if pow(g,2*q,p)==1 and all(pow(g,2*q//d,p)!=1 for d in divisors(2*q)))
+0035     return p,v
+0036 
+0037 def direct(x,root,p):
+0038     return [sum(v*pow(root,k*j,p) for j,v in enumerate(x))%p for k in range(len(x))]
+0039 
+0040 def modular():
+0041     rng=random.Random(492073);rows=[];entries=0;scanned=0
+0042     for q,m in [(2,1),(3,3),(6,3),(8,2),(9,3),(12,4),(15,3),(16,4),(25,5),(35,5),(45,5),(55,5),(63,7),(72,8),(77,7)]:
+0043         k=q//m;p,eta=field(q);z=eta*eta%p;w=pow(z,-1,p);wm=pow(w,k,p);wk=pow(w,m,p);im=pow(m,-1,p)
+0044         for a in list(a for a in range(1,q) if math.gcd(a,q)==1)[:3]:
+0045             beta=3%q
+0046             phases=[[pow(eta,2*(a*t*(t-1)//2+(a*b*m+beta)*t)+(q%2)*t,p) for t in range(m)] for b in range(k)]
+0047             for trial in range(3):
+0048                 x=[rng.randrange(p) for _ in range(q)]
+0049                 D=[[sum(phases[b][t]*x[b*m+t]*pow(wm,-r*t,p) for t in range(m))%p for r in range(m)] for b in range(k)]
+0050                 recovered=[pow(phases[b][t],-1,p)*im*sum(D[b][r]*pow(wm,r*t,p) for r in range(m))%p for b in range(k) for t in range(m)]
+0051                 assert recovered==x
+0052                 V=[[sum(recovered[b*m+t]*pow(wk,ell*b,p) for b in range(k))%p for t in range(m)] for ell in range(k)]
+0053                 Y=[0]*q
+0054                 for ell in range(k):
+0055                     for j in range(m):Y[ell+j*k]=sum(V[ell][t]*pow(w,ell*t,p)*pow(wm,j*t,p) for t in range(m))%p
+0056                 truth=direct(x,w,p);assert Y==truth;entries+=q
+0057                 # Derive each antiperiodic Green scan directly from a small K-DFT.
+0058                 accum=[0]*q
+0059                 for r in range(m):
+0060                     betar=(beta+r*k)%q
+0061                     f=direct([D[b][r] for b in range(k)],wk,p)
+0062                     idx=[a*j%q for j in range(q)]
+0063                     gauge=[pow(eta,2*(a*j*(j-1)//2+betar*j)+(q%2)*j,p) for j in range(q)]
+0064                     terms=[]
+0065                     for j,ii in enumerate(idx):
+0066                         boundary=pow(eta,-2*(m*(ii+betar)+a*m*(m-1)//2)-(q%2)*m,p)
+0067                         force=(f[ii%k]-boundary*f[(ii+a*m)%k])%p
+0068                         terms.append(force*pow(gauge[j],-1,p)%p)
+0069                     seed=sum(terms)*pow(2,-1,p)%p;prefix=0;scan=[0]*q
+0070                     for j,ii in enumerate(idx):scan[ii]=gauge[j]*(seed-prefix)%p;prefix=(prefix+terms[j])%p
+0071                     projected=[pow(phases[b][t],-1,p)*pow(wm,r*t,p)*D[b][r]%p for b in range(k) for t in range(m)]
+0072                     assert scan==direct(projected,w,p);scanned+=q
+0073                     accum=[(u+v)%p for u,v in zip(accum,scan)]
+0074                 assert [im*v%p for v in accum]==truth
+0075         rows.append({'Q':q,'M':m,'K':k,'prime':p,'root_order':2*q})
+0076     return {'cases':rows,'exact_aggregate_entries':entries,'exact_green_scan_entries':scanned}
+0077 
+0078 def floating():
+0079     rng=np.random.default_rng(380421);rows=[];maxerr=0.;transfers=0;moments=0
+0080     for k,m in [(1,2),(3,2),(2,3),(3,4),(2,5),(3,6),(2,7)]:
+0081         q=k*m;phase=np.exp(2j*np.pi*rng.random((k,m)))
+0082         Fm=np.exp(-2j*np.pi*np.outer(np.arange(m),np.arange(m))/m)/np.sqrt(m)
+0083         Fq=np.exp(-2j*np.pi*np.outer(np.arange(q),np.arange(q))/q)/np.sqrt(q)
+0084         # Columns e_r / sqrt(M) form the synthesis isometry E.
+0085         E=np.zeros((q,q),complex);P=[]
+0086         for r in range(m):
+0087             Pr=np.zeros((q,q),complex)
+0088             for b in range(k):
+0089                 e=np.conj(phase[b])*np.exp(-2j*np.pi*r*np.arange(m)/m)
+0090                 E[b*m:(b+1)*m,b*m+r]=e/np.sqrt(m)
+0091                 Pr[b*m:(b+1)*m,b*m:(b+1)*m]=np.outer(e,e.conj())
+0092             P.append(Pr)
+0093         errs=[np.linalg.norm(E.conj().T@E-np.eye(q)),np.linalg.norm(sum(P)/m-np.eye(q))]
+0094         J=Fq@E;errs.append(np.linalg.norm(J.conj().T@J-np.eye(q)))
+0095         for b in range(k):
+0096             for ell in range(k):
+0097                 T=Fm@np.diag(np.conj(phase[b])*np.exp(-2j*np.pi*ell*np.arange(m)/q))@Fm.T
+0098                 errs.append(np.linalg.norm(T.conj().T@T-np.eye(m)));transfers+=1
+0099                 # Full physical block-to-selected-output map has singular values 1/sqrt(K).
+0100                 A=Fq[np.ix_(ell+k*np.arange(m),b*m+np.arange(m))]
+0101                 errs.append(np.max(abs(np.linalg.svd(A,compute_uv=False)-1/np.sqrt(k))))
+0102         x=rng.normal(size=q)+1j*rng.normal(size=q)
+0103         L=(rng.normal(size=(5,q))+1j*rng.normal(size=(5,q)))/np.sqrt(q)
+0104         # Include arbitrary nonunit diagonal preweights and postprocessing.
+0105         x*=np.exp(np.linspace(-.5,.5,q));mu=L@x
+0106         y=np.array([L@(pr@x) for pr in P])
+0107         Cpop=sum(np.outer(v-mu,(v-mu).conj()) for v in y)/m
+0108         eenergy=float(np.vdot(x,x).real)
+0109         for s in range(1,m+1):
+0110             cs=np.zeros((5,5),complex);total=0.;cnt=0
+0111             for subset in itertools.combinations(range(m),s):
+0112                 bar=sum(P[r] for r in subset)/s;v=bar@x-x
+0113                 total+=float(np.vdot(v,v).real)
+0114                 vv=L@v;cs+=np.outer(vv,vv.conj());cnt+=1
+0115                 op=0 if s==m else max(1,m/s-1)
+0116                 errs.append(abs(np.linalg.norm(bar-np.eye(q),2)-op))
+0117                 # Exact deterministic energy formula in orthogonal bank coordinates.
+0118                 cap=sum(float(np.vdot(x,P[r]@x).real)/m for r in subset)
+0119                 expected=eenergy+((m/s-1)**2-1)*cap
+0120                 errs.append(abs(np.vdot(v,v).real-expected)/eenergy)
+0121             cs/=cnt;theory=(m-s)/(s*(m-1))*Cpop
+0122             errs.append(np.linalg.norm(cs-theory)/max(1,np.linalg.norm(Cpop)))
+0123             errs.append(abs(total/cnt/eenergy-(m-s)/s));moments+=1
+0124         maxerr=max(maxerr,max(errs));assert max(errs)<2e-11
+0125         rows.append({'Q':q,'M':m,'K':k,'max_residual':max(errs)})
+0126     return {'cases':rows,'transfer_matrices':transfers,'subset_size_moments':moments,'maximum_scaled_residual':maxerr}
+0127 
+0128 def main():
+0129     out={'provenance':provenance(),'modular':modular(),'numerical':floating(),'uploaded_code_executed':False,'status':'PASS'}
+0130     (ROOT/'audit'/'CHECK_RESULTS.json').write_text(json.dumps(out,indent=2)+'\n')
+0131     print(json.dumps({k:v for k,v in out.items() if k!='provenance'},indent=2))
+0132 if __name__=='__main__':main()

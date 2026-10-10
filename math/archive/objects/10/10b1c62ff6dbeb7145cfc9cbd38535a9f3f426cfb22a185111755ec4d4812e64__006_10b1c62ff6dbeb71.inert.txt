@@ -1,0 +1,133 @@
+# Prior-art audit: fixed-additive-accuracy Fourier evaluation by sampling and packed lookup
+
+Research date: 9 October 2026. This is a targeted literature audit, not a certification of priority or of the proposed proof. Sources below are original papers, author copies, or publisher/institutional records. Search results from secondary sites were used only to locate primary material.
+
+## Bottom line
+
+I did not find a primary paper stating the exact proposed uniform, preprocessing-inclusive theorem: for every fixed ε > 0 and c, arbitrary length-N complex integer input with O(log N)-bit components, all N unitary DFT coordinates within ε‖x‖₁/√N with failure at most δ ≥ N⁻ᶜ, in O_{ε,c}(N) word-RAM operations.
+
+That negative search result does **not** establish novelty. The main ingredients are familiar. The meaningful candidate contribution is the **uniform, counted construction and evaluation of quantized Fourier-phase blocks**. The latest user-supplied decoder v3 uses guarded packed additions, so it does not depend on the earlier single-word tile-transposition route. Sampling O(ε⁻² log(N/δ)) signed atoms is standard. A finite-alphabet matrix with only O(log N) columns already admits linear-time application after suitable preprocessing. Neither observation alone pays for constructing the sample-dependent Fourier data.
+
+Do not describe this as an exact linear-time FFT, an energy-relative FFT, or a replacement for standard numerical FFTs. A defensible provisional description is “a linear-time word-RAM algorithm for fixed input-mass-normalized additive Fourier approximation,” subject to the independent proof audit and further prior-art review.
+
+## Closest primary literature
+
+### 1. Finite-alphabet matrix application: Liberty and Zucker, 2008
+
+The Mailman algorithm gives O(mn/log(max(m,n))) application time for an m×n constant-alphabet matrix after O(mn) preprocessing. It includes the tall-and-skinny case. Applied to an N×O(log N) quantized sampled Fourier matrix, this yields O(N) application but does not cover the O(N log N) cost of explicitly constructing that matrix. This is the closest general computational precedent for the claimed speedup. See pp. 1–4, especially the tall-and-skinny and alphabet generalizations.
+
+Primary source: [The Mailman algorithm for matrix vector multiplication](https://www.cs.yale.edu/homes/el327/papers/matrixVectorApp.pdf).
+
+### 2. Sparse convex approximation: Barman, STOC 2015; Mirrokni et al., ICML 2017
+
+Barman gives a self-contained approximate Carathéodory argument and explicitly credits Maurey’s lemma. Bounded vectors in dimension d admit an equal-weight O(ε⁻² log d)-point approximation in the infinity norm by the standard p≈log d conversion. Mirrokni, Paes Leme, Vladu, and Wong develop a deterministic constructive treatment and tight bounds. These precedents cover the sample-compression idea, not its fast Fourier evaluation.
+
+Primary sources: [Barman](https://arxiv.org/abs/1406.2296), [Mirrokni et al.](https://proceedings.mlr.press/v70/mirrokni17a.html).
+
+The application here is immediate: after separating real and imaginary signed masses, normalized Fourier columns have bounded real and imaginary coordinates; Hoeffding plus a union bound supplies high probability simultaneously over all N bins. The integer sign-mass L=Σ(|Re x_j|+|Im x_j|) satisfies ‖x‖₁≤L≤√2‖x‖₁, so the √2 loss is absorbed in the accuracy budget. This is a derivation, not a claim that either paper states the proposed Fourier theorem.
+
+### 3. Approximate complex polynomial evaluation: Reif, STOC 1997 / SICOMP 1999
+
+Reif measures absolute evaluation error using k=log(‖coefficients‖₁/error). Near-constant amortized bounds require sufficiently many evaluation points, or restricted point/coefficient configurations. For fixed error relative to coefficient mass, the general bound still needs roughly n log n evaluation points to amortize the setup. It therefore does not directly supply the arbitrary N-input/N-output theorem here. It uses exact arithmetic, with finite-precision implementation explicitly left unresolved.
+
+Primary sources: [Publisher abstract](https://epubs.siam.org/doi/abs/10.1137/S0097539797324291), [author PDF](https://users.cs.duke.edu/~reif/paper/Eval.pdf). The author PDF was search-index readable but direct retrieval returned 403; the abstract and indexed introductory passages were inspected.
+
+### 4. Pruned/selected FFT: Woolfe, Liberty, Rokhlin, and Tygert, ACHA 2008
+
+Section 3.3 computes an arbitrary selection of ℓ DFT outputs of a length-n vector in O(n log ℓ) floating-point operations. It cites the closely related 1993 work of Sørensen and Burrus. Transposing the associated linear computation gives the corresponding sparse-input/all-output baseline. With O(log N) sampled atoms, this is O(N log log N), under the usual FFT-friendly length assumptions. Numerical precision must still be accounted for in a word-RAM theorem.
+
+Primary source: [A fast randomized algorithm for the approximation of matrices](https://tygert.com/frand.pdf), §3.3, pp. 341–343.
+
+This is a more informative baseline than comparing the proposed method only with a full O(N log N) FFT: much of the improvement already follows from standard sampling and pruning.
+
+### 5. Sparse Fourier recovery: Hassanieh et al., STOC 2012; Li and Nakos, ICALP 2020
+
+Hassanieh, Indyk, Katabi, and Price give O(k log N) time for exactly Fourier-k-sparse input and O(k log N log(N/k)) time for a best-k-term approximation of general signals. Their approximation is formulated relative to the Fourier-domain residual, not total input mass.
+
+Primary source: [Nearly Optimal Sparse Fourier Transform](https://arxiv.org/abs/1201.2501).
+
+Li and Nakos’s Definition 2 is particularly important for avoiding a misleading comparison: their “ℓ∞/ℓ1 guarantee” is ‖x̂−x̂′‖∞≤‖x̂_{−k}‖₁/k. The ℓ1 quantity is the **Fourier-domain tail**. Their deterministic result and sensing-matrix construction are not the proposed input-domain guarantee. Their Table 1 also separates ℓ∞/ℓ2, ℓ2/ℓ2, ℓ∞/ℓ1, and ℓ2/ℓ1 recovery.
+
+Primary source: [Deterministic Sparse Fourier Transform with an ℓ∞ Guarantee](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ICALP.2020.77), Definition 2 and Tables 1–2.
+
+An earlier practical sampling connection is Iwen, Gilbert, and Strauss’s FADFT/AAFFT work. It samples to estimate selected coefficients and uses unequally spaced FFT methods to accelerate batches of estimates and evaluations of sparse representations. It outputs a sparse Fourier representation and gives an energy-tail guarantee, not N uniformly materialized coordinates at the proposed input-mass tolerance.
+
+Primary source: [Empirical Evaluation of a Sub-Linear Time Sparse DFT Algorithm](https://users.math.msu.edu/users/iwenmark/Papers/AAFFT.pdf), §§2.1–2.2.
+
+### 6. Four Russians and word packing: Chan; Boothby and Bradshaw; Fredriksson and Grabowski
+
+Chan’s 2014 paper cleanly separates gains from table lookup, word operations, and sparse descriptions. Lemma 2.1 groups b≈0.01 log n/log(d+1) sparse descriptors, exhaustively tabulates their answers, and stores those answers packed. The resemblance to grouping O(log log N)-bit phase descriptors into O(log N)-bit keys is substantial. The underlying problem is Boolean matrix multiplication, so it is a technique precedent, not a Fourier theorem.
+
+Primary source: [Speeding up the Four Russians Algorithm by About One More Logarithmic Factor](https://tmc.web.engr.illinois.edu/bmm9_14.pdf).
+
+Boothby and Bradshaw give concrete finite-field Four-Russians and bitslicing methods, including the distinction between packed-field arithmetic with guard bits and bit-plane arithmetic. This supports treating the packing layer as standard machinery requiring explicit carry/representation accounting, rather than as a novel Fourier identity.
+
+Primary source: [Bitslicing and the Method of Four Russians Over Larger Finite Fields](https://arxiv.org/abs/0901.1413), §§2–3.
+
+Fredriksson and Grabowski use word-level packing to accelerate integer convolutions and approximate string matching, explicitly exploiting w-bit words. Their work is evidence that packed convolution speedups are longstanding; it is not a uniform complex-DFT approximation result of the kind proposed here.
+
+Primary source: [Exploiting word-level parallelism for fast convolutions and their applications in approximate string matching](https://www.sciencedirect.com/science/article/pii/S0195669812001308), European Journal of Combinatorics 34(1), 38–51, 2013, DOI 10.1016/j.ejc.2012.07.013.
+
+## What follows from old ingredients, and what remains a new lemma to verify
+
+The following distinctions are my deductions from the sources and the proposed construction.
+
+1. **Standard:** For fixed ε and polynomially small failure, construct a signed empirical surrogate with k=O(ε⁻² log N) atoms after an O(N) scan, with simultaneous Fourier error at the stated scale. The proof is ordinary concentration. Producing an implicit surrogate is not producing all output coordinates.
+2. **Standard baseline:** Evaluate that surrogate directly in O(Nk); a pruned transform reduces the arithmetic cost to O(N log k) for appropriate lengths.
+3. **Standard, after preprocessing:** Quantize phasors to fixed accuracy and apply the resulting constant-alphabet N×k matrix in O(N) when k=O(log N). This does not make its preprocessing free.
+4. **Candidate additional content:** Construct the necessary Fourier-specific block descriptions, their output words, and the final per-bin combinations in O(N), uniformly, while charging for all tables. The start/slope quantization keeps an atom’s description small on a length-Θ(log N) output block. The user-supplied v3 route stores biased nonnegative quantized group lanes with enough guard bits, adds their packed word vectors, then extracts and rescales the lanes. This avoids revisiting all k atoms separately at every output; it also removes the need for the earlier second lookup table or G×G single-word tile.
+5. **Not established by this audit:** That the exact combination is absent from prior literature, that every computational-model detail is valid, or that this approach improves wall-clock performance.
+
+A useful theorem organization would isolate item 4 as a deterministic structured exponential-sum evaluation lemma, then give the randomized approximation theorem as a short corollary. This makes it clear which work is substantive and which part is the classical empirical method.
+
+## How weak or strong is the accuracy?
+
+Let F be unitary, y=Fx, and r=(‖x‖₁/‖x‖₂)², so 1≤r≤N. The proposed per-coordinate tolerance is ε‖x‖₁/√N. Since the RMS Fourier-coordinate magnitude is ‖x‖₂/√N, the tolerance is ε√r times that RMS magnitude. The bound implies at most
+
+‖y−ỹ‖₂ ≤ ε‖x‖₁ = ε√r‖x‖₂.
+
+It therefore does not imply a fixed relative energy error. When r≈N, the permitted ℓ2 error can be ε√N times the signal energy norm. This observation is independent of any particular algorithm.
+
+### A fully integral example showing the distinction
+
+Take x_j to be independent signs ±1. Then ‖x‖₁=N and ‖x‖₂=√N. For any frequency, applying Hoeffding to real and imaginary parts, followed by a union bound over frequencies, gives
+
+Pr(max_f |(Fx)_f| > t) ≤ 4N exp(−t²/4).
+
+Consequently, **the all-zero output satisfies the proposed guarantee with probability at least 1−4N exp(−ε²N/4) over this input ensemble**. It loses all the signal’s energy. For ε=0.1 and N=65,536, that failure bound is below 10⁻⁶⁵. This is an analytic example, not a claim that the proposed algorithm returns zero or fails its theorem.
+
+The guarantee remains nontrivial for coherent input: for x=(1,…,1), it must capture the DC peak to relative O(ε); for a single impulse, it must approximate every phasor to relative O(ε). It can be useful for features above a total-mass-derived threshold. Whether that is useful for any proposed application needs a separate argument.
+
+## Model and practical-threshold cautions
+
+These are checks on theorem wording, not claims that the independent audit has found errors.
+
+- State O_{ε,c}(N), with ε and c fixed. “O(N)” alone hides the crucial parameter dependence and a potentially enormous N₀(ε,c).
+- Specify a uniform randomized word-RAM with w=Θ(log N), exact allowed integer operations, and O(1)-word arithmetic for sums and products. Division, multiplication, bounded random-word generation, and rejection sampling should be explicitly covered. Expected versus worst-case time cannot be silently interchanged.
+- State how numerical constants and trigonometric lookup entries are constructed to sufficient certified accuracy without unit-cost exact trigonometry. They may be tabulated, but the setup cost and precision belong in the proof.
+- State the output format. Constant-bit normalized lane symbols plus a common scale can be expanded into N O(1)-word approximate complex numbers, but the scale, rounding, and all N writes must be charged.
+- Distinguish the dense input interface from an input-sparsity model. An O(N) scan can be optimal for the supplied dense array even when the sampled surrogate is tiny.
+- Input-dependent sampling makes this a randomized nonlinear algorithm. Arithmetic-circuit lower bounds for exact or well-conditioned linear DFT computations do not automatically rule it out.
+
+### Updated practical assessment for the user-supplied v3 decoder
+
+The earlier two-table/transposition route required a G×G tile to fit in one word. **That is not a requirement of v3.** Consequently, an astronomical threshold inferred from G²≤w would be an invalid criticism of this newer construction.
+
+For v3, write w≈log₂N and G≈A log₂w, with fixed A depending on ε, c, and the grouping constants. A lane containing a biased q-bit group value needs q+⌈log₂G⌉+O(1) bits to prevent carry between lanes after G additions. For B=Θ(w), a packed group vector occupies O(q+log G) words. Summing all groups therefore costs O(G(q+log G)) per block, or O(N G(q+log G)/w) overall. For fixed parameters, this is o(N); extraction and materialization remain O(N). This is the supplied construction’s elementary operation count, not a measured implementation result.
+
+The remaining practical cautions are more modest and more accurate: the sampling constant grows at least quadratically in 1/ε in the stated scheme; phase-descriptor width constrains useful group size; exhaustive table construction and memory locality can dominate; and fixed physical word sizes must be instantiated explicitly. “Sublinear table” and a linear asymptotic bound do not establish a practical speedup. No numerical crossover or hardware threshold is justified without concrete parameters and end-to-end tests.
+
+A pertinent independent warning appears in Ben-Kiki et al.: standard Four-Russians emulation can sacrifice small space and cache-friendly access. That warning is for packed string matching, not a benchmark of this proposal.
+
+Primary source: [Towards optimal packed string matching](https://www.cs.haifa.ac.il/~oren/Publications/bpsm.pdf), §4, Theoretical Computer Science 525 (2014), 111–129.
+
+## Recommended claim and next research boundary
+
+If the correctness audit succeeds, claim only the stated approximation theorem and give full ε,c dependence, uniform setup, word operations, and output representation. Say that the construction combines standard signed empirical approximation with a Fourier-specific quantized lookup evaluation lemma. Cite Mailman, empirical/approximate-Carathéodory methods, pruned Fourier evaluation, Reif’s absolute-error polynomial evaluation, and Four-Russians packing.
+
+Before a priority claim, a specialist should examine whether a known bounded-precision exponential-sum, multipoint-evaluation, or finite-alphabet transform theorem subsumes the structured phase-block lemma. The guarded packed addition in the user-supplied v3 is itself standard word-parallel arithmetic and should be credited to that upload, not presented as an independently discovered new technique. The present targeted search found no exact match, but it is not exhaustive. Before any implementation or industrial claim, first instantiate constants and show a realistic admissible parameter regime; only then compare at the same error metric against pruned FFT, NUFFT where applicable, and ordinary FFT.
+
+## Search scope and excluded lookalikes
+
+Queries covered approximate/full DFT with linear time or word-RAM complexity, low precision/packed Fourier transforms, Fourier importance sampling and empirical approximations, finite-alphabet matrix-vector algorithms, Four-Russians lookup methods, approximate complex polynomial evaluation, and sparse Fourier ℓ∞ guarantees. Quantum Fourier transforms, graph Fourier transforms, fixed-size multiplyless engineering approximations, density-functional theory, and fast convolutions that only count multiplications were excluded as different problems. Search-engine publication dates were not trusted; dates above come from papers or publisher records.
+

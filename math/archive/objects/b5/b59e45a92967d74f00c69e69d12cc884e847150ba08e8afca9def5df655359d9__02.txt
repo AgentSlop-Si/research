@@ -1,0 +1,664 @@
+   1 """Adaptive reuse engine for real-valued FFTs (experimental research software).
+   2 
+   3 Uses optimized rFFT as the safe default and selectively exploits exact cache
+   4 hits, cyclic shifts, sparse edits, and rank-one/two linear spans. All returned
+   5 spectra are fresh arrays. Ordinary FFT complexity is not improved in general.
+   6 
+   7 Requires numpy; scipy is optional. Python >= 3.10.
+   8 """
+   9 from __future__ import annotations
+  10 
+  11 from collections import OrderedDict, Counter
+  12 from dataclasses import dataclass
+  13 import math
+  14 from typing import Optional
+  15 
+  16 import numpy as np
+  17 
+  18 try:
+  19     from scipy import fft as _scipy_fft
+  20 except ImportError:
+  21     _scipy_fft = None
+  22 
+  23 
+  24 def _as_real_1d(x):
+  25     original = np.asarray(x)
+  26     if original.ndim != 1 or original.size < 1:
+  27         raise ValueError("expected a nonempty, one-dimensional real array")
+  28     if not np.issubdtype(original.dtype, np.number) or np.iscomplexobj(original):
+  29         raise ValueError("expected real numeric input")
+  30     a = np.ascontiguousarray(original, dtype=np.float64)
+  31     if not np.isfinite(a).all():
+  32         raise ValueError("NaN and infinity are unsupported")
+  33     return a
+  34 
+  35 
+  36 def _as_real_2d(x):
+  37     original = np.asarray(x)
+  38     if original.ndim != 2 or min(original.shape) < 1:
+  39         raise ValueError("expected a nonempty real matrix (signals x samples)")
+  40     if not np.issubdtype(original.dtype, np.number) or np.iscomplexobj(original):
+  41         raise ValueError("expected real numeric input")
+  42     a = np.ascontiguousarray(original, dtype=np.float64)
+  43     if not np.isfinite(a).all():
+  44         raise ValueError("NaN and infinity are unsupported")
+  45     return a
+  46 
+  47 
+  48 def _fingerprint(raw: bytes, n: int):
+  49     # Python's process-local SipHash is noticeably faster than cryptographic
+  50     # hashes for this in-memory table. We ALWAYS compare the complete raw
+  51     # bytes before accepting a hit; a hash collision cannot corrupt results.
+  52     return (n, hash(raw))
+  53 
+  54 
+  55 def _shift_from_bytes(base: np.ndarray, target_raw: bytes) -> Optional[int]:
+  56     """Return shift to the right; C-level bytes search with exact verification.
+  57 
+  58     Deliberately bit-exact. Since raw bytes may contain accidental matches that
+  59     begin mid-double, only aligned matches count. A matching aligned full
+  60     pattern is by definition the desired circular shift.
+  61     """
+  62     raw = base.tobytes()
+  63     if len(raw) != len(target_raw):
+  64         return None
+  65     haystack = raw + raw[:-8]  # all N distinct rotations at 8-byte boundaries
+  66     start = 0
+  67     while True:
+  68         offset = haystack.find(target_raw, start)
+  69         if offset == -1:
+  70             return None
+  71         if offset % 8 == 0:
+  72             return (len(raw)//8 - offset//8) % (len(raw)//8)
+  73         start = offset + 1
+  74 
+  75 
+  76 @dataclass
+  77 class _Entry:
+  78     input: np.ndarray
+  79     spectrum: np.ndarray  # non-redundant rfft output, complex128
+  80     raw: bytes
+  81     bytes_used: int
+  82     signature: tuple[float, float]
+  83 
+  84 
+  85 @dataclass
+  86 class _Span:
+  87     basis: np.ndarray   # (r, n)
+  88     spectra: np.ndarray # (r, n//2+1)
+  89     pivots: tuple[int, ...]
+  90     tolerance: float
+  91     bytes_used: int
+  92 
+  93     def coefficients(self, row: np.ndarray) -> Optional[np.ndarray]:
+  94         if len(row) != self.basis.shape[1]:
+  95             return None
+  96         r = self.basis.shape[0]
+  97         if r == 1:
+  98             p = self.pivots[0]
+  99             alpha = row[p] / self.basis[0, p]
+ 100             coefficients = np.array([alpha], dtype=float)
+ 101         else:
+ 102             i, j = self.pivots
+ 103             a, b = self.basis
+ 104             determinant = a[i]*b[j] - a[j]*b[i]
+ 105             if abs(determinant) <= 1e-15 * (abs(a[i]*b[j])+abs(a[j]*b[i])+1e-300):
+ 106                 return None
+ 107             coefficients = np.array([
+ 108                 (row[i]*b[j] - row[j]*b[i])/determinant,
+ 109                 (a[i]*row[j] - a[j]*row[i])/determinant,
+ 110             ], dtype=float)
+ 111         # Validating ALL N coordinates is vital: matching only at pivots would
+ 112         # silently produce incorrect spectra for random arrays.
+ 113         estimate = coefficients @ self.basis
+ 114         if not np.allclose(estimate, row, rtol=self.tolerance, atol=self.tolerance):
+ 115             return None
+ 116         return coefficients
+ 117 
+ 118 
+ 119 def _make_span(signals: np.ndarray, tol=2e-12) -> Optional[tuple[_Span, np.ndarray]]:
+ 120     """Determine rank<=2 family, verify all coordinates, return exact basis rows.
+ 121 
+ 122     O(M*N) work for a constant rank. It is not a general numerical rank estimator.
+ 123     Reject poorly conditioned second bases instead of promising stable answers.
+ 124     """
+ 125     rows, n = signals.shape
+ 126     chosen = []
+ 127     coefficients = []
+ 128     pivot0 = None
+ 129     pivot1 = None
+ 130     for row in signals:
+ 131         if not chosen:
+ 132             if not np.any(row):
+ 133                 coefficients.append([])
+ 134                 continue
+ 135             chosen.append(row.copy())
+ 136             pivot0 = int(np.argmax(np.abs(row)))
+ 137             coefficients = [[0.0] for _ in coefficients]
+ 138             coefficients.append([1.0])
+ 139             continue
+ 140         if len(chosen) == 1:
+ 141             alpha = row[pivot0]/chosen[0][pivot0]
+ 142             if np.allclose(alpha*chosen[0], row, rtol=tol, atol=tol):
+ 143                 coefficients.append([float(alpha)])
+ 144                 continue
+ 145             # Determine the second pivot with a well-scaled determinant.
+ 146             dets = chosen[0][pivot0]*row - chosen[0]*row[pivot0]
+ 147             pivot1 = int(np.argmax(np.abs(dets)))
+ 148             scale = float(np.max(np.abs(chosen[0])) * np.max(np.abs(row)))
+ 149             if abs(dets[pivot1]) <= 1e-10 * max(scale, 1e-300):
+ 150                 return None
+ 151             chosen.append(row.copy())
+ 152             coefficients = [c+[0.0] for c in coefficients]
+ 153             coefficients.append([0.0, 1.0])
+ 154             continue
+ 155         a, b = chosen
+ 156         det = a[pivot0]*b[pivot1] - a[pivot1]*b[pivot0]
+ 157         alpha = (row[pivot0]*b[pivot1] - row[pivot1]*b[pivot0]) / det
+ 158         beta = (a[pivot0]*row[pivot1] - a[pivot1]*row[pivot0]) / det
+ 159         if not np.allclose(alpha*a+beta*b, row, rtol=tol, atol=tol):
+ 160             return None
+ 161         coefficients.append([float(alpha), float(beta)])
+ 162     if not chosen:
+ 163         # Degenerate all-zero family: handled cheaply by caller.
+ 164         return None
+ 165     basis = np.stack(chosen)
+ 166     c = np.asarray(coefficients, dtype=float)
+ 167     if not np.isfinite(c).all():
+ 168         return None
+ 169     pivots = (pivot0,) if len(chosen) == 1 else (pivot0, pivot1)
+ 170     empty = np.zeros((len(chosen), n//2+1), dtype=np.complex128)
+ 171     span = _Span(basis, empty, pivots, tol, 0)
+ 172     return span, c
+ 173 
+ 174 
+ 175 class AdaptiveFFT:
+ 176     """Cacheable real FFTs with bounded memory and exact/validated reuse.
+ 177 
+ 178     auto: conservative heuristic; exact lookup, structural only at large sizes.
+ 179     aggressive: always attempt available reuse, even if it can be slower.
+ 180     plain: no structural reuse or caching lookup; optimized backend only.
+ 181 
+ 182     n can be any positive integer. This is an online runtime optimization, not a
+ 183     mathematical improvement to worst-case FFT complexity.
+ 184     """
+ 185     def __init__(self, *, max_cache_bytes=64*1024*1024,
+ 186                  max_references=3, max_sparse_edits=1, max_spans=3,
+ 187                  mode='auto', backend='auto', auto_threshold=262144,
+ 188                  rank_batch_threshold=8192, rank_min_batch=12):
+ 189         if mode not in ('auto', 'aggressive', 'plain'):
+ 190             raise ValueError("mode must be auto, aggressive or plain")
+ 191         if backend not in ('auto', 'numpy', 'scipy'):
+ 192             raise ValueError("backend must be auto, numpy or scipy")
+ 193         if backend == 'scipy' and _scipy_fft is None:
+ 194             raise ImportError('scipy backend requested but scipy unavailable')
+ 195         self.backend = 'scipy' if (backend in ('scipy', 'auto') and _scipy_fft is not None) else 'numpy'
+ 196         self.mode = mode
+ 197         self.max_cache_bytes = int(max_cache_bytes)
+ 198         self.max_references = int(max_references)
+ 199         self.max_sparse_edits = int(max_sparse_edits)
+ 200         self.max_spans = int(max_spans)
+ 201         self.auto_threshold = int(auto_threshold)
+ 202         self.rank_batch_threshold = int(rank_batch_threshold)
+ 203         self.rank_min_batch = int(rank_min_batch)
+ 204         if min(self.max_cache_bytes, self.max_references, self.max_spans) < 0 or self.max_sparse_edits < 0:
+ 205             raise ValueError('memory/limits must be nonnegative')
+ 206         self.cache: OrderedDict[tuple, _Entry] = OrderedDict()
+ 207         self.spans: OrderedDict[int, _Span] = OrderedDict()
+ 208         self.cache_bytes = 0
+ 209         self.stats = Counter()
+ 210         self.last_strategy = 'none'
+ 211         self._freqs: dict[int, np.ndarray] = {}  # small bounded indices cache
+ 212         self._samples: dict[int, np.ndarray] = {}
+ 213         self._miss_streak = 0
+ 214 
+ 215     def _sample_indices(self, n):
+ 216         if n not in self._samples:
+ 217             if len(self._samples) >= 8:
+ 218                 self._samples.pop(next(iter(self._samples)))
+ 219             self._samples[n] = np.linspace(0, n-1, min(16,n), dtype=np.intp)
+ 220         return self._samples[n]
+ 221 
+ 222     @staticmethod
+ 223     def _signature(a):
+ 224         # Rotation-invariant screening; floating-point summation can change
+ 225         # slightly on rotation, hence the tolerances in _similar_signature.
+ 226         return (float(np.sum(a)), float(np.dot(a, a)))
+ 227 
+ 228     @staticmethod
+ 229     def _similar_signature(a, b):
+ 230         return (math.isclose(a[0], b[0], rel_tol=1e-10, abs_tol=1e-7) and
+ 231                 math.isclose(a[1], b[1], rel_tol=1e-10, abs_tol=1e-7))
+ 232 
+ 233     def _forward(self, x, axis=-1):
+ 234         if self.backend == 'scipy':
+ 235             return _scipy_fft.rfft(x, axis=axis)
+ 236         return np.fft.rfft(x, axis=axis)
+ 237 
+ 238     def _inverse(self, x, n, axis=-1):
+ 239         if self.backend == 'scipy':
+ 240             return _scipy_fft.irfft(x, n=n, axis=axis)
+ 241         return np.fft.irfft(x, n=n, axis=axis)
+ 242 
+ 243     def _frequencies(self, n):
+ 244         if n not in self._freqs:
+ 245             if len(self._freqs) >= 8:
+ 246                 self._freqs.pop(next(iter(self._freqs)))
+ 247             self._freqs[n] = np.arange(n//2+1, dtype=float)
+ 248         return self._freqs[n]
+ 249 
+ 250     @staticmethod
+ 251     def _rotation_factors(n, step, count):
+ 252         """Compute powers of one root of unity using O(count) C-level multiplies.
+ 253 
+ 254         Avoid exp() per frequency. Long products can accumulate rounding error;
+ 255         for unusually large n callers seeking high precision should use the
+ 256         backend FFT and/or compare accuracy against it.
+ 257         """
+ 258         omega = np.exp((-2j*math.pi/n)*int(step))
+ 259         phase = np.full(count, omega, dtype=np.complex128)
+ 260         phase[0] = 1+0j
+ 261         np.cumprod(phase, out=phase)
+ 262         return phase
+ 263 
+ 264     def _expire(self):
+ 265         while self.cache_bytes > self.max_cache_bytes:
+ 266             if self.cache:
+ 267                 _, entry = self.cache.popitem(last=False)
+ 268                 self.cache_bytes -= entry.bytes_used
+ 269                 self.stats['evictions'] += 1
+ 270             elif self.spans:
+ 271                 _, span = self.spans.popitem(last=False)
+ 272                 self.cache_bytes -= span.bytes_used
+ 273                 self.stats['evictions'] += 1
+ 274             else:
+ 275                 break
+ 276 
+ 277     def _save(self, a, spectrum, raw=None):
+ 278         if self.mode == 'plain' or self.max_cache_bytes <= 0:
+ 279             return
+ 280         if raw is None:
+ 281             raw = a.tobytes()
+ 282         key = _fingerprint(raw, len(a))
+ 283         old = self.cache.pop(key, None)
+ 284         if old is not None:
+ 285             self.cache_bytes -= old.bytes_used
+ 286         a = a.copy()
+ 287         spec = np.asarray(spectrum, dtype=np.complex128).copy()
+ 288         a.setflags(write=False)
+ 289         spec.setflags(write=False)
+ 290         entry = _Entry(a, spec, raw, a.nbytes + spec.nbytes + len(raw),
+ 291                        self._signature(a))
+ 292         if entry.bytes_used > self.max_cache_bytes:
+ 293             self._expire()
+ 294             return
+ 295         self.cache[key] = entry
+ 296         self.cache_bytes += entry.bytes_used
+ 297         self._expire()
+ 298 
+ 299     def _save_span(self, span):
+ 300         if self.mode == 'plain' or self.max_spans == 0 or self.max_cache_bytes <= 0:
+ 301             return
+ 302         span.bytes_used = span.basis.nbytes + span.spectra.nbytes
+ 303         if span.bytes_used > self.max_cache_bytes:
+ 304             return
+ 305         old = self.spans.pop(span.basis.shape[1], None)
+ 306         if old is not None:
+ 307             self.cache_bytes -= old.bytes_used
+ 308         self.spans[span.basis.shape[1]] = span
+ 309         self.cache_bytes += span.bytes_used
+ 310         while len(self.spans) > self.max_spans:
+ 311             _, old = self.spans.popitem(last=False)
+ 312             self.cache_bytes -= old.bytes_used
+ 313         self._expire()
+ 314 
+ 315     def _matching_entries(self, n):
+ 316         if self.max_references == 0:
+ 317             return []
+ 318         found = []
+ 319         for key, entry in reversed(self.cache.items()):
+ 320             if len(entry.input) == n:
+ 321                 found.append((key, entry))
+ 322                 if len(found) >= self.max_references:
+ 323                     break
+ 324         return found
+ 325 
+ 326     def _try_cached(self, a, raw, *, structural=True):
+ 327         n = len(a)
+ 328         key = _fingerprint(raw, n)
+ 329         entry = self.cache.get(key)
+ 330         if entry is not None and entry.raw == raw:
+ 331             self.cache.move_to_end(key)
+ 332             self.stats['exact_hits'] += 1
+ 333             return entry.spectrum.copy(), 'exact'
+ 334         if not structural or not self.max_cache_bytes:
+ 335             return None
+ 336         for k, span in list(reversed(self.spans.items())):
+ 337             if k != n:
+ 338                 continue
+ 339             coeff = span.coefficients(a)
+ 340             if coeff is not None:
+ 341                 self.spans.move_to_end(k)
+ 342                 self.stats['span_hits'] += 1
+ 343                 return coeff @ span.spectra, 'span'
+ 344         query_signature = None
+ 345         sample = self._sample_indices(n)
+ 346         for key, e in self._matching_entries(n):
+ 347             if self.max_sparse_edits:
+ 348                 # Necessary cheap condition: if already > max_edits differ in
+ 349                 # 16 sampled cells, there's no need to scan all N cells.
+ 350                 promising = (np.count_nonzero(a[sample] != e.input[sample])
+ 351                              <= self.max_sparse_edits)
+ 352                 mismatches = np.flatnonzero(a != e.input) if promising else np.empty(0,int)
+ 353                 if 0 < len(mismatches) <= self.max_sparse_edits:
+ 354                     spec = e.spectrum.copy()
+ 355                     for pos in mismatches:
+ 356                         difference = a[pos] - e.input[pos]
+ 357                         # For pos=0, only addition is needed: no complex exp.
+ 358                         if pos == 0:
+ 359                             spec += difference
+ 360                         else:
+ 361                             phase = self._rotation_factors(n, int(pos), len(spec))
+ 362                             spec += difference * phase
+ 363                     self.cache.move_to_end(key)
+ 364                     self.stats['sparse_hits'] += 1
+ 365                     return spec, 'sparse'
+ 366             if query_signature is None:
+ 367                 query_signature = self._signature(a)
+ 368             if not self._similar_signature(query_signature, e.signature):
+ 369                 continue
+ 370             shift = _shift_from_bytes(e.input, raw)
+ 371             if shift is not None:
+ 372                 # Distinguish unchanged from shifts (exact should catch unchanged).
+ 373                 phase = self._rotation_factors(n, shift, len(e.spectrum))
+ 374                 spec = e.spectrum * phase
+ 375                 self.cache.move_to_end(key)
+ 376                 self.stats['shift_hits'] += 1
+ 377                 return spec, 'shift'
+ 378         return None
+ 379 
+ 380     def rfft(self, x, *, reuse=None):
+ 381         """Return the nonredundant complex spectrum, always as a new array.
+ 382 
+ 383         reuse=None -> engine policy, True -> try reuse, False -> no structural
+ 384         reuse (exact cache lookup remains enabled unless mode='plain').
+ 385         """
+ 386         a = _as_real_1d(x)
+ 387         n = len(a)
+ 388         if self.mode == 'plain':
+ 389             self.last_strategy = 'fft'
+ 390             self.stats['fallback'] += 1
+ 391             return self._forward(a)
+ 392         # In the auto policy, avoid the cost of even hashing the input during
+ 393         # a run of unrelated (high-entropy) inputs. Probe periodically so a
+ 394         # later repeated input can eventually re-enable the cache.
+ 395         if (self.mode == 'auto' and reuse is None and
+ 396                 self._miss_streak >= 3 and self._miss_streak % 12 != 0):
+ 397             self._miss_streak += 1
+ 398             self.stats['auto_bypass'] += 1
+ 399             self.stats['fallback'] += 1
+ 400             self.last_strategy = 'fft_bypass'
+ 401             return self._forward(a)
+ 402         raw = a.tobytes()
+ 403         structural = self.mode == 'aggressive' or n >= self.auto_threshold
+ 404         if reuse is not None:
+ 405             structural = bool(reuse)
+ 406         found = self._try_cached(a, raw, structural=structural)
+ 407         if found is None:
+ 408             result = self._forward(a)
+ 409             strategy = 'fft'
+ 410             self.stats['fallback'] += 1
+ 411             self._miss_streak += 1
+ 412         else:
+ 413             result, strategy = found
+ 414             self._miss_streak = 0
+ 415         self.last_strategy = strategy
+ 416         if strategy != 'exact' and (strategy != 'shift' or self.mode != 'auto'):
+ 417             self._save(a, result, raw)
+ 418         return result
+ 419 
+ 420     def fft(self, x, *, reuse=None):
+ 421         """Full complex FFT, reconstructing Hermitian-redundant negative bins."""
+ 422         a = _as_real_1d(x)
+ 423         half = self.rfft(a, reuse=reuse)
+ 424         if len(a) % 2:
+ 425             tail = np.conj(half[-1:0:-1])
+ 426         else:
+ 427             tail = np.conj(half[-2:0:-1])
+ 428         return np.concatenate((half, tail))
+ 429 
+ 430     def fft_batch(self, x, *, reuse=None, return_info=False):
+ 431         """Return (M, N//2+1) rFFT spectra for real (M,N) data.
+ 432 
+ 433         Detect exact copies and a rank<=2 family; otherwise use batch rfft.
+ 434         When a cached span exists, reuse it row-by-row where applicable.
+ 435         """
+ 436         x = _as_real_2d(x)
+ 437         m, n = x.shape
+ 438         if self.mode == 'plain':
+ 439             answer = self._forward(x, axis=1)
+ 440             self.stats['fallback'] += m
+ 441             info = {'strategies': {'fft_batch': m}, 'rank': None}
+ 442             self.last_strategy = 'fft_batch'
+ 443             return (answer, info) if return_info else answer
+ 444         # Avoid a full scan for zero detection on ordinary nonzero batches.
+ 445         if not np.any(x.ravel()[:min(32,x.size)]) and not np.any(x):
+ 446             answer = np.zeros((m, n//2+1), dtype=np.complex128)
+ 447             self.stats['zero_batch'] += m
+ 448             self.last_strategy = 'zero_batch'
+ 449             info = {'strategies': {'zero': m}, 'rank': 0}
+ 450             return (answer, info) if return_info else answer
+ 451         if self.mode == 'auto' and reuse is None and m >= 8 and not self.spans:
+ 452             # SciPy batched rFFT is already exceptionally fast. Avoid Python
+ 453             # row-wise hashes and costly rank verification unless inexpensive
+ 454             # pilot columns strongly suggest a low-rank family AND the batch
+ 455             # is large enough to plausibly amortize the search cost.
+ 456             rank_hint = False
+ 457             if m >= 128 and n >= self.rank_batch_threshold:
+ 458                 sample = x[:, np.linspace(0, n-1, 12, dtype=int)]
+ 459                 rank_hint = np.linalg.matrix_rank(sample, tol=1e-9) <= 2
+ 460             if not rank_hint:
+ 461                 answer = self._forward(x, axis=1)
+ 462                 self.last_strategy = 'fft_batch'
+ 463                 self.stats['fallback'] += m
+ 464                 if self.max_references and m <= 16:
+ 465                     for j in range(max(0,m-min(self.max_references,2)),m):
+ 466                         self._save(x[j], answer[j])
+ 467                 info = {'strategies': {'fft_batch': m}, 'rank': None}
+ 468                 return (answer,info) if return_info else answer
+ 469         results = np.empty((m, n//2+1), dtype=np.complex128)
+ 470         strategies = Counter()
+ 471         missing = []
+ 472         # Exact cache is O(N) in compiled hashing code, and handles overlap
+ 473         # across calls. Do NOT scan every stored reference for every batch row.
+ 474         for index, row in enumerate(x):
+ 475             raw = row.tobytes()
+ 476             found = self._try_cached(row, raw, structural=False)
+ 477             if found is None:
+ 478                 missing.append(index)
+ 479             else:
+ 480                 results[index] = found[0]
+ 481                 strategies[found[1]] += 1
+ 482         if missing:
+ 483             unknown = x[missing]
+ 484             aggressive = self.mode == 'aggressive'
+ 485             want_rank = (reuse is not False and (aggressive or
+ 486                          (n >= self.rank_batch_threshold and len(missing) >= self.rank_min_batch)))
+ 487             rank_fitted = None
+ 488             if want_rank:
+ 489                 rank_fitted = _make_span(unknown)
+ 490             if rank_fitted is not None:
+ 491                 span, coeffs = rank_fitted
+ 492                 span.spectra = self._forward(span.basis, axis=1)
+ 493                 generated = coeffs @ span.spectra
+ 494                 results[missing] = generated
+ 495                 self._save_span(span)
+ 496                 strategies[f'rank{len(span.basis)}'] += len(missing)
+ 497                 self.stats['rank_batch'] += len(missing)
+ 498                 self.last_strategy = 'rank_batch'
+ 499             else:
+ 500                 # When nearly all rows are new, single optimized batch call
+ 501                 # avoids expensive per-row Python object and twiddle overhead.
+ 502                 if aggressive or (reuse is True) or (len(missing) <= 4 and n >= self.auto_threshold):
+ 503                     need_fft = []
+ 504                     for index in missing:
+ 505                         raw = x[index].tobytes()
+ 506                         found = self._try_cached(x[index], raw, structural=True)
+ 507                         if found is None:
+ 508                             need_fft.append(index)
+ 509                         else:
+ 510                             results[index] = found[0]
+ 511                             strategies[found[1]] += 1
+ 512                     missing = need_fft
+ 513                 if missing:
+ 514                     computed = self._forward(x[missing], axis=1)
+ 515                     results[missing] = computed
+ 516                     strategies['fft_batch'] += len(missing)
+ 517                     self.stats['fallback'] += len(missing)
+ 518                     self.last_strategy = 'fft_batch'
+ 519         # Cache at most recent candidate spectra within bounded byte budget.
+ 520         # In particular don't automatically cache a giant whole batch.
+ 521         for index in range(max(0, m - max(1, self.max_references)), m):
+ 522             self._save(x[index], results[index])
+ 523         info = {'strategies': dict(strategies), 'rank': len(span.basis) if (missing and rank_fitted is not None) else None}
+ 524         return (results, info) if return_info else results
+ 525 
+ 526     def convolution(self, a, b, *, reuse=None):
+ 527         """Linear convolution, using cached real spectra when possible."""
+ 528         a = _as_real_1d(a)
+ 529         b = _as_real_1d(b)
+ 530         target = len(a)+len(b)-1
+ 531         if self.backend == 'scipy':
+ 532             n = _scipy_fft.next_fast_len(target)
+ 533         else:
+ 534             n = 1 << (target-1).bit_length()
+ 535         pa = np.zeros(n, dtype=np.float64)
+ 536         pb = np.zeros(n, dtype=np.float64)
+ 537         pa[:len(a)] = a
+ 538         pb[:len(b)] = b
+ 539         fa = self.rfft(pa, reuse=reuse)
+ 540         fb = self.rfft(pb, reuse=reuse)
+ 541         return self._inverse(fa*fb, n)[:target]
+ 542 
+ 543     def fft_family(self, basis, coefficients, *, register=False):
+ 544         """Transform a KNOWN linear family: inputs = coefficients @ basis.
+ 545 
+ 546         This is the fastest and most reliable reusable relationship. The
+ 547         caller provides r basis rows and an M-by-r coefficient matrix. FFT
+ 548         only the r bases, then form M transforms in O(M*r*N) arithmetic.
+ 549         Unlike automatic rank detection there is no expensive full-input
+ 550         validation because the inputs are constructed from these ingredients.
+ 551         """
+ 552         basis = _as_real_2d(basis)
+ 553         co = np.asarray(coefficients, dtype=np.float64)
+ 554         if co.ndim != 2 or co.shape[1] != len(basis) or not len(co) or not np.isfinite(co).all():
+ 555             raise ValueError('coefficients must be a finite M-by-r matrix')
+ 556         spectra = self._forward(basis,axis=1)
+ 557         results = np.einsum('mr,rk->mk', co, spectra, optimize=True)
+ 558         self.stats['known_family'] += len(co)
+ 559         self.last_strategy = 'known_family'
+ 560         if register and len(basis) <= 2:
+ 561             identified = _make_span(basis)
+ 562             if identified is not None:
+ 563                 span,_ = identified
+ 564                 span.spectra = spectra.copy()
+ 565                 self._save_span(span)
+ 566         return results
+ 567 
+ 568     def register_basis(self, basis):
+ 569         """Register one or two independent basis arrays for future queries."""
+ 570         basis = _as_real_2d(basis)
+ 571         if not 1 <= len(basis) <= 2:
+ 572             raise ValueError('register_basis needs one or two basis signals')
+ 573         identified = _make_span(basis)
+ 574         if identified is None:
+ 575             raise ValueError('zero/ill-conditioned basis is not supported')
+ 576         span, _ = identified
+ 577         if len(span.basis) != len(basis):
+ 578             raise ValueError('basis signals are linearly dependent')
+ 579         span.spectra = self._forward(span.basis,axis=1)
+ 580         self._save_span(span)
+ 581         return len(span.basis)
+ 582 
+ 583     def clear(self):
+ 584         self.cache.clear()
+ 585         self.spans.clear()
+ 586         self.cache_bytes = 0
+ 587         self._freqs.clear()
+ 588         self._samples.clear()
+ 589         self._miss_streak = 0
+ 590         self.last_strategy = 'cleared'
+ 591 
+ 592     def summary(self):
+ 593         return {'backend': self.backend, 'mode': self.mode,
+ 594                 'entries': len(self.cache), 'models': len(self.spans),
+ 595                 'cache_bytes': self.cache_bytes,
+ 596                 'stats': dict(self.stats), 'last_strategy': self.last_strategy}
+ 597 
+ 598 
+ 599 def two_real_ffts_packed(a, b):
+ 600     """Two length-N real FFTs from one length-N complex FFT (educational)."""
+ 601     a, b = _as_real_1d(a), _as_real_1d(b)
+ 602     if len(a) != len(b):
+ 603         raise ValueError('same length required')
+ 604     z = np.fft.fft(a+1j*b)
+ 605     partner = np.conj(z[(-np.arange(len(a))) % len(a)])
+ 606     return (z+partner)/2, (z-partner)/(2j)
+ 607 
+ 608 
+ 609 class CanonicalFFTGraph:
+ 610     """Optional radix-2 DAG for operation counts, NOT the fast NumPy path."""
+ 611     def __init__(self):
+ 612         self.keys = {}
+ 613         self.nodes = []
+ 614         self.results = {}
+ 615         self.butterflies = 0
+ 616         self.build_calls = 0
+ 617         self.twiddles = {}
+ 618 
+ 619     def add(self, a):
+ 620         a = _as_real_1d(a)
+ 621         if len(a) & (len(a)-1):
+ 622             raise ValueError('DAG length must be a power of two')
+ 623         return self._add(a, 0, 1, len(a))
+ 624 
+ 625     def _add(self, a, off, stride, n):
+ 626         self.build_calls += 1
+ 627         if n == 1:
+ 628             key = ('leaf', float(a[off]))
+ 629             children = None
+ 630         else:
+ 631             l = self._add(a, off, stride*2, n//2)
+ 632             r = self._add(a, off+stride, stride*2, n//2)
+ 633             key = ('node', n, l, r)
+ 634             children = (l, r)
+ 635         node_id = self.keys.get(key)
+ 636         if node_id is None:
+ 637             node_id = len(self.nodes)
+ 638             self.keys[key] = node_id
+ 639             self.nodes.append((n, children, float(a[off]) if n==1 else None))
+ 640         return node_id
+ 641 
+ 642     def evaluate(self, node_id):
+ 643         if node_id in self.results:
+ 644             return self.results[node_id].copy()
+ 645         n, children, scalar = self.nodes[node_id]
+ 646         if n == 1:
+ 647             answer = np.array([complex(scalar)])
+ 648         else:
+ 649             l, r = children
+ 650             e = self.evaluate(l)
+ 651             o = self.evaluate(r)
+ 652             if n not in self.twiddles:
+ 653                 self.twiddles[n] = np.exp(-2j*np.pi*np.arange(n//2)/n)
+ 654             t = self.twiddles[n]*o
+ 655             answer = np.concatenate((e+t, e-t))
+ 656             self.butterflies += n//2
+ 657         self.results[node_id] = answer
+ 658         return answer.copy()
+ 659 
+ 660     def summary(self):
+ 661         return {'unique_nodes': len(self.nodes),
+ 662                 'butterflies': self.butterflies,
+ 663                 'cached_spectral_values': sum(len(v) for v in self.results.values()),
+ 664                 'build_calls': self.build_calls}

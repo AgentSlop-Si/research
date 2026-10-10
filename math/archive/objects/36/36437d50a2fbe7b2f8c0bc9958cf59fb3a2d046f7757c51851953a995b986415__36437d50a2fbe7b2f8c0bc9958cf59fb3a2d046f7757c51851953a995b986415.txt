@@ -1,0 +1,122 @@
+"""The Phase-14 Galois residual is a dyadic frequency-folded B-FFT bank.
+
+With U[a,k] the B-FFT of x[a+L*h], the residual A*x = R(U), where R
+is a *linear-time*, bijective Haar-like frequency mixer.
+It obeys R R^* = diag(L/d_e), d_e=length of each Galois orbit.
+Here `adjoint` is complex conjugation, not transposition.
+The source of N log B work is the bank of B-point FFTs, not R.
+"""
+from phase15_executor import P,root,phase_powers,fft_radix2,orbits,is_pow2,precompute_residual
+
+
+def fold_frequency_bank(U,B):
+    L=len(U)
+    assert is_pow2(L) and all(len(row)==B for row in U) and B>=L
+    N=B*L
+    tw=phase_powers(B)[:B//2]
+    spectra={L:[list(map(lambda v:v%P,row)) for row in U]}
+    d=L;count=0
+    while d>1:
+        half=d//2
+        nxt=[]
+        for a in range(half):
+            left=spectra[d][a]; right=spectra[d][a+half]
+            new=[0]*B
+            for q in range(B//2):
+                u=left[2*q]
+                v=tw[q]*right[2*q]%P
+                new[q]=(u+v)%P
+                new[q+B//2]=(u-v)%P
+                count+=1
+            nxt.append(new)
+        spectra[half]=nxt
+        d=half
+    result=[]
+    groups=orbits(N,B)
+    for group in groups:
+        d=len(group);g=L//d;k0=group[0]
+        u=k0//g
+        invu=pow(u,-1,d) if d>1 else 0
+        for e in range(d):
+            a=e*invu%d if d>1 else 0
+            c=(u*a-e)//d
+            result.append(phase_powers(B)[c%B]*spectra[d][a][u]%P)
+    assert len(result)==N and count==(N-B)//2
+    return result,groups,count
+
+
+def unfold_frequency_bank(residual,B,groups=None):
+    N=len(residual); L=N//B
+    assert is_pow2(L) and B>=L
+    groups=orbits(N,B) if groups is None else groups
+    spectra={d:[[None]*B for _ in range(d)] for d in [1<<i for i in range(L.bit_length())]}
+    # Fill the odd-frequency components, which are retained at each scale;
+    # level d=1 contains all frequencies.
+    ptr=0
+    for group in groups:
+        d=len(group);g=L//d;k0=group[0];u=k0//g
+        invu=pow(u,-1,d) if d>1 else 0
+        for e in range(d):
+            a=e*invu%d if d>1 else 0
+            c=(u*a-e)//d
+            at=spectra[d][a]
+            assert at[u] is None
+            at[u]=residual[ptr]*phase_powers(B)[(-c)%B]%P
+            ptr+=1
+    assert ptr==N
+    assert all(v is not None for v in spectra[1][0])
+    inv2=pow(2,-1,P)
+    tw_inv=[phase_powers(B)[(-i)%B] for i in range(B//2)]
+    d=2;count=0
+    while d<=L:
+        low=spectra[d//2]
+        cur=spectra[d]
+        for a in range(d//2):
+            for q in range(B//2):
+                high=low[a][q];other=low[a][q+B//2]
+                assert high is not None and other is not None
+                v=(high+other)*inv2%P
+                w=(high-other)*inv2*tw_inv[q]%P
+                assert cur[a][2*q] is None
+                assert cur[a+d//2][2*q] is None
+                cur[a][2*q]=v
+                cur[a+d//2][2*q]=w
+                count+=1
+        assert all(v is not None for r in cur for v in r),('gap',N,B,d)
+        d*=2
+    assert count==(N-B)//2
+    return spectra[L],count
+
+
+def inv_fft_radix2(values):
+    n=len(values)
+    tmp,c=fft_radix2(values)
+    scale=pow(n,-1,P)
+    return [tmp[-i%n]*scale%P for i in range(n)],c
+
+
+def inverse_residual(residual,B):
+    N=len(residual);L=N//B
+    U,_=unfold_frequency_bank(residual,B)
+    x=[0]*N
+    for a in range(L):
+        row,_=inv_fft_radix2(U[a])
+        for h,value in enumerate(row):
+            x[a+L*h]=value
+    return x
+
+
+if __name__=='__main__':
+    import random,json
+    rng=random.Random(1615)
+    for N,B in ((16,8),(32,8),(64,8),(128,16),(256,16),(256,32),(512,32),(1024,32),(2048,64),(4096,64)):
+        L=N//B
+        U=[[rng.randrange(P) for _ in range(B)] for a in range(L)]
+        y,groups,c1=fold_frequency_bank(U,B)
+        v,c2=unfold_frequency_bank(y,B,groups)
+        assert U==v,(N,B,'bank inverse failure')
+        x=[rng.randrange(P) for _ in range(N)]
+        residual,_,_=precompute_residual(x,B)
+        assert x==inverse_residual(residual,B),(N,B,'residual inverse failure')
+        print(json.dumps(dict(N=N,B=B,fold_butterflies=c1,unfold_butterflies=c2,
+                  exact_reconstruction=True, inverse_residual=True)))

@@ -1,0 +1,62 @@
+0001 """Exact finite-field identity checks for the factorization ONLY.
+0002 
+0003 OpenAI #130 is NOT an NTT over this field; we are testing the universal
+0004 algebraic grouping identity using integer arithmetic with no rounding.
+0005 """
+0006 import sys
+0007 from pathlib import Path
+0008 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+0009 import unittest
+0010 import random
+0011 from hybrid_sparse import normalize_changes
+0012 
+0013 P = 998244353
+0014 G = 3
+0015 
+0016 def direct_ntt(vec, w):
+0017     n = len(vec)
+0018     return [sum(vec[j]*pow(w,j*q,P) for j in range(n)) % P for q in range(n)]
+0019 
+0020 def grouped_sparse_ntt(n, edits):
+0021     assert (P-1)%n == 0
+0022     w = pow(G,(P-1)//n,P)
+0023     edits = {i:int(round(z.real))%P for i,z in normalize_changes(n,edits).items()}
+0024     k = len(edits)
+0025     b = 1 << (max(1,k)-1).bit_length()
+0026     m = n//b
+0027     wm=pow(w,b,P)
+0028     wb=pow(w,m,P)
+0029     tmp=[[0]*b for _ in range(m)]
+0030     for j,val in edits.items():
+0031         r,t=divmod(j,b)[1], j//b
+0032         for q in range(m):
+0033             tmp[q][r]=(tmp[q][r]+val*pow(wm,t*q,P))%P
+0034     for q in range(m):
+0035         for r in range(b):
+0036             tmp[q][r]=(tmp[q][r]*pow(w,r*q,P))%P
+0037     out=[0]*n
+0038     for q in range(m):
+0039         row = direct_ntt(tmp[q],wb)
+0040         for l in range(b):
+0041             out[q+m*l]=row[l]
+0042     return out
+0043 
+0044 class TestExactAlgebra(unittest.TestCase):
+0045     def test_exact_grouped_agrees_with_direct(self):
+0046         rng=random.Random(32)
+0047         for n in [1,2,4,8,16,32,64,128]:
+0048             w=pow(G,(P-1)//n,P)
+0049             for k in sorted(set([0,1,2,3,4,7,n//2,n])):
+0050                 if k>n:continue
+0051                 locations=rng.sample(range(n),k)
+0052                 vals=[rng.randrange(-30,31) for _ in locations]
+0053                 vec=[0]*n
+0054                 edits=[]
+0055                 for j,v in zip(locations,vals):
+0056                     vec[j] = v%P
+0057                     edits.append((j,v))
+0058                 actual=grouped_sparse_ntt(n,edits)
+0059                 want=direct_ntt(vec,w)
+0060                 self.assertEqual(actual,want,f'failed {n=} {k=}')
+0061 
+0062 if __name__=='__main__':unittest.main()

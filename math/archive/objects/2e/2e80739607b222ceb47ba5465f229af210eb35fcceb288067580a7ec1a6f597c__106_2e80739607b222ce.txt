@@ -1,0 +1,39 @@
+Pure scans with arbitrary shuffles
+Research result October 9 2026
+
+A stronger scoped result
+For N>1, an exact N-point Fourier factorization into serial pure one-state forward/backward scans, diagonals, and arbitrary permutations needs at least
+  1 + ceil(log2 N)
+scan passes, even when the permutations occur between passes. For dyadic N, the ordinary radix-2 FFT can be realized with 2 log2 N such scans. Thus this pure-scan architecture needs Theta(log N) passes. If each explicit full pass costs Theta(N), its total work is Theta(N log N).
+
+This closes a specific open branch in the incoming material. It is not a new general Fourier lower bound, a new faster FFT, or a literature-priority claim. Coefficients may be arbitrary; the proof uses inverse dependency support rather than coefficient magnitudes.
+
+Why the proof works
+An invertible pure scan has a bidiagonal inverse. One boundary row initially depends on just one coordinate. Each subsequent inverse scan can at most double that support, while permutations and diagonal factors only reorder or rescale it. Every inverse Fourier row has N nonzero entries. The attached theorem gives the exact assumptions and proof.
+
+What still escapes
+A scan with an independent direct input term, or a sum of forward/backward channels, can have a dense inverse and is outside this proof. Examples and their exact inverses are in the audit. Dense inverse alone is insufficient: monomial-plus-rank-r stages have a separate cumulative-rank restriction. No faster Fourier construction in the remaining broader family has been found here.
+
+Files
+INVERSE_SCAN_THEOREM.txt: strengthened lower bound, matching logarithmic-order construction, model boundaries and prior art.
+SCAN_PACKAGE_AUDIT.txt: static review of the upload, its valid cut-rank theorems, reproduction issues, and a separate low-rank-stage gate. Its simpler logarithmic support bound is strengthened by INVERSE_SCAN_THEOREM.txt.
+verification/check_inverse_scan.py: independently written exact modular checks and a complete classical FFT realized with two pure scans per butterfly layer.
+verification/inverse_scan_checks.json: captured successful results.
+
+Verification
+No uploaded Python was executed. All 11 uploaded manifest hashes matched, and all source/proofs/captured results were read statically.
+The new, independently written verification program passed:
+- 840 random scan words with internal diagonals, resets and permutations;
+- 4,680 inverse-identity basis-vector checks;
+- both maximum-support and singleton-boundary support inequalities;
+- 63 Fourier basis-vector comparisons and 108 random-vector comparisons, through N=256;
+- 8 fully dense inverse-Fourier matrix checks.
+All arithmetic was exact modulo 998244353. These tests support the algebraic proof; they are not timing results or a practical FFT speed comparison.
+
+Reproduce
+Requires Python 3 standard library. From the extracted directory:
+  python verification/check_inverse_scan.py
+The direct reference is intentionally slow and may take a minute. The code imports no modules from the uploaded package.
+
+Research direction
+An improved exact construction would have to use a stage family beyond this serial pure-scan model, or a charged implementation that is genuinely different from full scan passes. General feedthrough with interleaved permutations remains unclassified by these arguments. Defeating a lower-bound invariant alone is not an algorithm. The sparse thin-matrix verification question from the earlier report remains separately unresolved.

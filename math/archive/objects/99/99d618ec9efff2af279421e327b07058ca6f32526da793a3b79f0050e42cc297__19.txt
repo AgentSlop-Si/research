@@ -1,0 +1,34 @@
+   1 """Exploratory numeric benchmark; tests a factoring strategy, NOT OpenAI #130."""
+   2 import json, time
+   3 import numpy as np
+   4 from hybrid_sparse import sparse_dft
+   5 try:
+   6     from scipy import fft as spfft
+   7     direct_fft=spfft.fft
+   8 except ImportError:
+   9     direct_fft=np.fft.fft
+  10 
+  11 rng=np.random.default_rng(370)
+  12 records=[]
+  13 for n in [16384,65536,262144]:
+  14     for k in [1,2,8,32,128,1024]:
+  15         if k>n:continue
+  16         idx=rng.choice(n,size=k,replace=False)
+  17         vals=rng.standard_normal(k)+1j*rng.standard_normal(k)
+  18         edits=list(zip(idx.tolist(),vals.tolist()))
+  19         sparse=np.zeros(n,dtype=complex);sparse[idx]=vals
+  20         candidates=[]
+  21         for typ in ['full','hybrid']:
+  22             samples=[]
+  23             for _ in range(5):
+  24                 t0=time.perf_counter_ns()
+  25                 if typ=='full':out=direct_fft(sparse)
+  26                 else:out=sparse_dft(n,edits)
+  27                 samples.append((time.perf_counter_ns()-t0)/1e6)
+  28             candidates.append(float(np.median(samples)))
+  29         y,plan=sparse_dft(n,edits,return_plan=True)
+  30         err=float(np.max(np.abs(y-direct_fft(sparse))))
+  31         assert np.allclose(y,direct_fft(sparse),rtol=1e-9,atol=1e-8)
+  32         records.append(dict(n=n,k=k,b=plan.b,m=plan.m,full_ms=candidates[0],hybrid_ms=candidates[1],speedup=candidates[0]/candidates[1],max_abs_error=err,classical_inner_butterflies=plan.classical_inner_butterflies,classical_full_butterflies=plan.classical_full_butterflies))
+  33         print(f'N={n:7d} k={k:4d} block={plan.b:4d} direct={candidates[0]:8.3f}ms hybrid={candidates[1]:8.3f}ms ratio={candidates[0]/candidates[1]:6.2f}x abs_err={err:8.1e}')
+  34 with open('benchmark_results.json','w') as f:json.dump(records,f,indent=2)

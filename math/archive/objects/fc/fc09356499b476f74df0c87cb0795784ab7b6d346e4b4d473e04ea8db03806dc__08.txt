@@ -1,0 +1,146 @@
+   1	#!/usr/bin/env python3
+   2	"""Independent spectral sanity checks. No uploaded source is imported."""
+   3	import json
+   4	import math
+   5	from pathlib import Path
+   6	import numpy as np
+   7	
+   8	rng = np.random.default_rng(2026100902)
+   9	results = {"spectral_instances": [], "normalized_green_instances": [], "isolation_instances": [], "boundary_controls": []}
+  10	
+  11	
+  12	def weighted_cycle(n):
+  13	    w = np.exp(1j*rng.uniform(-math.pi,math.pi,n))
+  14	    w[-1] = -1/np.prod(w[:-1])
+  15	    m = np.zeros((n,n),complex)
+  16	    for j in range(n):
+  17	        m[(j+1)%n,j] = w[j]
+  18	    assert np.allclose(m.conj().T @ m,np.eye(n),atol=1e-11)
+  19	    assert np.allclose(np.linalg.matrix_power(m,n),-np.eye(n),atol=1e-10)
+  20	    return m
+  21	
+  22	
+  23	def k_stage(n):
+  24	    m = weighted_cycle(n)
+  25	    return np.eye(n)+np.linalg.inv(np.eye(n)-m)
+  26	
+  27	
+  28	def formula(n):
+  29	    a = math.sqrt(2+1/(4*math.sin(math.pi/(2*n))**2))
+  30	    b = math.sqrt(2+1/(4*math.cos(math.pi/(2*n))**2))
+  31	    logd = (n-1)*math.log(2)+math.log1p(2.0**(-n))
+  32	    g = math.exp(logd/n)
+  33	    return a,b,g,logd
+  34	
+  35	
+  36	def normalize(a):
+  37	    _, logd = np.linalg.slogdet(a)
+  38	    return a / math.exp(logd/a.shape[0])
+  39	
+  40	
+  41	def opnorm(a):
+  42	    return float(np.linalg.svd(a,compute_uv=False)[0])
+  43	
+  44	
+  45	def unitary(n):
+  46	    q,_ = np.linalg.qr(rng.normal(size=(n,n))+1j*rng.normal(size=(n,n)))
+  47	    return q
+  48	
+  49	
+  50	def green(n):
+  51	    t=3*np.eye(n)-np.eye(n,k=1)-np.eye(n,k=-1)
+  52	    p=np.eye(n)[rng.permutation(n)]
+  53	    b=p @ t @ p.T
+  54	    return np.linalg.inv(b)+np.linalg.inv(t)/20
+  55	
+  56	
+  57	def left_product(factors,n):
+  58	    p=np.eye(n,dtype=complex)
+  59	    for factor in factors:
+  60	        p=factor @ p
+  61	    return p
+  62	
+  63	
+  64	for n in (2,4,6,8,16,32,64,128):
+  65	    a,b,g,logd=formula(n)
+  66	    assert g<2 and b>=1.5 and g/b<4/3
+  67	    assert a>=n/math.pi and b<=math.sqrt(2.5)+1e-14
+  68	    ratio=None if n==2 else math.log(a/b)/math.log(g/b)
+  69	    for trial in range(2):
+  70	        k=k_stage(n)
+  71	        singular=np.linalg.svd(k,compute_uv=False)
+  72	        theta=(2*np.arange(n)+1)*math.pi/n
+  73	        expected=np.sort(np.abs((2-np.exp(1j*theta))/(1-np.exp(1j*theta))))[::-1]
+  74	        assert np.allclose(singular,expected,atol=1e-9,rtol=1e-10)
+  75	        assert abs(singular[0]-a)<1e-9 and abs(singular[-1]-b)<1e-9
+  76	        phase,measuredlogd=np.linalg.slogdet(k)
+  77	        assert abs(phase-1)<1e-9 and abs(measuredlogd-logd)<1e-9
+  78	        khat=normalize(k)
+  79	        assert abs(opnorm(khat)-a/g)<1e-9
+  80	        assert abs(opnorm(np.linalg.inv(khat))-g/b)<1e-9
+  81	        results["spectral_instances"].append({"n":n,"trial":trial,"a":a,"b":b,"g":g,
+  82	            "forward_stage_lower_bound":ratio,
+  83	            "integer_lower_bound":None if ratio is None else math.ceil(ratio-1e-10)})
+  84	
+  85	for n in (2,4,8,16,32):
+  86	    for use_inverse in (False,True):
+  87	        a=green(n)
+  88	        if use_inverse:
+  89	            a=np.linalg.inv(a)
+  90	        singular=np.linalg.svd(a,compute_uv=False)
+  91	        condition=float(singular[0]/singular[-1])
+  92	        ahat=normalize(a)
+  93	        inverse_norm=opnorm(np.linalg.inv(ahat))
+  94	        assert inverse_norm<=condition+1e-10 and condition<5
+  95	        results["normalized_green_instances"].append({"n":n,"inverse":use_inverse,
+  96	            "kappa2":condition,"normalized_inverse_norm":inverse_norm})
+  97	
+  98	for n in (2,4,8,16):
+  99	    a,b,g,_=formula(n)
+ 100	    for s in (0,1,2):
+ 101	        for t in (1,2,3):
+ 102	            factors=[unitary(n)]
+ 103	            distinguished=None
+ 104	            for j in range(t):
+ 105	                factors.append(normalize(k_stage(n)))
+ 106	                if distinguished is None:
+ 107	                    distinguished=len(factors)-1
+ 108	                factors.append(unitary(n))
+ 109	            for j in range(s):
+ 110	                m=green(n)
+ 111	                if j%2:
+ 112	                    m=np.linalg.inv(m)
+ 113	                factors.append(normalize(m))
+ 114	                factors.append(unitary(n))
+ 115	            w=left_product(factors,n)
+ 116	            left=left_product(factors[distinguished+1:],n)
+ 117	            right=left_product(factors[:distinguished],n)
+ 118	            isolated=np.linalg.inv(left) @ w @ np.linalg.inv(right)
+ 119	            assert np.allclose(isolated,factors[distinguished],atol=1e-9,rtol=1e-9)
+ 120	            upper=5**s*(g/b)**(t-1)*opnorm(w)
+ 121	            assert a/g<=upper+1e-8
+ 122	            results["isolation_instances"].append({"n":n,"green_count":s,"k_count":t,
+ 123	                "distinguished_normalized_k_norm":a/g,"general_product_upper_bound":upper})
+ 124	
+ 125	# Boundary realizations in the enlarged arbitrary-unitary model. Pair singular
+ 126	# eigenspaces in reverse order; phases are harmless for scalar-unitarity.
+ 127	for n in (2,4):
+ 128	    theta=(2*np.arange(n)+1)*math.pi/n
+ 129	    eigen=(2-np.exp(1j*theta))/(1-np.exp(1j*theta))
+ 130	    k=np.diag(eigen)
+ 131	    order=np.argsort(np.abs(eigen))
+ 132	    permutation=np.zeros((n,n))
+ 133	    for j in range(n):
+ 134	        permutation[order[j],order[n-1-j]]=1
+ 135	    w=k @ permutation @ k
+ 136	    _,_,g,_=formula(n)
+ 137	    residual=opnorm(w.conj().T @ w-g**4*np.eye(n))
+ 138	    assert residual<1e-10
+ 139	    results["boundary_controls"].append({"n":n,"two_stage_scalar_unitary_residual":residual})
+ 140	
+ 141	results["summary"]={"status":"PASS","spectral_instances":len(results["spectral_instances"]),
+ 142	    "normalized_green_instances":len(results["normalized_green_instances"]),
+ 143	    "isolation_instances":len(results["isolation_instances"]),
+ 144	    "boundary_controls":len(results["boundary_controls"]),"uploaded_code_imported_or_executed":False}
+ 145	Path(__file__).with_name("spectral_results.json").write_text(json.dumps(results,indent=2)+"\n")
+ 146	print(json.dumps(results["summary"],indent=2))

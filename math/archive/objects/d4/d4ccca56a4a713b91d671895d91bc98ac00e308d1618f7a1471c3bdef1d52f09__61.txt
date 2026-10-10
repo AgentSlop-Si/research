@@ -1,0 +1,168 @@
+1: """Independent exact audit; references use direct sums and Gaussian elimination."""
+2: from collections import Counter
+3: from itertools import product
+4: from pathlib import Path
+5: import hashlib
+6: import json
+7: import random
+8: 
+9: from affine_cycle import try_affine_fourier, affine_fft_or_fallback, solve_cycle, Counted
+10: from exact_fields import PrimeField, CyclotomicField
+11: 
+12: 
+13: class Trace:
+14:     def __init__(self, field):
+15:         self.field = field
+16:         self.calls = Counter()
+17: 
+18:     def __getattr__(self, name):
+19:         operation = getattr(self.field, name)
+20:         if name not in ('add', 'sub', 'mul', 'inv'):
+21:             return operation
+22:         def traced(*args):
+23:             self.calls['inverse' if name == 'inv' else name] += 1
+24:             return operation(*args)
+25:         return traced
+26: 
+27: 
+28: def direct(field, x, q):
+29:     out = []
+30:     for k in range(len(x)):
+31:         value = field.zero
+32:         for j, xj in enumerate(x):
+33:             value = field.add(value, field.mul(xj, field.power(q, j*k)))
+34:         out.append(value)
+35:     return out
+36: 
+37: 
+38: def gauss(field, matrix, rhs):
+39:     n = len(rhs)
+40:     rows = [list(row)+[value] for row, value in zip(matrix, rhs)]
+41:     for j in range(n):
+42:         pivot = next((i for i in range(j,n) if rows[i][j] != field.zero), None)
+43:         if pivot is None:
+44:             return None
+45:         rows[j], rows[pivot] = rows[pivot], rows[j]
+46:         scale = field.inv(rows[j][j])
+47:         rows[j] = [field.mul(value, scale) for value in rows[j]]
+48:         for i in range(n):
+49:             if i != j:
+50:                 scale = rows[i][j]
+51:                 rows[i] = [field.sub(a, field.mul(scale,b)) for a,b in zip(rows[i],rows[j])]
+52:     return [row[-1] for row in rows]
+53: 
+54: 
+55: def source_matrix(field,n,q,lam,a,b,shift):
+56:     matrix = [[field.one if i==j else field.zero for j in range(n)] for i in range(n)]
+57:     for i in range(n):
+58:         j = (a*i+shift)%n
+59:         matrix[i][j] = field.sub(matrix[i][j], field.mul(lam, field.power(q,(b*i)%n)))
+60:     return matrix
+61: 
+62: 
+63: def inspect(field,x,q,**kwargs):
+64:     trace = Trace(field)
+65:     y, meta = try_affine_fourier(trace,x,q,**kwargs)
+66:     assert dict(trace.calls) == meta['field_operations']
+67:     assert sum((Counter(v) for v in meta['stages'].values()),Counter()) == trace.calls
+68:     if y is not None:
+69:         assert y == direct(field,x,q)
+70:     return y,meta
+71: 
+72: 
+73: def main():
+74:     result = {'status':'PASS', 'exhaustive_checks':0, 'exhaustive_accepts':0,
+75:               'crossfield_gaussian_checks':0, 'singular_declines':0,
+76:               'fallback_checks':0, 'arbitrary_cycle_checks':0,
+77:               'inverse_root_checks':0, 'discovery_cost_checks':0}
+78:     field = PrimeField(5)
+79:     for q in (2,3):
+80:         for x in product(range(5),repeat=4):
+81:             for cap in (0,1,2):
+82:                 y,meta = inspect(field,list(x),q,max_defects=cap)
+83:                 result['exhaustive_checks'] += 1
+84:                 result['exhaustive_accepts'] += y is not None
+85: 
+86:     # Every source input here is generated independently by dense elimination.
+87:     configurations = [(PrimeField(p),n) for p in (17,41,97) for n in (4,8)]
+88:     configurations += [(CyclotomicField(n),n) for n in (4,8)]
+89:     for field,n in configurations:
+90:         canonical = field.root(n)
+91:         for exponent in (1,n-1):
+92:             q = field.power(canonical,exponent)
+93:             for a,b,shift in ((-7,-3,5),(1,1,-1),(5,3,1)):
+94:                 for scalar in (0,1,2):
+95:                     lam = field.integer(scalar)
+96:                     rhs = [field.zero]*n
+97:                     rhs[n-1] = field.integer(3)
+98:                     x = gauss(field, source_matrix(field,n,q,lam,a,b,shift), rhs)
+99:                     if x is None:
+100:                         continue
+101:                     y,meta = inspect(field,x,q,max_defects=1,a=a,b=b,shift=shift,supplied_lambda=lam)
+102:                     assert y is not None
+103:                     assert sum(meta['field_operations'].values()) <= 12*n+3
+104:                     result['crossfield_gaussian_checks'] += 1
+105:                     result['inverse_root_checks'] += exponent != 1
+106:                     yd,md = inspect(field,x,q,max_defects=1,a=a,b=b,shift=shift)
+107:                     if sum(v!=field.zero for v in x)>2:
+108:                         assert yd is not None
+109:                         assert sum(md['field_operations'].values()) <= 14*n+3
+110:                         result['discovery_cost_checks'] += 1
+111: 
+112:     # Deliberately compatible/singular cases and worst supported defect budgets.
+113:     rng = random.Random(298401)
+114:     field = PrimeField(17)
+115:     for n in (4,8):
+116:         q = field.root(n)
+117:         singular_lambdas = [v for v in range(17) if pow(v,n,17)==16]
+118:         for lam in singular_lambdas:
+119:             for _ in range(3):
+120:                 x = [rng.randrange(17) for _ in range(n)]
+121:                 y,meta = inspect(field,x,q,supplied_lambda=lam,max_defects=n)
+122:                 assert y is None and meta['reason']=='singular_target_cycle'
+123:                 result['singular_declines'] += 1
+124:                 trace=Trace(field)
+125:                 z,hybrid=affine_fft_or_fallback(trace,x,q,supplied_lambda=lam,max_defects=n)
+126:                 assert z==direct(field,x,q)
+127:                 assert dict(trace.calls)==hybrid['field_operations']
+128:                 assert hybrid['ordinary_fft_calls']==1
+129:                 result['fallback_checks'] += 1
+130: 
+131:     # Cycle solver is checked without Fourier structure, including zero edges.
+132:     field=PrimeField(97)
+133:     for n in (4,5,8):
+134:         for _ in range(30):
+135:             order=list(range(n)); rng.shuffle(order)
+136:             permutation=[0]*n
+137:             for j,index in enumerate(order): permutation[index]=order[(j+1)%n]
+138:             coefficients=[rng.randrange(4) for _ in range(n)]
+139:             rhs=[rng.randrange(97) for _ in range(n)]
+140:             matrix=[[int(i==j) for j in range(n)] for i in range(n)]
+141:             for i in range(n): matrix[i][permutation[i]]=(matrix[i][permutation[i]]-coefficients[i])%97
+142:             counted=Counted(field)
+143:             actual=solve_cycle(counted,permutation,coefficients,rhs)
+144:             assert actual==gauss(field,matrix,rhs)
+145:             expected=n+1 if actual is None else 5*n+3
+146:             assert sum(counted.count.values())==expected
+147:             result['arbitrary_cycle_checks'] += 1
+148: 
+149:     # Exact equality 14N+1 applies to the author's dense one-defect-at-zero family.
+150:     field=PrimeField(97)
+151:     for n in (4,8,16,32):
+152:         q=field.root(n)
+153:         lam=next(v for v in range(2,97) if pow(v,n,97)!=96)
+154:         rhs=[field.one]+[field.zero]*(n-1)
+155:         x=gauss(field,source_matrix(field,n,q,lam,5,1,1),rhs)
+156:         assert all(v!=field.zero for v in x)
+157:         y,meta=inspect(field,x,q)
+158:         assert y is not None
+159:         assert sum(meta['field_operations'].values())==14*n+1
+160:         result['discovery_cost_checks'] += 1
+161: 
+162:     result['source_sha256']=hashlib.sha256(Path('affine_cycle.py').read_bytes()).hexdigest()
+163:     result['author_audit_sha256']=hashlib.sha256(Path('run_audit.py').read_bytes()).hexdigest()
+164:     Path('independent_results.json').write_text(json.dumps(result,indent=2)+'\n')
+165:     print(json.dumps(result,indent=2))
+166: 
+167: 
+168: if __name__=='__main__': main()

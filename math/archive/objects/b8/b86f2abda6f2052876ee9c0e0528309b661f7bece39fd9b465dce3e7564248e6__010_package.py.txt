@@ -1,0 +1,15 @@
+from pathlib import Path
+import hashlib,zipfile
+here=Path(__file__).resolve().parent
+paths=[]
+for f in here.iterdir():
+    if f.is_file() and f.name!='SHA256SUMS.txt' and f.suffix in ('.md','.py','.json','.zip'):
+        paths.append(f)
+paths=sorted(paths,key=lambda x:x.name)
+(here/'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(f.read_bytes()).hexdigest()+'  '+f.name+'\n' for f in paths))
+archive=here.parent/'fft_four_stage_central_bit_no_go_2026-10-10.zip'
+with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=7) as z:
+    for f in paths+[here/'SHA256SUMS.txt']:
+        z.write(f,arcname=here.name+'/'+f.name)
+print('zip',archive,'bytes',archive.stat().st_size,'files',len(paths)+1)
+print('zip sha256',hashlib.sha256(archive.read_bytes()).hexdigest())

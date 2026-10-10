@@ -1,0 +1,209 @@
+1: import gc
+2: import unittest
+3: import weakref
+4: import numpy as np
+5: 
+6: from coalesced_projected import CoalescedProjectedFourier, modular_phase
+7: from vendor.projected_fourier import ProjectedFourierState
+8: 
+9: 
+10: class CoalescedTests(unittest.TestCase):
+11:     def check_fft(self, state, basis, **kwargs):
+12:         dense = state.coefficients @ basis
+13:         for j, value in state.sparse.items():
+14:             dense[j] += value
+15:         expected = np.fft.fft(dense)[state.bins]
+16:         np.testing.assert_allclose(state.query(), expected, rtol=3e-11, atol=3e-10, **kwargs)
+17: 
+18:     def test_all_bins_random_mixed_updates(self):
+19:         rng = np.random.default_rng(281)
+20:         n, r = 64, 5
+21:         basis = rng.normal(size=(r, n)) + 1j*rng.normal(size=(r, n))
+22:         bins = rng.permutation(n)
+23:         state = CoalescedProjectedFourier(n, bins, np.fft.fft(basis, axis=1)[:, bins])
+24:         for t in range(2000):
+25:             if t % 3:
+26:                 state.add_point(int(rng.integers(n)), complex(*rng.normal(size=2)))
+27:             else:
+28:                 state.add_coefficient(int(rng.integers(r)), complex(*rng.normal(size=2)))
+29:             if t % 37 == 0:
+30:                 self.check_fft(state, basis)
+31:         self.check_fft(state, basis)
+32: 
+33:     def test_repeated_keys_cost_depends_on_distinct_changes(self):
+34:         n = 128
+35:         basis = np.arange(n, dtype=float)[None, :].astype(complex)
+36:         bins = np.array([0, 1, 7, 127])
+37:         state = CoalescedProjectedFourier(n, bins, np.fft.fft(basis)[:, bins])
+38:         for _ in range(20000):
+39:             state.add_coefficient(0, 0.125)
+40:             state.add_point(3, 0.25j)
+41:         self.assertEqual(len(state.pending), 2)
+42:         self.check_fft(state, basis)
+43:         self.assertEqual(state.last_stats.pending_keys, 2)
+44:         self.assertEqual(state.last_stats.strategy, "coalesced")
+45:         self.assertEqual(len(state.pending), 0)
+46: 
+47:     def test_exact_cancellation_removes_entries_during_updates(self):
+48:         state = CoalescedProjectedFourier(16, [0, 3], np.ones((1, 2), complex))
+49:         for _ in range(10000):
+50:             state.add_coefficient(0, 0.125)
+51:             state.add_point(2, -0.5j)
+52:             state.add_coefficient(0, -0.125)
+53:             state.add_point(2, 0.5j)
+54:         self.assertEqual(state.pending, {})
+55:         self.assertEqual(state.sparse, {})
+56:         np.testing.assert_array_equal(state.query(), np.zeros(2))
+57:         self.assertEqual(state.last_stats.strategy, "cached")
+58: 
+59:     def test_long_history_not_retained_or_scanned(self):
+60:         state = CoalescedProjectedFourier(8, [0], np.ones((1, 1), complex))
+61:         for _ in range(20000):
+62:             state.add_coefficient(0, 0.125)
+63:             state.query()
+64:             self.assertFalse(state.pending)
+65:         self.assertFalse(hasattr(state, "events"))
+66:         self.assertEqual(state.last_stats.pending_keys, 1)
+67:         np.testing.assert_array_equal(state.query(), [2500])
+68: 
+69:     def test_rebuild_reclaims_many_deleted_points(self):
+70:         n = 4096
+71:         state = CoalescedProjectedFourier(n, [0, 1, n-1], np.empty((0, 3)), sparse_residual=((j, 1) for j in range(n)))
+72:         for j in range(n):
+73:             state.add_point(j, -1)
+74:         self.assertEqual(len(state.pending), n)
+75:         self.assertEqual(len(state.sparse), 0)
+76:         np.testing.assert_array_equal(state.query(), np.zeros(3))
+77:         self.assertEqual(state.last_stats.strategy, "rebuild")
+78:         self.assertEqual(state.last_stats.reclaimed_keys, n)
+79:         self.assertFalse(state.pending)
+80: 
+81:     def test_cancellation_shrinks_pending_tombstones_before_query(self):
+82:         import sys
+83:         state = CoalescedProjectedFourier(8192, [0], np.empty((0, 1)))
+84:         for j in range(8192):
+85:             state.add_point(j, 1)
+86:         large_bytes = sys.getsizeof(state.pending)
+87:         for j in range(8191):
+88:             state.add_point(j, -1)
+89:         self.assertEqual(len(state.pending), 1)
+90:         self.assertLessEqual(state._pending_high_water, 4)
+91:         self.assertLess(sys.getsizeof(state.pending), large_bytes/16)
+92:         state.add_point(8191, -1)
+93:         self.assertEqual(state._pending_high_water, 0)
+94:         self.assertEqual(sys.getsizeof(state.pending), sys.getsizeof({}))
+95:         np.testing.assert_array_equal(state.query(), [0])
+96: 
+97:     def test_duplicate_bins_zero_rank_and_one_bin(self):
+98:         for bins in ([5], [7, 0, 7, 2, 2], list(range(8))):
+99:             state = CoalescedProjectedFourier(8, bins, np.empty((0, len(bins))), sparse_residual=[(1, 2), (1, -1)])
+100:             state.add_point(7, 3-2j)
+101:             self.check_fft(state, np.empty((0, 8), complex))
+102:             state.add_point(1, -1)
+103:             self.check_fft(state, np.empty((0, 8), complex))
+104: 
+105:     def test_projection_owns_memory_and_does_not_pin_full_fft(self):
+106:         full = np.ones((1, 8192), complex)
+107:         projection = full[:, :4]
+108:         self.assertTrue(projection.flags.c_contiguous)
+109:         owner = weakref.ref(full)
+110:         state = CoalescedProjectedFourier(8192, [0, 1, 2, 3], projection)
+111:         self.assertTrue(state.projection.flags.owndata)
+112:         self.assertFalse(np.shares_memory(state.projection, full))
+113:         del projection, full
+114:         gc.collect()
+115:         self.assertIsNone(owner())
+116: 
+117:     def test_input_and_output_buffers_are_independent(self):
+118:         bins = np.array([0, 1])
+119:         p = np.ones((1, 2), complex)
+120:         c = np.ones(1, complex)
+121:         state = CoalescedProjectedFourier(4, bins, p, c)
+122:         bins[:] = 3
+123:         p[:] = 99
+124:         c[:] = 99
+125:         answer = state.query()
+126:         answer[:] = 0
+127:         np.testing.assert_array_equal(state.query(), [1, 1])
+128:         np.testing.assert_array_equal(state.bins, [0, 1])
+129: 
+130:     def test_snapshot_discards_sub_ulp_no_op(self):
+131:         p = np.ones((2, 1), complex)
+132:         c = np.array([1e16, -1e16], complex)
+133:         state = CoalescedProjectedFourier(1, [0], p, c)
+134:         original = ProjectedFourierState(1, [0], p, c)
+135:         state.add_coefficient(0, 1)
+136:         original.add_coefficient(0, 1)
+137:         np.testing.assert_array_equal(state.query(), [0])
+138:         np.testing.assert_array_equal(original.query(), [1])
+139:         self.assertFalse(state.pending)
+140: 
+141:     def test_disclosed_cancellation_limit_and_explicit_rebase(self):
+142:         # This is a LIMITATION regression, not a claim of numerical agreement:
+143:         # (1 - 1e16) rounds to -1e16, losing the final unit on cached replay.
+144:         state = CoalescedProjectedFourier(1, [0], np.ones((1, 1)), [1e16])
+145:         state.add_coefficient(0, -1e16)
+146:         state.add_coefficient(0, 1)
+147:         self.assertEqual(state.coefficients[0], 1)
+148:         np.testing.assert_array_equal(state.query(), [0])
+149:         np.testing.assert_array_equal(state.rebase(), [1])
+150: 
+151:     def test_modular_phase_high_indices_matches_fft(self):
+152:         n = 1 << 20
+153:         bins = np.array([0, 1, n-1, n-2, n//2, n-1])
+154:         x = np.zeros(n, complex)
+155:         x[n-1] = 1
+156:         state = CoalescedProjectedFourier(n, bins, np.empty((0, len(bins))))
+157:         state.add_point(n-1, 1)
+158:         np.testing.assert_allclose(state.query(), np.fft.fft(x)[bins], atol=2e-15, rtol=2e-15)
+159: 
+160:     def test_modular_phase_overflow_guard(self):
+161:         n = (1 << 62) - 57
+162:         j = n-1
+163:         bins = np.array([n-1, n-2, 0, 1], dtype=np.int64)
+164:         expected = np.exp(-2j*np.pi*np.array([1, 2, 0, n-1], dtype=float)/n)
+165:         np.testing.assert_array_equal(modular_phase(n, bins, j), expected)
+166:         state = CoalescedProjectedFourier(n, bins, np.empty((0, len(bins))), prepared_positions=[j])
+167:         state.add_point(j, 1)
+168:         np.testing.assert_array_equal(state.query(), expected)
+169: 
+170:     def test_prepared_and_unprepared_phases_match(self):
+171:         n = 257
+172:         bins = np.array([0, 1, 100, 256, 1])
+173:         a = CoalescedProjectedFourier(n, bins, np.empty((0, len(bins))))
+174:         b = CoalescedProjectedFourier(n, bins, np.empty((0, len(bins))), prepared_positions=[0, 1, 256, 256])
+175:         for j in (0, 1, 256):
+176:             a.add_point(j, 0.3-0.7j)
+177:             b.add_point(j, 0.3-0.7j)
+178:         np.testing.assert_array_equal(a.query(), b.query())
+179: 
+180:     def test_rebase_matches_fresh_relation(self):
+181:         rng = np.random.default_rng(69)
+182:         basis = rng.normal(size=(4, 32)) + 1j*rng.normal(size=(4, 32))
+183:         bins = [1, 2, 29, 31]
+184:         state = CoalescedProjectedFourier(32, bins, np.fft.fft(basis)[:, bins])
+185:         for i in range(1000):
+186:             state.add_coefficient(i % 4, complex(*rng.normal(size=2)))
+187:             state.query()
+188:         state.add_point(31, 0.375j)
+189:         got = state.rebase()
+190:         self.assertEqual(state.last_stats.strategy, "explicit_rebase")
+191:         np.testing.assert_array_equal(got, state._rebuild_value())
+192:         self.check_fft(state, basis)
+193: 
+194:     def test_invalid_shape_bounds_and_zero_edits(self):
+195:         for n, bins, p in [(0, [0], np.empty((0, 1))), (4, [], np.empty((0, 0))), (4, [4], np.empty((0, 1))), (4, [0], np.empty((2, 2)))]:
+196:             with self.assertRaises(ValueError):
+197:                 CoalescedProjectedFourier(n, bins, p)
+198:         state = CoalescedProjectedFourier(4, [0], np.ones((1, 1)))
+199:         with self.assertRaises(ValueError):
+200:             state.add_point(4, 1)
+201:         with self.assertRaises(ValueError):
+202:             state.add_coefficient(-1, 1)
+203:         state.add_point(0, 0)
+204:         state.add_coefficient(0, 0)
+205:         self.assertEqual(state.pending, {})
+206: 
+207: 
+208: if __name__ == "__main__":
+209:     unittest.main()

@@ -1,0 +1,12 @@
+   1 #!/usr/bin/env python3
+   2 from pathlib import Path
+   3 import tempfile,shutil,subprocess,hashlib,json,sys
+   4 base=Path(__file__).parent
+   5 with tempfile.TemporaryDirectory(prefix='one_inner_sector_review_') as td:
+   6  p=Path(td)/'package';shutil.copytree(base,p,ignore=shutil.ignore_patterns('__pycache__'))
+   7  outputs=['seed_audit/INDEPENDENT_CERTIFICATE.json','FIXED_GUARD_RESULTS.json','SECTOR_RESULTS.json','MEMBERSHIP_RESULTS.json']
+   8  old={n:hashlib.sha256((p/n).read_bytes()).hexdigest() for n in outputs}
+   9  for cmd in ['seed_audit/independent_verifier.py','check_fixed_guards.py','check_sectors.py','check_membership.py']:
+  10   subprocess.run([sys.executable,cmd],cwd=p,check=True)
+  11  new={n:hashlib.sha256((p/n).read_bytes()).hexdigest() for n in outputs};assert old==new
+  12  print(json.dumps({'status':'PASS','byte_identical_outputs':old,'isolated_temporary_directory':True,'network_required':False,'dependencies':'Python standard library','constructor_programs_executed':False},indent=2,sort_keys=True))

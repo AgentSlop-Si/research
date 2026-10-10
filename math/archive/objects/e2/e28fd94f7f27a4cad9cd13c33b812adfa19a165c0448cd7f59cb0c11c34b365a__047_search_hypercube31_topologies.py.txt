@@ -1,0 +1,70 @@
+import torch, random, math, json, time
+
+torch.set_default_dtype(torch.float64); cdtype=torch.complex128
+n=16; a=(1+1j)/2; b=(1-1j)/2
+C=torch.tensor([[a,b],[b,a]],dtype=cdtype); T=C
+for _ in range(3): T=torch.kron(T,C)
+Tnorm=torch.linalg.norm(T)
+standard=[]
+for bit in range(4):
+ step=1<<bit
+ for block in range(0,n,2*step):
+  for off in range(step): standard.append((block+off,block+off+step))
+
+def supp(seq):
+ S=[1<<i for i in range(n)]; full=(1<<n)-1
+ for p,q in seq:
+  u=S[p]|S[q]; S[p]=u;S[q]=u
+ return sum(x.bit_count() for x in S),sum(x==full for x in S)
+
+def find_full(seed, attempts=10000):
+ rng=random.Random(seed)
+ rem=rng.randrange(32); seq=[e for i,e in enumerate(standard) if i!=rem]; rng.shuffle(seq)
+ sc=supp(seq)
+ Tanneal=10.0
+ for it in range(attempts):
+  i,j=rng.sample(range(31),2); seq[i],seq[j]=seq[j],seq[i]
+  ns=supp(seq); delta=(ns[1]-sc[1])*1000+(ns[0]-sc[0])
+  if delta>=0 or rng.random()<math.exp(delta/max(Tanneal,1e-9)): sc=ns
+  else: seq[i],seq[j]=seq[j],seq[i]
+  Tanneal*=0.9995
+  if sc[1]==16: return rem,seq
+ return None,None
+
+def quickfit(seq,seed,steps=260):
+ torch.manual_seed(seed); g=len(seq)
+ z=torch.zeros((g,3,2),requires_grad=True); din=torch.zeros((n,2),requires_grad=True); dout=torch.zeros((n,2),requires_grad=True)
+ with torch.no_grad():
+  vals=[a,b,b]
+  for j,v in enumerate(vals): z[:,j,0].fill_(math.log(abs(v))); z[:,j,1].fill_(math.atan2(v.imag,v.real))
+  z.add_(0.015*torch.randn_like(z))
+ pars=[z,din,dout]; opt=torch.optim.Adam(pars,lr=.025)
+ def ex(u): return torch.exp(u[...,0]+1j*u[...,1])
+ def build():
+  M=torch.diag(ex(din)); pv=ex(z)
+  for j,(x,y) in enumerate(seq):
+   p,q,r=pv[j,0],pv[j,1],pv[j,2]; ss=-q*r/p
+   # update two rows directly instead of matrix multiply
+   oldx=M[x,:].clone(); oldy=M[y,:].clone()
+   M2=M.clone(); M2[x,:]=p*oldx+q*oldy; M2[y,:]=r*oldx+ss*oldy; M=M2
+  return torch.diag(ex(dout))@M
+ best=9.
+ for it in range(steps):
+  opt.zero_grad(); rel=torch.linalg.norm(build()-T)/Tnorm; (rel*rel).backward(); opt.step(); best=min(best,rel.item())
+  if it==170:
+   for pg in opt.param_groups: pg['lr']*=.3
+ return best
+
+res=[]; seen=set(); start=time.time()
+for s in range(30):
+ rem,seq=find_full(100000+s)
+ if seq is None: continue
+ key=(rem,tuple(seq))
+ if key in seen: continue
+ seen.add(key)
+ err=quickfit(seq,200000+s)
+ rec={'seed':s,'removed':rem,'quick_error':err,'schedule':seq}; res.append(rec)
+ print(json.dumps({k:v for k,v in rec.items() if k!='schedule'}),flush=True)
+res.sort(key=lambda x:x['quick_error'])
+json.dump({'elapsed':time.time()-start,'results':res},open('adaptive_fft_cpp/hypercube31_topology_sweep.json','w'),indent=2)
+print('BEST',[(r['quick_error'],r['removed']) for r in res[:5]])

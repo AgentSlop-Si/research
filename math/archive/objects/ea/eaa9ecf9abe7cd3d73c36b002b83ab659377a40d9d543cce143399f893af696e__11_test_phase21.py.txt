@@ -1,0 +1,210 @@
+import sys, pathlib, unittest, random
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]))
+from phase21_weyl import *
+
+class Phase21(unittest.TestCase):
+    def test_ntt_vs_direct_chirp(self):
+        for n in (4,8,16,32,64,128,256):
+            for seed in (1,9):
+                x=random_input(n,seed)
+                self.assertEqual(chirp_factorized_dft(x),ntt_reference(x),n)
+
+    def test_twisted_shift_antiperiodicity(self):
+        for n in (4,8,16,32,64):
+            x=random_input(n,21);v=x[:];w=root(n)
+            for _ in range(n):v=twisted_shift(v,w)
+            self.assertEqual(v,[(-xi)%P for xi in x],n)
+
+    def test_cyclic_green_exact_o_n_solve(self):
+        for n in (4,8,16,32,64,256):
+            for alpha in (1,2,7):
+                g=CyclicGreen.prepare(n,alpha)
+                x=random_input(n,22)
+                y=g.apply(x)
+                Ty=twisted_shift(y,root(n))
+                self.assertEqual([(v-alpha*t)%P for v,t in zip(y,Ty)],x,n)
+                if n<=32:self.assertEqual(y,g.apply_geometric_control(x))
+
+    def test_single_green_has_flat_entries_and_two_column_ratios(self):
+        for n in (4,8,16,32,64):
+            g=raw_green_matrix(n,1)
+            for col in range(n):
+                self.assertTrue(all(v!=0 for v in (row[col] for row in g)))
+            for k in range(n):
+                for l in range(k+1,n):
+                    self.assertEqual(column_ratio_distinct_count(g,k,l),2,(n,k,l))
+
+    def test_quadratic_chirp_cross_ratios(self):
+        for n in (4,8,16,32,64,128):
+            c=chirp_coefficients(n);w=root(n)
+            self.assertTrue(chirp_adjacent_certificate(c,w))
+            for rho in (3,7):
+                cc=[pow(rho,m,P)*c[m]%P for m in range(n)]
+                self.assertTrue(chirp_adjacent_certificate(cc,w))
+                # Pure geometric resolvent has all interior ratios =1.
+                geom=[pow(rho,m,P) for m in range(n)]
+                self.assertFalse(chirp_adjacent_certificate(geom,w))
+
+    def test_chirp_hankel_full_rank(self):
+        for n in (4,8,16,32,64,128,256):
+            c=chirp_coefficients(n)
+            m=n//2
+            self.assertEqual(matrix_rank(hankel(c,m)),m,n)
+
+    def test_resolvent_coeff_hankel_rank_at_most_q(self):
+        for n in (16,32,64):
+            for q in (1,2,3):
+                alphas=list(range(1,q+1));weights=[i+4 for i in range(q)]
+                c=[sum(weights[i]*pow(alphas[i],m,P)*pow(1+pow(alphas[i],n,P),-1,P)
+                       for i in range(q))%P for m in range(n)]
+                self.assertLessEqual(matrix_rank(hankel(c,n//2)),q)
+                self.assertGreater(matrix_rank(hankel(chirp_coefficients(n),n//2)),q)
+
+    def test_n_green_resolvents_positive_control(self):
+        for n in (4,8,16,32):
+            a,b=full_green_dictionary(n)
+            for seed in (3,5):
+                x=random_input(n,seed);y=polynomial_green_sum(x,a,b)
+                w=root(n);sc=pow(sqrt_mod(n),-1,P)
+                out=[y[j]*pow(w,j*j,P)*sc%P for j in range(n)]
+                self.assertEqual(out,ntt_reference(x),n)
+
+if __name__=='__main__':unittest.main()
+
+class CommutingCircuitTests(unittest.TestCase):
+    def test_depth_does_not_hide_pole_order(self):
+        for n in (16,32,64):
+            stages=[[(3,1),(5,2)],[(7,3),(11,4)]]
+            c=product_of_parallel_green_coeffs(n,stages)
+            self.assertLessEqual(matrix_rank(hankel(c,n//2)),4)
+            self.assertEqual(matrix_rank(hankel(chirp_coefficients(n),n//2)),n//2)
+            x=random_input(n,101)
+            lhs=polynomial_green_sum(polynomial_green_sum(x,[1,2],[3,5]),[3,4],[7,11])
+            rhs=[0]*n;v=x[:];w=root(n)
+            for cm in c:
+                rhs=[(p+cm*z)%P for p,z in zip(rhs,v)]
+                v=twisted_shift(v,w)
+            self.assertEqual(lhs,rhs)
+
+    def test_repeated_poles_confluent_case(self):
+        for n in (16,32,64):
+            coeff=single_green_coeff(n,3)
+            for t in (2,3,4):
+                total=[1]+[0]*(n-1)
+                for _ in range(t):
+                    total=negacyclic_convolution(total,coeff)
+                self.assertLessEqual(matrix_rank(hankel(total,n//2)),t)
+
+    def test_flat_green_condition_number_over_complex(self):
+        import numpy as np, math
+        for n in (4,8,16,32):
+            w=np.exp(-2j*np.pi/n)
+            D=np.diag([w**k for k in range(n)])
+            Z=np.roll(np.eye(n),1,axis=0)
+            T=np.linalg.solve(D,Z)
+            G=np.linalg.inv(np.eye(n)-T)
+            self.assertLess(np.max(abs(abs(G)-0.5)),2.e-12)
+            expected=1/math.tan(math.pi/(2*n))
+            self.assertAlmostEqual(np.linalg.cond(G),expected,places=9)
+
+class NoncommutingControls(unittest.TestCase):
+    def test_second_generator_and_green_solve(self):
+        for n in (4,8,16,32,64,256):
+            for beta in (1,2,5):
+                g=SecondCyclicGreen.prepare(n,beta)
+                x=random_input(n,77)
+                y=g.apply(x);u=second_shift(y,root(n))
+                self.assertEqual([(y[j]-beta*u[j])%P for j in range(n)],x)
+
+    def test_full_rank_weyl_commutator(self):
+        for n in (4,8,16,32,64):
+            w=root(n)
+            t=lambda v:twisted_shift(v,w)
+            u=lambda v:second_shift(v,w)
+            def comm(v):
+                a=t(u(v));b=u(t(v))
+                return [(x-y)%P for x,y in zip(a,b)]
+            m=dense_matrix_apply(comm,n)
+            self.assertEqual(matrix_rank(m),n)
+            # Analytic identity [T,U]=(omega^-2-1)Z^2.
+            v=random_input(n,151)
+            coef=(pow(w,-2,P)-1)%P
+            self.assertEqual(comm(v),[coef*x%P for x in v[-2:]+v[:-2]])
+
+    def test_full_rank_resolvent_commutator_but_wrong_fourier(self):
+        for n in (8,16,32,64):
+            w=root(n);g=SecondCyclicGreen.prepare(n,2)
+            t=lambda v:twisted_shift(v,w)
+            def comm(v):
+                a=t(g.apply(v));b=g.apply(t(v))
+                return [(x-y)%P for x,y in zip(a,b)]
+            self.assertEqual(matrix_rank(dense_matrix_apply(comm,n)),n)
+            g1=CyclicGreen.prepare(n,3)
+            mix=lambda v:[(x+y)%P for x,y in zip(g1.apply(v),g.apply(v))]
+            first,second=small_weyl_defect_counts(mix,n)
+            self.assertGreater(first,0)
+            self.assertGreater(second,0)
+
+class CommonOrderSeparatorTests(unittest.TestCase):
+    def test_weighted_cycle_green_recurrence_and_rank_one_cut(self):
+        for n in (8,16,32,64):
+            for seed in (1,2,3):
+                g=random_weighted_green(n,seed)
+                x=random_input(n,100)
+                y=g.apply(x)
+                w=g.weights
+                self.assertEqual([(y[j]-w[j]*y[j-1])%P for j in range(n)],x)
+                self.assertLessEqual(block_rank(g.apply,n,n//2),1)
+
+    def test_same_order_sum_and_products_remain_low_cross_rank(self):
+        for n in (8,16,32,64):
+            g=[random_weighted_green(n,i+7) for i in range(4)]
+            s1=lambda x:sum_apply(g[:2],x)
+            s2=lambda x:sum_apply(g[2:],x)
+            self.assertLessEqual(block_rank(s1,n,n//2),2)
+            # Arbitrary internal diagonal scalings do not change upper-right rank.
+            w=root(n)
+            ph=[pow(w,(j*j+3*j)%n,P) for j in range(n)]
+            circuit=lambda x:s2([a*p%P for a,p in zip(s1(x),ph)])
+            self.assertLessEqual(block_rank(circuit,n,n//2),4)
+            self.assertEqual(block_rank(ntt_reference,n,n//2),n//2)
+            if n>=16:self.assertLess(4,n//2)
+
+    def test_intermediate_permutation_escapes_common_cut_bound(self):
+        n=32
+        g=[random_weighted_green(n,i+7) for i in range(4)]
+        s1=lambda x:sum_apply(g[:2],x)
+        s2=lambda x:sum_apply(g[2:],x)
+        rng=random.Random(150)
+        perm=list(range(n));rng.shuffle(perm)
+        circuit=lambda x:s2([s1(x)[perm[j]] for j in range(n)])
+        self.assertGreater(block_rank(circuit,n,n//2),4)
+        self.assertLessEqual(block_rank(lambda x:s2(s1(x)),n,n//2),4)
+
+class ApproximationFloorTests(unittest.TestCase):
+    def test_spectral_floor_from_nuclear_budget(self):
+        import numpy as np,math
+        for n in (8,16,32,64,128):
+            w=np.exp(-2j*math.pi/n)
+            m=n//2
+            block=np.array([[w**(j*k)/math.sqrt(n) for k in range(m,n)]
+                            for j in range(m)],dtype=complex)
+            singular=np.linalg.svd(block,compute_uv=False)
+            self.assertLessEqual(float(singular[0]),1+1e-9)
+            self.assertAlmostEqual(sum(s*s for s in singular),n/4,places=7)
+            for q in range(n//4):
+                bound=math.sqrt((n/4-q)/(n/2-q))
+                self.assertGreaterEqual(float(singular[q])+1e-9,bound)
+
+class SharpnessCertificateTests(unittest.TestCase):
+    def test_explicit_prony_polynomial_exact_recurrence(self):
+        for n in (4,8,16,32,64,128,256):
+            a=prony_annihilator(n);c=chirp_coefficients(n)
+            h=n//2
+            for k in range(h):
+                self.assertEqual(sum(a[j]*c[k+j] for j in range(h+1))%P,0,n)
+
+    def test_complex_poles_squarefree_and_nonsingular_certificate(self):
+        for n in (4,8,16,32,64,128,256,512,1024,2048):
+            cert=prony_squarefree_certificate(n)
+            self.assertTrue(cert['certifies_N_over_2_distinct_admissible_complex_poles'],cert)

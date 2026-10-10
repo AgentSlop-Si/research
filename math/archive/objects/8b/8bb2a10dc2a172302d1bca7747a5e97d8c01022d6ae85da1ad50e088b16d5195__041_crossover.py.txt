@@ -1,0 +1,37 @@
+"""Warm-case crossover: reused convolution versus prepared-kernel FFT, single edited operand."""
+import numpy as np
+from scipy import fft
+from time import perf_counter_ns
+import json
+from cost_aware_fft import RelationFFT
+from relational_convolution import RelationalConvolver
+
+rng=np.random.default_rng(55)
+results=[]
+for n in (4096,65536,262144):
+    a=rng.standard_normal(n);b=rng.standard_normal(n)
+    f=RelationFFT(); sa=f.register(a); sb=f.register(b)
+    conv=RelationalConvolver(max_core_bytes=8*n)
+    conv.core(next(iter(sa.terms))[0],next(iter(sb.terms))[0])
+    for k in (1,2,4,8,16,32,64):
+        positions=rng.choice(n,size=k,replace=False)
+        amplitudes=rng.normal(size=k)
+        state=sa.fork()
+        for p,d in zip(positions,amplitudes): state.edit(int(p),float(d))
+        v=conv.product(state,sb)
+        def native():
+            aa=v.left.signal()
+            return fft.irfft(fft.rfft(aa)*next(iter(sb.terms))[0].spectrum,n=n)
+        def reused():return v.full('reuse')
+        r=native();x=reused()
+        np.testing.assert_allclose(x,r,rtol=1e-8,atol=1e-7)
+        times=[]
+        for fn in (native,reused):
+            samples=[]
+            for i in range(6):
+                t=perf_counter_ns();fn();samples.append((perf_counter_ns()-t)/1e6)
+            times.append(float(np.median(samples[1:])))
+        res={'n':n,'k':k,'native_ms':times[0],'reuse_ms':times[1],'speedup':times[0]/times[1]}
+        results.append(res)
+        print(f'N={n:<7} k={k:<3} native={times[0]:.4f} ms reuse={times[1]:.4f} ms speedup={res["speedup"]:.2f}x',flush=True)
+with open('crossover_results.json','w') as f:json.dump(results,f,indent=2)

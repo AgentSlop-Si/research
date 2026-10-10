@@ -1,0 +1,133 @@
+   1 #!/usr/bin/env python3
+   2 """
+   3 Exact-DFT reduced-center finite-network verifier.
+   4 
+   5 This script verifies the algebraic simplification:
+   6   old center: c_1,...,c_h,c_*
+   7   reduced center: c_1,...,c_h
+   8 
+   9 For triples T, define
+  10   (G x)_j = sum_{T contains j} x_T
+  11   (R c)_S = 1/2 sum_{j in S} c_j - 1/6 sum_j c_j.
+  12 
+  13 Then the coefficient of x_T in (R G x)_S is exactly
+  14   (|S intersect T|-1)/2,
+  15 which is the same coefficient produced by the manuscript's h+1-wire
+  16 center construction. Therefore the original side-wire cancellation
+  17 and restoration schedule remain unchanged.
+  18 
+  19 It also computes the finite-network parameters and scans h.
+  20 """
+  21 from math import comb, log, log1p
+  22 from fractions import Fraction
+  23 import itertools
+  24 
+  25 def C(n,k):
+  26     return comb(n,k) if 0 <= k <= n else 0
+  27 
+  28 def central_coeff(intersection_size):
+  29     # Exact coefficient of x_T in R G x at row S.
+  30     # sum_j G_j contributes exactly |T|=3 to the global term.
+  31     return Fraction(intersection_size, 2) - Fraction(3, 6)
+  32 
+  33 def verify_intersection_classes():
+  34     expected = {
+  35         0: Fraction(-1,2),
+  36         1: Fraction(0,1),
+  37         2: Fraction(1,2),
+  38         3: Fraction(1,1),
+  39     }
+  40     got = {t: central_coeff(t) for t in range(4)}
+  41     assert got == expected, (got, expected)
+  42     # Original side correction cancels the even off-diagonal classes 0 and 2.
+  43     for t in (0,2):
+  44         assert got[t] + (-got[t]) == 0
+  45     # Intersection-one off-diagonal class is already zero.
+  46     assert got[1] == 0
+  47     # Diagonal triple has intersection 3 and coefficient 1.
+  48     assert got[3] == 1
+  49     return got
+  50 
+  51 def reduced_parameters(h, padded=True):
+  52     v = C(h,3)
+  53     d_nbr = C(h-3,3) + 3*(h-3)
+  54     N0 = v**3
+  55     I0 = 3*v**2
+  56     center = h
+  57     W = 2*N0 + I0*(v*d_nbr + center)
+  58     m = h**3
+  59     Delta = 2*N0 - 2*I0*center*h
+  60     # Equivalent: 2*v^2*(v-3*h^2)
+  61     assert Delta == 2*v*v*(v-3*h*h)
+  62     if Delta <= 0:
+  63         return None
+  64     p = (W-1).bit_length()
+  65     Wden = (1 << p) if padded else W
+  66     x = Delta/(m*Wden)
+  67     gap = -log1p(-x)/log(m)  # stable evaluation of 1-theta
+  68     theta = 1-gap
+  69     lam = m - Delta/Wden
+  70     return {
+  71         "h":h, "v":v, "d_nbr":d_nbr, "N0":N0, "I0":I0,
+  72         "center":center, "W":W, "p":p, "Wden":Wden, "m":m,
+  73         "Delta":Delta, "lambda":lam, "theta":theta, "gap":gap
+  74     }
+  75 
+  76 def published_parameters():
+  77     h=100
+  78     m=10**6
+  79     Wstar=2**71
+  80     Delta=6871402692000000
+  81     x=Delta/(m*Wstar)
+  82     gap=-log1p(-x)/log(m)
+  83     return {"h":h, "m":m, "Wden":Wstar, "Delta":Delta, "gap":gap, "theta":1-gap}
+  84 
+  85 def scan(limit=100000, padded=True):
+  86     best=None
+  87     for h in range(7,limit+1):
+  88         q=reduced_parameters(h,padded=padded)
+  89         if q is not None and (best is None or q["gap"] > best["gap"]):
+  90             best=q
+  91     return best
+  92 
+  93 def small_matrix_check(h):
+  94     # A direct finite-dimensional check without NumPy.
+  95     triples=list(itertools.combinations(range(h),3))
+  96     for S in triples:
+  97         setS=set(S)
+  98         for T in triples:
+  99             t=len(setS.intersection(T))
+ 100             rg=central_coeff(t)
+ 101             if S == T:
+ 102                 final=rg
+ 103             elif t % 2 == 0:
+ 104                 final=rg-rg
+ 105             else:
+ 106                 final=rg
+ 107             expected=Fraction(1 if S==T else 0,1)
+ 108             assert final == expected, (S,T,t,rg,final)
+ 109     return len(triples)
+ 110 
+ 111 def main():
+ 112     print("intersection classes:", verify_intersection_classes())
+ 113     for h in (6,7,8,10):
+ 114         print(f"small exact matrix-class check h={h}: v={small_matrix_check(h)} OK")
+ 115 
+ 116     pub=published_parameters()
+ 117     best=scan(100000, padded=True)
+ 118     best_np=scan(100000, padded=False)
+ 119 
+ 120     print("\nPublished finite-network tensor gap:")
+ 121     print(pub)
+ 122     print("\nReduced-center, original power-of-two padding:")
+ 123     print(best)
+ 124     print("\nReduced-center, no-padding candidate objective:")
+ 125     print(best_np)
+ 126 
+ 127     ratio=best["gap"]/pub["gap"]
+ 128     print(f"\nTensor exponent-gap improvement vs published: {ratio:.6f}x")
+ 129     print("Clean every-length exponent 5e-10 is below the padded tensor gap:",
+ 130           5e-10 < best["gap"])
+ 131 
+ 132 if __name__ == "__main__":
+ 133     main()

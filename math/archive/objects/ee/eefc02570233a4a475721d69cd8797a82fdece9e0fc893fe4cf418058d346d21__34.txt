@@ -1,0 +1,32 @@
+   1 """Permutation-endpoint independent DFT subspace uncertainty gate.
+   2 For H of length h and spectral output I of t positions, the intersection
+   3 E_H intersect F^{-1}(E_I) has dimension d <= floor(h*t/n), by trace of
+   4 orthogonal projection products for normalized complex DFT.
+   5 Hence t-floor(ht/n) <= relevant QS rank budget.
+   6 """
+   7 from itertools import permutations
+   8 from collections import Counter
+   9 
+  10 def uncertainty_violations(pi,cup=1,cdown=1,bup=1,bdown=1):
+  11  n=len(pi); fail=[]
+  12  for u in range(n):
+  13   a=n;b=-1
+  14   for v in range(u,n):
+  15    t=v-u+1
+  16    a=min(a,pi[v]);b=max(b,pi[v]); h=b-a+1
+  17    bcost=(u>0)*bup+(v<n-1)*bdown
+  18    budget=bcost+(a>0)*cup+(b<n-1)*cdown
+  19    necessary=t-(h*t)//n
+  20    if necessary>budget:fail.append((u,v,a,b,t,h,necessary,budget))
+  21  return fail
+  22 
+  23 if __name__=='__main__':
+  24  from prior_window_gate import check_windows
+  25  count=Counter(); witness={}
+  26  for perm in permutations(range(8)):
+  27   a=not check_windows(perm)
+  28   b=not uncertainty_violations(perm)
+  29   count[a,b]+=1
+  30  print(dict(count))
+  31  for n,pi in [(16,[0,8,4,12,2,10,6,14,1,9,5,13,3,11,7,15]),(32,list(range(32)))]:
+  32   print(n,pi,'uncertainty violations',len(uncertainty_violations(pi)), 'first',uncertainty_violations(pi)[:2])

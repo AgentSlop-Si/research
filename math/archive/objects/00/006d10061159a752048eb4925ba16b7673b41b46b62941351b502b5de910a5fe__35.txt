@@ -1,0 +1,125 @@
+   1 #!/usr/bin/env python3
+   2 """Independent finite-field checks of the v21 packet/line identities."""
+   3 from pathlib import Path
+   4 from fractions import Fraction
+   5 from itertools import permutations
+   6 import json
+   7 from exact_utils import Field,prime_by_trial_division
+   8 BASE=Path(__file__).parent
+   9 
+  10 def block(n,p,w,a,x):
+  11  inv2=pow(2,-1,n)
+  12  return [[pow(a,d*pow(h,-1,n)%n,p)*pow(w,(-x*d*(d-h)*inv2)%n,p)%p for h in range(1,n)] for d in range(1,n)]
+  13 def green(n,p,w,a,h,r):
+  14  f=Field(p);mat=f.eye(n)
+  15  for j in range(n):mat[(j+h)%n][j]=(mat[(j+h)%n][j]-a*pow(w,r*j%n,p))%p
+  16  inv=f.inverse(mat);assert f.mul(mat,inv)==f.eye(n);return inv
+  17 
+  18 def case(n,p,w,a,saved=None,full_rank=True):
+  19  assert prime_by_trial_division(n) and n%2 and prime_by_trial_division(p)
+  20  assert w!=1 and pow(w,n,p)==1 and a%p and pow(a,n,p)!=1
+  21  f=Field(p);den=f.inv(1-pow(a,n,p));ivn=f.inv(n);two=pow(2,-1,n)
+  22  blocks=[block(n,p,w,a,x) for x in range(n)];ranks=[f.rank(b) for b in blocks];assert ranks==[n-1]*n
+  23  packets=[];labels=[];greens={};support=[];filtered_entries=0
+  24  for h in range(1,n):
+  25   gs=[green(n,p,w,a,h,r) for r in range(n)]
+  26   for r,g in enumerate(gs):greens[h,r]=g
+  27   for s in range(n):
+  28    mat=[[0]*n for _ in range(n)]
+  29    # Direct filtered geometric powers, with one position for each (m,j).
+  30    for m in range(n):
+  31     for j in range(n):
+  32      if (m*j+h*m*(m-1)//2-s)%n==0:mat[(j+m*h)%n][j]=den*pow(a,m,p)%p
+  33    # Independent resolvent character sum, all entries and all packets.
+  34    for i in range(n):
+  35     for j in range(n):
+  36      rhs=ivn*sum(pow(w,(-r*s)%n,p)*gs[r][i][j] for r in range(n))%p
+  37      assert mat[i][j]==rhs;filtered_entries+=1
+  38    rowmax=max(sum(bool(v) for v in row) for row in mat);colmax=max(sum(bool(mat[i][j]) for i in range(n)) for j in range(n))
+  39    total=sum(bool(v) for row in mat for v in row)
+  40    assert rowmax<=2 and colmax<=2 and total==(2*n-1 if s==0 else n-1)
+  41    packets.append(mat);labels.append((h,s));support.append((h,s,rowmax,colmax,total))
+  42  off=[[mat[i][j] for mat in packets] for i in range(n) for j in range(n) if i!=j]
+  43  offrank=f.rank(off) if full_rank else sum(ranks)
+  44  assert offrank==n*(n-1)
+  45  # Recover an arbitrary constant-diagonal matrix via displacement transforms.
+  46  target=[[(37*i+19*j+11*i*j+7)%p if i!=j else 13%p for j in range(n)] for i in range(n)]
+  47  chat={h:[0]*n for h in range(1,n)}
+  48  for x in range(n):
+  49   rhs=[]
+  50   for d in range(1,n):rhs.append((1-pow(a,n,p))*sum(target[(j+d)%n][j]*pow(w,(x*d*j)%n,p) for j in range(n))%p)
+  51   sol=f.solve(blocks[x],rhs)
+  52   for h,value in zip(range(1,n),sol):chat[h][x*h%n]=value
+  53  coeff={(h,s):ivn*sum(chat[h][ell]*pow(w,(-ell*s)%n,p) for ell in range(n))%p for h in range(1,n) for s in range(n)}
+  54  recon=[[sum(coeff[label]*mat[i][j] for label,mat in zip(labels,packets))%p for j in range(n)] for i in range(n)]
+  55  diag=(target[0][0]-recon[0][0])%p
+  56  assert all((recon[i][j]+diag*int(i==j))%p==target[i][j] for i in range(n) for j in range(n))
+  57  # Fourier line coefficients use only B_1, not a flattened overdetermined solve.
+  58  A=f.solve(blocks[1],[(1-pow(a,n,p))*pow(w,(-d*d)%n,p)%p for d in range(1,n)])
+  59  lam=(1-den*sum(A))%p;fourier=[[pow(w,(i*j-i*i)%n,p) for j in range(n)] for i in range(n)]
+  60  assert all((lam*int(i==j)+sum(A[h-1]*greens[h,(-h)%n][i][j] for h in range(1,n)))%p==fourier[i][j] for i in range(n) for j in range(n))
+  61  # Iteratively generate U^h, independently of the closed phase formula.
+  62  u=[[0]*n for _ in range(n)]
+  63  for j in range(n):u[(j+1)%n][j]=pow(w,(-j)%n,p)
+  64  power=f.eye(n);poly=[[0]*n for _ in range(n)];cc=[]
+  65  for h in range(n):
+  66   c=pow(w,(-h*(h+1)*two)%n,p);cc.append(c)
+  67   for i in range(n):
+  68    for j in range(n):poly[i][j]=(poly[i][j]+c*power[i][j])%p
+  69   if h:
+  70    phase=pow(w,(h*(h-1)*two)%n,p)
+  71    assert all(phase*power[i][j]%p==(pow(w,(-h*j)%n,p) if i==(j+h)%n else 0) for i in range(n) for j in range(n))
+  72   power=f.mul(u,power)
+  73  assert power==f.eye(n) and poly==fourier
+  74  spectrum=[sum(cc[h]*pow(w,k*h%n,p) for h in range(n))%p for k in range(n)];assert all(spectrum)
+  75  assert all(pow(w,i*j%n,p)==pow(w,((i*i-(i-j)**2+j*j)*two)%n,p) for i in range(n) for j in range(n))
+  76  if saved:
+  77   assert ranks==saved['block_ranks'] and offrank==saved['packet_offdiag_rank']
+  78   assert lam==saved['green_line_identity_scalar'] and sum(bool(v) for v in A)==saved['green_line_nonzero_coefficients']
+  79   samples=[next(r[2:] for r in support if r[:2]==pair) for pair in [(1,0),(1,1),(2,0),(2,3%n)]]
+  80   assert [list(t) for t in samples]==saved['packet_degree_samples']
+  81  # Nonpole exceptional controls: alpha=0 and alpha=-1 invalidate completeness.
+  82  assert f.rank(block(n,p,w,0,0))==0
+  83  minus=block(n,p,w,p-1,0)
+  84  assert all(minus[n-d-1]==[(-v)%p for v in minus[d-1]] for d in range(1,n))
+  85  assert f.rank(minus)<= (n-1)//2 and (1-pow(p-1,n,p))%p!=0
+  86  return {'n':n,'field_prime':p,'omega':w,'alpha':a,'block_ranks':ranks,'offdiag_rank':offrank,'full_offdiag_rank_computed':full_rank,'resolvent_character_entries_checked':filtered_entries,'all_packets_checked':len(packets),'line_coefficients':A,'line_scalar':lam,'line_nonzero_coefficients':sum(bool(v) for v in A),'chirp_spectrum':spectrum,'arbitrary_constant_diagonal_reconstruction':True,'exceptional_minus_one_block_rank':f.rank(minus)}
+  87 
+  88 def leading_controls():
+  89  out=[]
+  90  for n in (3,5,7):
+  91   perm=list(permutations(range(1,n)));values=[]
+  92   for pi in perm:values.append((sum(d*pow(h,-1,n)%n for d,h in zip(range(1,n),pi)),pi))
+  93   lo=min(e for e,pi in values);hi=max(e for e,pi in values)
+  94   assert [pi for e,pi in values if e==lo]==[tuple(range(1,n))] and lo==n-1
+  95   assert [pi for e,pi in values if e==hi]==[tuple(n-d for d in range(1,n))] and hi==(n-1)**2
+  96   out.append({'n':n,'permutations':len(perm),'unique_low_degree':lo,'unique_top_degree':hi})
+  97  # Exact rational dominance magnitudes, with no finite-field modulus interpretation.
+  98  dominance=[]
+  99  for n in (3,5,7,11,17,31,127,257,1021):
+ 100   for a in (Fraction(1,2),Fraction(1,3)):
+ 101    off=sum(a**m for m in range(2,n));gap=a-off
+ 102    assert gap>0
+ 103    if a==Fraction(1,2):assert gap==Fraction(1,2**(n-1))
+ 104    else:assert gap>Fraction(1,6)
+ 105    assert all(sorted(d*pow(h,-1,n)%n for h in range(1,n))==list(range(1,n)) for d in (1,2,n-1))
+ 106    dominance.append({'n':n,'alpha':str(a),'gap':str(gap)})
+ 107  return {'exhaustive_determinant_controls':out,'complex_modulus_dominance_controls':dominance}
+ 108 
+ 109 if __name__=='__main__':
+ 110  source=json.loads((BASE/'sources/results.json').read_text());records=[]
+ 111  for r in source['finite_field_cases']:
+ 112   records.append(case(r['n'],r['field_prime'],r['omega'],r['alpha'],r));print('Source case',r['n'],'PASS',flush=True)
+ 113  for n in (3,5,19):
+ 114   found=None
+ 115   for p in range(2*n+1,2000,n):
+ 116    if not prime_by_trial_division(p):continue
+ 117    w=next((pow(g,(p-1)//n,p) for g in range(2,p) if pow(g,(p-1)//n,p)!=1),None)
+ 118    if w is None:continue
+ 119    for a in range(2,p):
+ 120     if pow(a,n,p)!=1 and all(Field(p).rank(block(n,p,w,a,x))==n-1 for x in range(n)):found=(p,w,a);break
+ 121    if found:break
+ 122   assert found;records.append(case(n,*found,full_rank=n<=5));print('Additional case',n,'PASS',flush=True)
+ 123  result={'status':'PASS','cases':records,'formal_guard_controls':leading_controls(),'source_programs_executed':False,'scope':'Odd-prime full matrix identities; conventional chirp convolution and no faster-FFT claim'}
+ 124  (BASE/'VERIFIED_RESULTS.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+ 125  print('PASS all identities and guards',flush=True)

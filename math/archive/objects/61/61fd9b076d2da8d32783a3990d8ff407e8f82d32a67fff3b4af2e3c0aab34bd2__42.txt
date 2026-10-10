@@ -1,0 +1,120 @@
+1: """Independent exact C-Horner and block-tail checks."""
+2: import json
+3: import random
+4: import sys
+5: from pathlib import Path
+6: from tail_blocks import prepare_tail,apply_tail,expected_online,expected_preparation
+7: from operators import prepare_sparse,horner_c
+8: from fixed_kernel import lower_convolution
+9: from prior_exact_arithmetic import PrimeField,CyclotomicField
+10: from full_similarity import (prepare_full,apply_full,
+11:     expected_online as expected_full_online,expected_preparation as expected_full_preparation)
+12: sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'fft_qweyl_resolvent_research'))
+13: from resolvent import prepare_resolvent,solve
+14: 
+15: 
+16: def audit_case(field,n,r,name,rng):
+17:     q=field.root(n)
+18:     assert field.power(q,n)==field.one
+19:     assert field.power(q,n//2)!=field.one
+20:     plan=prepare_tail(field,n,r,q)
+21:     sparse=prepare_sparse(field,n,q)
+22:     assert plan.preparation==expected_preparation(n,r),(n,r,plan.preparation,expected_preparation(n,r))
+23:     p=[field.zero]*(n-r)+plan.polynomial
+24:     vectors=[[field.one if i==j else field.zero for i in range(n)] for j in range(n)]
+25:     vectors.append([field.integer(rng.randrange(-5,6)) for _ in range(n)])
+26:     for x in vectors:
+27:         y,counts=apply_tail(field,plan,x)
+28:         expected,horner_counts=horner_c(field,sparse,p,x)
+29:         assert y==expected,(name,n,r)
+30:         assert counts['field_operations']==expected_online(n,r)
+31:         # Independent direct calculation through the two triangular kernels.
+32:         z=lower_convolution(field,plan.kernel.middle,x)[n-r:]
+33:         scaled=[field.mul(g,a) for g,a in zip(plan.g_tail,z)]
+34:         compressed=[]
+35:         for i in range(r):
+36:             v=field.zero
+37:             for j in range(i,r):
+38:                 v=field.add(v,field.mul(plan.polynomial[j-i],scaled[j]))
+39:             compressed.append(field.mul(plan.inverse_g_head[i],v))
+40:         assert lower_convolution(field,plan.kernel.kernel,
+41:                                  compressed+[field.zero]*(n-r))==y
+42:     # Also check that the evaluator is not hard-coded to the H_q tail.
+43:     arbitrary=[field.integer(2-3*j+j*j) for j in range(r)]
+44:     other=prepare_tail(field,n,r,q,arbitrary)
+45:     expected,_=horner_c(field,sparse,[field.zero]*(n-r)+arbitrary,vectors[-1])
+46:     assert apply_tail(field,other,vectors[-1])[0]==expected
+47:     aggregate_checks=0
+48:     if n<=16:
+49:         resolvent=prepare_resolvent(field,n,q)
+50:         # Direct independent N-pole summation; reference only, not the fast path.
+51:         for tested in (plan,other):
+52:             combined=[field.zero]*n
+53:             for j in range(n):
+54:                 lam=field.power(q,j)
+55:                 value=field.zero
+56:                 for coefficient in reversed(tested.polynomial):
+57:                     value=field.add(field.mul(value,lam),coefficient)
+58:                 weight=field.mul(field.mul(field.power(lam,(1-r)%n),value),
+59:                                  plan.kernel.kernel[-1])
+60:                 resolved,_=solve(field,resolvent,lam,vectors[-1])
+61:                 combined=[field.add(a,field.mul(weight,b))
+62:                           for a,b in zip(combined,resolved)]
+63:             assert combined==apply_tail(field,tested,vectors[-1])[0]
+64:             aggregate_checks+=1
+65:     comparator=None
+66:     if isinstance(field,PrimeField):
+67:         eta=field.root(2*n)
+68:         assert field.mul(eta,eta)==q
+69:         assert field.power(eta,n)==field.neg(field.one)
+70:         full=prepare_full(field,n,r,eta)
+71:         assert full.preparation==expected_full_preparation(n)
+72:         value,full_counts=apply_full(field,full,vectors[-1])
+73:         assert value==apply_tail(field,plan,vectors[-1])[0]
+74:         assert full_counts['field_operations']==expected_full_online(n)
+75:         comparator=dict(preparation=full.preparation,
+76:                         online=full_counts['field_operations'],fft_length=2*n,
+77:                         target='same C^(N-r)p(C), default H_q tail coefficients',
+78:                         extra_assumption='supplied primitive 2N-th root eta with eta^2=q')
+79:     return dict(field=name,n=n,r=r,basis_vectors=n,mixed_vectors=2,
+80:                 aggregate_identity_checks=aggregate_checks,
+81:                 full_similarity_comparator=comparator,
+82:                 fft_length=2*r,preparation=plan.preparation,
+83:                 online=counts['field_operations'],
+84:                 horner_online=horner_counts['field_operations'],
+85:                 forward_ffts=counts['forward_ffts'],inverse_ffts=counts['inverse_ffts'],
+86:                 total_tail_field_ops=sum(plan.preparation.values())+sum(counts['field_operations'].values()),
+87:                 status='PASS')
+88: 
+89: 
+90: def main():
+91:     rng=random.Random(20261009)
+92:     records=[]
+93:     for prime in (65537,998244353):
+94:         f=PrimeField(prime)
+95:         for n in (2,4,8,16,32,64):
+96:             r=1
+97:             while 2*r<=n:
+98:                 records.append(audit_case(f,n,r,f'F_{prime}',rng))
+99:                 r*=2
+100:     for n in (2,4,8):
+101:         r=1
+102:         while 2*r<=n:
+103:             records.append(audit_case(CyclotomicField(n),n,r,f'Q(zeta_{n})',rng))
+104:             r*=2
+105:     result=dict(status='PASS',configurations=len(records),
+106:                 basis_vectors=sum(r['basis_vectors'] for r in records),
+107:                 mixed_vectors=sum(r['mixed_vectors'] for r in records),
+108:                 aggregate_identity_checks=sum(r['aggregate_identity_checks'] for r in records),
+109:                 full_similarity_checks=sum(r['full_similarity_comparator'] is not None for r in records),
+110:                 scope='Exact rank-at-most-r high-degree tails, O(N log(r+1)) prep+online; not full H_q(C)',
+111:                 records=records)
+112:     out=Path(__file__).parent/'results';out.mkdir(exist_ok=True)
+113:     (out/'tail_audit.json').write_text(json.dumps(result,indent=2)+'\n')
+114:     print(json.dumps({k:v for k,v in result.items() if k!='records'},indent=2))
+115:     for row in records:
+116:         if row['field']=='F_65537' and row['n']==64:
+117:             print(json.dumps({k:row[k] for k in ('n','r','fft_length','preparation','online','horner_online')}))
+118: 
+119: 
+120: if __name__=='__main__':main()
