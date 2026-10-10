@@ -2,7 +2,7 @@
 
 ## Bottom line
 
-No result in this review is certified as a worldwide-first breakthrough. The strongest present candidates are focused mathematical packages, headed by the prefix-stabilizer optimizer/count theorem, guarded local Rogers–Szegő discriminants, and the exact common-chirp eliminant/recognizer. Unrestricted sub-N log N exact FFT remains unproved.
+No result in this review is certified as a worldwide-first breakthrough. The strongest present candidates are focused mathematical packages, headed by the prefix-stabilizer optimizer/count theorem, guarded local Rogers–Szegő discriminants, and the exact common-chirp eliminant/recognizer. An unrestricted exact sub-N log N DFT algorithm is not established in this project. A separate OpenAI preprint states an all-length sub-N log N bound in an exact-complex, supplied-root model; its attribution, statement and model are verified, but its correctness has not been independently validated in this review. The project's rank-7 theorem is finite-word approximate evaluation of represented inputs and is not a same-model competitor.
 
 This is a complete **catalogue screening**, with deeper bounded comparisons for leading families. It is not a fresh proof audit or exhaustive novelty search for all 178 rows. “Accepted” below is an attributed scoped status, not a new correctness verdict. An unsuccessful literature search does not prove originality.
 
@@ -11,7 +11,7 @@ This is a complete **catalogue screening**, with deeper bounded comparisons for 
 - The numbered family order is a provisional editorial judgment of currently supported research significance and distinctiveness. It is not a probability, citation forecast, quantified impact score or promise of publication.
 - Potential impact, historical novelty, mathematical acceptance and executable/practical performance are separate columns.
 - A family groups related claims for navigation. Membership does not prove equivalence. Refinements and alternate views do not create additional discovery counts.
-- A: focused candidate with bounded comparison; B: specialized result whose external novelty is not newly assessed; C: technical/supporting/finite refinement; D: known mechanism, engineering or attributed input; O: open/conditional/failed target route.
+- A: focused candidate with bounded comparison; B: specialized result with external comparison depth stated per row; C: technical/supporting/finite refinement; D: known mechanism, engineering or attributed input; O: open/conditional/failed target route.
 - R1 means the exact statement/status/model was screened, with full proof and external novelty unassessed in this pass. R2 means selected original theorem/audit passages and claim-level primary comparison were inspected, still without a new independent proof audit or global priority clearance.
 
 ## Provisional family priorities
@@ -21,63 +21,63 @@ This is a complete **catalogue screening**, with deeper bounded comparisons for 
 For every finite abelian group, extended to all finite quasihamiltonian groups (groups whose subgroups pairwise permute) and, separately, all finite p-groups: exact prefix-stabilizer maximum, every optimizer, unique top subgroup and labeled-count recurrence. S3 sharply limits a broader structural extension.
 
 - Significance: Specialized theorem with cross-domain combinatorial reach
-- Novelty evidence: Strong focused candidate; historical priority unresolved. The equality/uniqueness/enumeration package is stronger than the elementary p-group value or subgroup-chain construction alone.
+- Novelty evidence: Focused candidate; historical priority unresolved. The strongest increment is the complete optimizer/coset-hierarchy characterization and unique recovery of the top subgroup. The labeled-count recurrence is a consequence using classical maximal-subgroup recursion and factorial/product enumeration, not a new counting method.
 - Current boundary: No upper bound for all finite groups, all solvable groups or mixed-order nilpotent groups. The related Fourier edge-count application still constructs/evaluates a dense Fourier stage in quadratic work.
-- Next check: Obtain the full Erdős–Faigle–Kern 1992 mathematical body; compare weighted chains, regular permutation-group connectivity statistics and subgroup-tree enumerations, particularly the equality/count statements.
+- Next check: Obtain a readable authorized copy of the full Erdős–Faigle–Kern article and compare its missing general lemmas with optimizer necessity and unique top-subgroup recovery. Further negative keyword searches do not close that gap.
 
 ### 2. Guarded moving-root Rogers–Szegő discriminants and arithmetic families
 
 Exact fixed-root moving-z Hermite splitting and ordinary-discriminant leading coefficients, together with carefully guarded cyclotomic content and squarefreeness applications.
 
 - Significance: Specialized theorem in q-polynomials and arithmetic
-- Novelty evidence: Focused candidate after substantial classical demotions; historical priority unresolved. The moving-root coefficients and guarded arithmetic are the candidate increment.
+- Novelty evidence: Focused fixed-odd-root moving-variable coefficient candidate; historical priority unresolved. The one-simple-overlap initial form and full normalized ordinary-discriminant coefficient are the narrowest surviving increment. Static q-Lucas factorization, the q-to-1 endpoint, standalone gap-two Hermite discriminants and hook congruences are classical; guarded arithmetic is an application.
 - Current boundary: q-Lucas, static root-of-unity factorization, ordinary Hermite discriminants, quasi-Laguerre discriminants and hook-Wronskian identities are established. All-composite half-order squarefreeness and repeated-prime extensions remain open.
-- Next check: Compare exact local ordinary-discriminant leading terms and valuation formulas, not static factorization, against Lubinsky–Saff, root-of-unity q-polynomial literature and citations of the quasi-orthogonal discriminant papers.
+- Next check: Recover the missing Lubinsky–Saff bibliography page 360 and Zhedanov 1997 through authorized copies, then trace exact fixed-root moving-variable ordinary-discriminant results. Compare the complex-parameter disk and inverse-pair application separately; their priority is not cleared.
 
 ### 3. Nonzero common-phase eliminant and exact raw-vector recognizer
 
 A uniformly nonzero degree-at-most binom(r+2,3) phase eliminant, exact full-input acceptance/rejection and all outputs on acceptance, including paid failed phases and the dyadic growing-r bound.
 
 - Significance: Specialized exact recognition algorithm and algebraic certificate
-- Novelty evidence: Potentially distinctive exact contract; broad Prony/chirp/pruned-FFT novelty is rejected. Historical priority search remains incomplete.
+- Novelty evidence: Focused exact-contract candidate; historical priority unresolved. Shared-parameter Hankel elimination followed by Prony recovery and nonsymmetric Toeplitz predictors have explicit antecedents. The narrower comparison target is the uniformly nonzero phase polynomial, guaranteed unit pivots and paid finite-field full-input decision composition.
 - Current boundary: No noisy/robust recovery, optimality or unrestricted fast DFT. Rejection does not return a transform; fallback is charged. Original D06 historical bytes remain unresolved; the accepted later review uses a self-contained Gauss proof and fresh controls.
-- Next check: Compare the exact nonzero eliminant with unknown-common-width Gaussian Prony methods, full 2009 chirp sensing algorithms and structured Toeplitz determinant literature; match field, grid and rejection contracts.
+- Next check: Inspect legitimate complete Derin 1987, Applebaum et al. 2009 and original Lindsay Theorem 5B sources; trace equispaced unknown-width/quadratic-factor sampling. Match arbitrary-center nonvanishing, degree, supplied-field/root grid and every-input rejection costs.
 
 ### 4. Independently routed inverse-sum separator and correction bounds
 
 Uniform branch-count ceilings and approximation obstructions for independently routed inverse sums, including accepted separator/correction refinements; exact-field column-two variant has distinct scope.
 
 - Significance: Specialized structural theorem for restricted matrix representations
-- Novelty evidence: Plausible reusable synthesis within the stated grammar; worldwide priority unresolved. Nullity, graph-induced ranks and treewidth separators are classical.
+- Novelty evidence: Focused specialized synthesis candidate; historical priority unresolved. Complementary inverse ranks, weighted separators, common-graph rank algebra and the column-two frame/gain-graph mechanism are classical. The comparison target is the complete independently routed branch-specific restriction and correction contract with its 9^r cutoff.
 - Current boundary: Branch count, representation rank and separator complexity are not unrestricted arithmetic time. Products, shared evaluators and changed interfaces require new arguments; constants are not claimed optimal.
-- Next check: Match the complete independent-routing, weighted-separator and sparse/low-rank correction contract against graph-induced rank structures and structured inverse-sum literature.
+- Next check: Compare the exact branch-specific common-rectangle and sparse/low-rank correction quantifiers with GIRS/TQS and frame-matrix literature; retain independent routing and half-component normalization. Recover the separate 14:53 correction author-file provenance without reopening its reviewed mathematical support.
 
 ### 5. Fourier endpoint minimax and autocorrelation-deficit rank bounds
 
 All-independent-endpoint dyadic quasiseparable minimum N/4+1, and the separately scoped finite-abelian deficit rank/gap extension.
 
 - Significance: Specialized theorem in Fourier submatrix geometry
-- Novelty evidence: Candidate general endpoint/deficit statement; the bit-reversal hierarchy and N=8 corollary have explicit prior art. Worldwide priority unresolved.
+- Novelty evidence: Two focused application candidates with historical priority unresolved: the all-size cyclic-dyadic independent-endpoint minimax and the separately scoped arbitrary-abelian deficit rank/gap formula. Digit reversal, the N=8 corollary, rank >= rh/N, stabilizer-sensitive uncertainty and the maximum-translation-overlap statistic are established; no new invariant or spectral principle is claimed.
 - Current boundary: Not a +1 bound for half-square blocks; their minimum is N/4. No unrestricted circuit lower bound or general finite-field transfer of positivity. No exact all-size minimum rank-sum theorem.
-- Next check: Compare the all-size extremum and arbitrary-abelian deficit formula with quantitative uncertainty/rank literature, beyond Delvaux–Van Barel Theorem 9.
+- Next check: Recover the accepted final DV2008 comparison artifact while preserving its inherited status and distinct preprint numbering; compare higher-dimensional support/rank profiles and concentration second-moment inequalities retaining overlap data. Noncyclic upper minimax and all-size minimum rank sums remain unestablished in the project.
 
 ### 6. Legal four-orientation signed magnetic bank construction
 
 Accepted all odd N>=23 count 2N-2 floor((N+10)/8)+2 = 7N/4+O(1), using a valid zero-node minor test followed by simultaneous legal-node attainment. The N=5 exact-five-bank result is a finite companion.
 
 - Significance: Specialized representation/existence theorem
-- Novelty evidence: Focused Fourier-specific envelope/legal-attainment candidate; general Padé, reversal, irreducibility and polynomial openness are classical.
+- Novelty evidence: Focused Fourier-specific legal-attainment application candidate; historical priority unresolved. One-orientation scroll/Waring dictionaries, simultaneous Padé, shared-node discriminant guards and reversal/openness are established. The narrow target is the enlarged Fourier envelope and exclusions, quotient-axis identity, zero-node minor witness and their legal 7N/4+O(1) consequence.
 - Current boundary: Nodes may need a splitting extension. No K-only attainment, optimality, fast root construction or scalar FFT improvement. A bank contains N branches; generic-amplitude circuit bounds do not apply automatically to special Fourier amplitudes.
-- Next check: Test a simultaneous count-preserving equivalence of all four weighted orientations to known rational-normal-scroll/simultaneous Waring models; compare the specific Fourier kernel envelope and axis-minor identity.
+- Next check: Resolve whether a complete four-orientation count-preserving equivalence exists, preserving the Fourier target, weighted overlaps, physical axis, legal finite nonzero nodes and splitting-field scope. Separate one-orientation generic ranks and rational realization dimensions do not settle that equivalence.
 
 ### 7. All-length finite-word relative-l2 approximate Fourier evaluation
 
 Accepted cold all-length O(N(t+log log N)) word work, O(N) words, deterministic relative-l2 error <=2^-t for represented dyadics with polynomial dynamic range, supplied 2<=t<=ceil(log2(N+1)).
 
 - Significance: Broad approximate-algorithm scope under a growing-word RAM contract
-- Novelty evidence: Highest broad algorithmic reach in this inventory, but strong packed-FFT/tabulation antecedents. Exact model-matched priority unresolved; do not infer novelty from sub-NlogN word work.
+- Novelty evidence: Broad approximate-algorithm scope within the growing-word model; exact complete-contract priority remains unresolved. Packed transforms, lookup tables and charged data movement/setup have strong antecedents. The comparison target is the combined all-length represented-dyadic relative-l2 contract, not sub-NlogN word work alone. The external OpenAI exact-complex preprint uses a different model and is not a project result.
 - Current boundary: Growing Theta(log N)-bit multiplication/division words; approximation to represented inputs. t=Theta(log N) restores O(N log N). No exact-complex/bit-complexity breakthrough or validated production speedup; table/setup/rounding obligations remain explicit.
-- Next check: Derive a full same-model comparison with bit-packed FFT and word-RAM multiplication results, especially Chan et al. Appendix B: input representation, precision, norm, preparation and output costs must all match.
+- Next check: Inspect the full Fredriksson–Grabowski development and Chan Appendix B citation lineage for an earlier low-precision complex all-output theorem or a fully charged reduction matching representation, error norm, precision, setup and output. External OpenAI proof/Lean validation would be a separate task.
 
 ### 8. Sparse-endpoint single-Green representation lower bound
 
@@ -142,6 +142,16 @@ Exact reconstruction-equivalent guarded atlas on the fixed 99-edge support. The 
 - Current boundary: Both surviving charts retain all 50 original residual equations and 19 original guards. Retained input count is not dimension or algebraic independence. No surviving-chart existence or emptiness, full F11 infeasibility, scalable Fourier construction or runtime result.
 - Next check: First consolidate the exact frozen locus/equivalence and accepted branches; then compare sparse matrix-factorization/gauge elimination methods. Do not treat each eliminated variable as a separate discovery.
 
+## Reconciliation of later priority audits
+
+The 2026-10-10 follow-ups through cycle 2148 support retaining every provisional family rank and every assessment tier. They sharpen attribution rather than certify worldwide priority. The source ledger separates newly inspected primary passages in those audits, inherited final-version comparisons and full-text access gaps. This reconciliation is not a fresh independent proof audit.
+
+Prefix counting mechanisms are standard; optimizer necessity and unique subgroup recovery remain the focused target. Shared-nuisance-parameter Hankel elimination and Toeplitz predictors are established antecedents for the chirp package. The endpoint deficit is a reparameterization of an established overlap statistic. Signed-bank one-orientation dictionaries do not establish a global four-orientation count-preserving equivalence.
+
+For F132, “Dyadic only” in the historical limitation refers to the predecessor. The current all-length bound uses the later packed backend plus the all-length wrapper and its acceptance record; it must not be attributed to the old interpolation compiler alone. The optional O(N^(1/8)) preparation refinement is dyadic-backend-only.
+
+The OpenAI preprint is external prior work: [official introduction at the pinned commit](https://github.com/openai/math/blob/fd4aeeb2ee4fc729c18d98444fed42fd0529eeeb/preprints/An-explicit-power-saving-for-the-exact-discrete-Fourier-transform-September-25-2026/build/sections/introduction.tex). Its statement and computational model are verified; no independent proof, Lean build or axiom validation is claimed here.
+
 ## Attribution changes that matter
 
 1. The norm-certified finite-word evaluator has the broadest algorithmic scope, but word operations differ from scalar complex operations and bit operations. Bit-packed DFTs and precomputed tables already appear in Chan et al., Appendix B. A same-model theorem comparison is still needed.
@@ -175,7 +185,7 @@ Current shared source: [canonical research Sheet](https://docs.google.com/spread
 - [BrunoSalizzoni2020: Giordano Bruno–Salizzoni, Additivity of algebraic entropy for locally finite groups with permutable finite subgroups](https://arxiv.org/pdf/2001.02419). Primary PDF reopened; Theorem 1.4, definitions and Q8/S3 examples. Establishes classical group terminology and permutability context.
 - [LubinskySaff1987: Lubinsky–Saff, Convergence of Padé approximants of partial theta functions and the Rogers–Szegő polynomials (1987)](https://doi.org/10.1007/BF01890574). Inherited mathematical-body comparison covers pp.331–359 and reference p.361; reference p.360 remains missing. Lemma 4.1 p.343, Lemma 4.5 (4.15) p.346 and Theorem 3.2 (3.11–3.12) p.340 are the direct classical antecedents. The whole paper was not newly reread here; a current DOI open failed.
 - [AAK2009: Atakishiyeva–Atakishiyev–Koornwinder, q-extension of Mehta eigenvectors](https://arxiv.org/html/0811.4100v2). Primary full text reopened; inherited precise q-Hermite/Gaussian-binomial mapping retained. Mapping is an audit derivation, not a claim the paper states the new grid minimum.
-- [SawaUchida2018: Sawa–Uchida, Discriminants of classical quasi-orthogonal polynomials](https://arxiv.org/pdf/1802.00605). Primary PDF reopened. Inherited exact quasi-Laguerre pullback to Theorem 4.8 demotes the standalone gap-two Hermite discriminant.
+- [SawaUchida2018: Sawa–Uchida, Discriminants of classical quasi-orthogonal polynomials, arXiv v1](https://arxiv.org/pdf/1802.00605v1). The inherited exact quasi-Laguerre pullback uses arXiv-v1 Theorem 4.8/(4.13). P2109 checks the corresponding [final journal Theorem 3.6/(3.6)](https://www.jstage.jst.go.jp/article/jmath/71/3/71_831/_pdf), pp.844–845. The standalone gap-two Hermite discriminant remains a classical reduction; version and theorem numbers must not be interchanged.
 - [Grosu2020: Grosu–Grosu, The irreducibility of some Wronskian Hermite polynomials](https://arxiv.org/pdf/2007.00065v1). Inherited precise Theorem 8 hook-congruence reduction read; primary source not newly reopened in this pass.
 - [Massey1969: Massey, Shift-Register Synthesis and BCH Decoding](https://www.isiweb.ee.ethz.ch/archive/massey_pub/pdf/BI411.pdf). Inherited full-primary comparison: section III, Theorems 2–3. Recurrence synthesis is classical.
 - [BenOrTiwari1988: Ben-Or–Tiwari, A Deterministic Algorithm for Sparse Multivariate Polynomial Interpolation](https://www.cecm.sfu.ca/personal/monaganm/teaching/TopicsinCA15/BenOrTiwari.pdf). Inherited primary comparison: introduction and section 8. Sparse interpolation/unknown sparsity precedent; complete current finite-field contract not ruled out.
