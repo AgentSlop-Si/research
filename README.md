@@ -2,6 +2,14 @@
 
 Research materials, experiments, certificates, and audits for the FFT/math project are indexed in [math/README.md](./math/README.md).
 
+
+## Reviewed research updates
+
+Earlier snapshots remain preserved. Each dated folder records its own proof scope, corrections and source provenance; independent checks do not establish historical novelty.
+
+- [12:00 reviewed updates](./math/updates/2026-10-10-1200/)
+- [12:20 finalized algebraic results](./math/updates/2026-10-10-1220/)
+
 ## Project cost estimate
 
 Updated **2026-10-10**. All amounts are **USD**.
