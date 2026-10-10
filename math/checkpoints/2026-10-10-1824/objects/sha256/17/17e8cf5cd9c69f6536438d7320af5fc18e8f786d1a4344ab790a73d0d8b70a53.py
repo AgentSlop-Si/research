@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+import json,importlib.util,hashlib
+from pathlib import Path
+OUT=Path(__file__).resolve().parent
+sp=importlib.util.spec_from_file_location('our_fresh_kernel',OUT/'reduce_guarded.py');m=importlib.util.module_from_spec(sp);sp.loader.exec_module(m)
+path=OUT/'CERTIFICATE.json';D=json.loads(path.read_text());P={h:m.unpack(ts) for h,ts in D['polynomials'].items()}
+es={k:P[h] for k,h in D['final']['equations'].items()};gs={k:P[h] for k,h in D['final']['guards'].items()};m.POLYS.clear()
+def dependencies(p):return [v for j,v in enumerate(m.VS) if any(e[j] for e in p)]
+steps=[]
+for v,eid in [(39,'45'),(44,'0'),(55,'2')]:
+ by=m.coeffs(es[eid],m.VS.index(v));assert set(by)<={0,1};den=by[1];num=m.pneg(by.get(0,{}));proof=m.certified_factorization(den,gs);assert proof
+ steps.append(dict(variable=v,source_equation=eid,source_label=D['initial']['labels'][eid],source=m.keep(es[eid]),numerator=m.keep(num),denominator=m.keep(den),dependencies=sorted(set(dependencies(num)+dependencies(den))),denominator_nonzero=dict(guard_factors=proof['guard_factors'],constant=[list(proof['constant'][0]),proof['constant'][1]])))
+comp=dict(status='AUTHOR-PENDING: exact rational-circuit reduction, independent review pending',format='triangular rational polynomial evaluation circuit v1',parent_certificate_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),parent_stage='final',coefficient_basis=D['coefficient_basis'],variables=m.VS,free_variables=[v for v in D['final']['statistics']['variables'] if v not in [39,44,55]],reconstruction_order=[39,44,55],definitions=steps,guards=D['final']['guards'],equations={k:h for k,h in D['final']['equations'].items() if k not in ['45','0','2']},equation_polynomial_source='CERTIFICATE.json: final equations / polynomials',polynomials=m.POLYS,semantics='Evaluate definitions in order using the free coordinates and earlier definitions. Set each eliminated coordinate to its numerator divided by its denominator. Evaluate each listed parent-stage equation and guard at those assignments. Every equation must vanish and every guard must be nonzero. Each denominator is exactly a nonzero constant times the listed parent-stage guards, whose dependencies are already available. Finally reconstruct x91 using the parent certificate linear-elimination record, then invoke the accepted prior reconstruction.',equations_count=55,guards_count=14,nonzero_constant_contradiction_claimed=False,factorization_claimed=False,stop_reason='Expanded attempts for x39, x55 and x44 hit the explicit 50,000-term or 2,000,000-product-pair limits. This compact branch commits those already-certified acyclic pivots without expansion; it does not claim an exhaustive new circuit-level pivot search.')
+(OUT/'COMPACT_BRANCH.json').write_text(json.dumps(comp,separators=(',',':'))+'\n');print('COMPACT FINAL',len(comp['free_variables']),'variables',comp['equations_count'],'equations')

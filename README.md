@@ -24,6 +24,7 @@ Earlier snapshots remain preserved. Each dated folder records its own proof scop
 - [16:16 accepted Fourier updates](./math/checkpoints/2026-10-10-1616/README.md), with pre-publication status retained as a historical snapshot.
 - [16:56 five independent research audits](./math/checkpoints/2026-10-10-1656/README.md), with pre-publication status retained as a historical snapshot.
 - [18:04 Fourier bank bounds and prefix optimum](./math/checkpoints/2026-10-10-1804/README.md), including the separately dated 18:10 Sheet follow-on.
+- [18:24 reviewed axis criterion and guarded Fourier supplement](./math/checkpoints/2026-10-10-1824/README.md), including the separately dated 18:25 Sheet checkpoint.
 
 ## Project cost estimate
 
