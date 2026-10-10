@@ -25,6 +25,7 @@ Earlier snapshots remain preserved. Each dated folder records its own proof scop
 - [16:56 five independent research audits](./math/checkpoints/2026-10-10-1656/README.md), with pre-publication status retained as a historical snapshot.
 - [18:04 Fourier bank bounds and prefix optimum](./math/checkpoints/2026-10-10-1804/README.md), including the separately dated 18:10 Sheet follow-on.
 - [18:24 reviewed axis criterion and guarded Fourier supplement](./math/checkpoints/2026-10-10-1824/README.md), including the separately dated 18:25 Sheet checkpoint.
+- [18:39 accepted stronger theorem checkpoint](./math/checkpoints/2026-10-10-1839/README.md), with the uniform 7N/4 signed-bank theorem, nonabelian prefix extensions, nine-coordinate necessary circuit and verified 18:41 Sheet evidence.
 
 ## Project cost estimate
 
