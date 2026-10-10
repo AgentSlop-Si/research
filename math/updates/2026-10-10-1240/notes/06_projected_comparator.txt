@@ -1,0 +1,93 @@
+Reviewer derived additive quotient comparator
+Frozen draft 1 dated 10 October 2026
+Status DERIVED AND SELF CHECKED PENDING INDEPENDENT REVIEW
+
+This note is separate from the accepted scope of the Phase33 source audit. It is a bounded comparison construction, not a result asserted by the submitted archive. No historical novelty, best-known constant, numerical stability, or unrestricted FFT speedup is claimed. It must receive an independent review before being promoted into a theorem catalogue.
+
+Input and output contract
+
+Let N=2^t with integer t>=1 and integer 1<=C<=t. Let F_N have entries exp(2 pi i jk/N). Let H_C be the odd residues a modulo N with a=1 mod 2^C, and P_C the average over multiplication-index permutations from H_C. The input is an arbitrary dense vector x in C^N; the required output is the full length-N vector y=F_N P_C x=P_C F_N x. It is not selected frequency samples. The output's invariant subspace has rank R=2^C+(t-C)2^(C-1).
+
+The algebraic algorithm needs a primitive 2^C-th root w_C and field operations. The input field must contain x and w_C and have characteristic different from 2. For characteristic zero this computes the stated complex projected DFT after embedding. In positive characteristic it computes the reduction of its coefficient matrix. If a primitive Nth root also exists, this is the usual F_N P_C there. If it does not, no full F_N in that field is asserted. C=0 is outside the contract.
+
+The root is supplied and prevalidated. When C=1, w_C=-1 is a universal constant in odd characteristic, so no root discovery is needed. Validation of a supplied w_C uses w_C^(2^C)=1 and w_C^(2^(C-1))!=1. Together these certify order 2^C in the stated field. Such validation costs O(C) additional field multiplications by repeated squaring and does not change the bound. Root search, field construction, primality certification, and bit arithmetic are outside the algebraic contract.
+
+Orbit description and coefficient proof
+
+For each shell j=1,...,t, write its input positions as n=2^(t-j)u with odd u modulo 2^j. Put m_j=min(j,C), L_j=2^(j-m_j), and q_j=2^m_j. Its H_C orbits have representatives r odd modulo q_j and elements r+q_j h, h=0,...,L_j-1. Their averages define P_C. The zero position is a singleton.
+
+Define the bucket sum B_j(r)=sum_{h=0}^{L_j-1} x_[2^(t-j)(r+q_j h)] and put B_j(r)=0 for even r modulo q_j. The contribution of this orbit to Fourier output k is
+
+(B_j(r)/L_j) sum_{h=0}^{L_j-1} exp(2 pi i k(r+q_j h)/2^j).
+
+The inner geometric sum vanishes unless L_j divides k. If L_j divides k, it equals L_j exp(2 pi i (k/L_j)r/q_j). Consequently the whole shell contributes
+
+1_{L_j divides k} A_j(k/L_j modulo q_j),
+
+where A_j is the positive-sign ordinary q_j-point DFT of B_j. The algorithm therefore has no field inversions. The denominators introduced by the orbit averages have cancelled exactly. Equivalently the coefficient of a single original input from that orbit is either zero or a power of a q_j-th root.
+
+Since q_j divides 2^C, w_j=w_C^(2^(C-m_j)) supplies every root. This proves that the projected coefficient matrix is defined over Q(w_C), and justifies its reduction to any odd-characteristic field with w_C. No Nth root is needed for the projected matrix.
+
+Algorithm
+
+1. Read each nonzero-index input once and add it to B_j(u mod q_j). Find j and u by the power of two dividing the index. Save x_0 separately.
+2. For each j compute the ordinary q_j-point DFT A_j of the zero-even vector B_j, using radix-2 butterflies. This is a real cost, never an oracle or uncharged transform.
+3. Let S_j=A_j(0). Form prefixes Q_a=x_0+sum_{j=1}^a S_j for a=0,...,t. The zero-frequency output is Q_t.
+4. For each output shell ell=1,...,t, and each odd representative v modulo 2^min(ell,C), set
+
+Y_(ell,v)=Q_(t-ell)
+  +sum_{s=1}^{min(ell,C)}
+     A_(t-ell+s)(2^(min(t-ell+s,C)-s) v modulo 2^min(t-ell+s,C)).
+
+5. Scatter Y_(ell,u mod 2^min(ell,C)) to every output position 2^(t-ell)u with u odd. This writes all N outputs.
+
+Proof of reconstruction
+
+For k=2^(t-ell)v with v odd, L_j divides k precisely when j-min(j,C)<=t-ell. All j<=t-ell contribute A_j(0)=S_j. These, together with x_0, are Q_(t-ell).
+
+For j>t-ell, write s=j+ell-t. Because j<=t, s<=ell; the divisibility condition is s<=min(j,C). Since j=t-ell+s>=s, this is equivalent to s<=C. Thus exactly 1<=s<=min(ell,C) remain. At this j, k/L_j=2^(min(j,C)-s)v, giving Step 4.
+
+Changing v by a multiple of 2^min(ell,C) leaves each index in Step 4 unchanged: s<=min(ell,C), so the resulting index difference is divisible by 2^min(j,C). Hence the representative scatter is correct. This establishes y=F_N P_C x for every x, including every boundary case C=1, C=t, and N=2.
+
+Arithmetic charges
+
+Use the unit-cost field model with scalar additions/subtractions and multiplication by prepared roots counted, plus O(log N)-bit word indices. No field inversion appears online or in root-power preparation. Conjugation and error-energy evaluation are not part of this output-only algorithm.
+
+Bucket accumulation uses at most N-1 additions, N input reads, and O(N) index work. Avoiding initial additions into zero reduces constants, but is unnecessary for the bound.
+
+A q=2^m radix-2 FFT can use m q additions/subtractions and m q/2-q+1 nonidentity twiddle multiplications, once its twiddle powers and order/permutation are prepared. This follows by charging two additions per butterfly and skipping the first twiddle of every butterfly block. Direct root recurrences or a less optimized recursive FFT also fit O(m q). The independent code uses the latter style; no constant-factor comparison is asserted for it.
+
+The sum of the shell transform sizes is
+
+sum_{j=1}^t q_j=(t-C+2)2^C-2.
+
+The sum of their radix-2 m q bounds is exactly
+
+sum_{j=1}^t min(j,C)2^min(j,C)
+ =2^C [C(t-C+2)-2]+2
+ =Theta((t-C+1) C 2^C).
+
+Coefficient preparation can share tables for all lengths 2,4,...,2^C: derive the roots by C-1 squarings and generate at most sum_{m=1}^C (2^m-1)=O(2^C) powers. Bit-reversal/permutation tables for those lengths use O(2^C) words and word work. Alternatively they may be generated on demand; either route stays inside the asserted total.
+
+Prefix formation costs t additions. Reconstruction evaluates R-1 nonzero-shell representatives, each with at most C additions and C indexed reads from prepared A_j. Hence it costs at most C(R-1), bounded by O((t-C+1)C2^C). The scatter costs N writes. All stored B_j, A_j, representative tables, and FFT workspace occupy O((t-C+1)2^C) field elements/index words, with O(N) for explicit input and output.
+
+Total including field coefficient preparation and optional order validation:
+
+T=O(N+(t-C+1)C2^C),
+space=O(N+(t-C+1)2^C).
+
+These are algebraic and word-RAM bounds. They are not bit complexity or Python CPU bounds; arbitrary-precision field elements and index words have representation costs. If a full length-N root is the only supplied primitive root, obtaining w_C by t-C squarings adds O(t), which is absorbed by N.
+
+Parameter regime and nonclaims
+
+For fixed C the work is O(N), with an output of rank O(log N). A growing cutoff remains within the linear upper bound when (t-C+1)C2^C=O(N). At C=t the work is O(N+t2^t)=O(N log N), and the output is the ordinary full DFT. The method does not yield an unrestricted sub-N log N transform.
+
+For every C<t there are nonzero x with P_C x=0, so there is no uniform nontrivial relative approximation guarantee. If the norm certificate is required in addition, compute orbit residual energy in another O(N) pass over complex inputs; that requires real arithmetic/conjugation and declared reciprocal powers of two or equivalent averaging. Numerical root error, rounding, cancellation, and stability are not analyzed here.
+
+Compared with the source evaluator, this replaces its direct multiplicative-character table work, Theta(N+(t-C+1)4^C), by ordinary short additive FFTs. It improves the asymptotic C-dependence. It does not assert lower scalar counts for every small cutoff, fastest practical performance, or novelty. Ordinary additive decomposition and finite geometric sums are classical ingredients.
+
+Self-check evidence and reproducibility
+
+Fresh independent_controls.py contains by_additive_quotients and a separately written elementary short_fft, with no imports from the submitted archive. The construction agrees with direct projected DFTs in 56 cases: p=12289 and 65537, t=1,...,7, every C=1,...,t. Those tests include all valid cutoffs at each N and compare to explicit subgroup averaging, not merely a related implementation. A separate N=64, C=2 example over F_5 verifies all 64 entries using only the order-4 root 2 and the geometric coefficient formula; F_5 has no order-64 root.
+
+These are self-checks by the author of this comparator note. They are not the independent second review required for promotion. The uploaded source programs were never executed, and no remote artifact was changed.

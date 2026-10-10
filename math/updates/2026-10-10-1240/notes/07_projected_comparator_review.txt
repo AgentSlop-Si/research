@@ -1,0 +1,247 @@
+Independent proof and control verdict: dyadic projected additive-FFT comparator
+10 October 2026
+
+VERDICT: ACCEPT, WITH THE EXPLICIT SCOPE BELOW
+
+The frozen reviewer-derived comparator is correct for N=2^t, t>=1 and
+1<=C<=t. It computes every entry of P_C F_N x = F_N P_C x for arbitrary
+dense input, with total O(N+(t-C+1)C 2^C) field/word-RAM work including
+root-power preparation, optional validation of a supplied root, and full
+readout. A primitive 2^C-th root suffices. No primitive Nth root is required
+in the computation. No unrestricted sub-N log N FFT improvement follows.
+
+This accepts a separately derived comparison construction, not a claim that
+the submitted Phase33 source implements it. The source's evaluator remains
+a different direct-character-table method. Historical priority, optimality,
+floating-point stability, bit complexity, and best practical constants are
+not established.
+
+Frozen object reviewed
+
+Title: Reviewer derived additive quotient comparator, Frozen draft 1
+Filename: REVIEWER_ADDITIVE_QUOTIENT_COMPARATOR.txt
+SHA-256: 996a7215ebc4ffac8921d90e4083d9b50d134c72622488496cbb1342dee2b592
+
+Its pending-review label records its status when frozen. This separate receipt
+supplies the independent review; the frozen note need not be rewritten.
+The author's programs and the uploaded source programs were not executed or
+imported for this review. Only newly written controls were run.
+
+1. Precise output, conductor, and field contract
+
+For 1<=C<=t let H_C consist of the units a modulo N with a=1 modulo 2^C.
+P_C averages coordinate permutations induced by multiplication by H_C.
+Over the complex numbers it is an orthogonal projector. A multiplier
+permutation intertwines F_N with its inverse permutation, and inversion
+preserves H_C, so P_C commutes with F_N. Individual multipliers need not
+commute with F_N.
+
+On shell j, whose indices are 2^(t-j)u for odd u modulo 2^j, the image of
+H_C is the kernel of reduction to the units modulo 2^min(C,j). Therefore
+the invariant multiplicative characters are exactly those factoring through
+that quotient. Equivalently, their primitive multiplicative conductor is
+at most 2^C. This is multiplicative conductor, not an additive low-frequency
+cutoff. The principal character has conductor 1; there is no nonprincipal
+character of conductor 2.
+
+Set m_j=min(C,j), q_j=2^m_j, L_j=2^(j-m_j). The shell's orbits consist of
+the units r+q_j h, 0<=h<L_j, for odd r modulo q_j. Zero is a singleton.
+Consequently
+
+rank(P_C) = 1 + sum_(j=1)^t 2^(min(C,j)-1)
+          = 2^C + (t-C)2^(C-1).
+
+The algorithm works over a field K of characteristic other than 2 containing
+the input and a specified primitive 2^C-th root omega. The projected matrix
+has entries in the integer cyclotomic ring Z[omega], as the coefficient proof
+below shows. In positive characteristic, "reduction" should be read as this
+integer-cyclotomic specialization, not as a field homomorphism from Q.
+
+If K contains a compatible primitive Nth root zeta, meaning
+zeta^(N/2^C)=omega, the result is F_(N,zeta)P_C x in K. Otherwise adjoining
+such a root gives the same identity in an extension, and the result lies
+back in K. This is stronger and more precise than pretending that a full
+N-point DFT exists in a base field lacking its root. Characteristic 2 is
+excluded: the required roots and invertible averaging sizes are absent.
+
+No large multiplicative-character basis, Gauss sums, character roots, or
+field inversions are needed by the comparator itself.
+
+2. Independent coefficient derivation
+
+Let B_j(r) be the sum of the original inputs over an orbit, and let B_j(r)=0
+at even residues modulo q_j. After projection the input at every member of
+that orbit is B_j(r)/L_j. In a splitting field its Fourier contribution is
+
+(B_j(r)/L_j) zeta_(2^j)^(k r)
+  * sum_(h=0)^(L_j-1) zeta_(L_j)^(k h).
+
+The geometric sum is zero unless L_j divides k; if it divides k, the sum is
+L_j. The denominator cancels exactly. Thus the entire shell contributes
+
+1_(L_j divides k) A_j((k/L_j) mod q_j),
+
+where A_j is the positive-sign, unnormalized ordinary q_j-point DFT of B_j.
+Its root is omega^(2^(C-m_j)). Each original input coefficient is therefore
+either zero or a power of a q_j-th root. This proves the root contract and
+all cancellations for every input, rather than only for invariant inputs.
+
+3. Check of the frozen note's exact reconstruction equation
+
+Write a nonzero output as k=2^(t-ell)v with v odd. A shell contributes
+precisely when j-min(j,C)<=t-ell. If j<=t-ell, the DFT table index is zero.
+For j>t-ell put s=j+ell-t. The remaining conditions are exactly
+1<=s<=min(ell,C), and its table index is
+
+2^(min(t-ell+s,C)-s) v modulo 2^min(t-ell+s,C).
+
+With Q_a=x_0+sum_(j=1)^a A_j(0), this gives
+
+y_(2^(t-ell)v) = Q_(t-ell)
+  + sum_(s=1)^min(ell,C)
+      A_(t-ell+s)(2^(min(t-ell+s,C)-s) v
+                  mod 2^min(t-ell+s,C)).
+
+The zero-frequency result is Q_t. Changing v by 2^min(ell,C) changes every
+table index by a multiple of its table length, so each representative can
+be scattered to its whole output orbit. This verifies the frozen note's
+equation, including its normalization, sign, and output ordering.
+
+4. Complete arithmetic and access ledger
+
+The dense input shells partition the N-1 nonzero positions. Enumeration by
+shell and odd unit takes N input reads including x_0, at most N-1 bucket
+additions, and O(N) word operations. It needs no repeated N-entry scan and
+no uncharged discrete logarithm or multiplicative-group enumeration.
+
+Put S=sum_(j=1)^t min(C,j)2^min(C,j). Then
+
+sum_(j=1)^t q_j = (t-C+2)2^C-2,
+S = 2^C [C(t-C+2)-2]+2
+  = Theta((t-C+1)C 2^C).
+
+Every short FFT is paid for. A radix-2 transform of size 2^m uses m2^m
+additions/subtractions and at most m2^(m-1) multiplications, even if identity
+twiddles are charged. The usual omission of the first twiddle in each block
+gives m2^(m-1)-2^m+1 nonidentity multiplications. Neither count assumes a
+free Fourier oracle.
+
+A shared length-2^C power table uses at most 2^C-1 multiplications. All shorter
+twiddles are indexed subsequences. Bit reversal costs O(q_j) per transform
+when generated on demand, or O(2^C) total stored word preparation for shared
+length-specific tables. Root validation by repeated squaring costs O(C).
+Thus the root preparation and validation are inside the asserted bound.
+
+The frozen reconstruction forms t prefixes, then evaluates rank(P_C)-1
+representatives with at most C additions and C indexed table reads each.
+All N outputs are explicitly written. These costs fit the same bound.
+Its stored shell tables total O((t-C+1)2^C) field elements/words, in addition
+to explicit input/output. This is the accepted space bound in the note.
+
+Independent reconstruction cross-check and tighter workspace option
+
+The same shell identity admits a separate nested-support implementation:
+
+- For j=1,...,C form T_j[k]=T_(j-1)[k mod 2^(j-1)]+A_j[k], with T_0=[x_0].
+- Initialize y[k]=T_C[k mod 2^C] at every output.
+- For each j>C, add A_j[q mod 2^C] only to y[2^(j-C)q].
+
+The low-table merges cost 2^(C+1)-2 additions. The high-shell additions
+total sum_(j=C+1)^t N/2^(j-C)=N-2^C. Hence reconstruction itself can be
+O(N), with O(2^C) auxiliary workspace beyond the input and output, processing
+one shell at a time. This independently derived implementation corroborates
+the same theorem; it is not needed to repair the frozen reconstruction.
+
+The fresh streaming code deliberately charges identity multiplications and
+initial additions into zero. Its exact online field-operation ledger is
+
+(N-1) + (3/2)S + (2^(C+1)-2) + (N-2^C)
+  = 2N+2^C-3+(3/2)S.
+
+The recorded ledger is an explicit implementation count, not a best constant.
+It excludes optional root validation from the online count and records the
+root-table preparation separately. Both are included in the theorem's total.
+
+5. Root supply, endpoints, and limits
+
+The primitive root is a supplied input, not the result of a free root search.
+Its order is certified by omega^(2^C)=1 and omega^(2^(C-1))!=1. The field
+and its arithmetic must already be available. Field construction, primality
+certification, discovery of a root, and arbitrary-precision bit costs are
+separate problems. Starting from a supplied Nth root adds t-C squarings,
+which are absorbed by O(N). At C=1 the root is the universal constant -1,
+so there is no root search at all.
+
+C=1: all odd multipliers are averaged; the rank is t+1. The method is
+linear-time but does not improve the source's optimized C=1 scalar constant.
+
+C=t: H_C is trivial, the rank is N, and the ordinary full DFT is obtained.
+The work is O(N log N). The deliberately simple fresh streaming code takes
+3tN online field operations when identity twiddles are counted; this is no
+new unrestricted FFT complexity improvement.
+
+N=2, C=1: the formula gives y=(x_0+x_1, x_0-x_1), as required.
+
+C=0: this is explicitly outside the frozen note's contract. A consistent
+optional extension sets H_0=H_1 and P_0=P_1, because all units are odd and
+every integer is 1 modulo 1. The rank is t+1, not the displayed C>=1 rank
+formula with C=0 substituted. Implement with effective cutoff max(1,C).
+Its work is O(N), still consistent with the requested O(N) endpoint.
+The controls test this extension separately. N=1, t=C=0 is also checked
+as the standalone identity case, outside the frozen t>=1 theorem.
+
+For fixed C the method is O(N), and a growing cutoff stays within that
+upper bound when (t-C+1)C2^C=O(N). The output rank remains restricted for
+every C<t. A vector with +1 and -1 at two members of one orbit is completely
+annihilated by P_C despite having nonzero full DFT. No uniform nontrivial
+relative error guarantee follows for arbitrary input.
+
+The comparison improves the C-dependence of the source's direct-character
+upper bound O(N+4^C log N), or its sharper implementation-dependent form
+Theta(N+(t-C+1)4^C). It does not certify a new historical theorem, a lower
+bound, or faster small-C scalar counts than every other evaluator.
+
+The field-operation and word-RAM claims use O(log N)-bit index words. They
+do not claim constant-time large-integer field arithmetic. Conjugation,
+residual-energy certificates, floating-point precision, and numerical
+conditioning are additional tasks and are not silently included.
+
+6. Fresh finite and exact controls
+
+The reusable file fresh_controls.py uses only Python's standard library.
+It contains two independently written reconstruction variants: the exact
+frozen representative formula and the separate nested-support formulation.
+They are compared with direct positive-sign DFTs followed by explicit
+multiplication-subgroup averaging, rather than with the source program.
+
+Results in fresh_results.json:
+
+- 100 parameter cases over F_17, F_97, F_257, and F_65537.
+- 3,012 complete basis vectors and 213,220 output entries per reconstruction
+  variant; all agree exactly with the independently constructed target.
+- 219 dense vectors over 119 parameter cases, including lengths 256 and 512.
+- All C=0, C=1, and C=t endpoints in those ranges, orbit-rank checks,
+  F_N P_C=P_C F_N checks, and exact field-operation ledger checks.
+- 36,408 exact characteristic-zero coefficient entries across 27 cases,
+  N=2 through 64 and every C=0,...,t, checked in
+  Z[z]/(z^(N/2)+1) using integer cross-multiplication of rational subgroup
+  averages. These are symbolic coefficient checks, not approximate complex
+  arithmetic and not merely modular checks.
+- At N=8, nine vectors over F_3 with cutoff 1 and nine over F_5 with cutoff 2
+  are checked against full DFTs in their quadratic extensions. Neither base
+  field has a primitive eighth root. The projected results lie in the base
+  field and match the comparator using only its cutoff root.
+- Negative controls detect a reversed Fourier sign, omission of the canceled
+  orbit-size factor, and a nonprimitive supplied root.
+
+Finite controls corroborate the algebraic derivation; they do not replace
+the proof or certify every software implementation. No uploaded or comparator
+author program was executed or imported. No remote file was changed.
+
+Reproduce locally with:
+python fresh_controls.py
+
+Integrity information is in SHA256SUMS.txt and REVIEW_RECEIPT.json. The
+receipt binds the frozen author note, this proof verdict, the fresh control
+source, and the exact recorded results. The code also embeds its own source
+SHA-256 in the result for an independent consistency check.
