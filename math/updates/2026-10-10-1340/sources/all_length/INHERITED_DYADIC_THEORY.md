@@ -1,0 +1,296 @@
+Public source-text preservation. This is the source author’s theory. The [accepted audit](../../reviews/02_all_length_taylor.md) controls its model and interpretation: the catalogue already contains a stronger all-length interpolation compiler, so this is an alternative Taylor proof. The original source’s project-wide missing-transfer and review-pending wording is historical. No historical priority or production eager-table implementation is certified. References to original programs describe the source package; those programs are excluded here. Preservation and hashing are not a new full proof review. This inherited text does not override the accepted compiler’s explicit precision-domain, quantizer, preparation-cap and fallback safeguards.
+
+# Norm-certified tabulated Fourier transforms
+
+**Date:** October 10, 2026  
+**Status:** A self-contained, project-originated proof candidate for a deterministic, normwise-accurate **finite-word** Fourier upper bound. Not independently peer reviewed; external novelty is unconfirmed. **Not an exact arbitrary-complex FFT breakthrough.**
+
+## Executive statement
+
+For N a power of two, every fresh binary-encoded complex input with O(log N) bits per coordinate can be transformed, with every output explicit, to relative Euclidean error epsilon in
+
+    O_epsilon(N log N / log log N)
+
+word-RAM operations and O(N) words, with all input-independent tables and coefficient preparation charged. Epsilon is any fixed dyadic constant in (0,1/4]. No sparsity, repeated inputs, randomization, or failure probability is assumed.
+
+The same asymptotic bound holds, with constants depending on beta, for epsilon_N = 2^{-ceil((log_2 N)^beta)}, 0<beta<1. More generally epsilon_N=N^{-o(1)} gives o(N log N) work under the explicit radix schedule below.
+
+The target is the normalized DFT U_N[k,j]=exp(-2 pi i k j/N)/sqrt(N):
+
+    ||reported-U_N x||_2 <= epsilon ||x||_2.
+
+This is **not** coefficientwise relative accuracy, correct rounding of all bins, exact complex arithmetic, an integer-multiplication bit bound, or a practical crossover result. The speedup uses nonlinear finite-state quantization and word-addressed lookup tables. It must not be relabeled a saving in an exact linear arithmetic circuit.
+
+The construction responds to the earlier project's explicit open approximation question: improve the weak sampled L1/sqrt(N) all-bin scale to a meaningful worst-case energy-relative error without restoring N log N work. It does not resolve the project's separate exact arbitrary-input goal.
+
+## 1. Model and input representation
+
+Put n=log_2 N. A RAM word has w=C n bits, with a sufficiently large fixed C depending on the fixed input-format bound. The model supports standard word arithmetic, comparisons, multiplication, integer division, shifts, Boolean operations, and random access. A constant number of words is charged as O(1), not an arbitrary-precision scalar oracle.
+
+Each real and imaginary input coordinate is a dyadic rational with O(n) bits of binary description and polynomial dynamic range. One concrete format is x_j=(a_j+i b_j) 2^{-B}, where |a_j|,|b_j|<=N^c and |B|<=c n for fixed c. Per-coordinate dyadic exponents within O(n) can be aligned to a common binary scale using O(N) work and O(n)-bit integers, changing c by a constant. Unbounded exponents or arbitrary real-number oracles are outside this input model.
+
+Scan the coordinates. If all are zero, output N zeros. Otherwise choose a power-of-two scale R such that
+
+    1/2 <= max_j max(|Re(x_j/R)|,|Im(x_j/R)|) < 1.
+
+This uses the largest integer component's leading-bit position, not an expensive exact norm. Write a=x/R. Then
+
+    1/2 <= ||a||_2 <= sqrt(2N).
+
+Finding leading bits can be charged without assuming a new oracle: split an O(n)-bit word into a fixed number of chunks of at most gamma n bits, use an eagerly constructed leading-bit table for each chunk, and inspect the fixed number of chunks. This table costs N^gamma poly(n)=o(N) time and space. Its size is included in preparation.
+
+Reported outputs may be stored as explicit mantissa/exponent pairs, with R's exponent added per output in O(N) work. A shared scale is also an explicit numeric format, not a deferred transform query.
+
+## 2. Finite floating alphabet
+
+Choose
+
+    p = ceil(log_2(1024(n+1)/epsilon)),
+    u = 2^{-p},
+    e_min = floor(log_2(epsilon/[1024(n+1)]))-n,
+    e_max = n+4,
+    tau = 2^{e_min}.
+
+Thus
+
+    u <= epsilon/[1024(n+1)],
+    tau <= epsilon/[1024 N(n+1)].
+
+A nonzero real alphabet member is
+
+    sign * (2^p+f) * 2^{e-p},
+    0<=f<2^p, e_min<=e<=e_max.
+
+Zero has a reserved exponent code. Invalid padded codes are defined to decode to zero. Let E=e_max-e_min+1 and e_bits=ceil(log_2(E+1)). One real code uses p+e_bits+1 bits, and one complex code uses
+
+    b = 2(p+e_bits+1).
+
+For fixed epsilon, p=O(log n), E=O(n), and b=O(log n)=O(log log N).
+
+Quantize by truncating the mantissa toward zero. Values below 2^{e_min} are sent to zero. Upper overflow is saturated and flagged. For every non-overflowing real v,
+
+    |q(v)-v| <= u |v| + tau.
+
+Applying this separately to real and imaginary components gives, for any length-N complex vector v,
+
+    ||q(v)-v||_2 <= u ||v||_2 + sqrt(2N) tau.                 (2.1)
+
+All reachable states will be shown to avoid upper overflow. Saturation only makes the finite table total on arbitrary padded inputs; it is never needed in a valid theorem execution.
+
+Every alphabet value is an integer multiple of 2^{e_min-p}. Its lattice integer has O(n+p) bits. For p=o(n), dot products with dyadic coefficients and at most poly(n) summands use O(n) bits. Consequently their exact implementation during table construction needs only a fixed number of machine words. The Python verifier uses arbitrary-precision integers for portability, not to assume free unbounded arithmetic.
+
+## 3. Explicit small-block tables
+
+Fix gamma=1/4. For sufficiently large N, select the largest power of two m satisfying
+
+    m b <= gamma n.                                        (3.1)
+
+Construct tables for each power-of-two r<=m that can occur as a final radix. For every one of the 2^{br} padded keys:
+
+1. Decode the r complex symbols.
+2. Multiply by a prepared dyadic matrix A_r approximating the normalized U_r, using exact fixed-point integer dot products.
+3. Quantize every output back to the same alphabet.
+4. Pack the r output codes into one word.
+
+The same table is used at every scale: its local operation is U_r, while scale-dependent phases are performed separately.
+
+### Coefficient requirement
+
+Prepare A_r entrywise to complex absolute error at most u/(8r). Then
+
+    ||A_r-U_r||_2 <= ||A_r-U_r||_F <= u/8.
+
+No approximate-matrix rank assumption is used. The table stores the prescribed r-coordinate rounded/saturated result for every alphabet input. The normwise approximation bound below applies to nonsaturating executions; Section 6 proves that every reachable theorem execution is nonsaturating.
+
+Combining coefficient error with (2.1), the complete vector-valued table stage, or a block-diagonal collection of such stages on N coordinates, satisfies
+
+    ||computed(v)-U v||_2 <= 3u ||v||_2 + sqrt(2N) tau,      (3.2)
+
+provided there is no upper saturation. The bound 3u is deliberately conservative.
+
+### Table cost
+
+There are at most log_2(m)+1 block sizes. Since 2^{br}<=N^gamma, direct r^2 evaluation per key costs
+
+    N^gamma poly(n,p)=o(N)
+
+for the fixed-accuracy and subpolynomial-accuracy regimes considered here. The total table storage has the same sublinear upper bound. Every entry is constructed; no unknown-input-state table is supplied for free and no average-case cache-hit assumption is made.
+
+The output payload also fits in one word because it has r b bits. Online input gathering/key assembly uses O(r) word operations, the table access uses O(1), and unpacking/scattering uses O(r). A small transform is therefore O(r), **not an uncharged O(1) r-output operation**.
+
+For fixed epsilon,
+
+    m=Theta(n/log n),
+    log_2 m=Theta(log n).
+
+For small N with no useful m, use an ordinary rounded radix-2 transform. For fixed epsilon these are finitely many sizes, so this does not change the asymptotic statement. This fallback may cover all practically interesting lengths under the conservative constants.
+
+## 4. Scale-dependent twiddles without hidden N log N preparation
+
+Repeated low-precision multiplication around the entire N-th-root circle can accumulate O(Nu) error. Do not generate twiddles that way.
+
+Instead choose a phase grid
+
+    R_phase = 2^{p+8}.
+
+Prepare its R_phase unit-circle points to absolute error at most 3*2^{-(p+10)}. For a requested root exp(-2 pi i j/L), choose its nearest grid index using integer arithmetic:
+
+    s = round(j R_phase/L) mod R_phase.
+
+Since pi<4, the angle discrepancy is at most
+
+    pi/R_phase < u/64.
+
+Including the dyadic coefficient error gives complex absolute error <u/8. Multiplying a stored value by this dyadic twiddle and quantizing satisfies the same conservative stage bound (3.2).
+
+The entire phase table costs
+
+    2^p poly(n,p)
+
+word operations, including rigorous coefficient approximation. For fixed epsilon this is poly(n); when p=o(n) it is N^{o(1)}. It is therefore o(N), not N separate expensive transcendental evaluations.
+
+### An elementary uniform coefficient generator
+
+The supplied implementation makes this obligation concrete using rational arithmetic:
+
+- Machin's identity pi=16 atan(1/5)-4 atan(1/239), with alternating-series rational intervals.
+- A Taylor approximation of exp(i theta) on |theta|<=pi. The integral remainder is bounded by |theta|^{L+1}/(L+1)!.
+- A dyadic enclosure for 1/sqrt(r), computed by integer square root:
+
+      floor(2^q/sqrt(r)) = isqrt(floor(2^{2q}/r)).
+
+- Exact rational/dyadic rounding.
+
+Take the coefficient denominator exponent p+ceil(log_2 r)+10. The recorded rational error certificate is <u/(8r). All arithmetic in this preparation can be done by elementary polynomial-time-in-(n+p) integer methods. Even a crude polynomial factor is harmless in the preceding sublinear table bounds. No FFT or fast integer-multiplication theorem is used to justify this preparation.
+
+## 5. Exact factorization underlying the approximate executor
+
+For L=r s, let child transforms be
+
+    y_a[k]=(1/sqrt(s)) sum_{j=0}^{s-1} x[a+r j] exp(-2 pi i k j/s).
+
+Then
+
+    (U_L x)[k+s t]
+      =(1/sqrt(r)) sum_{a=0}^{r-1}
+        y_a[k] exp(-2 pi i a k/L) exp(-2 pi i a t/r).
+
+This follows by substituting the child sum and writing every original index as a+r j. It is the classical mixed-radix identity, not a new exact factorization.
+
+Use radix m until the remaining length is <=m, then use its corresponding table. At a global recursion level all twiddle multiplications form a diagonal unitary target, and all small transforms form a block-diagonal unitary target. All gathers/scatters are permutations.
+
+There are
+
+    d=ceil(n/log_2 m)
+
+macro-levels, each with O(N) gathering, twiddle, key assembly, lookup, unpacking, and output movement. No subproblem returns compressed output or omits coordinates.
+
+## 6. Complete normwise error proof
+
+Count at most L=2n+1 elementary unitary-target/quantization stages, including initial quantization. Actual macro-depth is smaller, but using n avoids any circular precision choice.
+
+Let a=x/R and let e_j be the Euclidean error from the ideal cumulative unitary program after j stages. By (3.2),
+
+    e_{j+1} <= (1+3u)e_j + 3u||a||_2 + sqrt(2N)tau.
+
+Consequently,
+
+    e_L <= [(1+3u)^L-1]||a||_2
+            + [sum_{j=0}^{L-1}(1+3u)^j] sqrt(2N)tau.       (6.1)
+
+Here 3uL<=1/2. Elementary exponential estimates imply
+
+    (1+3u)^L <= 2,
+    (1+3u)^L-1 <= 6uL.
+
+Since ||a||_2>=1/2,
+
+    e_L/||a||_2 <= 6uL + 4L sqrt(2N)tau
+                  <= 6uL + 8L N tau
+                  < epsilon.                            (6.2)
+
+The final inequality follows directly from L<=2(n+1) and the selected u,tau; the last upper bound is at most 28 epsilon/1024.
+
+### No saturation, without circularity
+
+Argue by first-overflow contradiction. Up to a supposed first overflow, the preceding inequalities apply and bound every stored vector norm by (1+epsilon)||a||_2 <=(5/4)sqrt(2N). Before quantization each approximate unitary block or twiddle increases norm by at most 1+u/8. Its coordinates are therefore far smaller than 2^{e_max}=16N. The first overflow cannot occur. This also validates every earlier use of (3.2).
+
+Restoring the exact power-of-two scale R proves
+
+    ||reported-U_N x||_2 <= epsilon||x||_2.
+
+No probability statement, variance argument, or generic-input assumption enters this proof. The algorithm is nonlinear because of quantization, so a bound for exact bounded-coefficient linear circuits does not directly govern its word-table operations.
+
+## 7. Work and accuracy theorems
+
+All sources of work are included:
+
+    T(N,epsilon) = O(N + N n/log_2 m
+                       + N^gamma poly(n,p) + 2^p poly(n,p)).
+
+Total storage is O(N) words: the recursively retained arrays form a geometric-series space bound, all outputs are explicit, and prepared tables are o(N).
+
+### Fixed accuracy
+
+For every fixed 0<epsilon<=1/4, p=Theta(log n), b=Theta(log n), m=Theta(n/log n), and
+
+    T(N,epsilon)=O_epsilon(N log N/log log N).
+
+### Subpolynomially shrinking accuracy
+
+For epsilon_N=2^{-ceil(n^beta)}, fixed 0<beta<1,
+
+    p=Theta(n^beta), b=Theta(n^beta), m=Theta(n^{1-beta}),
+    log_2 m=Theta((1-beta)log_2 n),
+
+and preparation remains o(N). Thus
+
+    T(N,epsilon_N)=O_beta(N log N/log log N).
+
+More generally p=o(n) implies m grows without bound, table preparation is o(N), and T=o(N log N). This covers effectively specified epsilon_N=N^{-o(1)}. The word size remains Theta(log N) for sufficiently large N.
+
+### Polynomial accuracy does not retain this speedup
+
+If epsilon=N^{-a}, fixed a>0, then p=Theta(n) and b=Theta(n). Condition (3.1) permits only bounded m, so there are Theta(log N) macro-levels. For sufficiently demanding a the phase table also ceases to be sublinear. No polynomial-accuracy or exact-complex corollary follows by silently sending epsilon to zero.
+
+## 8. Relation to the user's previous branches
+
+- **Sparse phasor tables:** they compress a sampled surrogate and control a weak L_box/sqrt(N) all-bin error. Here there is no sampling and no low-rank projection; every coordinate traverses a complete normalized Fourier program. The price is N log N/log log N rather than O(N), with a deterministic relative l2 guarantee.
+- **Condition-reset macro stages:** the classical macro composition is retained, but there is no borrowed #130 exact primitive. Each local operation is an explicitly tabulated finite alphabet map with a rigorous normwise error bound.
+- **Certified growing fibers:** those are exact on a restricted internal-mode family. This construction assumes no internal sparsity but gives only approximate finite-word outputs.
+- **Green/feedback/marked-cycle proposals:** their unresolved exact identities or evaluators are not invoked. Their negative results remain relevant to the separate exact-complex task and are not claimed to be overturned here.
+- **Graph reuse:** all macro blocks use the same fully enumerated state-response table. The amortization is input-independent and preprocessing is charged even for one fresh transform.
+
+## 9. Implementation and evidence
+
+`norm_tabulation.py` contains explicit integer alphabet encoding, rigorous rational coefficient preparation, packed block kernels, complete small eager tables, the precision/radix scheduler, and an exact-dyadic reference executor.
+
+`verify.py` passes seven groups:
+
+- 6,000 quantizer cases, with underflow and saturation audited separately.
+- 2,160 pack/unpack cases.
+- 198 coefficient certificates checked against independent 70-digit transcendental values.
+- ALL 69,632 padded keys in two actual eager tables, covering 270,336 complex table outputs.
+- 216 end-to-end accuracy cases, 4,536 output coordinates, at lengths 2 through 64, tolerances 1/16 and 10^-6, and forced radices 2,4,8.
+- 16 symbolic schedules and conservative exact rational error budgets.
+- 4 polynomial-accuracy cases demonstrating loss of the growing radix.
+
+The largest measured relative-error/tolerance ratio was about 0.000375638; constants were chosen conservatively.
+
+**Software coverage is not overstated:** the complete eager tables use toy precision. High-accuracy tests use on-demand block-entry construction and sparse memoization of requested phase-grid points, plus forced radices that may not satisfy the asymptotic key budget at those small N. This validates the arithmetic/error mechanisms, NOT the asymptotic time of those test runs. A full production eager-table executor and useful-size crossover have not been demonstrated.
+
+The mathematical algorithm explicitly enumerates all admissible table keys and the phase grid; it does not rely on these simulator shortcuts. It is asymptotically finite and uniform, but its useful sizes can be astronomically large.
+
+## 10. Originality and references
+
+The classical Fourier decomposition, floating-point quantization, finite-state tabulation, and Four-Russians principle are not new. This note's proposed project-level contribution is a combined deterministic arbitrary-input relative-l2 theorem, with normalization, underflow, exponent-alphabet size, twiddle generation, table output packing, cold preparation, and the accuracy-dependent radix boundary all accounted for.
+
+Targeted searches did not establish publication priority. The full conclusion might have appeared elsewhere or follow from a known general tabulation theorem. Independent mathematical and literature review are necessary before labeling it a novel published result.
+
+Primary external comparator: Josh Alman, *Faster Walsh-Hadamard Transform and Matrix Multiplication over Finite Fields using Lookup Tables*, SOSA 2023, DOI 10.1137/1.9781611977585.ch13, arXiv:2211.04643. This established work gives N log N/log log N bit bounds for constant-field Kronecker transforms; the present note instead treats rounded complex Fourier blocks with an explicit global error contract. No priority is claimed for the shared lookup mechanism.
+
+The official OpenAI Math #130 documentation separately reports a uniform exact-complex sub-N-log-N result with supplied roots and unrestricted coefficients. No construction or saving from that result is used here. This finite-word approximate theorem does not strengthen it in the same model.
+
+## Final claim boundary
+
+A concrete norm-certified, all-input approximate word-RAM upper-bound proof candidate has been supplied. It is not another conditional missing-factor identity. However, it changes the exact-complex contract: finite binary input representation, quantization, and table lookup are essential. **The requested new universal exact arbitrary-complex FFT and its external novelty have not been established.**

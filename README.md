@@ -13,6 +13,12 @@ Earlier snapshots remain preserved. Each dated folder records its own proof scop
 - [13:00 representation and interface results](./math/updates/2026-10-10-1300/)
 - [13:10 proof coverage and bounded N7 checkpoint](./math/updates/2026-10-10-1310/)
 - [13:20 exact-minimum-eight N7 theorem and field scope](./math/updates/2026-10-10-1320/)
+- [13:40 four bounded Fourier research reviews](./math/updates/2026-10-10-1340/)
+- [Small-order synthesis manuscript and certificates](./math/manuscripts/2026-10-10-small-order/small_order_synthesis_manuscript/editorial_v2/README.txt)
+- [Eight-file intake and scoped review](./math/intake/2026-10-10-1339/)
+- [Q01 consolidation and Schur derived gate](./math/reviewed-results/2026-10-10-q01-schur/)
+- [Finite-word approximate packed Fourier theorem](./math/reviewed-results/2026-10-10-packed-fft/)
+- [Cyclotomic and Gauss synthesis review](./math/reviews/2026-10-10-cyclotomic-gauss-v2/)
 
 ## Project cost estimate
 
