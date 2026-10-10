@@ -52,6 +52,8 @@ Uniform branch-count ceilings and approximation obstructions for independently r
 - Current boundary: Branch count, representation rank and separator complexity are not unrestricted arithmetic time. Products, shared evaluators and changed interfaces require new arguments; constants are not claimed optimal.
 - Next check: Compare the exact branch-specific common-rectangle and sparse/low-rank correction quantifiers with GIRS/TQS and frame-matrix literature; retain independent routing and half-component normalization. Recover the separate 14:53 correction author-file provenance without reopening its reviewed mathematical support.
 
+- Source-availability update: [2026-10-10; source-availability reconciliation, superseding the preceding author-body recovery task] The original 14:53 correction-compatible separator manuscript has been recovered, hash-verified and read (SHA-256 79a5f64c11c47e39eb1fe90f7f6d51743dc9e4f1a9d89a5c505ce17835a86c0f). Its short acceptance receipt remains an attribution-normalized export, not recovered original receipt bytes. The author-body absence is closed; the model-matched literature comparison and worldwide priority remain open. Ranks, assessment bands, correctness classifications and counts are unchanged.
+
 ### 5. Fourier endpoint minimax and autocorrelation-deficit rank bounds
 
 All-independent-endpoint dyadic quasiseparable minimum N/4+1, and the separately scoped finite-abelian deficit rank/gap extension.
