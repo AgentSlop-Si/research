@@ -19,6 +19,8 @@ Earlier snapshots remain preserved. Each dated folder records its own proof scop
 - [Q01 consolidation and Schur derived gate](./math/reviewed-results/2026-10-10-q01-schur/)
 - [Finite-word approximate packed Fourier theorem](./math/reviewed-results/2026-10-10-packed-fft/)
 - [Cyclotomic and Gauss synthesis review](./math/reviews/2026-10-10-cyclotomic-gauss-v2/)
+- [15:53 reviewed Fourier research checkpoint](./math/checkpoints/2026-10-10-1553/README.md), with publication status retained as a historical snapshot.
+- [Earlier accepted Fourier checkpoint](./math/checkpoints/2026-10-10-1553/prior_checkpoints/accepted_fourier_research_checkpoint_2026-10-10.zip), preserved byte-for-byte as a 94-member archive.
 
 ## Project cost estimate
 
