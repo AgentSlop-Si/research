@@ -1,0 +1,44 @@
+PHASE23 CANDIDATE-GATE CORRECTION ADDENDUM
+Engineering bug fix only. Independently authored helper; original audit and source unchanged.
+
+Acceptance status
+Accept the helper as a complete enumeration of the existing planner's input-independent seed bound on canonical chirps, with exhaustive finite controls described in TEST_RECEIPT.json. This closes the missed s=4 fast path at budgets 2 and 3. It does not add a new transform algorithm, establish novelty, enlarge the mathematical recognized family beyond the existing four strategies, or assert an old-multipole-family superset.
+
+Definition
+Let N>=3 be odd, B a nonnegative integer, and 0<=s<N. Define the existing planner's seed bound C_N(s) by:
+  C_N(4)=2, when s=4 is a valid canonical residue;
+  C_N(s)=min(max(4,s), N-s+4 if s>4 else N, N/gcd(N,s)) otherwise.
+The special bound 2 is an input-independent upper bound. A particular nonresonant one-pole input or a pole on the omitted closing edge may need only one direct seed. We make no minimum-seed claim for individual phases.
+The desired gate is exactly A(N,B)={s in [0,N): C_N(s)<=B}, optionally intersected with a user-supplied canonical supported_s restriction.
+
+Complete finite enumeration
+The helper unions these sets and returns their sorted unique residues:
+1. Forward: 0<=s<N, max(4,s)<=B. This is empty if B<4, otherwise 0 through min(N-1,B).
+2. Wrapped: 5<=s<N, N-s+4<=B. This is max(5,N+4-B) through N-1, if nonempty.
+3. One-pole: {4}, provided N>4 and B>=2.
+4. Small additive order: for every divisor d of N with 1<=d<=min(B,N), include s=k(N/d) for 0<=k<d and gcd(k,d)=1. The case d=1,k=0 is included because gcd(0,1)=1.
+
+Proof of soundness
+Every forward or wrapped residue has the corresponding strategy cost <=B. The special residue 4 has bound 2<=B. For an order-set residue, gcd(N,kN/d)=(N/d)gcd(d,k)=N/d, so its additive order is d<=B. Consequently its coset cost is <=B; for s=4 its special cost is also <=B whenever it could arise from this order set, since its additive order is N>=5. All returned residues therefore satisfy C_N(s)<=B.
+
+Proof of completeness
+For s!=4, a minimum <=B is witnessed by one of the ordinary strategies. A forward witness belongs to set 1; a real wrapped witness belongs to set 2. The disabled wrapped placeholder N when s<=4 cannot create an additional case: additive order N/gcd(N,s)<=N, so if that placeholder is <=B, the coset bound is also <=B. For a coset witness let d=N/gcd(N,s)<=B and k=s/(N/d). Then d divides N, 0<=k<d, gcd(k,d)=1, and the helper includes s in set 4. For s=4, C_N(4)<=B is exactly B>=2, so set 3 includes it. This proves equality with A(N,B), not merely a sufficient subset.
+An optional supported_s iterable is validated and intersected with the complete set, so completeness is relative to that explicit restriction.
+
+Bounded preparation
+No N-residue scan is used by the helper when B is fixed. Forward and wrapped sets each have O(B) entries. The divisor loop tests at most min(B,N) integers; the inner loops inspect at most sum_{d=1}^{min(B,N)}d = O(min(B,N)^2) integer candidates. Coprimality, sorting and adjacent deduplication add their ordinary integer/word costs. The helper does not use hashing. A conservative bound is O(B^2 log(B+2)) word work when indices fit machine words, with the usual integer-arithmetic factors otherwise. Large N does not enter as an enumeration loop bound when B is fixed. There are no field operations or discrete-log queries in this helper.
+Candidate storage is O(min(N,B^2+B+1)); sorted output cannot exceed N. A supplied restriction iterable of length L adds O(L log(B+2)) validation/intersection operations using binary search, with retained restriction storage bounded by the candidate set. This input cost is not hidden. The phase table, root-power construction, raw coefficient verification, transform work, output writes and fallback retain the original audit's accounting and limitations.
+
+Minimal integration guidance, not an applied source patch
+The smallest source-level fix would explicitly propose residue 4 before the existing canonical-range and seed-budget filters. This addendum instead supplies a standalone complete helper. A maintainer can use its returned residues in the existing phase_table construction, keeping the existing coefficient ratio gate, every adjacent recurrence check, and ordinary N-point fallback unchanged. No modification has been made to phase23.py, phase22.py, the source ZIP, or the frozen audit.
+
+Recognition and fallback boundaries
+Candidate membership is only a preliminary gate. It does not authorize fast execution without checking all N input samples. The nonzero accepted family remains
+  x_t=gamma*mu^t*eta^(s*t^2)/product_{r=1}^t(1-eta^(8r)),
+with nonzero gamma and mu, prime field, supplied primitive 2N-root, odd N, and an eligible canonical s. The zero vector remains a separate valid shortcut, including B=0. Unsupported chirps, unrelated raw vectors, or forged matching prefixes still require fallback. Arbitrary non-root-grid mu is allowed and tested. The prime-field precondition and the previous family's non-inclusion correction remain unchanged.
+
+Test independence and exact scope
+The test oracle computes additive order by repeated modular addition until returning to zero. It neither calls the helper's cost function to construct its expected set nor uses the helper's gcd/divisor enumeration. It compares every canonical residue against the literal planner cost for every odd N=3 through 511 and every budget B=0 through N+4. It also checks the helper's exposed cost function against this separate oracle, monotonicity, restriction generators/repeats, invalid arguments, huge-N bounded-budget cases, and a huge budget on small N.
+Fresh exact-field controls verify s=4 acceptance at budgets 2 and 3 for all nonzero phases in four verified prime fields, including off-grid phases and resonant two-seed cases, and compare a separately authored one-pole evaluator with direct Fourier sums.
+Additional exhaustive raw-vector tests compare gate acceptance with independently generated exact family sets over F_7 at N=3 and F_11 at N=5. Every rejected vector is sent through a fresh exact Horner-evaluation fallback stand-in and checked against direct power sums. This verifies routing and correctness of the controls, not a rerun of the original source NTT. Unsupported genuine chirps and every single-coefficient mutation of an s=4 example also remain on fallback.
+No original source module was imported, executed, patched or compiled. Only the new helper and new test program were executed. The original audit remains frozen under its previous hash. TEST_RECEIPT.json records exact finite counts and file hashes; the additive proof covers valid N and B beyond the finite tests.

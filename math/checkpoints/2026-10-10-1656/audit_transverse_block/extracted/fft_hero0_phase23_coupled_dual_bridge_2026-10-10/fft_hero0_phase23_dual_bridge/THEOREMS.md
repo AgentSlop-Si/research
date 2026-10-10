@@ -1,0 +1,240 @@
+# HERO #0 — Phase 23: coupled dual-bridge Fourier rigidity
+
+**Date:** 2026-10-10  
+**Status:** Mathematically derived necessary conditions and reproducible exact-field checks. No universal exact `O(N)` or `O(N log log N)` Fourier algorithm; external novelty not established.
+
+## 0. What Phase 23 actually changes
+
+Phase 22 allowed one transverse Green path to vary while **fixing** its complementary path. Its successful rank-one elimination could not rule out simultaneous complex retuning of both paths. Phase 23 works with **both paths completely unknown** and obtains two independent, quantitative conditions for every two-stage rook-supported factorization:
+
+1. A field-independent **Hadamard rank-product barrier**, with a sharp blockwise Fourier singular-value lower bound for approximation. It applies to arbitrary complex rook-supported matrices, hence any number of weighted Green terms confined to the corresponding coordinate fibers.
+2. A characteristic-zero **phase-support budget**: even if one path is completely unrestricted and complex, the other path must have linearly many nonreal *effective matrix entries*. Both orientations must satisfy the condition simultaneously. This is a necessary condition, not a constraint on the number of independent edge parameters.
+
+These theorems are not generic FFT lower bounds. They are specific to a two-layer horizontal/vertical rook-support layout with the standard input/output coordinate ordering. Output or input bit reversals/other permutations are not automatically covered.
+
+## 1. Model and the exact two-path equation
+
+Let `N=s²` and represent flat indices by `(x,y)`, where the flat index is `sx+y` and `x,y ∈ {0,...,s−1}`. Let `X_H` and `Y_H` preserve the second coordinate, i.e., only entries with output `y=input b` can be nonzero. Let `X_V` and `Y_V` preserve the first coordinate, i.e., only entries with output `x=input a` can be nonzero.
+
+Consider the *unnormalized* Fourier matrix
+
+`F_N[(x,y),(a,b)] = ζ_N^((sx+y)(sa+b))`, where `ζ_N=e^(2π i/N)`.
+
+For `x≠a` and `y≠b`, the product `T=(Y_H+Y_V)(X_H+X_V)` has only **two intermediate vertices**, `(x,b)` and `(a,y)`. Therefore, with no approximation and no invertibility or parameter assumptions,
+
+```
+T[(x,y),(a,b)] =
+  Y_V[(x,y),(x,b)] X_H[(x,b),(a,b)]
++ Y_H[(x,y),(a,y)] X_V[(a,y),(a,b)].              (1.1)
+```
+
+The opposite-axis `H-H` and `V-V` paths vanish on those off-rook entries.
+
+Fix `x,b` and form the `(s−1)×(s−1)` block indexed by free `y≠b` and `a≠x`. Set
+
+```
+u_y = Y_V[(x,y),(x,b)]
+v_a = X_H[(x,b),(a,b)]
+A[y,a] = Y_H[(x,y),(a,y)]
+B[y,a] = X_V[(a,y),(a,b)].
+```
+
+The exact simultaneous-coupling equation is
+
+```
+                         T^{x,b} = u v^T + A ⊙ B.   (1.2)
+```
+
+Here `⊙` denotes the Hadamard / entrywise product, **without complex conjugation**.
+
+Fixing `y,a` instead gives the mirrored decomposition, where `Y_H X_V` contributes the outer product and `Y_V X_H` contributes a Hadamard product. Both apply to the *same* candidate and must be satisfied.
+
+### Fourier block spectrum
+
+The Fourier block is
+
+```
+F^{x,b}[y,a] = ζ_s^(xb+ya) ζ_N^(yb)
+             = ζ_s^(xb) diag_y(ζ_N^(yb)) · F_s[all y except b, all a except x].
+```
+
+The row diagonal has unit modulus. Since `F_s F_s*=sI`, deleting row `b` and column `x` gives a matrix whose Gram is `sI−vv*` with `||v||²=s−1`. Its singular values are
+
+- `√s`, repeated `s−2` times;
+- `1`, repeated once.
+
+Therefore its rank is exactly `s−1` over the complex numbers. The same full-rank statement holds over a field containing a primitive `s`th root, with characteristic not dividing `s`, because every cofactor of a Fourier matrix is a nonzero scalar multiple of an inverse entry. The mirrored blocks have the same singular values.
+
+## 2. Theorem 23.1 — fully complex, fully coupled rank-product gate
+
+**Theorem.** If `T=F_N` then for every `x,b`,
+
+```
+rank(A^{x,b}) · rank(B^{x,b}) ≥ s−2.                (2.1)
+```
+
+For every `y,a`, the mirrored product of the two opposite transverse ranks must also be at least `s−2`.
+
+**Proof.** Write rank factorizations
+
+`A=Σ_{i=1}^{r_A} a_i b_i^T`, `B=Σ_{j=1}^{r_B} c_j d_j^T`.
+
+Then
+
+`A⊙B=Σ_{i,j}(a_i⊙c_j)(b_i⊙d_j)^T`.
+
+Thus `rank(A⊙B)≤r_A r_B`, over *any field*. Equation (1.2) implies
+
+`rank(T^{x,b}) ≤1+r_A r_B`.
+
+Since `rank(F^{x,b})=s−1`, equality requires `(2.1)`. The mirrored proof is identical. ∎
+
+This is a constraint on **transverse ranks of the specific fiber-kernel views**; it is not a statement that a full Green resolvent has low rank (a Green resolvent is ordinarily invertible/full rank). The theorem imposes no restrictions on real vs complex weights or on how much the two Green paths are tuned together.
+
+**Equal-rank consequence.** If both transverse matrices have rank at most `r`, then necessarily `r²≥s−2`, so `r≥√(s−2)=Ω(N^(1/4))` for an exact factorization. This is not an arithmetic-circuit lower bound, since a high-rank view may still be generated by an `O(N)`-applicable structured operator.
+
+## 3. Theorem 23.2 — a full-matrix approximation bound
+
+Suppose in one orientation `rank(A^{x,b})rank(B^{x,b})≤ρ` for **every** `(x,b)`, where `0≤ρ≤s−3`.
+
+Every corresponding candidate block has rank at most `1+ρ≤s−2`. The Eckart–Young–Mirsky theorem and the Fourier block singular values show that its squared Frobenius error is at least
+
+```
+s·(s−3−ρ)+1.
+```
+
+The `s²` transverse blocks `(x,b)` partition exactly the entries with `x≠a,y≠b`; these entries appear in no other block in that same orientation. Therefore
+
+```
+||F_N−T||_F² / ||F_N||_F²
+  ≥ 1 − (3+ρ)/s + 1/s².                             (3.1)
+```
+
+The mirrored orientation yields an independent bound, and one may take the maximum of the two. In particular, if `ρ=o(s)` uniformly then the relative Frobenius error tends to **1**, not zero. This is an error bound for approximating the *complete* Fourier matrix, **not** a bound on a small collection of spectral outputs.
+
+This interpolation includes the Phase 22 one-path-only result when `ρ=0`; here `ρ` can be positive and **both paths are unknown, complex and active**.
+
+### Consequence: no two-layer homogeneous-fiber Green FFT
+
+If the output-horizontal kernels are identical on every horizontal fiber,
+
+`Y_H[(x,y),(a,y)] = h[x,a]` independent of `y`,
+
+then every view `A^{x,b}` has rank at most 1. If the input-vertical kernels are identical on every vertical fiber,
+
+`X_V[(a,y),(a,b)] = v[y,b]` independent of `a`,
+
+then every `B^{x,b}` has rank at most 1. This is true even if `h,v` are entirely complex and arise from dense cyclic Green resolvents, and **regardless** of the input-horizontal and output-vertical groups' complex weights.
+
+Thus `ρ≤1`. For every `s≥4`, `1<s−2` and exact equality is impossible. The quantitative error lower bound is
+
+```
+||F_N−T||_F / ||F_N||_F
+  ≥ sqrt(1−4/s+1/s²)  →  1.                         (3.2)
+```
+
+The corresponding reverse homogeneous pair has the same obstruction. Homogeneity may also hold for a **sum** of multiple fiber-replicated Green kernels, since the sum remains independent of the transverse fiber coordinate. This is an all-length restricted no-go theorem, not proof that a *fiber-varying* Green network is impossible.
+
+### More general separable-fiber corollary
+
+Suppose for each fixed `x` and for all `y,a`,
+
+`Y_H[(x,y),(a,y)] = Σ_{i=1}^{r} f_i(y)g_i(x,a)`, and
+
+`X_V[(a,y),(a,b)] = Σ_{j=1}^{u} h_j(a)k_j(y,b)`.
+
+Then, after deleting coordinates, the transverse matrices have ranks at most `r,u`; hence every exact two-layer Fourier factorization requires `r u≥s−2`. If `ru=o(s)` the approximation error tends to 1 by (3.1). A polynomial-of-degree-`d` dependence of **the effective kernels** on a fiber coordinate is an example with rank at most `d+1`; this does not follow merely from polynomial edge *weights* after Green inversion.
+
+## 4. Theorem 23.3 — simultaneous imaginary-phase support budget
+
+Over the complex numbers, put
+
+```
+m(s) = (s−1)/2, if s odd;
+       (s−2)/2, if s even.
+```
+
+**Lemma (uniform sine rank).** For every fixed `x,b`, the real matrix `Im F^{x,b}` has rank at least `m(s)`. Moreover its top `m(s)−1` singular values are at least `√(s/2)`, and its `m(s)`th singular value is at least `√(s/2−m(s))` (at least `1/√2`). The same holds for every mirrored Fourier block.
+
+**Proof.** Embed the `(s−1)×(s−1)` imaginary block in the full `s×s` row-phased Fourier matrix. Frequencies `y` and `s−y` share a real 2-dimensional trigonometric subspace. Choose one row from each of the `m` nonself-conjugate frequency pairs, avoiding the single deleted row `b`. These `m` nonzero real sine/cosine rows are pairwise orthogonal with squared norm `s/2`. Each has zero mean. Deleting one column `x` changes their Gram matrix from `(s/2)I_m` to `(s/2)I_m−vv^T`, where every coordinate of `v` has magnitude ≤1. This matrix has `m−1` eigenvalues `s/2` and one eigenvalue at least `s/2−m>0`. As the chosen rows form a submatrix of `Im F^{x,b}`, the stated rank and singular-value lower bounds follow. For the mirrored blocks, transpose and exchange the roles of rows and columns. ∎
+
+Let `q_HV` count the off-diagonal entries with nonzero imaginary part in the *effective matrices* `Y_H` and `X_V` combined, including multiplicity across those two matrices. Let `q_VH` analogously count nonreal off-diagonal entries of `Y_V` and `X_H`. Both orientations must be considered.
+
+**Theorem (exact).** Every complex exact two-layer rook factorization satisfies
+
+```
+q_HV ≥ ceil( s² · max(m−2,0)/(s−1) ),
+q_VH ≥ ceil( s² · max(m−2,0)/(s−1) ).               (4.1)
+```
+
+**Proof.** In one transverse rectangle, equation (1.2) gives a complex outer product `uv^T` plus `A⊙B`. The imaginary part of the outer product has real rank at most 2. Let `q_{x,b}` count positions in the rectangle where either `Im A` or `Im B` is nonzero. The imaginary part of `A⊙B` is supported on at most `q_{x,b}` matrix entries and hence has rank at most `q_{x,b}`. Therefore
+
+`m ≤ rank(Im F^{x,b}) ≤ 2+q_{x,b}`,
+
+so `q_{x,b}≥m−2`. Across all `s²` rectangles, every nonreal off-diagonal entry of `Y_H` or `X_V` participates in at most `s−1` such rectangles. Therefore
+
+`s²(m−2) ≤ Σ_{x,b} q_{x,b} ≤ (s−1) q_HV`.
+
+The mirrored orientation proves the separate inequality for `q_VH`. ∎
+
+For even `s=16`, this requires `q_HV≥86`, `q_VH≥86`; for `s=64`, it requires at least `1886` per crossed pair. As `s→∞`, each pair needs `(1/2−o(1))N` *effective nonreal entries*. These counts are **not** lower bounds on the number of complex Green-edge parameters: one complex edge can make many entries of a dense Green inverse nonreal. They are also coordinate/gauge dependent.
+
+**Approximation version.** The matrix `Im(T^{x,b})` has rank at most `2+q_{x,b}`. Use the uniform sine singular-value bound and Eckart–Young:
+
+```
+||F^{x,b}−T^{x,b}||_F²
+  ≥ (s/2) max(m−3−q_{x,b},0).
+```
+
+Summing disjoint transverse blocks and charging each nonreal entry at most `s−1` times gives
+
+```
+||F_N−T||_F² / ||F_N||_F²
+ ≥ max(0, (m−3)/(2s) − (s−1)q_HV/(2s³)).          (4.2)
+```
+
+The mirrored inequality holds with `q_VH`. If either of those phase-support budgets is `o(N)`, the relative Frobenius error has limiting inferior at least `1/2`. This is weaker than the rank-product bound in its overlap of applicability, but it operates on **a different complexity measure** (effective phase support instead of complex ranks) and requires no rank assumption on the complementary path.
+
+## 5. Exact finite-field and numerical certificates
+
+`phase23_dual_phase.py`, `test_phase23.py` and `audit_phase23.py` independently evaluate the formulas, including arbitrary complex rook groups, genuine Green cycles, and varying low-separation-rank fibers.
+
+Using the prime `p=65537` and a primitive `N`th root of unity:
+
+| Grid side `s` | `N` | Rank of Fourier block | Homogeneous complex Green two-path rank | Nonzero `3×3` Fourier minor mod 65537 |
+|---:|---:|---:|---:|---:|
+| 4 | 16 | 3 | 2 | 1024 |
+| 8 | 64 | 7 | 2 | 8736 |
+| 16 | 256 | 15 | 2 | 36857 |
+| 32 | 1024 | 31 | 2 | 17660 |
+
+The determinant is for rows and columns indexed `1,2,3` of `F_s`; analytically it equals
+
+`(ζ_s^1 ζ_s^2 ζ_s^3) ∏_{1≤i<j≤3}(ζ_s^j−ζ_s^i)`,
+
+which is **nonzero over C for every s≥4**, independent of finite-field reduction. The modulo-65537 values are computational consistency checks, not the sole characteristic-zero proof.
+
+Additionally, true cyclic Green matrices were assembled into *both complete stages* and multiplied exactly modulo 65537 at `s=4,8,16`; their transverse rank remained ≤2, matching the proof. Independently, genuine complex-valued cyclic Green matrices were used for all four resolvent groups at `s=4,8,16`. The full-matrix measured relative errors were about `1.398`, `1.122`, `1.033`, respectively, versus rigorous lower bounds `0.250`, `0.718`, `0.868`. These are validation controls, not optimization results. Fiber-varying, fully field-valued rook groups with transverse ranks `(2,2)` at `s=8`, `(3,3)` at `s=16`, and `(3,4)` at `s=32` satisfied the predicted rank ceilings.
+
+The imaginary-rank proof was independently checked in complex arithmetic on **every transverse rectangle** for `s=3,4,5,6,7,8,9,12,16`, in both orientations. Formal sine specializations were also checked exactly in `GF(65537)` for all rectangles at `s=4,8,16`. The Gram eigenvalue identity was checked independently, with numerical error of floating-point magnitude.
+
+Seventeen Phase23 automated tests pass; 88 inherited Phase19–22 tests were rerun and pass. Numerical ALS fitting of unrestricted rook matrices at `s=3,4,5` found no exact all-input Fourier factorization, but this is **not** an impossibility result and is not used in any proof.
+
+## 6. What is actually new, and what remains open
+
+- **New-to-this-project:** two simultaneous rank-product requirements for the fully complex dual bridge; quantified **full-transform** approximation floor for low transverse rank; complex homogeneous Green no-go even with the other path completely adjustable; paired effective phase-entry count and its approximation floor.
+- **Classical ingredients:** rank of the Schur/Hadamard product, Fourier minor/Vandermonde rank, Eckart–Young–Mirsky, trigonometric Fourier orthogonality, and fiberwise sparse factorization. We have **not** established external priority or publication novelty.
+- **Still open:** whether the original fully retunable, strongly non-homogeneous, high-transverse-rank two-layer Margulis Green network can factor `F_N` for *any* unbounded length family. Typical random complex weights produce full transverse ranks and pass the new rank-product test, but fail the Fourier equations; passing a necessary gate is not a construction.
+- **Not claimed:** worst-case exact sub-`N log N` FFT, `O(N)` integer multiplication, arbitrary endpoint permutations, bit-complexity superiority, or a general arithmetic-circuit lower bound.
+
+### Exact Phase 24 target
+
+For `s=4` and then `s=8`, enforce both rank-product budgets and the full off-rook tensor equations simultaneously. Eliminate Green fiber parameters using a coupled polynomial/Sylvester resultant with **all** on-rook and diagonal equations retained. Distinguish (i) high-rank but compatible kernels from (ii) generic high-rank kernels with residual Fourier error. Check any candidate in exact `Q(ζ_N)` or an extension field, including denominator singularities, then derive a **uniform all-length** application recurrence if a solution survives. Do not repeat the Phase22 one-bridge repair or the Phase21 mixed-Hessian span.
+
+### Related prior art for novelty screening
+
+- L. Zheng, E. Riccietti, R. Gribonval, *Efficient Identification of Butterfly Sparse Matrix Factorizations*, SIAM Journal on Mathematics of Data Science 5(1), 2023, https://doi.org/10.1137/22M1488727.
+- L. Zheng, E. Riccietti, R. Gribonval, *Identifiability in Two-Layer Sparse Matrix Factorization*, https://arxiv.org/abs/2110.01235.
+- L. Zheng et al., *Butterfly factorization by algorithmic identification of rank-one blocks*, https://arxiv.org/abs/2307.00820.
+
+These references support the general sparse/two-layer factorization context, not an externally verified priority claim for this project's specialized inequalities.

@@ -1,0 +1,124 @@
+INDEPENDENT AUDIT: HERO #17, PHASE 23
+Chirped q-Green coset transform, ordinary N-point target
+Frozen 2026-10-10. Original source archive identity: see SOURCE_ARCHIVE_LEDGER.json at the export root.
+
+VERDICT
+
+Accept the core structured-family theorem in its stated exact prime-field model, the default-budget detector's soundness, the coset O(dN+N) bound, and the published same-N scalar-operation totals. The three-seed case s=N/3 works for every odd N divisible by 3. This is not a general-input linear FFT, a bit-complexity result, a floating-point accuracy result, a hardware speed claim, or a novelty certificate.
+
+There are two concrete corrections and one API caveat:
+1. The eligibility table is incomplete for seed_budget=2 or 3: it omits s=4, whose declared seed cost is 2. It safely falls back, so this does not corrupt outputs or affect the default budget 12 or headline case.
+2. The new recognized family escapes the previous bounded-Hankel-rank family, but it is not a strict superset of that family. The phrase "strictly wider" should be replaced by "a different family including examples of growing normalized Hankel rank."
+3. The constructor assumes p is prime. Its root-order test does not validate primality. This is a documented-domain caveat rather than a counterexample over F_p.
+
+METHOD AND PROVENANCE
+
+Both supplied Library files were materialized and treated as read-only evidence. The external COSET_AUDIT_RESULTS.json is byte-identical to the copy inside the ZIP. Every one of the 16 entries in the supplied SHA256SUMS.txt verifies. Source programs, tests, predecessor programs, and supplied audit programs were never imported, compiled, or executed.
+
+The audit reads phase23.py and the relevant phase22.py validation/ledger/ordinary-N NTT code statically. Fresh controls reconstruct the equations independently, generate coefficients using the explicit closed product formula, use an independently written generic Cooley-Tukey NTT with direct small butterflies, and use separate direct Fourier sums. The fresh evaluator does not share the original implementation or its arithmetic ledger. Published numeric ledgers are independently derived from loop counts, not accepted as measurements.
+
+The technical evidence is the supplied frozen package. No historical priority search or previous phase's full regression rerun was attempted.
+
+EXACT DOMAIN AND ACCEPTED INPUTS
+
+Let N>=3 be odd, p prime, 2N divide p-1, eta have order 2N, omega=eta^2, and q=eta^8=omega^4. Since gcd(N,4)=1, q has order N. Thus each 1-q^t for 1<=t<N is nonzero, and Phi_t=product_{r=1}^t(1-q^r) is invertible.
+
+The nonzero fast-path input has the form
+  x_t = gamma * mu^t * eta^(s*t^2) / Phi_t,
+where gamma and mu are any nonzero field elements, 0<=s<N, and s is in the actual generated eligibility table. The all-zero vector is handled separately. A zero geometric phase, or a nonzero vector with one of its first three entries zero, goes to the fallback. Every nonzero true member has all its entries nonzero.
+
+Define R_t=(1-q^t)x_t/x_(t-1). A family member has R_t=mu*eta^s*omega^(s*(t-1)); hence R_2/R_1=omega^s. Distinct canonical s have distinct omega^s. The code compares this ratio with the bounded deterministic table and then verifies every adjacent relation for t=1,...,N-1. Once x_0 and R_1 are fixed, these nonvanishing-denominator relations uniquely determine every coefficient. Therefore successful full verification proves family membership. A matching prefix is insufficient, and a later forged value is rejected.
+
+No assumption mu^N=1 or mu^(2N)=1 is used. The large controls use mu=2, verified off the 2N-root grid for each of the source audit's fields. There is no discrete-log oracle, probabilistic fingerprint, or general N-root enumeration in the input-dependent gate.
+
+SPECTRAL IDENTITY AND WRAP
+
+The coefficient relation yields, directly on the finite polynomial P(z)=sum_t x_t z^t,
+  P(z)-P(qz) = R_1*z*P(omega^s*z) - R_1*x_(N-1)*omega^(-s)*z^N.
+Substitute z=omega^j, with j modulo N. The exact ordinary positive-sign N-point transform X_j=P(omega^j) satisfies
+  X_(j+4) = X_j - R_1*omega^j*X_(j+s) + B,
+  B = x_(N-1)*R_1*omega^(-s).
+The final term comes from removing the single degree-N endpoint. In particular, non-grid mu does not justify dropping a mu-dependent boundary: its contribution is already inside x_(N-1) and R_1. The source retains the correct term.
+
+All spectral indices wrap modulo N and eta powers modulo 2N. Canonicalizing s modulo N is legitimate because eta^(N*t^2)=(-1)^t, so s+N with phase mu equals s with phase -mu. The fresh controls explicitly check this sign identity.
+
+COSET PROOF AND COST
+
+Set g=gcd(N,s), d=N/g, H=<s>. H has d elements, and H+4r for r=0,...,g-1 are distinct cosets because gcd(4,g)=1. Seed all d values indexed by H with direct N-term Fourier evaluations. If H+4r is known, then both j and j+s are in that coset, so the spectral identity computes j+4 in the next coset. The first g-1 transitions visit every other output exactly once. No unresolved within-coset dependency, closure solve, division, or hidden transform is needed.
+
+There are d direct Fourier seeds and N-d propagations. Direct seeds cost O(dN), propagation O(N), fresh root powers O(N), and full raw recognition O(N) for fixed seed budget. Retained storage is O(N) field elements for fixed budget. This proves O(dN+N) accepted-input field arithmetic, including the requested N outputs. In particular, s=N/3 has d=3 even while s grows linearly with N.
+
+For generic s, d can be Theta(N); this coset method alone can take quadratic work. The default recognizer only accepts residues with a bounded planned seed count. It does not establish a uniform linear algorithm for every chirp or arbitrary raw vector.
+
+OTHER EXECUTION PATHS AND SINGULARITIES
+
+For s=1,2,3, four consecutive seeds permit forward propagation. For s>4, the first s seeds allow solving for X_(j+s), since X_j and X_(j+4) have already been computed and R_1*omega^j is nonzero. For s=N-t near N, t+4 seeds permit the backward-index construction. The planner's inequalities prevent it from choosing more initial indices than available at the small valid lengths.
+
+For s=4, (1+R_1*omega^j)X_(j+4)=X_j+B. At most one denominator vanishes because the omega^j are distinct. The +4 walk visits every residue at odd N. A singular traversed edge is handled by directly seeding its successor; all other nonzero denominators are batch inverted with one inversion in the supplied implementation. A pole on the omitted closing edge needs no extra seed, because X_0 is already known. The source's handling is correct. Fresh controls tested every possible pole position at N=5,9,15,27,49,81.
+
+On a rejected length-N field vector, apply calls the ordinary N-point NTT with the same root grid. At lengths 3^m the inspected code uses radix 3. At a residual non-3 radix it directly evaluates that residual transform; it can be quadratic on a large prime length. This is a correct all-input fallback, not a new all-length FFT bound. The wrong input length raises an error before transform execution. The original program itself was not run in this audit; fallback correctness is supported by source inspection, the Cooley-Tukey identity, and the fresh independent comparisons.
+
+DETECTOR COMPLETENESS COUNTEREXAMPLE
+
+The documented planner assigns cost 2 to s=4. However, the constructor initially proposes s<=B, near-N residues with N-s+4<=B, and residues of additive order <=B. For B=2 or 3 and N>=5 odd, s=4 is in none of those sets. Therefore the special two-seed class is never offered to the gate.
+
+Concrete witness: N=9, p=19, eta=2, s=4, gamma=1, mu=2,
+  x=[1,15,3,15,12,6,12,17,16].
+The source gate logic reconstructed independently rejects this member at budget 2, but accepts it at budget 4. It is a missed fast path, not a wrong Fourier output. The minimal correction is to include 4 in the proposed set before the existing range and seed-cost filters. The default B=12 includes it already. Across every odd N=5,...,99 and budget 0,...,14, the fresh eligibility-set comparison found exactly this omission and no admitted over-budget residues.
+
+PRIMALITY PRECONDITION COUNTEREXAMPLE
+
+phase22.validate checks odd length, divisibility of p-1, and eta's multiplicative order; it does not test p for primality. For N=3, p=91, eta=12, all those checks pass, but q=53 and gcd(1-q,91)=13, so the supposed field denominator is not invertible. This input is outside the theorem's prime-field domain. Either explicitly retain a caller-certified-prime contract or add a separately charged appropriate validation step. Do not describe the constructor as certifying a prime field.
+
+GROWING HANKEL RANK, BUT NOT SET INCLUSION
+
+After normalizing by the old s=2 kernel, b_t=gamma*mu^t*eta^((s-2)t^2). The r-by-r Hankel matrix factors into invertible diagonal matrices and a Vandermonde matrix with nodes omega^((s-2)i). It is full rank whenever r<=N/gcd(N,s-2) and 2r-1<=N. For N=3^m and s=N/3, gcd(N,s-2)=1, giving rank (N+1)/2. Fresh modular elimination confirms ranks 5,14,41 at N=9,27,81.
+
+This demonstrates examples beyond every fixed-order old recognizer; it does not make all old examples members of the new single-chirp class. At N=9,p=19,eta=2, take the old order-two input x_t=h^(2)_t*(1+omega^t). Its vector is [2,7,3,15,6,16,7,2,9]. Its consecutive R_(t+1)/R_t values are [2,8,14,1,1,14,8], which are not constant, so it cannot be any single new-family member. The two recognized sets are not nested in the claimed direction.
+
+INDEPENDENT OPERATION-LEDGER DERIVATION
+
+A fully accepted nonzero input uses 5N+5 online field operations for recognition: 2N additions/subtractions, 3N+2 multiplications, and 3 inversions. The initial all-zero test, input normalization, comparisons, indexing, gcd, table sorting, and control operations are word/integer work; they are not part of the published numeric scalar field ledger.
+
+In the coset path with d seeds:
+  direct seeds: 2d(N-1) field operations;
+  boundary and propagation: 2+4(N-d);
+  total online: (2d+9)N+7-6d.
+At d=3, this is 15N-11.
+
+For N=177147=3^11 and the source field p=4960117:
+  preparation root table: 2N-1 = 354293 multiplications;
+  root-order validation: 86 charged binary-exponentiation multiplications;
+  total preparation: 354379;
+  recognition: 885740;
+  three direct Horner seeds: 1062876;
+  boundary and coset propagation: 708578;
+  structured total: 3011573.
+
+The particular ordinary-N reference has 4 multiplications and 6 additions per radix-3 butterfly. With 11 levels, its online count is 10*(N/3)*11+3 = 6495393, including its inverse and fixed constants. Add its separately charged preparation 354379 to obtain 6849772. The ratio is 2.2744831355573982. All 32 source audit count rows re-derive exactly by their corresponding formulas.
+
+Both algorithms compute exactly the same N Fourier coefficients. There is no previous-phase 2N-output comparison here. Both reported totals charge fresh construction; no cross-call amortization is used in the headline total. Input fixture generation, primality/root discovery, and the audit's checking work are excluded on both sides, consistent with supplied-field/supplied-root raw-input semantics.
+
+The baseline is specific and is not operation-minimal. For example, an ordinary-N evaluator could prepare only N omega powers from the supplied eta: N multiplications instead of 2N-1. Keeping the same validation and butterfly code, that alone lowers this reference total to 6672626 and the ratio to about 2.21566. Trivial twiddles and other optimizations also deserve consideration. Thus the precise 2.27448 figure is an implementation-model comparison, not an optimum FFT lower bound.
+
+ACCOUNTING AND PRECISION BOUNDARIES
+
+The numeric model charges one scalar operation for each field addition, subtraction, multiplication, and inversion. A modular inversion is not equal-cost to addition on real hardware. Reductions inside those operations are included implicitly; input canonicalization and repeated already-canonical modulo operations are not additional field-op charges. Root validation's trial factorization and the sparse table's gcd/sort work contribute integer/word work; for fixed B and the documented supplied-root model these fit O_B(N), but are not numeric ledger entries.
+
+The root-power table stores 2N field elements; the normalized input, output, seed/coset lists, and the one-pole edge/inversion scratch each remain linear-sized. For variable B, candidate construction is bounded by O(B^2) candidates and polylogarithmic integer factors, not a constant independent of B. A caller-supplied supported_s collection has its own input size and sorting cost; the clean bound refers to the default/generated bounded gate or a bounded explicit restriction.
+
+Prime p must grow with N because 2N divides p-1. Each field element therefore requires Omega(log N) bits. An O(N) field-operation count does not imply O(N) bit operations or fixed-precision floating-point performance. No stability claim follows for complex arithmetic, especially near small denominator or resonant configurations.
+
+FRESH CONTROL RESULTS
+
+- Exhaustively classified all 343 raw vectors over F_7 at N=3: 109 accepted including zero, 234 rejected to fallback.
+- Exhaustively classified all 161051 raw vectors over F_11 at N=5: 501 accepted including zero, 160550 rejected to fallback.
+- Accepted sets exactly matched independently enumerated structured families in those exhaustive tests. Accepted transforms and rejected fallback references matched direct sums.
+- Tested all s residues at 13 odd/composite lengths from 7 through 105, across multiple geometric phases, with 115563 full Fourier coefficients checked.
+- Rejected 1445 single-sample alterations of accepted signals; fresh fallback references matched direct sums.
+- Tested 186 resonant pole positions, 51 s-to-s+N sign aliases, the low-budget gate omission, and the composite-modulus caveat.
+- Compared all 1062720 output coefficients for the four source families at eight source lengths from 81 through 177147 with a fresh ordinary-N NTT.
+- Independently directly summed 409 additional selected large-case bins. This is a new fixed-seed selection, so it need not equal the source audit's 413-bin count.
+- Matched every one of the 32 published same-N scalar-operation rows by independent formulas.
+
+These are controls of the fresh mathematical reconstruction plus static source inspection. They do not falsely claim a rerun of the supplied implementation or its reported test suite. Complete machine-readable cases, exact parameters, spectrum hashes, concrete counterexamples, source hashes, and the independent control program are included with this report.
