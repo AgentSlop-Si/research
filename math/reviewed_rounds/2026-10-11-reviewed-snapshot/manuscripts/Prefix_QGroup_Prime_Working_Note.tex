@@ -1,0 +1,409 @@
+\documentclass[11pt,letterpaper]{article}
+\usepackage{fontspec}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{unicode-math}
+\setmainfont{Latin Modern Roman}
+\setmonofont{Latin Modern Mono}
+\setmathfont{Latin Modern Math}
+\usepackage{microtype,booktabs,array,enumitem}
+\usepackage[hyphens]{url}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Prefix stabilizer maxima}
+\fancyhead[R]{\small Working note}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\setlength{\headheight}{14pt}
+\setlength{\emergencystretch}{2em}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newcommand{\Stab}{\operatorname{Stab}}
+\newcommand{\ind}{\mathbf{1}}
+\newcommand{\Max}{\operatorname{Max}}
+\newcommand{\Zscore}{Z_G(\mathbf{x})}
+\newcommand{\hash}[1]{{\small\ttfamily\nolinkurl{#1}}}
+\setlist[enumerate]{itemsep=3pt,topsep=5pt}
+\title{\bfseries Prefix stabilizer maxima for a prime power group times a prime cyclic group}
+\author{Working note}
+\date{11 October 2026}
+\begin{document}
+\maketitle
+\thispagestyle{plain}
+\begin{abstract}
+Let $H$ be any finite $q$-group of order $q^a$, and let $p\ne q$ be prime. For an ordering of the labeled elements of $H\times C_p$, sum the orders of the setwise stabilizers of its nonempty prefixes, subtracting one at each prefix. We prove that the maximum is
+\[
+|H|p\left[a\left(1-\frac1q\right)+1-\frac1p\right].
+\]
+Every maximizing order is obtained by recursively placing the right cosets of a maximal subgroup in consecutive blocks, with independent optimal orders inside the blocks. The proper-prefix stabilizers recover the top subgroup uniquely, giving an exact labeled counting recurrence. A symbolic $q$-adic checkpoint inequality proves that an order whose proper-prefix stabilizers generate the entire group loses at least $p-1$ when $a\ge1$. The proof includes $p=2<q$ and the boundary $H=1$. Finite controls are recorded separately from the proof. The escape bound is not claimed sharp, and historical priority remains unresolved.
+\end{abstract}
+
+\paragraph{Status and source fidelity.}
+The frozen mathematical statement and proof received an independent project review with decision \emph{ACCEPT} and no mathematical correction on 11 October 2026. This is a working note, not a claim of journal acceptance. The presentation below typesets that accepted argument and supplies its finite $q$-group dependency. The original theorem and independent review are preserved unchanged in the accompanying source package; exact SHA-256 identities appear in Appendix~\ref{app:provenance}.
+
+\section{Statement and conventions}
+Let $q$ and $p$ be distinct primes, let $H$ be a finite $q$-group of order $n=q^a$, and put $P=C_p$ and $G=H\times P$. The case $a=0$ is allowed. For an ordering $\mathbf{x}=(x_1,\ldots,x_{np})$ of the labeled elements of $G$, write
+\begin{align}
+T_j&=\{x_1,\ldots,x_j\}, &
+S_j&=\{g\in G:gT_j=T_j\},\label{eq:prefix}\\
+Z_G(\mathbf{x})&=\sum_{j=1}^{np}(|S_j|-1), &
+B(\mathbf{x})&=\langle S_1,\ldots,S_{np-1}\rangle.\label{eq:score}
+\end{align}
+The action is by left multiplication. The full prefix is included in $Z_G$ and excluded from $B$. Let $M(K)$ and $A(K)$ denote, respectively, the maximum score and the number of labeled maximizing orders on a finite group $K$. No quotient by translations or automorphisms is taken.
+
+\begin{definition}
+A \emph{recursive maximal-subgroup right-coset ordering} of a nontrivial group chooses a maximal proper subgroup $J$, places its distinct right cosets consecutively in any order, and recurses independently inside every coset. The singleton has its unique order. Identifying $Jx$ with $J$ by $hx\mapsto h$ defines the recursion; changing representatives merely right-translates the coordinates and preserves all left stabilizers.
+\end{definition}
+
+\begin{theorem}\label{thm:main}
+For $G=H\times C_p$ as above, set
+\begin{equation}
+V(H,p)=np\left[a\left(1-\frac1q\right)+1-\frac1p\right].\label{eq:value}
+\end{equation}
+Then the following statements hold.
+\begin{enumerate}
+\item $M(H\times C_p)=V(H,p)$.
+\item An ordering is maximizing if and only if it is a recursive maximal-subgroup right-coset ordering.
+\item The top subgroup of each maximizing ordering is unique and equals $B(\mathbf{x})$.
+\item With $A(1)=1$,
+\begin{equation}
+A(H\times C_p)=p!\,A(H)^p+q!\sum_{M\in\Max(H)}A(M\times C_p)^q.\label{eq:count}
+\end{equation}
+For $H=1$ the sum is empty, giving $A(C_p)=p!$.
+\item If $a\ge1$ and $B(\mathbf{x})=G$, then
+\begin{equation}
+Z_G(\mathbf{x})\le V(H,p)-(p-1)<V(H,p).\label{eq:escape}
+\end{equation}
+\end{enumerate}
+\end{theorem}
+
+The numerical bound~\eqref{eq:escape} is not asserted sharp. The previously accepted specialized bound for $D_8\times C_p$, with $p$ odd, is stronger and is retained in Section~\ref{sec:d8}. Here $D_8$ means the dihedral group of order eight. The theorem assumes neither $p>q$ nor commutativity or pairwise subgroup permutability in $H$. It proves no assertion for an added factor $C_{p^b}$ with $b>1$, for a general noncyclic second Sylow subgroup, or for three distinct prime factors. In particular, it is not a theorem for all finite nilpotent groups.
+
+\section{Stabilizer splitting and every checkpoint}
+Every subgroup $K\le H\times P$ splits as $L\times Q$ with $L\le H$ and $Q\le P$. Indeed, for $(h,z)\in K$, the orders of $h$ and $z$ are coprime; Chinese-remainder exponents isolate $(h,1)$ and $(1,z)$ as powers of $(h,z)$ in $K$. Doing this for every element proves the product decomposition. Since $p$ is prime, $Q$ is either $1$ or $P$.
+
+Call a prefix a \emph{checkpoint} if it is $P$-invariant. This is equivalent to its being $A\times P$ for a subset $A\subseteq H$, since $P$ acts transitively on each fibre $\{h\}\times P$. Include the empty and full prefixes. List \emph{every} checkpoint, not a chosen subsequence, by its rank:
+\begin{equation}
+0=k_0<k_1<\cdots<k_r=n,\qquad T_{pk_i}=A_{k_i}\times P,\qquad |A_{k_i}|=k_i.\label{eq:path}
+\end{equation}
+Put $L_j=S_j\cap(H\times1)$, identified with a subgroup of $H$, and $b_j=|L_j|$. Then $b_j$ is a power of $q$. At noncheckpoints $|S_j|=b_j$. At a checkpoint of positive rank $k$,
+\[
+|S_{pk}|=p b_{pk},\qquad b_{pk}\mid\gcd(k,n),
+\]
+because the action of $L_{pk}$ on $A$ is free. Write $h(k)=\gcd(k,n)$, including $h(0)=n$ when convenient.
+
+For $d\in\mathcal D=\{q,q^2,\ldots,q^a\}$, let $c_d=d-d/q$. Telescoping over powers of $q$ gives the exact identity
+\[
+b-1=\sum_{\substack{d\in\mathcal D\\d\mid b}}c_d
+\]
+for any power $b$ of $q$ dividing $n$. Thus, for
+$C_d=\#\{j\in\{1,\ldots,np\}:d\mid b_j\}$,
+\begin{equation}
+Z_G=\sum_{d\in\mathcal D}c_d C_d+(p-1)\sum_{i=1}^r b_{pk_i}.\label{eq:decomp}
+\end{equation}
+
+\section{The strict checkpoint interval count}
+For consecutive checkpoint ranks $k<l$, define
+\begin{equation}
+w_d(k,l)=\max\left(0,\left\lfloor\frac ld\right\rfloor-\left\lceil\frac kd\right\rceil\right).\label{eq:w}
+\end{equation}
+There are at most $\max(0,pw_d-1)$ noncheckpoint indices $pk<j<pl$ for which $d\mid b_j$.
+
+To prove this, let $F_j$ be the set of full $P$-fibres and $E_j$ the set of nonempty $P$-fibres. Both are invariant under $L_j$, so $|F_j|$ and $|E_j|$ are multiples of $d$. Nesting gives
+$A_k\subseteq F_j\subseteq E_j\subseteq A_l$, and consequently
+\begin{equation}
+pd\left\lceil\frac kd\right\rceil\le p|F_j|\le j\le p|E_j|\le pd\left\lfloor\frac ld\right\rfloor.\label{eq:interval}
+\end{equation}
+At a noncheckpoint the outer inequalities for $j$ are strict. Equality at the left outer endpoint would force $j=p|F_j|$ and make the prefix a union of full fibres. Equality at the right would force $j=p|E_j|$ and give the same contradiction. Also $d\mid j$, by the free action of $L_j$ on the prefix. Counting multiples of $d$ in this open interval gives exactly the stated bound, including empty and reversed intervals.
+
+At an actual checkpoint $d\mid b_{pk}$ implies $d\mid k$. Sum these bounds over every open checkpoint interval and count the endpoints separately. Replacing each endpoint $b_{pl}$ by $h(l)$ yields
+\begin{align}
+Z_G&\le U_p=\sum_{i=0}^{r-1}E_p(k_i,k_{i+1}),\label{eq:upper}\\
+E_p(k,l)&=p\left[h(l)+\sum_{d\in\mathcal D}c_d w_d(k,l)\right]
+-\left[1+\sum_{d\in\mathcal D}c_d\ind_{\{w_d(k,l)>0\}}\right].\label{eq:edge}
+\end{align}
+The endpoint contribution in this bound is $ph(l)-1$; the open-interval contribution is $\sum_d c_d[pw_d-\ind_{\{w_d>0\}}]$. If a particular endpoint has $b_{pl}<h(l)$, the bound has excess at least
+\begin{equation}
+p\bigl[h(l)-b_{pl}\bigr].\label{eq:endpointloss}
+\end{equation}
+This records the whole checkpoint contribution, not only the extra $(p-1)b$ term in~\eqref{eq:decomp}.
+
+\section{The symbolic q adic edge identity}
+Define
+\begin{equation}
+s(0)=0,\qquad s(k)=\sum_{t=1}^k\gcd(t,n),\qquad F_p(k)=ps(k)-k.\label{eq:potential}
+\end{equation}
+For $0\le k<l\le n$, put $m=l-k$ and $g=\gcd(k,l,n)$, and write
+\begin{equation}
+F_p(l)-F_p(k)-E_p(k,l)=p\alpha(k,l)+\beta(k,l).\label{eq:loss}
+\end{equation}
+The letters $\alpha,\beta$ here are the coefficients denoted $A,B$ in the frozen proof; they avoid conflict with the order count and generated subgroup. Let $X(k,l)$ be the set of $d\in\mathcal D$ such that neither endpoint is divisible by $d$ and a multiple of $d$ lies strictly between $k$ and $l$. Then
+\begin{align}
+\alpha(k,l)&=m-g+\sum_{d\in X(k,l)}c_d,\label{eq:alpha}\\
+\beta(k,l)&=1-m+\sum_{\substack{d\in\mathcal D\\w_d(k,l)>0}}c_d.\label{eq:beta}
+\end{align}
+
+Here is an exhaustive proof of~\eqref{eq:alpha}, with no computation premise. Let
+$N_d=\#\{t:k<t<l,\ d\mid t\}$. Expanding
+$\gcd(t,n)=1+\sum_{d\mid t}c_d$ over the $m-1$ interior integers gives
+\[
+\alpha=m-1+\sum_d c_d(N_d-w_d).
+\]
+The difference $N_d-w_d$ has exactly three possibilities.
+\begin{enumerate}
+\item If both endpoints are divisible by $d$, then $N_d=m/d-1$ and $w_d=m/d$, so the difference is $-1$.
+\item If neither endpoint is divisible by $d$ and an interior $d$-multiple exists, then $w_d=N_d-1$, so the difference is $+1$.
+\item Otherwise the difference is zero. If exactly one endpoint is divisible, direct counting gives $N_d=w_d$. If neither is divisible and no interior multiple exists, both are zero.
+\end{enumerate}
+The negative terms sum to $\sum_{d\mid g}c_d=g-1$, and the positive terms are exactly $X(k,l)$. This proves~\eqref{eq:alpha}; equation~\eqref{eq:beta} follows by direct subtraction of the constant terms in~\eqref{eq:edge}.
+
+Since $g\mid m$, either $m=g$ or $m\ge2g$. If $m>g$, then $\alpha\ge m-g$ and $\beta\ge1-m$, so for every integer $p\ge2$,
+\begin{align}
+p\alpha+\beta&\ge p(m-g)+1-m\notag\\
+&=(p-1)(m-2g)+(p-2)g+1\notag\\
+&\ge p-1>0.\label{eq:positive}
+\end{align}
+The last step uses $g\ge1$. In particular, it remains valid at $p=2$.
+
+If $m=g$, then $m$ is a power of $q$, both endpoints are multiples of $m$, and $[k,l]$ is one aligned interval of length $m$. For $d\le m$, $w_d=m/d>0$ and both endpoints are divisible by $d$. For $d>m$, no $d$-multiple lies strictly inside that aligned interval, and $w_d=0$. Thus $X$ is empty, $\alpha=0$, and
+\[
+\beta=1-m+\sum_{q\le d\le m}c_d=0.
+\]
+The formula includes $m=1$, with empty sum. Therefore, for every $p\ge2$,
+\begin{equation}
+F_p(l)-F_p(k)-E_p(k,l)\ge0,\label{eq:nonneg}
+\end{equation}
+with equality if and only if
+\begin{equation}
+l-k=\gcd(k,l,n),\label{eq:aligned}
+\end{equation}
+equivalently, if and only if $[k,l]$ is an aligned $q$-adic interval. The group reduction requires distinct primes $p,q$; the edge inequality itself only requires the integer condition $p\ge2$.
+
+\section{Zero paths and the universal value bound}
+Suppose $a\ge1$ and consider a path $0=k_0<\cdots<k_r=n$ consisting entirely of zero-loss edges. If it is not the single edge $0\to n$, each edge has length $d=q^j<n$, hence $d\le n/q$. Each is aligned to multiples of $d$. The rank $r_0=n/q$ is a multiple of every such $d$, so no edge can contain $r_0$ strictly in its interior: an aligned interval of length $d$ has no interior multiple of $d$. The increasing path must therefore visit $r_0$.
+
+Telescoping~\eqref{eq:upper} and~\eqref{eq:nonneg} yields
+\[
+Z_G\le F_p(n)=ps(n)-n.
+\]
+For $j=0,\ldots,a-1$, there are $n/q^j-n/q^{j+1}$ integers $t\in\{1,\ldots,n\}$ with $\gcd(t,n)=q^j$. Each level contributes $n(1-1/q)$, and $t=n$ contributes $n$. Therefore
+\begin{equation}
+s(n)=n+an\left(1-\frac1q\right),\qquad F_p(n)=V(H,p).\label{eq:sumgcd}
+\end{equation}
+
+For $a=0$, $G=C_p$. Every nonempty proper prefix has trivial stabilizer and the final prefix has stabilizer $G$. All $p!$ orders have score $p-1$. The remainder of the mixed-prime proof assumes $a\ge1$.
+
+\section{A coset checkpoint traps every proper stabilizer}
+Assume rank $r_0=n/q$ is a checkpoint with $b_{pr_0}=r_0$. Its set $A$ has size $r_0$ and is invariant under $K=\Stab_H(A)$, also of size $r_0$. Thus $A$ is one right $K$-coset. The subgroup $K$ has index $q$ in the $q$-group $H$, hence is normal. Put $J=K\times P$. The prefix $T_{pr_0}$ is a full right $J$-coset, and $J$ is normal of prime index $q$ in $G$.
+
+Every $y\notin J$ has nonidentity image in the prime-order quotient $G/J$. Its action on the $q$ right $J$-cosets is one cycle. Before or at the displayed checkpoint, every nonempty prefix is contained in its one right $J$-coset; its image under $y$ lies in a distinct, disjoint coset. Such a prefix cannot be stabilized by $y$. After the checkpoint, a prefix contains one full $J$-coset. If $y$ stabilized it, iterating $y$ would force all $q$ full cosets into the prefix, impossible for a proper prefix. Hence every proper-prefix stabilizer lies in $J$, and
+\begin{equation}
+B(\mathbf{x})\le J<G.\label{eq:trap}
+\end{equation}
+This uses a complete orbit of $q$ quotient cosets, not only an index-two exchange. It does not assert that earlier stabilizers preserve later prefixes.
+
+\section{Strict top escape}
+Suppose $B(\mathbf{x})=G$. There is a proper checkpoint; otherwise every proper-prefix stabilizer lies in $H\times1$.
+
+If the path has no checkpoint at $r_0=n/q$, it is nontrivial, and Section~5 shows it contains a nonzero-loss edge. Equation~\eqref{eq:positive} gives total potential loss at least $p-1$, proving~\eqref{eq:escape}.
+
+If $r_0$ is a checkpoint, Section~6 excludes $b_{pr_0}=r_0$. Its checkpoint contribution has excess at least
+\[
+p(r_0-b_{pr_0})\ge p
+\]
+in~\eqref{eq:upper}, by~\eqref{eq:endpointloss}; thus $Z_G\le V(H,p)-p$. When $r_0=1$, this second case cannot occur, since the checkpoint stabilizer has order at least one. In every possible case~\eqref{eq:escape} follows. No escape assertion about the singleton group is used.
+
+\section{Attainment and all equality cases}
+The finite $q$-group theorem gives
+\begin{equation}
+M(H)=na\left(1-\frac1q\right),\label{eq:qbase}
+\end{equation}
+together with its recursive equality characterization. Its proof is recalled in Appendix~\ref{app:qbase} to make the dependence explicit.
+
+The subgroup $H\times1$ is normal of prime index $p$. Place its $p$ right cosets consecutively, each with an optimal $H$ ordering. A normal-prime-index block ordering has every proper stabilizer inside the top subgroup: inside a partial block it fixes the unique partial coset, while at a proper block boundary its image in the prime-order quotient stabilizes a nonempty proper subset and so is trivial. Its score is the sum of the local scores plus $|G|-|H|$. Therefore this construction has score
+\[
+pM(H)+np-n=V(H,p),
+\]
+proving attainment of~\eqref{eq:sumgcd}.
+
+Now prove the complete equality characterization by induction on $a$. The base $a=0$ was settled above, including the unique trivial top subgroup of $C_p$. Let $\mathbf{x}$ maximize $Z_G$. Strict escape forces $B(\mathbf{x})<G$. Choose a maximal subgroup $J$ containing $B(\mathbf{x})$. Subgroup splitting shows that the maximal subgroups of $G$ are exactly
+\[
+H\times1\quad\text{of index }p,\qquad
+M\times P\quad(M\in\Max(H))\quad\text{of index }q.
+\]
+The latter are normal because maximal subgroups of a finite $q$-group are normal of index $q$. If $J=H\times1$, the finite $q$-group theorem applies. Otherwise $J=M\times P$ has first-factor order $q^{a-1}$, so the induction hypothesis applies. These are all the proper-subgroup cases required; no general nilpotent theorem is assumed.
+
+For completeness, the exact local accounting is as follows. At insertion $j$ into the right $J$-coset $C_j=Jx_j$, let
+\[
+U_j=T_j\cap C_j,\qquad L_j^{\mathrm{loc}}=\Stab_J(U_j).
+\]
+Since $S_j\le J$ for every proper $j$, $S_j\le L_j^{\mathrm{loc}}$. Every local prefix of each coset appears exactly once at its active insertion. The final local stabilizer is $J$ and the final global stabilizer is $G$. Thus
+\begin{equation}
+Z_G=\sum_C Z_J(\mathbf{x}|_C)+|G|-|J|
+-\sum_{j<|G|}\bigl(|L_j^{\mathrm{loc}}|-|S_j|\bigr).\label{eq:local}
+\end{equation}
+All deficits are nonnegative. If $t=[G:J]$ is the prime index, the accepted or inductive local value gives
+\begin{equation}
+tM(J)+|G|-|J|=|G|W(|G|)=V(H,p),\qquad
+W(m)=\sum_{\ell\ \mathrm{prime}}v_\ell(m)\left(1-\frac1\ell\right).\label{eq:inductvalue}
+\end{equation}
+Equality of $Z_G$ to $V$ forces every local order to be optimal and every deficit in~\eqref{eq:local} to vanish.
+
+At the first completion of a $J$-coset, the local stabilizer is $J$, so the whole prefix is $J$-invariant. No other coset is complete yet; $J$-invariance forces every other coset to be empty. Thus that coset is the first consecutive block. At each subsequent completion before the last, the same argument forces the next untouched coset to form the next complete block. The last coset fills the remainder. Local optimality and induction yield the asserted recursive structure.
+
+Conversely, every recursively chosen maximal-subgroup block order has optimal local orders by induction or the $q$-group theorem. The prime-index block calculation used in attainment gives global value $V$. At every proper prefix its stabilizer lies in $J$, while at the first full block it equals $J$. Therefore $B(\mathbf{x})=J$, proving unique recovery of the top subgroup.
+
+\section{Labeled counting}
+Fix a maximal subgroup $J$ of index $t$. Its $t$ distinct right cosets can be ordered in $t!$ ways, and there are $A(J)$ independent optimal labeled orders in every block. Fixing representatives identifies a coset with $J$ by right translation. Changing representatives re-coordinates the same orders and introduces no extra factor. Unique top recovery makes distinct $J$ classes disjoint. Consequently the count is
+\[
+\sum_{J\in\Max(G)}[G:J]!\,A(J)^{[G:J]}.
+\]
+Inserting the maximal subgroups listed in Section~8 proves~\eqref{eq:count}. The $q$-group counts needed there satisfy
+\begin{equation}
+A(H)=q!\sum_{M\in\Max(H)}A(M)^q\quad(H\ne1),\qquad A(1)=1.\label{eq:qcount}
+\end{equation}
+For $H=1$, equation~\eqref{eq:count} gives $A(C_p)=p!$. The singleton itself has value $0$, count $1$, and no top subgroup. The trivial top subgroup for the nontrivial prime-order group $C_p$ is recovered correctly. This completes the proof of Theorem~\ref{thm:main}.
+
+\section{The stronger historical dihedral result}\label{sec:d8}
+The earlier independently accepted theorem for $D_8\times C_p$, with $p$ odd, proves
+\begin{equation}
+B(\mathbf{x})=G\quad\Longrightarrow\quad
+Z_G(\mathbf{x})\le18p-7=(20p-8)-(2p-1).\label{eq:d8escape}
+\end{equation}
+Here $V(D_8,p)=20p-8$. This specialized loss $2p-1$ is stronger than the general loss $p-1$; the present theorem does not replace or weaken it. Its separate proof uses the complete symbolic 36-edge table on ranks $0,\ldots,8$ and the index-two checkpoint trap. The unchanged theorem and acceptance review are included among the historical source records. Equation~\eqref{eq:d8escape} is reported as that prior result, not derived from~\eqref{eq:escape}.
+
+For its explicit labeled count, put $f=p!$ and
+\[
+T=f\,2^p+2f^2,\qquad U=f\,8^p+2T^2,\qquad V_4=f\,24^p+6T^2.
+\]
+These are respectively the counts for $C_2\times C_p$, $C_4\times C_p$, and $C_2^2\times C_p$. Since $D_8$ has one cyclic and two Klein-four maximal subgroups,
+\[
+A(D_8)=2\cdot8^2+4\cdot24^2=2432,
+\]
+and the historical recurrence gives
+\begin{equation}
+A(D_8\times C_p)=p!\,2432^p+2U^2+4V_4^2.\label{eq:d8count}
+\end{equation}
+At $p=3$, the value is $52$ and the count is $203{,}047{,}403{,}520$.
+
+There is also a uniform escaping example. Write
+$D_8=\langle r,s:r^4=s^2=1,\ srs=r^{-1}\rangle$. The order
+\[
+e,s,r,rs,r^2,r^2s,r^3,r^3s
+\]
+has proper-prefix stabilizers generating $D_8$ and score $10$. Expanding each element to its full $P$-fibre gives $B(\mathbf{x})=D_8\times P$ and
+\[
+Z_G=p\cdot10+8(p-1)=18p-8.
+\]
+This example is one below the specialized upper bound. Neither that observation nor the general theorem asserts the sharp escaping maximum. It also shows why unconditional accumulated-coset containment cannot be used outside its proved hypotheses.
+
+\section{Finite controls separate from the proof}\label{sec:controls}
+The preceding proof is symbolic in $q$, $a$, and $p$ and uses no finite enumeration as a premise. The independent acceptance packet records the following separately written controls; they were read and source-bound for this note, not rerun as part of typesetting.
+
+Arithmetic controls cover $415{,}758$ edges in $29$ prime-power rank spaces: $q=2$, $1\le a\le8$; $q=3$, $1\le a\le5$; $q=5,7$, $1\le a\le3$; and $q=11,13,17,19,23$, $1\le a\le2$. They compare the potential, floor--ceiling edge, interior-multiple identity, zero criterion, nonnegative slope, and loss at $p=2$. Additional checks cover $5{,}598$ small rank paths and $11{,}200$ strict interval instances. Arithmetic instances with $p=q$ test only the edge identity, not an extension of the group theorem.
+
+Direct group controls use $13$ products, $1{,}287$ complete orders, and $3{,}496$ actual checkpoint-interval checks. Larger nonexhaustive cases include $D_{16}\times C_3$ and two nonabelian groups of order $27$ times $C_2$. Thus the controls explicitly include odd nonabelian first factors with $p=2$.
+
+Independent dynamic programming over all subsets uses
+\[
+D(S)=|\Stab(S)|-1+\max_{x\in S}D(S\setminus\{x\}),\qquad D(\varnothing)=0,
+\]
+with counts summed over maximizing last elements. It assumes no optimizer hierarchy. Across the eleven groups in Table~\ref{tab:controls}, $50{,}873{,}422$ subset states, including empty states, are covered. Every optimum count agrees with the separately enumerated recursive family. These are bounded corroborations of value and equality classification, not an inference to arbitrary groups.
+
+\begin{table}[htbp]
+\centering
+\caption{Independent exhaustive controls for labeled orders}\label{tab:controls}
+\begin{tabular}{lrrr}
+\toprule
+Group & Order & Maximum & Maximizing orders\\
+\midrule
+$1$ & 1 & 0 & 1\\
+$C_2$ & 2 & 1 & 2\\
+$C_3$ & 3 & 2 & 6\\
+$C_3\times C_2$ & 6 & 7 & 120\\
+$C_5\times C_2$ & 10 & 13 & $32{,}640$\\
+$C_7\times C_2$ & 14 & 19 & $51{,}448{,}320$\\
+$C_9\times C_2$ & 18 & 33 & $13{,}727{,}232$\\
+$C_3^2\times C_2$ & 18 & 33 & $95{,}219{,}712$\\
+$C_8\times C_3$ & 24 & 52 & $2{,}044{,}231{,}680$\\
+$D_8\times C_3$ & 24 & 52 & $203{,}047{,}403{,}520$\\
+$Q_8\times C_3$ & 24 & 52 & $6{,}434{,}684{,}928$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Related work and the contribution boundary}
+The substantive extension proved here is the objective-specific maximum and necessity of the complete optimizer hierarchy for arbitrary finite $q$-groups $H$ times $C_p$. Recovery of the top subgroup and the labeled recurrence are consequences of the structural classification. Independent correctness review and historical comparison answer different questions.
+
+For a common labeling, a nonidentity regular-action permutation $g$ contributes one for each invariant proper initial segment. These cuts are its connectivity set in the terminology of Stanley~\cite{stanley}. Hence $Z_G$ is the sum of the connectivity-set sizes over all group elements, including the identity's $|G|-1$ cuts. The optimization here is over simultaneous relabelings of the entire fixed regular group, preserving its multiplication relations. The inspected connectivity results do not establish this maximum or its equality cases.
+
+Fixed-chain transversal signatures are classical; Gonz\'alez Vasco, R\"otteler, and Steinwandt~\cite{gvs} give such constructions and minimum-length signatures for solvable groups. Their length objective is the sum of factor-block sizes. More general coset-dependent constructions also predate the present work: Baumeister and de Wiljes~\cite{bdw}, Algorithm~5.2 and Theorem~5.4, combine local signatures indexed by transversal choices under stated compatibility conditions. Thus independent branching or coset-dependent choice is not claimed as an original idea here. Those inspected statements concern factorization blocks rather than the score over every nested element prefix, and do not supply the present upper bound or all-optimizer necessity theorem.
+
+Likewise the sum over top choices, factorial ordering of children, and product over independent subproblems are standard counting mechanisms. Maximal-chain enumeration and rooted-tree recursions are relevant antecedents~\cite{st,mbkk}; the objective-specific input to~\eqref{eq:count} is identifying all optimizers and proving disjointness across top subgroups.
+
+A bounded comparison located no exact earlier equivalent. This does not establish worldwide priority. The comparison with Erd\H{o}s, Faigle, and Kern~\cite{efk} is incomplete: Theorem~2.1 and its main incidence calculation were recovered, but full definitions and Lemma~2.1, most of Section~4, the proof of Proposition~5.1, and the complete Section~6 ending remain partly unread. The checked direct substitutions fail their required hypotheses; that is not a whole-paper exclusion. The companion historical report records the precise search and access boundaries. No general nilpotent theorem, sharpness claim, or worldwide-first claim follows from this note.
+
+\appendix
+\section{The finite prime power dependency}\label{app:qbase}
+This appendix records the required finite $q$-group result from the earlier accepted manuscript. Its proof does not assume pairwise subgroup permutability.
+
+\begin{lemma}\label{lem:normal}
+Every maximal proper subgroup of a nontrivial finite $q$-group is normal of index $q$.
+\end{lemma}
+\begin{proof}
+First prove that every proper subgroup $L<K$ of a finite $q$-group is strictly contained in $N_K(L)$. The class equation gives a nontrivial center $Z(K)$. If $Z(K)\not\subseteq L$, a central element outside $L$ lies in $N_K(L)\setminus L$. Otherwise, induction applies to $L/Z(K)<K/Z(K)$, and an element of its normalizer outside $L/Z(K)$ lifts to $N_K(L)\setminus L$. If $L$ is maximal, this strict normalizer containment forces $N_K(L)=K$. The quotient $K/L$ is a nontrivial $q$-group with no nontrivial proper subgroup. Any nonidentity element generates it; a cyclic group of order $q^b$ for $b>1$ has a nontrivial proper subgroup. Therefore $[K:L]=q$.
+\end{proof}
+
+For a subset of a finite group, the action of its left stabilizer is free. Thus a prefix stabilizer of a $q$-group $K$ of order $N=q^b$ has order dividing both its rank $j$ and $N$. Consequently
+\[
+Z_K\le\sum_{j=1}^{N}\bigl(\gcd(j,N)-1\bigr)=Nb\left(1-\frac1q\right).
+\]
+The equality on the right follows by the valuation count in~\eqref{eq:sumgcd}. Inductively choose a maximal subgroup $L$, normal of index $q$ by Lemma~\ref{lem:normal}. Consecutive $L$-coset blocks with optimal local orders have score
+\[
+qM(L)+N-|L|=Nb\left(1-\frac1q\right),
+\]
+by the normal-prime-index block calculation in Section~8. Hence the bound is attained. Every optimum saturates each nonnegative pointwise deficit:
+\begin{equation}
+|\Stab(T_j)|=\gcd(j,N)\quad(1\le j\le N).\label{eq:saturate}
+\end{equation}
+
+Set $k=N/q$. At rank $k$, saturation gives a stabilizer $L$ of order $k$, so $T_k=Lx_1$. At rank $tk$, $1\le t<q$, saturation again gives a stabilizer $J$ of order $k$. Both $L$ and $J$ are normal maximal subgroups. The $J$-invariant prefix contains $Lx_1$, hence $JLx_1$. If $J\ne L$, the product $JL$ is a subgroup properly containing $L$, so $JL=K$, contradicting properness of the prefix. Thus $J=L$ at every such boundary.
+
+Including the empty and full prefixes, each successive difference of boundary prefixes is $L$-invariant of size $k$, hence one right $L$-coset. Therefore the order consists of consecutive coset blocks. The block score identity and the attained global value force each local order to be optimal. Induction gives exactly the recursive characterization, including its converse. All proper stabilizers lie in the chosen top $L$ and the first completed block has stabilizer $L$, giving unique recovery. The disjoint top-choice counting of Section~9 gives~\eqref{eq:qcount}. For $K=1$, the value is $0$, the count is $1$, and no top is asserted.
+
+\section{Exact source identities}\label{app:provenance}
+The following identities bind this presentation to its accepted research sources. Every listed frozen archive and theorem was checked locally by SHA-256, and unchanged copies are included in the package. The final delivery receipt separately records the Library round-trip check of the new package, avoiding a self-referential archive hash.
+
+\paragraph{Accepted author archive.}
+The archive has $60{,}607$ bytes and Library identifier
+\begin{center}\hash{libfile_38c2907665a88191a9f2a8d6aff48a09}\end{center} SHA-256:
+\begin{center}\hash{57ff2f6d35bc41e0bb8f827fa478866d5b6c990fae8ac7d283759c94a0c1a9fe}\end{center}
+The unchanged theorem member is $15{,}027$ bytes. SHA-256:
+\begin{center}\hash{290e120fd40a464144c2b92ce23576a21b6aed4c5d0f70603125bba7b9d346b1}\end{center}
+
+\paragraph{Independent acceptance archive.}
+The archive has $161{,}861$ bytes and Library identifier
+\begin{center}\hash{libfile_c0c6044d21ec81919e9086451f65ff24}\end{center} SHA-256:
+\begin{center}\hash{8a3394d996903c49dc5a58732fc6e6a293b771019fa893b8959db011eccfb52a}\end{center}
+The decision is \emph{ACCEPT}; no mathematical correction was required. The accepted family includes $p=2<q$. The review does not accept a general nilpotent theorem, sharp escape bound, or historical priority.
+
+\paragraph{Bounded historical comparison archive.}
+The archive has $12{,}425$ bytes and Library identifier
+\begin{center}\hash{libfile_07a6103f05bc8191bb3dde2b717f4fc7}\end{center} SHA-256:
+\begin{center}\hash{f6bffb4b177ba1cb067ce09765af64ff8c853f3fdebd59f3653354c9abd37ada}\end{center}
+This comparison is historical evidence, not a mathematical proof premise. The package's source bindings also hash the finite $q$-group manuscript, the historical $D_8$ theorem and acceptance review, the exact accepted statement, and the independently reported control results. No source mathematical program was executed during preparation of this note.
+
+\begin{thebibliography}{9}
+\bibitem{stanley} R. P. Stanley, \emph{The Descent Set and Connectivity Set of a Permutation}. Primary manuscript dated 16 August 2005, equation~(1), Proposition~1.1, and Theorems~1.2 and~1.4. \url{https://math.mit.edu/~rstan/papers/decset.pdf}.
+\bibitem{gvs} M. I. Gonz\'alez Vasco, M. R\"otteler, and R. Steinwandt, \emph{On Minimal Length Factorizations of Finite Groups}, Experimental Mathematics 12 (2003). Definition~2.1 and Proposition~3.1. \url{https://www.microsoft.com/en-us/research/wp-content/uploads/2016/11/On-Minimal-Length-Factorizations-of-Finite-Groups.pdf}.
+\bibitem{bdw} B. Baumeister and J.-H. de Wiljes, \emph{Aperiodic logarithmic signatures}, arXiv:1104.4503 (2011), Algorithm~5.2 and Theorem~5.4. \url{https://arxiv.org/abs/1104.4503}.
+\bibitem{st} M. \c{S}tef\u{a}nescu and M. T\u{a}rn\u{a}uceanu, \emph{Counting maximal chains of subgroups of finite nilpotent groups}, Carpathian Journal of Mathematics 25 (2009), inspected pages 119--124, Theorem~2.1 and Section~3. \url{https://www.carpathian.cunbm.utcluj.ro/wp-content/uploads/2009-vol-25-1/carpathian_2009_25_1_119_127.pdf}.
+\bibitem{mbkk} F. A. Matsen IV, S. C. Billey, A. Kas, and M. Konvalinka, \emph{Tanglegrams A Reduction Tool for Mathematical Phylogenetics}, primary manuscript, Section~2.2, Theorem~5 and Example~6. \url{https://matsen.fredhutch.org/papers/Matsen2018-bg.pdf}.
+\bibitem{efk} P. Erd\H{o}s, U. Faigle, and W. Kern, \emph{A Group-Theoretic Setting for Some Intersecting Sperner Families}, Combinatorics, Probability and Computing 1 (1992), 323--334. Partially inspected; the remaining access boundary is stated in Section~12. \url{https://doi.org/10.1017/S0963548300000377}.
+\end{thebibliography}
+\end{document}
