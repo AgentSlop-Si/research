@@ -1,6 +1,8 @@
 # Reviewed research checkpoints
 
-Latest: [11 October later reviewed addendum](2026-10-11-late-reviewed-addendum/README.md), final sealed scopes through19:30 UTC.
+Latest: [11 October CHIRP phase-one independent acceptance and unapplied table-gap audit](2026-10-11-phase-one-and-gap-audit/README.md). The new CHIRP bounded milestone is accepted; zero new cells were saved in the canceled gap-fixing pass.
+
+Earlier: [11 October later reviewed addendum](2026-10-11-late-reviewed-addendum/README.md), final sealed scopes through19:30 UTC.
 
 Earlier: [11 October reviewed snapshot](2026-10-11-reviewed-snapshot/README.md). Its open-stage labels reflect its earlier cutoff; consult the later addendum for closed extensions and cleared v3 releases.
 
