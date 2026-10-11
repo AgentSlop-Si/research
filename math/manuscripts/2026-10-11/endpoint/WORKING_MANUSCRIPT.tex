@@ -1,0 +1,917 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+%
+\documentclass[
+  11pt,
+  letterpaper,
+]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\pdfmapfile{+lm.map}
+\pdfmapfile{+symbols.map}
+\pdfmapfile{+cm.map}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{xcolor}
+\usepackage[margin=0.85in]{geometry}
+\usepackage{longtable,booktabs,array}
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\ifLuaTeX
+\usepackage[bidi=basic]{babel}
+\else
+\usepackage[bidi=default]{babel}
+\fi
+\babelprovide[main,import]{american}
+% get rid of language-specific shorthands (see #6817):
+\let\LanguageShortHands\languageshorthands
+\def\languageshorthands#1{}
+\ifLuaTeX
+  \usepackage{selnolig}  % disable illegal ligatures
+\fi
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  pdftitle={Fourier endpoint minimax and autocorrelation deficit rank bounds},
+  pdflang={en-US},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{Fourier endpoint minimax and autocorrelation deficit rank bounds}
+\usepackage{etoolbox}
+\makeatletter
+\providecommand{\subtitle}[1]{% add subtitle to \maketitle
+  \apptocmd{\@title}{\par {\large #1 \par}}{}{}
+}
+\makeatother
+\subtitle{A two theorem working manuscript}
+\author{}
+\date{11 October 2026}
+
+\begin{document}
+\maketitle
+
+\section{Abstract}\label{abstract}
+
+This manuscript gives complete proofs of two previously established
+project results, keeping their hypotheses and conclusions separate. For
+the cyclic Fourier matrix of order \(N=2^m\geq8\), the minimum, over
+independent row and column permutations, of the maximum strict
+off-diagonal corner rank is \(N/4+1\). Double bit reversal attains the
+minimum. The minimum rank of an arbitrary half-size square is instead
+\(N/4\). Separately, for a unitary character table of any finite abelian
+group, a complementary Gram-matrix second moment gives a rectangular
+rank bound and a positive low-rank approximation gap in terms of the
+maximum nonzero-translation overlap of the column set. All degenerate
+sizes, normalization choices, and singular-value indices are specified
+below.
+
+This is a consolidation of accepted proof sources, not a new theorem or
+fusion. Digit reversal, Fourier support uncertainty, the flat-unitary
+rank bound, translation-overlap statistics, and spectral approximation
+arguments have established antecedents. The exact scope's historical
+priority remains unresolved. No general FFT arithmetic-complexity
+conclusion or publication-acceptance claim is made.
+
+\section{1 Scope and conventions}\label{scope-and-conventions}
+
+For a finite set \(E\), write \(\mathbb C^E\) for its coordinate space
+with the standard Hermitian inner product. If \(A\) has row set \(E\)
+and column set \(D\), then \(A[R,H]\) is the submatrix with
+\(R\subseteq E\) and \(H\subseteq D\). Reordering the chosen rows or
+columns does not change rank or singular values. Complements are taken
+in the full relevant indexing set. An empty matrix has rank zero.
+
+For \(N\geq1\), put \([N]=\{0,\ldots,N-1\}\). If \(\rho\) is a
+permutation of \([N]\), use the convention \((P_\rho x)_i=x_{\rho(i)}\).
+Thus
+
+\[
+(P_\rho A P_\sigma^{T})_{ij}=A_{\rho(i),\sigma(j)}.
+\]
+
+For an \(N\times N\) matrix define
+
+\[
+q(A)=\max_{1\leq k<N}\max\bigl\{
+\operatorname{rank}A[0:k,k:N],\,
+\operatorname{rank}A[k:N,0:k]\bigr\}.                 \tag{1}
+\]
+
+The interval notation is half-open. These two blocks are the strict
+off-diagonal corners across the same coordinate cut. Set \(q(A)=0\) for
+\(N=1\), when there is no cut. The two endpoint permutations in the
+minimization below are arbitrary and independent.
+
+The unnormalized cyclic Fourier matrix and its unitary normalization are
+
+\[
+F_N=(\omega_N^{ab})_{a,b\in[N]},\qquad
+\omega_N=e^{2\pi i/N},\qquad U_N=N^{-1/2}F_N.        \tag{2}
+\]
+
+For a finite abelian group \(G\) of order \(N\), written additively, its
+dual group is \(\widehat G\). The unitary character table used here is
+
+\[
+U_{\chi,x}=N^{-1/2}\chi(x),\qquad
+\chi\in\widehat G,\ x\in G.                       \tag{3}
+\]
+
+Characters have modulus one. Character orthogonality makes \(U\)
+unitary. Conjugating the Fourier convention changes none of the
+conclusions. Nonzero scalar normalization does not change exact rank; it
+does change singular values and operator-norm errors. Throughout the
+analytic statements, \(\|\cdot\|_2\) denotes the operator norm for
+Euclidean norms, rather than the Frobenius norm.
+
+\subsection{Exact assumption and convention
+table}\label{exact-assumption-and-convention-table}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.2600}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.7400}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Item
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Convention and required hypothesis
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Endpoint minimax & Cyclic \(N=2^m\); independent endpoint permutations;
+one matrix and a common cut coordinate order \\
+Exact field scope in Theorem 1 & Complex numbers, or a
+characteristic-zero field containing a primitive \(N\)th root; no square
+root of \(N\) is needed for the unnormalized statement \\
+Deficit theorem & Any finite abelian \(G\), \(N\geq2\); complex
+unitary-normalized character table; \(1\leq r,h\leq N\) \\
+Selected sets & Rows \(R\subseteq\widehat G\), columns \(H\subseteq G\);
+\(r=|R|\), \(h=|H|\) \\
+Translation overlap & \(c_H(s)=|H\cap(H-s)|=|\{x\in H:x+s\in H\}|\) \\
+Deficit & \(d_H=h-\max_{s\neq0}c_H(s)\); defined only when \(N\geq2\) \\
+Singular values & Descending square roots of the \(h\) eigenvalues of
+\(V^*V\), including zeros if \(h>r\) \\
+Approximation rank & \(W\in\mathbb C^{r\times h}\), integer \(t\geq0\),
+\(\operatorname{rank}W\leq t\); strict gap condition \(t<h-B_H\) \\
+Half-square result & Cyclic \(N=4L\); arbitrary row and column sets,
+each of size \(N/2\); \(N=2\) treated separately \\
+Finite characteristic & No general lower-bound or positive-gap transfer
+is asserted; modular checks are controls only \\
+Open extensions & Noncyclic matching minimax upper bounds and exact
+all-size minimum rank sums are not assumptions of either theorem \\
+\end{longtable}
+
+\section{2 The cyclic dyadic endpoint
+theorem}\label{the-cyclic-dyadic-endpoint-theorem}
+
+\textbf{Theorem 1.} Let \(N=2^m\), \(m\geq0\). Over \(\mathbb C\),
+
+\[
+\min_{\rho,\sigma\in S_N}q(P_\rho F_NP_\sigma^T)
+=\begin{cases}
+0,&N=1,\\
+1,&N=2\text{ or }4,\\
+N/4+1,&N\geq8.
+\end{cases}                                                    \tag{4}
+\]
+
+For every size, bit reversal at both endpoints is a minimizing pair. The
+same exact statement holds over every characteristic-zero field
+containing a primitive \(N\)th root, with that root in place of
+\(\omega_N\).
+
+Separately, for \(N=2^m\geq4\),
+
+\[
+\min_{|R|=|H|=N/2}\operatorname{rank}F_N[R,H]=N/4.             \tag{5}
+\]
+
+For \(N=2\), this half-square minimum is \(1\). At \(N=1\) there is no
+integer half-square size. Equation (5) is not a \(+1\) statement.
+
+\subsection{2.1 The universal critical rectangle lower
+bound}\label{the-universal-critical-rectangle-lower-bound}
+
+Write \(N=4L\) with \(L\geq2\). Take arbitrary
+\(R,H\subseteq\mathbb Z_N\) with
+
+\[
+|R|=2L-1,\qquad |H|=2L+1=:h.
+\]
+
+Let \(I=\mathbb Z_N\setminus R\), so \(|I|=h\), and let
+
+\[
+V=U_N[R,H],\qquad A=U_N[I,H]^*U_N[I,H].
+\]
+
+The columns of \(U_N\) are orthonormal, hence
+
+\[
+0\leq A\leq I_h,\qquad V^*V=I_h-A.                          \tag{6}
+\]
+
+Consequently \(\ker V\) is the eigenvalue-one eigenspace of \(A\). Its
+dimension \(d\) is at most \(\operatorname{tr}(A^2)\), since every
+eigenvalue of \(A\) belongs to \([0,1]\).
+
+Set \(f_I(s)=\sum_{a\in I}\omega_N^{as}\). The \((x,y)\) entry of \(A\),
+for \(x,y\in H\), is \(N^{-1}f_I(y-x)\). Grouping ordered pairs by their
+difference gives
+
+\[
+\operatorname{tr}(A^2)=\frac1{N^2}\sum_{s\in\mathbb Z_N}
+c_H(s)|f_I(s)|^2.                                             \tag{7}
+\]
+
+Here \(c_H(0)=h\). Every nonzero translation of \(\mathbb Z_{2^m}\) has
+even order and partitions the group into cycles of that even length. An
+invariant set is a union of those cycles and therefore has even
+cardinality. Since \(h\) is odd, \(H\) is not invariant under any such
+translation. Thus \(c_H(s)\leq h-1\) for \(s\neq0\). Orthogonality also
+gives
+
+\[
+\sum_s|f_I(s)|^2=Nh,\qquad f_I(0)=h.
+\]
+
+Substitution into (7) yields
+
+\[
+\begin{aligned}
+\operatorname{tr}(A^2)
+&\leq\frac{h h^2+(h-1)(Nh-h^2)}{N^2}\\
+&=L+\frac34+\frac1{4L}+\frac1{16L^2}=:B_L<L+1.              \end{aligned} \tag{8}
+\]
+
+For the last inequality, \(4L^2-4L-1>0\) for every integer \(L\geq2\).
+Since \(d\) is an integer, \(d\leq L\). Therefore every such rectangle
+satisfies
+
+\[
+\operatorname{rank}F_N[R,H]=h-d\geq L+1.                    \tag{9}
+\]
+
+After any independent row and column reorderings, the upper-right corner
+at \(k=2L-1\) has exactly these dimensions. Equation (9) therefore
+proves the lower bound in (4) uniformly over both permutations. No
+assumption about the positions of either selected set was used.
+
+\subsection{2.2 The exact bit reversal
+recurrence}\label{the-exact-bit-reversal-recurrence}
+
+Let \(b_m(j)\) be reversal of the \(m\) binary digits of \(j\), with
+\(b_0(0)=0\). Define
+
+\[
+Q_N[i,j]=\omega_N^{b_m(i)b_m(j)},\qquad
+r_N(k)=\operatorname{rank}Q_N[0:k,k:N].
+\]
+
+Put \(r_N(0)=r_N(N)=0\). We prove, for every dyadic \(N=4L\geq4\) and
+\(0\leq k\leq2L\),
+
+\[
+r_N(k)=\lceil k/2\rceil+r_L(\lfloor k/2\rfloor).             \tag{10}
+\]
+
+The smaller table uses \(\omega_L=\omega_N^4\), including the one-entry
+table when \(L=1\). The first \(2L\) bit-reversed labels are all the
+even labels. Write them as \(2q_i\). If \(z_j=b_{m-2}(j)\), then
+
+\[
+q_{2j}=z_j,\qquad q_{2j+1}=L+z_j,\qquad 0\leq j<L.          \tag{11}
+\]
+
+Let \(p=\lfloor k/2\rfloor\) and \(d=\lceil k/2\rceil\). The selected
+rows contain \(p\) complete pairs from (11), and one unpaired row if
+\(k\) is odd. They have \(d\) distinct residues modulo \(L\).
+
+All odd natural column labels \(2\ell+1\), \(0\leq\ell<2L\), lie to the
+right of the cut. In row label \(2q\) their entries are
+
+\[
+\omega_N^{(2q)(2\ell+1)}
+=\omega_{2L}^{q}\omega_L^{q\ell}.                           \tag{12}
+\]
+
+Rows \(q\) and \(q+L\) have opposite values on these columns. On one
+representative of each distinct residue, removal of the nonzero phase
+\(\omega_{2L}^q\) leaves \(d\) distinct rows of the full Fourier matrix
+\(F_L\), with its columns repeated twice. These rows are independent, so
+the odd-column span has dimension exactly \(d\).
+
+Define \(\pi:\mathbb C^k\to\mathbb C^p\) by adding the two coordinates
+in each complete pair and ignoring the unpaired coordinate, if present.
+The odd-column span lies in \(\ker\pi\). Since \(\pi\) is surjective and
+\(k-p=d\), both spaces have dimension \(d\) and hence are equal. Passing
+to the quotient by the odd-column span is therefore precisely passing
+through \(\pi\).
+
+A surviving even column label \(2\ell\) has equal entries on each paired
+row, and its image under \(\pi\) is
+
+\[
+2\bigl(\omega_L^{z_j\ell}\bigr)_{0\leq j<p}.                \tag{13}
+\]
+
+The column positions \(k,\ldots,2L-1\) in (11) give, modulo \(L\),
+exactly the residues \(z_p,\ldots,z_{L-1}\), with possible repetitions.
+At an odd cut \(k=2p+1\), the second member of the partially removed
+pair still survives and supplies \(z_p\). Dropping it would change the
+recurrence incorrectly. The quotient columns therefore have rank
+\(r_L(p)\). Adding back the \(d\)-dimensional odd-column span proves
+(10), including \(p=0\) and \(p=L\).
+
+\subsection{2.3 Reflection and the maximum cut
+rank}\label{reflection-and-the-maximum-cut-rank}
+
+Digit reversal satisfies \(b_m(N-1-i)=N-1-b_m(i)\). Consequently
+
+\[
+Q_N[N-1-i,N-1-j]
+=\omega_N^{1+b_m(i)+b_m(j)}Q_N[i,j].                       \tag{14}
+\]
+
+The factors on the right are invertible row and column scalings.
+Simultaneous reversal carries an upper corner at \(k\) to a lower corner
+at \(N-k\); \(Q_N\) is symmetric, so
+
+\[
+r_N(k)=r_N(N-k).                                           \tag{15}
+\]
+
+For \(k=2a\leq2L\), (10) and the column-count bound \(r_L(a)\leq L-a\)
+give \(r_N(k)\leq L\). For \(k=2a+1<2L\), they give \(r_N(k)\leq L+1\).
+Reflection covers every other cut. If \(L\geq2\), then \(r_L(L-1)=1\),
+because this is a nonempty single-column Fourier block with nonzero
+entries. Thus \(r_N(2L-1)=L+1\). Symmetry equates the upper and lower
+ranks at each cut. This proves the matching upper bound for \(N\geq8\).
+
+The bases are \(r_1(0)=r_1(1)=0\) and \(r_2(1)=1\). At \(N=4\), (10) and
+(15) give the profile \((1,1,1)\). Every nontrivial Fourier matrix has a
+nonzero corner at \(k=1\), so the minima at \(N=2,4\) are exactly one.
+This also explains why substituting \(N=4\) into \(N/4+1\) is invalid.
+
+\subsection{2.4 Half squares and the characteristic zero
+extension}\label{half-squares-and-the-characteristic-zero-extension}
+
+For every complex Fourier rectangle \(V=U_N[R,H]\), coordinate
+restriction gives \(\|V\|_2\leq1\), while \(\|V\|_F^2=|R||H|/N\). The
+sum of the squared singular values is at most their number, hence
+
+\[
+\operatorname{rank}V\geq |R||H|/N.                         \tag{16}
+\]
+
+For \(N=4L\) and half-size sets, this is \(\operatorname{rank}V\geq L\).
+Choose both sets to be all even labels. With \(0\leq a,b<2L\), the
+unnormalized entries are
+
+\[
+\omega_N^{(2a)(2b)}=\omega_L^{ab}.
+\]
+
+Every residue modulo \(L\) occurs twice in each axis, so the block is
+\(F_L\) with repeated rows and columns and has rank exactly \(L\). This
+proves (5). The chosen set has a nontrivial translation stabilizer,
+consistent with deficit zero in Theorem 2. At \(N=2\), every half-square
+is a nonzero scalar.
+
+Finally let \(K\) have characteristic zero and contain a primitive
+\(N\)th root \(\zeta\). Every matrix involved in the exact statements
+has entries in the cyclotomic subfield \(\mathbb Q(\zeta)\). Matrix rank
+is unchanged under field extension, since it is characterized by
+vanishing and nonvanishing minors. An embedding of this subfield into
+\(\mathbb C\) sends \(\zeta\) to a primitive complex root. Such a root
+is \(\omega_N^a\) with \(\gcd(a,N)=1\), giving the same minimax through
+a row-label permutation. The bit-reversal recurrence also holds directly
+for every primitive root. This proves the asserted field extension
+without assuming that all of \(K\) embeds into \(\mathbb C\) or that
+\(\sqrt N\in K\). It does not transfer the positivity proof to finite
+characteristic. This completes Theorem 1.
+
+\section{3 The finite abelian autocorrelation deficit
+theorem}\label{the-finite-abelian-autocorrelation-deficit-theorem}
+
+\textbf{Theorem 2.} Let \(G\) be any finite abelian group of order
+\(N\geq2\), and let \(U\) be (3). Fix \(R\subseteq\widehat G\) and
+\(H\subseteq G\) with \(1\leq r=|R|,h=|H|\leq N\). Put \(V=U[R,H]\) and
+
+\[
+\begin{aligned}
+c_H(s)&=|H\cap(H-s)|,\\
+d_H&=h-\max_{s\neq0}c_H(s),\\
+B_H&=\frac{h(N-r)}N-\frac{d_Hr(N-r)}{N^2}.
+\end{aligned}                                                \tag{17}
+\]
+
+Then
+
+\[
+\operatorname{rank}V\geq
+\left\lceil\frac{rh}N+\frac{d_Hr(N-r)}{N^2}\right\rceil.
+                                                               \tag{18}
+\]
+
+For every integer \(0\leq t<h-B_H\) and every
+\(W\in\mathbb C^{r\times h}\) with \(\operatorname{rank}W\leq t\),
+
+\[
+\|V-W\|_2\geq\sigma_{t+1}(V)
+\geq\left(1-\sqrt{\frac{B_H}{h-t}}\right)^{1/2}>0.             \tag{19}
+\]
+
+The transposed bounds hold with the roles of \(R\) and \(H\)
+interchanged. Explicitly, define \(d_R\) by nonzero translations in
+\(\widehat G\) and put
+
+\[
+B_R=\frac{r(N-h)}N-\frac{d_Rh(N-h)}{N^2}.
+\]
+
+Then the other rank bound is
+
+\[
+\operatorname{rank}V\geq
+\left\lceil\frac{rh}N+\frac{d_Rh(N-h)}{N^2}\right\rceil,       \tag{20}
+\]
+
+and the other gap is \((1-\sqrt{B_R/(r-t)})^{1/2}\) when
+\(0\leq t<r-B_R\). One may take the larger rank lower bound and, among
+gap bounds whose own strict condition holds, the larger gap.
+
+\subsection{3.1 Proof of the rank
+estimate}\label{proof-of-the-rank-estimate}
+
+Let \(I=\widehat G\setminus R\) and \(n=N-r\). Set
+
+\[
+A=U[I,H]^*U[I,H],\qquad f_I(s)=\sum_{\chi\in I}\chi(s).
+\]
+
+As in (6), \(A\) is a positive contraction and \(V^*V=I_h-A\). For
+\(x,y\in H\), \(A_{xy}=N^{-1}f_I(y-x)\). Thus the exact second-moment
+identity and orthogonality give
+
+\[
+\operatorname{tr}(A^2)=\frac1{N^2}\sum_{s\in G}c_H(s)|f_I(s)|^2,
+\quad \sum_{s\in G}|f_I(s)|^2=Nn,\quad f_I(0)=n.              \tag{21}
+\]
+
+The identity uses \(\operatorname{tr}(A^2)=\sum_{x,y}|A_{xy}|^2\), valid
+because \(A\) is Hermitian. Using \(c_H(0)=h\) and \(c_H(s)\leq h-d_H\)
+for \(s\neq0\) yields
+
+\[
+\begin{aligned}
+\operatorname{tr}(A^2)
+&\leq\frac{h n^2+(h-d_H)(Nn-n^2)}{N^2}\\
+&=\frac{hn}N-\frac{d_Hrn}{N^2}=B_H.                         \end{aligned} \tag{22}
+\]
+
+The multiplicity of eigenvalue one of \(A\) equals \(\dim\ker V\) and is
+at most \(\operatorname{tr}(A^2)\). Hence
+\(\operatorname{rank}V\geq h-B_H\). Taking the integer ceiling proves
+(18). Also \(0\leq d_H\leq h\), so \(B_H=(n/N)(h-d_Hr/N)\geq0\), as
+required for (19).
+
+\subsection{3.2 Proof of the indexed gap and the transpose
+statement}\label{proof-of-the-indexed-gap-and-the-transpose-statement}
+
+List the eigenvalues of \(A\) as \(a_1\geq\cdots\geq a_h\), all in
+\([0,1]\). The descending eigenvalues of \(V^*V\) are
+\(1-a_h,\ldots,1-a_1\). Therefore
+
+\[
+\sigma_{t+1}(V)^2=1-a_{h-t}.
+\]
+
+Since at least \(h-t\) eigenvalues of \(A\) are at least \(a_{h-t}\),
+
+\[
+(h-t)a_{h-t}^2\leq\sum_{j=1}^h a_j^2
+=\operatorname{tr}(A^2)\leq B_H.
+\]
+
+This proves the second inequality in (19). The strict condition
+\(t<h-B_H\) implies \(h-t>B_H\geq0\), so the denominator is positive and
+the resulting gap is positive. This condition and (18) also ensure
+\(t<\operatorname{rank}V\leq\min(r,h)\), so the stated nonzero
+singular-value index is legitimate.
+
+For completeness, let \(E\) be the span of the top \(t+1\) right
+singular vectors of \(V\). Since \(\operatorname{rank}(W|_E)\leq t\),
+some unit vector \(x\in E\) satisfies \(Wx=0\). Then
+\(\|(V-W)x\|_2=\|Vx\|_2\geq\sigma_{t+1}(V)\), proving the first
+inequality in (19) without a separate approximation theorem as an
+unproved premise.
+
+Under the canonical identification \(G\cong\widehat{\widehat G}\), the
+transpose \(U^T\) is the unitary character table of \(\widehat G\).
+Apply the proved statements to \(V^T\), whose rank, nonzero singular
+values, and operator norm equal those of \(V\). This proves (20) and the
+transposed gap. Theorem 2 is complete.
+
+\subsection{3.3 Endpoint and normalization
+cases}\label{endpoint-and-normalization-cases}
+
+The definition of \(d_H\) does not apply to the trivial group, since
+there is no nonzero translation. At \(N=1\) the character table is
+\([1]\): its unique nonempty block has rank one and distance one from
+the only rank-zero matrix. Empty restrictions have rank zero. These
+direct facts are the entire \(N=1\) convention, not an artificial
+maximum over an empty set.
+
+For \(N\geq2\), empty \(R\) or \(H\) may be handled directly as
+rank-zero blocks; they are excluded from the statement to avoid
+unnecessary deficit and approximation-index conventions. When \(r=N\),
+\(B_H=0\) and \(V\) has orthonormal columns. Equations (18) and (19)
+give rank \(h\) and gap one for every \(0\leq t<h\). When \(h=N\),
+\(d_H=0\) and (18) gives rank \(r\); the transposed bound gives the
+exact gap one for every \(t<r\), since \(V\) has orthonormal rows.
+
+For a singleton \(H\), \(d_H=1\) and \(B_H=(N-r)^2/N^2\). The rank bound
+rounds up to one and the gap at \(t=0\) is exactly \(\sqrt{r/N}\), the
+norm of this column. For a singleton \(R\), the transposed statement
+gives the exact norm \(\sqrt{h/N}\). These observations cover all
+nonempty restrictions at \(N=2\) as well as singleton cases at larger
+sizes.
+
+If \(t\geq h-B_H\), equation (19) asserts no strictly positive gap from
+that orientation. Equality at the threshold gives zero in the displayed
+expression; when \(t\geq h\) the denominator is not used. Failure of
+this sufficient strict condition is not a claim that an exact rank-\(t\)
+representation exists. The other orientation may still apply.
+
+For the unnormalized character table \(F=\sqrt N\,U\), all rank
+conclusions are unchanged. For a rank-at-most-\(t\) approximant \(Z\) to
+\(F[R,H]\), apply (19) to \(W=Z/\sqrt N\): the lower bound on
+\(\|F[R,H]-Z\|_2\) is \(\sqrt N\) times the normalized bound. More
+generally, multiplication of the whole target by a scalar \(\alpha\)
+multiplies the norm lower bound by \(|\alpha|\). This is the
+normalization needed for every gap in this manuscript.
+
+\section{4 Existing consequences and their
+boundaries}\label{existing-consequences-and-their-boundaries}
+
+\subsection{Translation stabilizers and
+cardinality}\label{translation-stabilizers-and-cardinality}
+
+For \(s\neq0\), \(c_H(s)=h\) if and only if \(H+s=H\). Thus \(d_H>0\)
+exactly when \(H\) has trivial translation stabilizer. If \(G\) is a
+\(p\)-group and \(p\nmid h\), each nonidentity translation has orbit
+length a positive power of \(p\), so \(H\) cannot be a union of its
+orbits. It follows that \(d_H\geq1\). More generally, \(\gcd(h,N)=1\)
+suffices: the nontrivial order of a translation divides \(N\) and would
+have to divide \(h\) for invariance.
+
+For a square block of side \(s\) in a \(p\)-group with \(p\nmid s\),
+(18) consequently gives
+
+\[
+\operatorname{rank}U[R,H]\geq
+\left\lceil\frac{s^2}N+\frac{s(N-s)}{N^2}\right\rceil.        \tag{23}
+\]
+
+For example, at \(N=64\) and \(s=21\), the expression inside the ceiling
+is \(29127/4096\), giving eight; the ordinary ceiling
+\(\lceil441/64\rceil\) is seven. No location assumption or new separator
+model is needed for this existing example.
+
+\subsection{Critical rectangles for abelian two
+groups}\label{critical-rectangles-for-abelian-two-groups}
+
+For every finite abelian \(2\)-group of order \(N=4L\geq8\), take
+\(r=2L-1\), \(h=2L+1\). Odd cardinality gives \(d_H\geq1\) and (22)
+gives the same upper bound \(B_L\) in (8). With \(t=L\), (19) yields the
+existing corollary
+
+\[
+\sigma_{L+1}(U[R,H])\geq
+\delta_N:=\left(1-\sqrt{\frac{B_L}{L+1}}\right)^{1/2}>0.      \tag{24}
+\]
+
+Indeed, \(L<h-B_L\) is equivalent to \(B_L<L+1\). Since
+
+\[
+L+1-B_L=\frac14-\frac1{4L}-\frac1{16L^2}\longrightarrow\frac14,
+\]
+
+the expansion \(1-\sqrt{1-x}\sim x/2\) gives
+\(\delta_N\sim(2N)^{-1/2}\). This is a decaying indexed gap, not uniform
+conditioning of the entire rectangle. If a full-matrix approximant has
+rank at most \(L\) on the corresponding critical corner, its
+operator-norm error from the independently reordered normalized
+character table is at least \(\delta_N\), since coordinate restriction
+cannot increase the error norm. A matching endpoint minimax upper
+construction for every noncyclic \(2\)-group is not supplied.
+
+\subsection{Rank sums at the already accepted
+sizes}\label{rank-sums-at-the-already-accepted-sizes}
+
+Let \(S(M)=\sum_{k=1}^{N-1}\operatorname{rank}M[0:k,k:N]\). Equation
+(16) gives the universal pointwise lower bound
+\(\lceil k(N-k)/N\rceil\). For odd \(k\) and dyadic \(N\geq2\), the
+column size \(h=N-k\) is odd, so (18) improves this to
+
+\[
+\operatorname{rank}M[0:k,k:N]\geq
+\left\lceil\frac{k(N-k)(N+1)}{N^2}\right\rceil.              \tag{25}
+\]
+
+At \(N=8\), these lower bounds are \((1,2,3,2,3,2,1)\). At \(N=16\),
+they are \((1,2,3,3,4,4,5,4,5,4,4,3,3,2,1)\). Recurrence (10) attains
+each entry. The exact minimum upper-cut sums at these sizes are
+therefore 14 and 48. The base-size minima are \(S_1=0\), \(S_2=1\), and
+\(S_4=3\).
+
+For the bit-reversal ordering only, summing (10) using reflection gives
+
+\[
+S_N=\frac{N^2}{8}+\frac N4+4S_{N/4},\qquad S_1=0, S_2=1.
+\]
+
+To see the coefficients, the even cuts up to the middle contribute
+\(\sum_{a=1}^{L}(a+r_L(a))\), the odd cuts contribute
+\(\sum_{a=0}^{L-1}(a+1+r_L(a))\), and reflection doubles the combined
+sum and subtracts the middle value \(r_N(2L)=L\). For \(N=2^m\), the
+solution is
+
+\[
+S_N=\begin{cases}
+N^2/6+N(m/8-1/6),&m\text{ even},\\
+N^2/6+N(m/8+1/24),&m\text{ odd}.
+\end{cases}                                                  \tag{26}
+\]
+
+Meanwhile summing the unrounded bound in (16) gives
+\(S(M)\geq(N^2-1)/6\). Thus (26) has the optimal leading term \(N^2/6\).
+It does not prove exact all-size minimum rank sums. Already at \(N=32\),
+(25) together with the even-cut baseline sums to 182, whereas (26) gives
+192; these bounds do not settle the gap.
+
+\section{5 Prior art and the recovered final paper
+comparison}\label{prior-art-and-the-recovered-final-paper-comparison}
+
+Double digit reversal and the simultaneous rank-one block hierarchy are
+established in Delvaux and Van Barel's final 2008 article {[}1{]},
+especially Eq. (15) and Lemma 7. The upper calculation in Section 2 is
+explicit cut bookkeeping within that known structure. Their Theorem 9
+describes the minimum Fourier support of one nonzero vector with bounded
+input support; Remark 10 gives additional extremal-support geometry. The
+\(N=8\) critical lower bound is already a consequence: a rank-deficient
+\(5\times3\) transposed critical block would give input support at most
+three and output support at most three, whereas their theorem requires
+at least four.
+
+For \(N=4L\geq16\), the direct one-vector substitution at a hypothetical
+rank \(L\) only gives Fourier support at least four, while the two
+complement sizes are \(2L-1\) and \(2L+1\). This direct substitution
+does not exclude rank \(L\). That observation distinguishes quantifiers;
+it is not a proof that the entire older theory cannot imply the general
+result through a different argument.
+
+The final comparison report {[}S6{]} has now been recovered
+byte-for-byte at its recorded hash, and the local final journal PDF
+matches the hash recorded in that closure. The relevant final passages
+were checked again against this PDF. Its source-availability issue is
+closed. Older immutable reports {[}S2, S5{]} contain superseded access
+wording; that wording is not a current blocker. The bounded comparison
+concluded that the complete general minimax and deficit rank/gap
+statements were not stated in that article. It did not establish
+worldwide novelty.
+
+The ordinary flat-unitary bound (16) is classical; de Wolf {[}4, Theorem
+1{]} gives the Hadamard version, attributes it to Lokam, and discusses
+the equal-magnitude orthogonal/DFT setting. Projection and
+Hilbert--Schmidt uncertainty methods are classical {[}7{]}.
+Stabilizer-sensitive support uncertainty is also established {[}5, Lemma
+7.1 and Theorem 7.2{]}. The statistic used here is not newly invented:
+Shkredov {[}6, Eq. (4){]} uses \(\rho(H)=\max_{s\neq0}|H\cap(H+s)|\),
+and exactly \(d_H=h-\rho(H)\). The sign of the translation has no effect
+on this maximum.
+
+The Kronecker Fourier work {[}3{]} is relevant prior art for
+subgroup-based rank-deficient blocks and support extrema on general
+finite abelian groups. Merely extending the group class is not an
+originality argument. The remaining historical comparison concerns the
+exact overlap-retaining fixed-rectangle coefficient, higher-dimensional
+support or rank profiles, and concentration second moments. Those
+questions are separate from the complete proofs above.
+
+\subsection{Versioned citation
+concordance}\label{versioned-citation-concordance}
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2600}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3800}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.3600}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Source and version
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Hierarchy or support passages
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Verification in this packet
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+DV2008 final {[}1{]} & Eq. (15), pp.~1593--1594; Lemma 7, p.~1596;
+Theorem 9, pp.~1598--1599; Remark 10, p.~1599 & Recovered accepted
+comparison; matching local final PDF; key passages rechecked \\
+TW470 September 2006 {[}2{]} & Lemma 8, printed p.~11 / PDF p.~13;
+Theorem 10, printed pp.~13--14 / PDF pp.~15--16 & Author-institution PDF
+and numbering freshly checked \\
+TW477 November 2006 {[}3{]} & Theorem 14, printed pp.~11--12; Theorem
+17, p.~13; Theorem 20 and Corollary 21, pp.~17--18 & Author-institution
+preprint; earlier bounded comparison retained; no relabeling as
+final-journal numbering \\
+\end{longtable}
+
+The preprint and final article numbers are deliberately not
+interchangeable. The local inspection did not repeat the entire
+final-paper comparison or all earlier specialist literature searches.
+References {[}4{]}--{[}7{]} were checked at their indicated
+primary-source versions; the broader inherited reference inventory is
+preserved in the source packet.
+
+\section{6 Status and open extensions}\label{status-and-open-extensions}
+
+No mathematical gap was found in consolidating the two stated theorems.
+Their previously recorded independent checks are {[}S3{]} and {[}S4{]}.
+The present manuscript is an author-side consolidation awaiting a separate independent manuscript review; it does
+not label itself newly independently accepted. The algebraic controls
+accompanying the packet are regression checks, not replacements for the
+proofs or new finite-field theorems.
+
+The following are optional future problems, not omitted assumptions or
+unfinished steps in either proof:
+
+\begin{itemize}
+\tightlist
+\item
+  Find matching endpoint minimax upper constructions for arbitrary
+  noncyclic finite abelian \(2\)-groups.
+\item
+  Determine the exact minimum upper-cut rank sum at every dyadic size
+  beyond the accepted small cases.
+\item
+  Determine sharper or optimal fixed-rectangle gap bounds, or suitable
+  distinct positive-characteristic rank statements.
+\item
+  Complete the wider model-matched historical comparison for the general
+  minimax and the exact deficit formula.
+\end{itemize}
+
+No separator fusion is developed in this manuscript. Nor does high cut
+rank alone measure Fourier evaluation cost: even a permutation can have
+large corner rank while applying cheaply. Arithmetic or circuit lower
+bounds would require a separately specified and charged computation
+model. Neither theorem supplies one.
+
+\section{References}\label{references}
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Steven Delvaux and Marc Van Barel. \emph{Rank-deficient submatrices of
+  Fourier matrices}. Linear Algebra and its Applications 429 (2008),
+  1587--1605.
+  \href{https://doi.org/10.1016/j.laa.2008.04.043}{doi:10.1016/j.laa.2008.04.043}.
+  Final journal version inspected locally; source PDF SHA-256 is
+  recorded in the packet.
+\item
+  Steven Delvaux and Marc Van Barel. \emph{Rank-deficient submatrices of
+  Fourier matrices}. Report TW470, September 2006.
+  \href{https://www.cs.kuleuven.be/publicaties/rapporten/tw/TW470.pdf}{Author-institution
+  preprint}. Numbering is specific to this version.
+\item
+  Steven Delvaux and Marc Van Barel. \emph{Rank-deficient submatrices of
+  Kronecker products of Fourier matrices}. Report TW477, November 2006.
+  \href{https://www.cs.kuleuven.be/publicaties/rapporten/tw/TW477.pdf}{Author-institution
+  preprint}. The later article is in Linear Algebra and its Applications
+  426 (2007), 349--367; passage references here use TW477.
+\item
+  Ronald de Wolf. \emph{Lower Bounds on Matrix Rigidity via a Quantum
+  Argument}.
+  \href{https://homepages.cwi.nl/~rdewolf/publ/qc/qrigid.pdf}{Author-hosted
+  preprint}, Theorem 1, p.~4, and Section 1.2, p.~2. The flat-matrix
+  lower bound is credited there to Lokam; no unverified original
+  corollary number is asserted here.
+\item
+  Tao Feng, Henk D. L. Hollmann, and Qing Xiang. \emph{The shift bound
+  for abelian codes and generalizations of the Donoho--Stark uncertainty
+  principle}.
+  \href{https://arxiv.org/pdf/1804.00367v1}{arXiv:1804.00367v1}, 2018,
+  Lemma 7.1 and Theorem 7.2, PDF p.~11.
+\item
+  Ilya D. Shkredov. \emph{Uncertainty for convolutions of sets}.
+  \href{https://arxiv.org/pdf/2404.12469v1}{arXiv:2404.12469v1}, 2024,
+  Eq. (4), p.~2. The cited definition is the maximum nonzero-translation
+  overlap.
+\item
+  Gorjan Alagic and Alexander Russell. \emph{Uncertainty Principles for
+  Compact Groups}.
+  \href{https://arxiv.org/pdf/math/0608702v2}{arXiv:math/0608702v2},
+  2008, Theorem 1 and Corollary 1, pp.~1--2, and Theorem 3.1.1, p.~4.
+\end{enumerate}
+
+\section{Appendix Proof source
+concordance}\label{appendix-proof-source-concordance}
+
+The following labels refer to exact local source copies in the
+accompanying proof-source packet. Complete byte counts, original paths,
+retrieval provenance, and full SHA-256 hashes are in
+SOURCE\_MANIFEST.json. The source copies remain unchanged, including
+their historical dating and now-superseded access prose.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.0900}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.4100}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.5000}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Label
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Source
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Role in this manuscript
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+S1 & MINIMAX\_PROOF, \emph{Independent Fourier endpoint rank audit} &
+Theorem 1, exact recurrence, small rank sums \\
+S2 & DEFICIT\_PROOF, \emph{Autocorrelation-deficit Fourier bounds and
+routed separators} & Theorem 2, stabilizer/cardinality consequences;
+separator sections excluded here \\
+S3 & R07, REVIEW-07 report, Section 7 C02 & Recorded independent
+acceptance of endpoint scope and critical rectangle extension \\
+S4 & R08, REVIEW-08 report, deficit passage & Recorded independent
+checking of the separate deficit estimate and spectral index \\
+S5 & MINIMAX\_PRIORITY, endpoint priority report & Half-square boundary,
+prior-art boundaries, version-specific references \\
+S6 & Recovered DELVAUX\_FINAL\_COMPARISON & Half-square proof and
+completed bounded final-paper comparison \\
+S7 & FINAL\_THEOREMS, Section 1 & Existing abelian two-group
+critical-rectangle gap and detailed upper proof \\
+S8 & ORIGINAL\_MINIMAX\_PROOF & Original exact recurrence exposition
+extracted inertly from its uploaded archive \\
+\end{longtable}
+
+The five readiness-pinned main sources were rehashed and matched before
+writing. Source S6 was recovered from the repository blob already listed
+in the local pinned tree; it matches its inherited comparison hash
+exactly. The packet does not redistribute the journal article PDF or its
+extracted full text. It records the verified local PDF hash and its
+bibliographic reference instead.
+
+\end{document}
