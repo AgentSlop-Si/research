@@ -1,6 +1,8 @@
 # Reviewed research checkpoints
 
-Latest: [11 October CHIRP phase-one independent acceptance and unapplied table-gap audit](2026-10-11-phase-one-and-gap-audit/README.md). The new CHIRP bounded milestone is accepted; zero new cells were saved in the canceled gap-fixing pass.
+Latest: [11 October reviewed proof follow-up](2026-10-11-proof-review-followup/README.md): RS b=5 accepted; PREFIX correctly positioned as recovered/reproved scope with fresh C30 evidence; narrow CGSF commutant obstruction accepted. No live table changes.
+
+Earlier: [11 October CHIRP phase-one independent acceptance and unapplied table-gap audit](2026-10-11-phase-one-and-gap-audit/README.md). The new CHIRP bounded milestone is accepted; zero new cells were saved in the canceled gap-fixing pass.
 
 Earlier: [11 October later reviewed addendum](2026-10-11-late-reviewed-addendum/README.md), final sealed scopes through19:30 UTC.
 
