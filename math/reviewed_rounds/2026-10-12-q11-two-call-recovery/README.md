@@ -20,3 +20,7 @@ Independent symbolic checks derive the identity from T³=cI and contract the old
 The growing field and second-call coefficient heights must be charged in a bit model. The stated elementary relative-error bound can grow as O(N*epsilon); no stability equivalence is established. Products B A B do not preserve the additive Green grammar or branch counts. The existing Model R interval, coloring costs and expanded-output limits remain unchanged. Broader Q11, all-length/negative-family extensions, minimality among arbitrary architectures, bit/physical performance and historical priority remain open.
 
 Earlier: [whole-output and shared-bank reviews](../2026-10-12-whole-output-shared-banks/README.md). Prior scientific reports and repository visibility/licensing remain unchanged.
+
+## Later admitted-instance backend execution
+
+Read the [Q16 bounded backend execution review](../2026-10-12-q16-admitted-backend/README.md), including full outputs, actual work, the retained failed tape and remaining provider/totality limits.
