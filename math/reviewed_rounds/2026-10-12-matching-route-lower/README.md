@@ -14,3 +14,7 @@ The row-incidence lower N(5q−1) yields Omega(Nq) visits only for the stipulate
 The exact source archives and earlier mathematical reports are preserved. New coloring constructions and executable reproducer packaging are outside this dated review cutoff.
 
 Earlier: [common phase arcs, one-sparse pruning and counted RAM](../2026-10-12-arcs-pruning-ram/README.md).
+
+## Later coloring upper and source-attribution review
+
+The [reviewed coloring construction](../2026-10-12-coloring-attribution/README.md) reduces the paid Model R upper to 20q−7 with an explicitly charged cubic-word coloring setup. The lower remains 20q−12, so the current paid gap is five. This dated report and its earlier upper comparison are preserved.
