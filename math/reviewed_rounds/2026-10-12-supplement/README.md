@@ -13,3 +13,7 @@ Read the [independent attribution correction](q05-attribution-correction.md) and
 - [Even-chirp complete certificate contract](even-chirp-complete-certificate.md): mathematically complete all-r membership certificates in its primitive-2N-root family. The bounded implementation is resource-limited: the valid N4096/r8/F65537/psi6561/all-ones endpoint returns LIMIT at 50 million units. This family and negative-sign convention are distinct from Q13.
 
 These are privacy-filtered report/proof derivatives. Original reports and complete research packets remain preserved separately. Executable source bundles are not included in this publication, and this is not external peer review or production certification. See FILE_MANIFEST.json and MINIMAL_VERIFICATION.json.
+
+## Later finite certificates
+
+See [Q33 retained-data replay, PREFIX source comparison and Q24 finite stage minimum](../2026-10-12-finite-certificates/README.md). The Q05 attribution correction above remains current.
