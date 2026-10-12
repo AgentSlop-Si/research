@@ -10,3 +10,7 @@ The Q11 improvement has O(N) field coefficient preparation PLUS O(s³) integer-w
 The [self-contained reproducibility supplement](../../reproducibility/q11-matching-green/README.md) still reproduces the earlier 20q+1 baseline. It is not silently upgraded to the coloring implementation. Original reports, archives, repository visibility and licensing remain unchanged.
 
 Earlier: [restricted matching-support and rank-incidence lower bounds](../2026-10-12-matching-route-lower/README.md). Broader Q11, unrestricted-cycle lower bounds, stability, general C03 sparse recovery and historical priority remain open.
+
+## Later bounded overlap review
+
+Read the [b=19 unramified middle-overlap acceptance](../2026-10-12-b19-unramified/README.md), with its exact 37-order domain, existential good-prime qualification and 18 remaining ramified middle orders.
