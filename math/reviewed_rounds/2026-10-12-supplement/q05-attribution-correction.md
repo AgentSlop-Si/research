@@ -66,8 +66,10 @@ This corrects attribution for the existing Q05/C02/TH-05 result without changing
 
 Accepted conclusion:
 
-"The exact independent-endpoint minimax is accepted for every finite abelian 2-group: 0,1,1 at N=1,2,4 and N/4+1 for N≥8. Its matching upper and common cut profile follow by elementary rank bookkeeping from Delvaux–Van Barel's TW477 Lemma 12 dual flags. The symmetric isotropic recursion is a self-dual specialization. The N=8 lower is already a Hamming-profile corollary; the universal N≥16 critical-rectangle lower and full historical priority remain unresolved comparison questions."
+"The exact independent-endpoint minimax is accepted for every finite abelian 2-group: 0,1,1 at N=1,2,4 and N/4+1 for N≥8. Its matching upper and common cut profile follow by elementary rank bookkeeping from Delvaux–Van Barel's TW477 Lemma 12 dual flags. The symmetric isotropic recursion is a self-dual specialization. The N=8 lower is already a Hamming-profile corollary; historical priority of the accepted universal N≥16 critical-rectangle lower and full minimax equality remains an unresolved comparison question."
 
-The general-group upper comparison is resolved as a classical corollary. The universal N>=16 lower and full worldwide priority remain unresolved. Original dated reports are preserved; this later correction supersedes their attribution only.
+The general-group upper comparison is resolved as a classical corollary. Historical priority of the accepted universal N>=16 lower and full minimax equality remains unresolved. Original dated reports are preserved; this later correction supersedes their attribution only.
 
 See [the independent dual-flag proof](q05-dual-flag-proof.md) and [the earlier dated minimax report](../2026-10-12-reviewed-research/q05-noncyclic-minimax.md). The earlier report remains unchanged.
+
+Editorial clarification, 12 October 2026: the remaining question above concerns historical attribution. The universal lower bound and minimax equality remain mathematically accepted. The original reviewed source report is unchanged.

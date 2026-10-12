@@ -9,3 +9,7 @@
 The five sources are independently reviewed project research, published here as privacy-filtered report derivatives. Full review archives and executable reproductions remain preserved separately. No worldwide novelty or general FFT improvement is claimed.
 
 Previous collections: [finite certificates](../2026-10-12-finite-certificates/README.md), [bounded supplement](../2026-10-12-supplement/README.md), and the important [Q05 attribution correction](../2026-10-12-supplement/q05-attribution-correction.md).
+
+## Later bounded SRCR, N32 and HERO17 reviews
+
+Read the [SRCR volume obstruction/escape, N32 four-row certificate and HERO17 seed obstruction](../2026-10-12-srcr-n32/README.md), retaining their restricted model and full-transform limitations.

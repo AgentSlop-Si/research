@@ -2,7 +2,7 @@
 
 ## Later Q05 attribution correction
 
-The [Q05 noncyclic minimax report](q05-noncyclic-minimax.md) remains preserved as originally dated. Before citing its contribution, read the [later independent attribution correction](../2026-10-12-supplement/q05-attribution-correction.md): the upper follows from TW477 dual flags, and the N8 lower is classical. The equality remains accepted; N>=16 lower/full priority remains unresolved. See the [supplement](../2026-10-12-supplement/README.md) for later bounded implementations and certificates.
+The [Q05 noncyclic minimax report](q05-noncyclic-minimax.md) remains preserved as originally dated. Before citing its contribution, read the [later independent attribution correction](../2026-10-12-supplement/q05-attribution-correction.md): the upper follows from TW477 dual flags, and the N8 lower is classical. The equality and universal N>=16 lower remain accepted; historical priority of that lower and the full minimax equality remains unresolved. See the [supplement](../2026-10-12-supplement/README.md) for later bounded implementations and certificates.
 
 This additive collection publishes 49 independently reviewed research reports as privacy-filtered text derivatives. It does not replace earlier repository checkpoints. The reports preserve their individual mathematical models, version restrictions and open obligations.
 
