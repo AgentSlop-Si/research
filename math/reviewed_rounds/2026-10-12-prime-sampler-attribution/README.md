@@ -9,3 +9,7 @@
 These are bounded source-bound project reviews. Original scientific archives remain unchanged. Derivatives omit private tracking details and disclose precision clarifications. No broad production, entropy-source, recovery or historical-priority conclusion follows.
 
 Earlier: [guarded Q27 exclusion, Q11 matching baseline and Q16 ranking/location](../2026-10-12-green-ranking-slices/README.md).
+
+## Later overlap, event and ABI reviews
+
+Read the [b=17 completion, Q16 event components and bounded ABI review](../2026-10-12-overlap-events-abi/README.md), with their exact domains, paid costs and remaining obligations.
