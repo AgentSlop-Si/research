@@ -15,3 +15,7 @@ Fresh verification reconstructs 767 complex and 177 squared-norm enclosures, 6,1
 General overlap remains open for odd b>=23 in the middle strip 2b+1<d<15(b+1)/2, except separately proved instances. The next b=23 strip is the 66 odd orders 49..179. Ordinary residual squarefreeness keeps its separate accepted and unresolved ranges. Global F020, quantitative conditioning, other root/characteristic cases and historical priority remain open. Classical Hermite/Laguerre/Jacobi, Carlitz/Grosu–Grosu and Sawa–Uchida ingredients retain credit. No FFT speedup or novelty clearance is claimed.
 
 Earlier: [ALG-074 source/interface blocker](../2026-10-12-alg074-source-blocker/README.md). Previous mathematical reports and repository visibility/licensing remain unchanged.
+
+## Later uniform PREFIX review
+
+Read the [p=11 uniform PREFIX acceptance](../2026-10-12-prefix-p11-uniform/README.md), including both sharp scores and the separate unrestricted optimizer/count theorem.
