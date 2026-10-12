@@ -30,3 +30,7 @@ Fused evaluation does not change the Model R branch interval [20q−12,20q−7].
 The original two-DFT evaluator already has the same asymptotic rate. Arbitrary-cycle optimality, all-N/negative-family extensions, numerical stability, bit/physical performance and historical priority remain open. Classical bounded-radix Fourier ingredients retain credit, with no FFT exponent or novelty claim.
 
 Earlier: [Q27 edge14 exact exclusion](../2026-10-12-q27-edge14-exclusion/README.md). Prior scientific reports and repository visibility/licensing remain unchanged.
+
+## Later reverse-schedule refinement
+
+Read the [Q11 two-call Fourier recovery review](../2026-10-12-q11-two-call-recovery/README.md), which shortens the earlier three-call schedule while preserving all model and cost limits.
