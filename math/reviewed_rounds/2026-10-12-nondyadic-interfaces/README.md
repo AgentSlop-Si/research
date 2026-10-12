@@ -23,3 +23,7 @@ Direct character-projector recovery is dense: O(BM²+M²) per attempted fiber. F
 Both are bounded implementation increments. Unrestricted fields and lengths, extension fields or other representations, common-chirp/caller integration, fast arbitrary-length windowed binning, a sharper paid uniform RIP constructor, finite-word/bit/numerical production, stability and historical priority retain their separate open obligations. No generic FFT speedup, new theorem count or novelty clearance is asserted. Q09 work is outside this dated report collection.
 
 Earlier: [b=19 overlap completion](../2026-10-12-b19-ramified-completion/README.md). Existing scientific reports, repository visibility and licensing remain unchanged.
+
+## Later fixed-word implementation review
+
+Read the [bounded Q09 C11 specialization for N=1,2,4](../2026-10-12-q09-fixed-word/README.md), with pinned instruction/stack ceilings and explicit object-memory boundaries.
