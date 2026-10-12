@@ -17,3 +17,7 @@ Cold compilation yields seven semantically identical JSON results and a byte-ide
 The full Q09 backend remains open, including N>=8 and its original full domain, general roots, parsing/real conversion, automatic Q discovery, complete dynamic ledgers, ABI migration, allocator/RSS accounting and competitive production. Historical priority and existing theorem identities remain unchanged. No FFT-speed or novelty promotion follows.
 
 Earlier: [Q07 ternary and Q14 N15 interfaces](../2026-10-12-nondyadic-interfaces/README.md). Existing scientific reports and repository visibility/licensing are preserved.
+
+## Later source-blocker review
+
+Read the [ALG-074 stacked-stream source and interface HOLD](../2026-10-12-alg074-source-blocker/README.md), preserving accepted finite scopes while identifying the missing original words and full-record program binding.
