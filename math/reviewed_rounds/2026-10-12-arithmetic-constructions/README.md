@@ -11,3 +11,7 @@ Read the [research-round summary](ROUND_SUMMARY.md) for the five results and the
 These are source-bound independent project reviews, not external peer review. Report derivatives preserve mathematical proof, source attribution and limitations while omitting private tracking details. Complete research/review archives remain preserved separately. No general FFT breakthrough, practical speed advantage or worldwide-first claim is made.
 
 Earlier: [finite-field and restricted-grammar reviews](../2026-10-12-finite-grammar-reviews/README.md). The [Q05 attribution clarification](../2026-10-12-supplement/q05-attribution-correction.md) remains applicable to the earlier minimax result.
+
+## Later uniform extensions and bounded components
+
+Read the [uniform PREFIX, b=13 overlap, growing Green baseline, companion estimation and matched comparator reviews](../2026-10-12-uniform-extensions/README.md), with their exact assumptions and remaining obligations.
