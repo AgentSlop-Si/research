@@ -15,3 +15,7 @@ Precisely one new disjoint tuple raises accepted coverage to 133 of 5,984, leavi
 The full 34-phase target fiber stays open. Other witnesses, generic same-branch transfer, four-or-more moving phases, free interstage diagonals, nonunit gains, larger sizes, construction efficiency and historical priority are not settled. Large exact arithmetic and replays are paid verification work, with no algorithmic speed or novelty claim.
 
 Earlier: [uniform PREFIX family at p=11](../2026-10-12-prefix-p11-uniform/README.md). Previous scientific reports and repository visibility/licensing remain unchanged.
+
+## Later whole-output and shared-evaluator reviews
+
+Read the [bounded Q16 whole-output and Q11 shared character-bank reviews](../2026-10-12-whole-output-shared-banks/README.md), with distinct theorem, execution and cost boundaries.
