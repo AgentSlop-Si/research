@@ -8,3 +8,7 @@
 These are source-bound independent project reviews, published as privacy-filtered report derivatives. The original research and complete review archives remain preserved separately. No new worldwide novelty, unrestricted lower bound, FFT speedup or production certification is claimed.
 
 Earlier: [network and algebra reviews](../2026-10-12-network-algebra/README.md) and the [Q05 attribution correction](../2026-10-12-supplement/q05-attribution-correction.md).
+
+## Later finite-field and restricted-grammar reviews
+
+Read the [signed F8, HERO0 common-bipartition and ALG074 retained-corner reviews](../2026-10-12-finite-grammar-reviews/README.md) for later bounded acceptances and their remaining obligations.
