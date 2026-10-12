@@ -19,3 +19,7 @@ Each positive recovery actually makes 609 bit attempts and 471,063 source calls,
 Q16 remains open for general provider/entropy certification, a justified operational abort model, uniform executable refinement and totality, broader tail/noise and all-input relative recovery, unitary/downstream S6, practical performance and historical priority. The earlier cardinal one-sparse restriction, raw top-two obstruction and exact two-sample baseline remain valid on their original domains. No novelty or broad-gate closure is claimed.
 
 Earlier: [Q11 two-call recovery refinement](../2026-10-12-q11-two-call-recovery/README.md). Prior scientific reports and repository visibility/licensing remain unchanged.
+
+## Later uniform overlap proof
+
+Read the [full b=23 Rogers–Szegő overlap review](../2026-10-12-b23-overlap/README.md), with original normalization, exact local/annulus certificates and remaining general-scope limits.
