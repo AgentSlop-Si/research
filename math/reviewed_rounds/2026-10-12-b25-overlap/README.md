@@ -19,3 +19,7 @@ The remaining general overlap strip starts at odd b>=27, with odd 2b+1<d<15(b+1)
 Classical Hermite/Laguerre/Jacobi and inherited Carlitz/Grosu–Grosu/Sawa–Uchida attribution is retained. The original Carlitz paper was not newly read. Historical priority of the criterion and its application remains unresolved. No FFT-speed or novelty claim is made.
 
 Earlier: [full b=23 overlap family](../2026-10-12-b23-overlap/README.md). Earlier scientific reports and repository visibility/licensing remain unchanged.
+
+## Later source intake
+
+Read the [ACWL original candidate and two bounded independent reviews](../2026-10-12-acwl-intake/README.md). The restricted lift statements are accepted; the proposed fast-transform compiler remains open.
