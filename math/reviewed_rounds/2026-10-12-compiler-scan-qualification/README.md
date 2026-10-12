@@ -60,3 +60,8 @@ are preserved; no code, raw archive or full third-party paper is published.
 The compiler appendix additionally identifies the exact accepted candidate
 proof that defines its source-event contract. Neither result establishes a
 broader novelty claim, practical speedup or whole-algorithm completion.
+
+## Later reviewed supplements
+
+- [Overlap trace proof and classical-source attribution](../2026-10-12-overlap-trace-attribution/README.md): a proof simplification for the same accepted annulus; existing family coverage and unresolved historical priority are retained.
+- [Complete N=32 cross-prime cubic exclusion](../2026-10-12-q26-n32-complete-cubic/README.md): the fixed seven-Green model is excluded by the joint cover, with both actual modular rank-nine exceptions preserved. Larger sizes and the quartic gate remain open.
