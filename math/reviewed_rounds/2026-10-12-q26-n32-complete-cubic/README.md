@@ -13,3 +13,8 @@ The full report retains the mapping-coverage proof, quotient/minor scaling, exac
 This is a documentation publication. The sealed source archives and original programs are not distributed in this collection, so it is not a standalone executable replay package. The [minimal verification record](MINIMAL_VERIFICATION.json) and [file manifest](FILE_MANIFEST.json) record the exact scope and content identities.
 
 N=64 and larger exhaustive certificates, uniform all-N exclusion, N=32 quartic K4, a production Fourier algorithm, field-to-bit complexity, novelty and priority remain open or outside scope. The given candidate's linear field-operation application cost does not turn this exclusion into a Fourier construction or speedup. Earlier scientific reports are unchanged.
+
+## Later source assessments
+
+- [Four submitted source assessments](../2026-10-12-submitted-source-assessments/README.md): scoped generic support barriers, a structured-residual executor, covariance extensions and an engineering NTT baseline, with their separate review and execution limits.
+- [Alternative one-bank Fourier compiler audit](../2026-10-12-borrowed-compiler-audit/README.md): accepted mathematical construction and bounded fresh reproduction, corrected credit to the prior quadratic-depth compiler, and explicit limits on global execution and originality.

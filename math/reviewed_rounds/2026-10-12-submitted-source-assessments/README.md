@@ -1,0 +1,14 @@
+# Submitted Fourier source assessments
+
+Review date: 12 October 2026.
+
+Four source families contribute bounded results. They do not establish a faster unrestricted all-input Fourier transform or an unrestricted Fourier lower bound. This prose packet preserves the accepted mathematical scopes, source corrections and unresolved construction/resource obligations.
+
+- [Generic fusion barrier](GENERIC_FUSION_REVIEW.md): accepts the restricted generic-complex cyclic-filter and multistage Weyl support obstructions and the shared-defect exact-row implication, with the complete quantifiers and corrections. The dense-residual cost statement belongs to a specified support-pruned radix-two executor. A cheap covariance base remains a construction problem.
+- [Structured residual executor](STRUCTURED_RESIDUAL_REVIEW.md): supports exact dyadic full-output mathematics and static source correspondence under supplied field/root/divisor assumptions, with O(N[1+log(s*+1)]+m log m) field/index work and O(N) field-word/index space. A stated structured family is linear for fixed m; generic/worst-case execution remains Theta(N log N). There are two candidate-support censuses plus additional paid linear passes. Supplied code was not replayed.
+- [Engineering NTT baseline](ENGINEERING_NTT_REVIEW.md): the source reports 162 exact input-vector tests plus heavy controls and a reported 2.37-fold warm speedup of DIF4 over its in-house radix-2 at N=262144. Static consistency was checked. No source-bound runtime reproduction or general optimized-library advantage is established; saved custom complex timings are slower than FFTW_ESTIMATE.
+- [Covariance and two centers](COVARIANCE_TWO_CENTER_REVIEW.md): two centers and all diagonals generate the coarse commutant algebraically. Arbitrary sums in that expressiveness argument do not provide bounded packet size or cheap application. Conditional fast lifts still need a uniform, fully charged compiler for the actual evolving base; the cheap nearly complete base for exceptional-row correction is also unconstructed.
+
+[Source citations](SOURCE_CITATIONS.json) identify the reviewed source files and members by their original names and exact hashes. A repeated standalone Markdown file and matching archive member represent the same source content. The generic archive's 2026-10-13 filename is preserved as supplied; it is not the review date.
+
+[Verification scope](VERIFICATION_SCOPE.json) separates retained independent identity/certificate checks from source-reported tests and current byte-integrity verification. This packet is not an executable release. It contains no programs, binaries or source archives. Historical priority, unrestricted domains, general circuits, numerical stability, bit/physical costs and production qualification are not established beyond the precise statements in each review.
