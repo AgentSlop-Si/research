@@ -15,3 +15,7 @@ Fresh synthetic XOR controls show why this matters: a naive clean-only copy fail
 Earlier accepted finite words and the complete explicit retained 47x47 family keep their original scope. The actual stacked program, copied-center full-record transformation, tensor/controlled-permutation embedding, width-481 child, fixed-tape recursion and complete costs remain open. This is a reviewed blocker clarification, not a new mathematical result, counterexample to the historical conditional proposition, complexity theorem, novelty claim or priority finding.
 
 Earlier: [bounded Q09 fixed-word review](../2026-10-12-q09-fixed-word/README.md). Existing scientific reports and repository visibility/licensing remain unchanged.
+
+## Later overlap-family review
+
+Read the [full b=21 Rogers–Szegő overlap acceptance](../2026-10-12-b21-overlap/README.md), with its separate annulus/local-prime proofs and unchanged broader limits.
