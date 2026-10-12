@@ -8,3 +8,7 @@ The accepted research reviewed here does not yet demonstrate an improvement over
 These reports record a bounded source lookup and model comparison. They establish no new theorem, competing exponent, practical speedup or priority claim. The stronger reported upstream figure is a comparison target, not a newly accepted result of this research project.
 
 Earlier: [uniform extensions and bounded Fourier components](../2026-10-12-uniform-extensions/README.md). All earlier reviewed scopes and historical records remain available there.
+
+## Later reviewed family extensions
+
+Read the [PREFIX p=7 and Rogers–Szegő b=15 reviews](../2026-10-12-prefix-p7-rs-b15/README.md). These scoped mathematical extensions do not establish an improved exact-DFT exponent.
