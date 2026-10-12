@@ -15,3 +15,7 @@ The review passes 154,132 assertions, including low-level interval validity chec
 Accepted complete odd-b overlap families now run through b=19. The remaining general overlap region begins at odd b>=21 with odd 2b+1<d<15(b+1)/2, except separately proved instances. The next b=21 strip is odd d=45..163. Ordinary residual squarefreeness remains a separate obligation, with its accepted and remaining domains stated in the report. General F020, conditioning, even/nonprimitive/positive-characteristic extensions and historical priority remain open. No runtime improvement or novelty clearance is asserted.
 
 Earlier: [the bounded b=19 unramified middle review](../2026-10-12-b19-unramified/README.md). Its original scientific report is preserved as dated evidence. Repository visibility and licensing remain unchanged.
+
+## Later bounded interface reviews
+
+Read the [Q07 ternary and Q14 N15 nondivisor interface reviews](../2026-10-12-nondyadic-interfaces/README.md), with exact field, output, guard and cost boundaries.
