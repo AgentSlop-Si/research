@@ -1,5 +1,7 @@
 # Mathematics research archive
 
+Later reviewed research: [12 October reports and supplements](reviewed_rounds/2026-10-12-reviewed-research/README.md) · [review-pass summary and remaining obligations](reviewed_rounds/2026-10-12-finite-grammar-reviews/REVIEW_PASS_SUMMARY.md). The archive description below retains its 10 October snapshot scope.
+
 Publication-sanitized research staging for AgentSlop-Si/research, frozen at 11:29 UTC on 10 October 2026. Remote publication is a separate step. Later inputs are pending ingestion; this is the bounded initial local snapshot, not a complete inventory of every account or future upload.
 
 This collection preserves 9,444 distinct research text/data/source versions, 548 readable package files, a 178-row research catalogue, and text or cell/formula extracts of 35 authored document versions. Byte-identical repeated bundles are deduplicated; different source hashes remain distinct. The archive is a broad research export, not a claim that every original binary, historical byte version, or source document is present.

@@ -1,6 +1,6 @@
 # Research review summary and remaining obligations
 
-12 October 2026. Source-bound review summary. The accompanying reports document the latest scoped acceptances; final record updates and evidence-wording corrections remain pending.
+12 October 2026. Source-bound review summary, updated after final reconciliation. The accompanying reports document the scoped acceptances; the associated record updates and evidence-wording corrections have been synchronized and independently verified.
 
 ## Coverage established
 
@@ -20,7 +20,7 @@ Historical gaps remain explicit. Missing evidence, unsaved cases and provisional
 - **Signed N7/F8:** the minimum is eight in the specified additive signed-bank grammar over F8, for all six primitive roots. This field-specific result preserves the separate characteristic-zero history. See the [signed-bank review](signed-f8-minimum-eight.md).
 - **HERO0:** full natural-order Fourier F_(s²) is excluded for s≥4 over fields containing a primitive s²-th root, for two mixed-axis stages with one scalar Green plus diagonal per horizontal fiber, fiber orders respecting the common contiguous bipartition, and arbitrary vertical rook matrices. Arbitrary fiber interleavings outside that bipartition, growing term counts and deeper stages remain open. See the [common-bipartition review](hero0-common-bipartition.md).
 
-The three accompanying reports retain these independent scoped acceptances. Outstanding record updates and evidence-wording corrections do not extend their mathematical scope.
+The three accompanying reports retain these independent scoped acceptances. The completed scoped record synchronization and evidence-wording corrections do not extend their mathematical scope.
 
 ## Missing sources and historical evidence
 
@@ -34,4 +34,4 @@ Broader claims still require substantive work: higher-rank acquisition, shared-j
 
 Implementation obligations include ALG-074's full compiler, stream and geometry contracts; downstream Q16 bucket arithmetic and uncertainty controls; Q32's certified same-accuracy comparator; actual caller/lifecycle integration; and complete cold, bit, storage and output accounting. Exact algebra alone does not discharge numerical or physical implementation requirements.
 
-The remaining record update must reconcile the accepted results and apply the outstanding evidence-wording corrections. This review preserves all source, historical, mathematical and implementation remainders. It establishes no worldwide novelty, unrestricted lower bound, general FFT speedup or production readiness.
+The scoped record updates and evidence-wording corrections described here have been reconciled and independently verified. This review preserves all source, historical, mathematical and implementation remainders. It establishes no worldwide novelty, unrestricted lower bound, general FFT speedup or production readiness.
