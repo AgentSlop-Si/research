@@ -9,3 +9,7 @@
 These source-bound independent project reviews retain their original mathematical, execution and attribution limits. Report derivatives omit private tracking details. The Q16 derivative clarifies a tap-preparation phrase using its accompanying accepted cost ledger; its source report is unchanged. No broad gate retirement, practical speed or historical-priority claim is made.
 
 Earlier: [PREFIX p=7 and Rogers–Szegő b=15](../2026-10-12-prefix-p7-rs-b15/README.md). The [exact DFT comparison](../2026-10-12-exact-dft-comparison/README.md) records the earlier quadratic Q11 baseline; the later matching result above improves that Green-specific baseline while leaving the comparison's no-demonstrated-exponent-improvement conclusion intact.
+
+## Later criterion, sampling and attribution reviews
+
+Read the [RS criterion, exact affine sampler and Q11 attribution reviews](../2026-10-12-prime-sampler-attribution/README.md), with their exact domains, paid costs and remaining obligations.
