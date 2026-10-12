@@ -29,3 +29,7 @@ The first review also corrects the manuscript’s intermediate covariance equati
 All three prose files here are byte-identical to their retained sources. FILE_MANIFEST.json records the exact source hashes. This prose collection does not include the private integration record or the complete executable review archives. The original candidate is presented beside its qualified reviews, with no promotion to an accepted fast-transform algorithm.
 
 Earlier: [full b=25 overlap review](../2026-10-12-b25-overlap/README.md). Existing scientific reports, repository visibility and licensing are unchanged.
+
+## Later conditional recurrence review
+
+Read the [GTSL source and independent rate correction](../2026-10-12-gtsl-recurrence-review/README.md), including why a half-limit alone is insufficient and what remains unproved about the proposed compiler.
