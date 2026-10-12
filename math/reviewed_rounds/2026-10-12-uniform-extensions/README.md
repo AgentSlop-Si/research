@@ -11,3 +11,7 @@ Read the [research-round summary](ROUND_SUMMARY.md) for the five results, assump
 These are source-bound independent project reviews. Privacy-filtered report derivatives retain proof, source attribution, methods and limitations. Original research/review archives remain preserved separately. No general FFT breakthrough, blanket completion or worldwide-first claim is made.
 
 Earlier: [arithmetic constructions and exact obstructions](../2026-10-12-arithmetic-constructions/README.md), including the Q11 and RS attribution addenda. The [Q05 attribution clarification](../2026-10-12-supplement/q05-attribution-correction.md) remains applicable to the earlier minimax result.
+
+## Exact DFT source comparison
+
+Read the [pinned upstream exponent and accepted-research model comparison](../2026-10-12-exact-dft-comparison/README.md). This is a bounded comparison, with no new mathematical result or claimed improvement.
