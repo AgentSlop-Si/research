@@ -11,3 +11,7 @@ The original constructor refuses at (N,p,omega)=(16,1201,473) and (32,353,294) w
 These source-bound independent project reviews preserve source assumptions, paid cold/online work and remaining limits. No full sparse-engine, practical FFT-speed or historical-priority conclusion is claimed. Original reviewed archives and earlier reports remain unchanged.
 
 Earlier: [full b=17 overlap, Q16 event components and the bounded ABI bridge](../2026-10-12-overlap-events-abi/README.md). That earlier ABI review kept historical modules inert; actual execution in this later named migration is a separate acceptance.
+
+## Later arc, pruning and counted-RAM reviews
+
+Read the [bounded common-phase-arc, one-sparse pruning and counted-RAM reviews](../2026-10-12-arcs-pruning-ram/README.md), including the exact two-sample baseline and remaining general recovery limits.
