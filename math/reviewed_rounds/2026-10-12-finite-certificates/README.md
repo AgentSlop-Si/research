@@ -7,3 +7,7 @@
 These three privacy-filtered report derivatives preserve their original research sources and all accepted scope boundaries. Complete review archives and executable reproduction files are retained separately, not bundled here. No worldwide novelty, general FFT speedup or production claim is added.
 
 The [preceding supplement](../2026-10-12-supplement/README.md) includes the important [Q05 attribution correction](../2026-10-12-supplement/q05-attribution-correction.md), which remains current.
+
+## Later network and algebra reviews
+
+See the [NF06, C03, M-SCAN, CFGL and Phase56 reports](../2026-10-12-network-algebra/README.md). The preceding finite-scope qualifications and Q05 attribution correction remain current.
