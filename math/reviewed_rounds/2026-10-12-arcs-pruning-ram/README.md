@@ -10,3 +10,7 @@
 These are bounded implementation and composition reviews, with original theory identities and dated source archives retained. They establish no practical FFT-speed or historical-priority conclusion.
 
 Earlier: [single-target composition, N16 accuracy and corrected historical caller migration](../2026-10-12-trial-accuracy-caller/README.md).
+
+## Later restricted matching-route bounds
+
+Read the [fixed-partition support and rank-incidence lower-bound reviews](../2026-10-12-matching-route-lower/README.md), with their precise model restrictions and fully paid upper comparison.
