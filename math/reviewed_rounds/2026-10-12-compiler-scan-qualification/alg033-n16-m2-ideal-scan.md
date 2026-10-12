@@ -1,0 +1,241 @@
+# ALG-033 bounded N16/M2 scan-operator equivalence: independent review
+
+Date: 2026-10-12 UTC.
+
+## Verdict
+
+**INDEPENDENT ACCEPT, N=16, M=2, exact-arithmetic operator equivalence only.**
+The ideal interpretation of the source-defined compression/8-point transform/
+cycle-gauge/balanced-scan/output-scatter path equals the direct normalized
+16-point transform of the source-defined block projection for all 128 legal
+states and all complex inputs. It also equals the exact-root counterpart of
+the already accepted dense useful-accuracy coefficient formula.
+
+This closes the bounded ideal scan-operator subobligation. It does not certify
+the actual NumPy binary64 output, transfer the dense implementation's numerical
+error bound to the scan, or retire the generic ALG-033 gate. The production
+implementation, end-to-end executed accuracy, generic dimensions, novelty and
+practical efficiency remain open.
+
+## Bound sources and independence
+
+The reviewer inspected and hashed, but did not import or execute:
+
+- `source_composite_cycle_core.py.txt`, SHA-256
+  `226e18d6cbae68b5c064a5c4a0b4aa0e7762405ecbf7613c136240ae176e610e`.
+- Accepted dense `useful_accuracy.py`, SHA-256
+  `cbfbf7f78aed0b3ab0769ab40aecee5ef469ac2cab61117c7fdcc99faea39e57`.
+- Prior `INDEPENDENT_REVIEW.md`, SHA-256
+  `7e290b020fda621bdd939da44690e0cbac441f9dae7ab62a59839a48791d337f`.
+
+The final candidate archive is `ALG033_N16_M2_Exact_Scan_Operator_CANDIDATE_2026-10-12.zip`,
+38,275 bytes, SHA-256
+`e55f27dcdbee72affc635e212400cd2df90f950011fe110bbce1299267648895`.
+All 14 members have safe unique regular relative paths, and all 13 payload
+manifest entries verify. The exact candidate model has SHA-256
+`4d3658358cfc2641350b1abac7faa06ed5bba901a53e05a18723521fd61d037a`;
+its author checker has SHA-256
+`ccd02bdcec7ce166250fd4036082cca95b51d5291de842dc819a4d8478502579`.
+The reviewer read the complete model, checker and proof as inert text/AST.
+`verify_candidate_binding.py` independently verifies archive provenance,
+source identity, declared scope/cost fields and the independently reconstructed
+matrix digest. Author-reported 11 mutation kills remain distinguished from
+our six independently executed controls. The sealed author cold record is retained
+as evidence; we do not claim to have replayed author code.
+
+Only the new reviewer-owned `independent_check.py` is run for operator checks. It uses standard
+library integer arithmetic, not NumPy, historical programs, the author checker,
+or the candidate implementation. AST parsing records ten function/class
+bindings with line ranges and AST hashes; a mismatch of any full source hash
+refuses the review. The reviewed source function boundaries are compression
+64–77, projection 80–85, pairwise reduction 88–97, exclusive scan 100–121,
+cycle setup 124–138, scan decoder 141–154, one-row entry 157–160, and direct
+reference 163–166. The sealed review retains frozen source copies as inert evidence; this report does not redistribute them.
+
+## Independently derived operator
+
+Let z=exp(2πi/16), i_j=aj mod 16, where a is odd, and β∈{0,…,15}.
+The two local block phases are 1 and s_r=z^(2ar+β). Thus
+
+    d_r = x_(2r) + s_r x_(2r+1),             0≤r<8,
+    (Px)_(2r)=d_r,  (Px)_(2r+1)=s_r^(-1)d_r.
+
+P is the source-defined unnormalized block map. There is no extra division
+by M=2. Its two-by-two block is [[1,s_r],[conj(s_r),1]], and P²=2P.
+Calling it a projection does not permit silently inserting an orthogonal-
+projection factor 1/2.
+
+Define D_h=Σ_(r=0)^7 d_r z^(-2rh), periodically with period 8.
+The direct normalized DFT is
+
+    Y_i = (D_i + z^(-(i+β)) D_(i+a))/4.
+
+The source forcing is therefore exactly
+
+    Y_i - z^(-(i+β))Y_(i+a)
+      = (D_i - z^(-(2(i+β)+a))D_(i+2a))/4.
+
+The source gauge is g_j=z^(a j(j−1)/2+βj), satisfying
+
+    g_(j+1)/g_j=z^(i_j+β),  g_0=1,  g_16=z^(120a)=−1.
+
+Writing v_j=Y_(i_j)/g_j and t_j=forcing_(i_j)/g_j gives
+v_j−v_(j+1)=t_j. Since i_16=i_0 and g_16=−1, v_16=−v_0.
+Consequently v_0=(Σ_j t_j)/2 and
+
+    Y_(i_j)=g_j[(Σ_l t_l)/2 − Σ_(l<j)t_l].
+
+This is precisely the source seed, exclusive prefix and scatter formula.
+The minus-one monodromy is essential: a periodic gauge or inclusive prefix
+would not give this output. Odd a makes the scatter a permutation; no output
+is omitted or overwritten.
+
+Expanding d_r in the displayed Y formula gives the accepted dense coefficients:
+
+    4 coefficient(2r→k)
+      = z^(-2rk)+z^(-(2r+1)k−2ar−β),
+    4 coefficient(2r+1→k)
+      = z^(-2rk+2ar+β)+z^(-(2r+1)k).
+
+These formulas establish exact-root operator equivalence, not equality of the
+two programs after their different numerical approximations.
+
+## Exhaustive independent verification
+
+All calculations take place in the integer quotient ring Z[z]/(z^8+1),
+representing four times the outputs. Division by 2 at the seed checks exact
+coefficient parity rather than rounding. Roots act by independently implemented
+signed coefficient shifts. Sixteen root powers generated by repeated polynomial
+multiplication and 128 independent convolution/reduction checks confirm the
+shift implementation.
+
+For all 8 odd a, 16 β, 16 input basis positions and 16 outputs:
+
+- 32,768 real-basis and 32,768 imaginary-basis output identities pass.
+- The source-derived scan output, direct expanded-projection DFT16, and accepted
+  collapsed exact-root coefficients agree in all 65,536 cases.
+- A fresh recursive radix-2 DFT8 agrees with a separate direct DFT8.
+- A staged 16-element Blelloch scan agrees with a sequential exclusive-prefix
+  reference, with exactly 30 addition sites per call.
+- All 65,536 real/imaginary recurrence checks pass, and the seed agrees with
+  D_0+z^(-β)D_a in the scaled representation.
+- Each of the 128 state scatters is a permutation, and monodromy is −1.
+
+The real-basis matrix coefficient stream has SHA-256
+`154e8a96cff3e313ecc8f70ef89b410cba3a63008235158840d58d56427de0e7`.
+In the author’s denominator-8 serialization, our independently reconstructed
+matrix digest is `9d5a459028910e10ccb2390809f25933557ed73527397749155fdfd9b3df2891`,
+matching the candidate’s reported digest without executing its code.
+Complex linearity then gives the ideal identity for every complex input; this
+is not an inference from a few numerical vectors.
+
+Six deliberately wrong source-semantic variants are detected, with exact
+witnesses retained in the sealed reviewer results: incorrect forcing shift, boundary
+phase sign, missing seed halving, inclusive prefix, missing scatter permutation,
+and conjugated output gauge. A mutation rejected at exact seed integrality is
+reported as such, rather than claiming a produced-output counterexample.
+
+## Complete path and cost boundary
+
+The source call graph is `one_row_estimate` → compression → one `fft` of length
+8 → cycle setup → balanced total/exclusive scan → 16 outputs. It does not call
+`direct_row_estimate`; that oracle uses a full length-16 FFT and is separate.
+
+For this fixed N16/M2 path the literal source includes:
+
+- Compression: constructs all 16 local phases, including eight trivial phases;
+  16 phase/data complex multiplies and eight complex additions. Counting only
+  eight nontrivial multiplications would describe an optimization, not the
+  literal submitted source.
+- Transform: exactly one unnormalized negative-sign length-8 FFT call. Its
+  internal floating operations, allocation and backend behavior are not
+  established by an abstract DFT proof or our independent radix-2 checker.
+- Cycle setup: 16 indices, 16 triangular residues, 16 gauges and 16 boundary
+  phases; then 16 boundary/data multiplies, 16 complex subtractions, 16 real
+  divisions by sqrt(16), and 16 complex divisions by the gauges.
+- Seed: a 16-element balanced sum with 15 complex additions and one real
+  division by two.
+- Prefix: 15 upsweep plus 15 downsweep additions, along with copies and stores.
+- Output: 16 subtractions, 16 gauge/data multiplies, and a scatter of 16 values.
+
+The complex-data subtotal outside the FFT and phase construction is 48 complex
+multiplications, 16 complex divisions, 17 real divisions, and 85 complex
+additions/subtractions. These are source-expression counts, not real-FLOP,
+instruction, timing, or bit-operation bounds. In particular, the eight
+compression additions are the eight mathematical two-term pair sums; `np.sum`
+may do extra identity accumulation or other backend work. The subtotal is not
+an exact count of NumPy's executed arithmetic. Phase setup additionally uses
+48 complex exponentials, their floating argument construction, integer/modular
+array arithmetic, conversions and allocation. There is one square-root call;
+the fixed source also performs four dimension validations and two state
+validations/gcd calls. Sampler, repeated rows/aggregation, validation and other
+runtime overhead are not free and are not certified by the subtotal.
+
+All states are supplied deterministically by this audit. No random generator
+is invoked or charged as though it had no setup or rejection cost. No measured
+speedup or complete cold memory/bit/RAM/resource claim is made.
+
+## Numerical accuracy and sampler boundaries
+
+The prior dense executor replaces each coefficient's two roots with certified
+dyadic midpoints and then performs exact integer accumulation. Its proved
+row error ≤2^(-28)||x||₂ belongs to that implementation.
+
+The scan source instead calls `np.exp`, `np.fft.fft`, floating compression,
+complex gauge division, pairwise reduction, a scan, and output multiplication.
+A rigorous numerical claim would need a justified error model for each of
+these steps, including phase argument construction and the actual FFT backend,
+as well as finite-input/overflow assumptions and propagation through the
+recurrence. None is supplied by exact polynomial equality. The accepted dense
+eta must not be copied into a scan plan or treated as inherited automatically.
+
+The `dtype` parameter does not by itself establish an extended-precision path:
+compression uses complex128, the FFT explicitly receives complex128 input,
+phase construction is float64, and `pairwise_sum` returns a Python `complex`.
+Even when a wider dtype is requested these narrowing points persist.
+
+The exact ideal row operator has the same distribution and mathematical
+moments as the exact-root dense operator under the same uniform state law.
+This does not certify an actual 101-row scan implementation, its coordinate
+median, or its floating simultaneous useful-accuracy bound.
+
+The historical capped sampler has cap 128 at N=16, per-trial rejection 7/15,
+and positive exhaustion probability (7/15)^128 under the ideal uniform draw
+model. Conditional on success its a is uniform over the eight odd units and
+β is uniform over 16 shifts. The separately accepted seven-fair-bit bijection
+has zero rejection/abort in its ideal-source model; it is a different sampler.
+Neither physical entropy nor source execution is certified here.
+
+## Preserved scientific limits
+
+The original adaptive v13 claim remains REFUTED; v1 remains on hold. The
+accepted v2 bounded reference and the N16 dense useful-accuracy result retain
+their prior scopes. Generic/all-length and Bessel execution, actual scan
+rounding/accuracy, physical entropy, complete cold cost, production readiness,
+matched certified FFT comparison, practical speedup, novelty and attribution
+remain unresolved or unchanged. This bounded exact-arithmetic theorem does
+not establish those broader claims.
+
+## Sealed independent replay
+
+Cold extraction of the accepted reviewer archive reproduced both the exact
+operator results and the static candidate-binding result byte-identically.
+Only reviewer-owned checkers ran; no candidate or historical executable was
+run. The exact operator-results SHA-256 is
+`082b865df49f014bab7f5f6171c6ed6e688b093bad8a70276c56f363fd608b00`,
+and the candidate-binding result SHA-256 is
+`c9767e0199407deccab89f2b7b491e35383fd369f3893497b862b8a62c88ff27`.
+The accepted reviewer archive has 18 safe regular members, with all 17
+payloads manifest-bound and verified.
+
+## Publication provenance and derivative disclosure
+
+This is a privacy-filtered repository report derivative, not a byte-for-byte
+copy of the sealed review. Mathematical proofs, numerical and computational
+limits, and source-accounting qualifications are retained. Administrative
+integration instructions and environment-specific replay paths are omitted.
+No program, archive or full third-party paper is included in this publication.
+
+- Accepted reviewer archive: `ALG033_N16_M2_Exact_Scan_Independent_ACCEPT_2026-10-12.zip`, 70,069 bytes.
+- Accepted reviewer archive SHA-256: `fb91deb00e93e81b3215ed09d7e18df80740eefa40e38b6453a08b9438e50b08`.
+- Unmodified independent source-report SHA-256: `786a5c3ee748bedcb9068789026be83dae6a207ddeeb18cd2040ff67ec8c0f4d`.

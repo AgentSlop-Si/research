@@ -33,3 +33,7 @@ The original manuscript is unchanged. The two review reports are labeled publica
 ## Open algorithmic work
 
 The source does not provide the growing union compiler, a scalable exact all-input circuit certificate, a scale-uniform savings rate, or the fully charged coefficient/preparation/routing construction needed to instantiate the theorem. Existing finite structures and classical identities do not fill that gap. No faster Fourier algorithm, practical FFT speedup, Fourier lower bound, or historical novelty is established. The original manuscript's external comparator and project-phase claims are outside this review's verified scope.
+
+## Later bounded implementation reviews
+
+Read the [N16 ideal scan and named CSM1 compiler reviews](../2026-10-12-compiler-scan-qualification/README.md), with their exact source and implementation-model limits. These separate finite results do not instantiate the GTSL compiler.
