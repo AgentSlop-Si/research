@@ -17,3 +17,7 @@ The portable independent cold replay repeats the cones, finite bases, graphs, gr
 Previously accepted p=3,5,7 families remain unchanged. Both-prime-variable bounds for 13<=p<r, full-escape classification/count, broader nonabelian three-prime and nilpotent groups, larger exponents, EFK remaining-body/equality source gaps and historical priority remain open. Classical signature/transversal/coset and factorial-count ingredients retain attribution. No novelty, cryptographic or runtime claim follows.
 
 Earlier: [full b=21 Rogers–Szegő overlap](../2026-10-12-b21-overlap/README.md). Previous scientific reports and repository visibility/licensing remain unchanged.
+
+## Later three-phase exclusion
+
+Read the [Q27 stage-1 (8,9,14) exact exclusion](../2026-10-12-q27-edge14-exclusion/README.md), with all six original guards and the full target-fiber scope limits.
