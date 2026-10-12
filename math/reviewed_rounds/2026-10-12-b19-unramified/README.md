@@ -13,3 +13,7 @@ The 18 ramified middle orders remain: 45,51,57,63,69,75,81,87,93,99,105,111,117,
 The reviewer independently rebuilt 3672 exact checks and rejected 27 negative controls; a clean extracted replay is byte-identical. Classical Hermite/Carlitz/Grosu–Grosu/Sawa–Uchida ingredients remain credited. This is a bounded application, not a new general criterion, a worldwide-priority finding or a general closure.
 
 Earlier: [coloring upper and bounded C03 attribution checkpoint](../2026-10-12-coloring-attribution/README.md). Earlier reviewed reports and repository visibility/licensing remain unchanged.
+
+## Later b=19 family completion
+
+The subsequent [ramified-middle review and full b=19 composition](../2026-10-12-b19-ramified-completion/README.md) resolves the 18 orders left open in this dated report. The original unramified proof and its existential good-prime limitation remain unchanged.
