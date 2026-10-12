@@ -9,3 +9,7 @@ These are independent project reviews at their stated scopes. Original research 
 Earlier: [SRCR, N32 and HERO17 reviews](../2026-10-12-srcr-n32/README.md). The [Q05 attribution clarification](../2026-10-12-supplement/q05-attribution-correction.md) preserves the accepted lower bound and equality while distinguishing unresolved historical priority.
 
 See the [review-pass summary and remaining obligations](REVIEW_PASS_SUMMARY.md).
+
+## Later arithmetic constructions and exact obstructions
+
+Read the [PREFIX, Q27, Q11, degree-eleven RS and Q16 bucket-arithmetic reviews](../2026-10-12-arithmetic-constructions/README.md), including the two bounded attribution addenda and their remaining obligations.
