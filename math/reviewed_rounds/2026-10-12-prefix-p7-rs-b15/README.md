@@ -8,3 +8,7 @@
 These are independently reviewed additions to established families, with portable cold replay evidence. They do not close the broader problems, classify escape optimizers, establish numerical conditioning or demonstrate a faster Fourier transform. The original research/review archives remain unchanged; these public derivatives remove private tracking and delivery details while retaining mathematical proof, evidence and limitations.
 
 Earlier: [exact DFT source and model comparison](../2026-10-12-exact-dft-comparison/README.md) and [the p=5/b=13 uniform extensions](../2026-10-12-uniform-extensions/README.md).
+
+## Later guarded constructions and components
+
+Read the [Q27 slice, Q11 matching baseline and Q16 ranking/location reviews](../2026-10-12-green-ranking-slices/README.md), with their exact domains, paid costs and remaining obligations.
