@@ -19,3 +19,7 @@ General overlap remains open for odd b>=25 in the strip 2b+1<d<15(b+1)/2, except
 Classical Hermite/Laguerre/Jacobi and Carlitz/Grosu–Grosu/Sawa–Uchida attribution remains. The original Carlitz paper was not newly read. Historical priority and the broader F020 problem remain open, with no FFT-speed or novelty claim.
 
 Earlier: [Q16 admitted-instance backend execution](../2026-10-12-q16-admitted-backend/README.md). Previous scientific reports and repository visibility/licensing remain unchanged.
+
+## Later accepted family
+
+Read the [full b=25 overlap review](../2026-10-12-b25-overlap/README.md), extending the accepted families while preserving the original parameter and the remaining general problem.
