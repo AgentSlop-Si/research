@@ -1,0 +1,121 @@
+ALG029: bounded conservative-pruning contract assessment
+13 October 2026 UTC
+AUTHOR CANDIDATE ONLY. Independent review is pending.
+
+Useful result
+A source-bound sufficient-condition contract preserves ALG029's global
+l-infinity error and its ideal arithmetic work order, while allowing
+uncertain near-threshold leaves to remain in the output. It does not return
+the exact hard-threshold mask. Supplying the numerical certificates, their
+precision and their full cost is the unresolved implementation task.
+No score, accepted theorem, scientific status or novelty judgment changes.
+
+Why this is a distinct task
+The selected Bringmann v2 Theorem4 comparison and its independent review
+are already complete. This assessment does not repeat that comparison,
+small-k tuning, high-SNR counterexamples or zero-tail nonimplication. It
+addresses the separate numerical-pruning interface explicitly left open
+by the current ALG029 action and original IMPLEMENTATION.md. The prior
+prototype already scales norms; naive overflow is not rediscovered here.
+
+Pinned source use
+The exact local PROOF.md supplies the unitary DIF graph, its disjoint
+residue-class subtrees, exact subtree energy identity, N+V norm-value
+volume and full-output ledger. IMPLEMENTATION.md distinguishes its
+complex128 prototype from a certified floating-point realization and
+specifies epsilon=0 and epsilon>=1 branches. README.md supplies context.
+SOURCE_ASSESSMENT_BINDINGS.json records fresh byte hashes and checks
+against the inherited source integrity pins. Source programs were not run.
+
+Contract
+Let N=2^L, 0<epsilon<1, x be a nonzero exact input, y=U_N x under the
+source's unitary negative-exponent convention. Let v_A be the ideal DIF
+state at a node owning output index set A. The source proves
+||v_A||_2=||y_A||_2. Different nodes at a common depth have disjoint A.
+
+Require a certified positive number ell satisfying
+    ||x||_2/2 <= ell <= ||x||_2.
+Set theta=epsilon ell and delta=theta/4.
+At every visited node require a real norm estimate a_A with
+    |a_A-||v_A||_2| <= delta.
+At each retained leaf k require a complex output estimate z_k with
+    |z_k-y_k| <= delta.
+All bounds concern the ideal state and ideal Fourier coefficient, so any
+accumulated butterfly, root, scaling and norm errors must be inside them.
+A small local rounding bound on the approximate state alone is insufficient.
+
+Initialize every one of the N output entries to zero. Prune node A only
+when a_A+delta<=theta. Otherwise descend, or at a leaf write z_k. Ties
+in that upper-bound comparison are pruned. Output all N entries.
+
+Error proof
+For a pruned node, ||y_A||_2=||v_A||_2<=a_A+delta<=theta.
+Each output left zero therefore has absolute error at most theta. Each
+retained leaf has absolute error at most delta. A coordinate belongs to
+at most one first-pruned subtree, so errors do not sum along its path.
+Hence
+    ||output-U_N x||_infinity <= theta <= epsilon||x||_2.
+This is the original additive error promise. The exact source mask need
+not be reproduced: a coefficient with magnitude theta can be retained.
+Thus this contract cannot be advertised as a certified realization of
+exact hard thresholding, or used where that exact output identity is needed.
+It is a conservative relaxation preserving the error target.
+
+Work proof, with an explicit certificate-cost premise
+For every unpruned node a_A+delta>theta. Since a_A<=||v_A||_2+delta,
+    ||v_A||_2 > theta-2delta = theta/2.
+Let A_d be the number of unpruned nodes at depth d. Energy conservation
+and ell>=||x||_2/2 give
+    A_d <= min(2^d, 4||x||_2^2/theta^2)
+        <= min(2^d, 16 epsilon^(-2)).
+The non-strict displayed bound is safe; the second energy inequality is
+strict before it is weakened. Thus the split-node volume obeys
+    V <= N sum_(d=0)^(L-1) min(1,16 epsilon^(-2)/2^d),
+and N+V=O(N[1+min(L,log(epsilon^(-2)))]) with an absolute additive
+constant absorbed in O. The factor16 shifts the logarithmic crossover by
+at most four levels; it is not a measured cost improvement.
+
+This counts work only if producing each node/leaf certificate has a
+uniformly bounded constant cost per processed state entry in the chosen
+arithmetic model. More generally write the total as
+    K_setup + O(N+V) + K_cert,
+where K_setup includes input validation, ell enclosure, root/scalar
+preparation and any other cold work, and K_cert includes every precision
+refinement, rounding enclosure and certificate operation not already paid.
+The contract establishes neither K_setup=O(N) nor K_cert=O(N+V) for a
+finite-word implementation. The output-zero writes, retained writes,
+rescaling, index/stack work, rejected/failed attempts and storage are paid.
+The source's depth-first O(N) state storage applies only if the certificate
+representation and precision do not grow beyond the separately charged
+resource bound. No unit-cost certificate oracle is silently supplied.
+
+Boundary branches and exactness
+x=0 must be certified and handled by N zero writes. If x cannot be
+certified zero or assigned a valid ell under the resource contract, a
+bounded implementation must report a typed unresolved/resource outcome;
+this text does not prove an always-terminating precision policy.
+epsilon=0 keeps the existing ordinary exact-transform requirement;
+epsilon>=1 permits the source's all-zero branch. Nothing here closes the
+relative-best-k or zero-tail exact-recovery branches. Root representation,
+input precision/width, all-size certified arithmetic and actual machine
+runtime remain open.
+
+Fresh controls
+The independently authored check_alg029_contract.py makes 7,860 exact
+rational controls on all real integer spectra in {-2,-1,0,1,2}^N for
+N=1,2,4, four epsilons and three signed leaf-error directions. It checks
+the error promise, factor16 energy-count premise and complete output
+length. It uses exact spectral subtree energies, not an implemented
+numerical DIF; complex-valued and all-size validity comes from the proof
+above, not these finite cases. The controls also exhibit why testing a_A
+alone is unsafe and why a tied coefficient may be retained. They import
+no archived research program. No historical test counts are adopted.
+
+Bounded next task
+Independently review this contract first. If accepted, select one fully
+specified finite representation/domain, then implement and certify the
+node/leaf budgets against the ideal DIF states with explicit phase/root,
+norm, rescaling, zero and resource handling. Freeze that implementation
+and ledger before attempting tests. Stop at one verified bounded API or
+a precise unattainable budget; do not reopen the completed literature
+comparison or claim an all-size numerical/bit/runtime theorem.
