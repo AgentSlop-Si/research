@@ -1,0 +1,152 @@
+# Fully charged cold/warm NTT contract, v1
+
+Prepared 2026-10-13. Scope: ENGINEERING-NTT-BASELINE-20261012. This is a source inspection and an executable-independent evaluation specification. No recovered C++ was imported, compiled, or executed. There are no new performance measurements, acceptance claims about that implementation, or novelty claims here.
+
+## Decision and precise next evaluation
+
+The next useful experiment is a separately authorized, freshly instrumented four-schedule comparison at n = 8192, p = 998244353, natural-order canonical outputs, with schedule-owned plans, K = 1 and K = 64 useful calls, the frozen eight dense inputs, and 48 paired blocks in two sessions. Report plan-cold paid latency, conditional warm latency, and paid warm amortization separately. Require all-output correctness against the independent oracle before timing. Stop at a complete auditable result for this length, or at the first correctness/resource/configuration blocker. This specifically tests whether the previously reported warm ordering survives paid setup and identical lifecycle accounting at the source's auto-dispatch boundary. It does not retune that threshold or seek the best point after observing timings.
+
+After that bounded pilot, the same contract already fixes the full comparison grid n = 2^10 through 2^18 and K in {1, 8, 64}. Running that grid is a later evaluation, not part of this source-only preparation. Only the execution environment configuration remains to be bound: hardware/OS/runtime, compiler/toolchain, and exact release/debug build command/flags. Authorization to execute is a separate gate, not an unknown mathematical scope.
+
+## 1. Source identity and provenance boundary
+
+- fft_engine.cpp: 15,015 bytes; SHA-256 0bd324e62b302e4b2e6405c953cb513a93b8840b74137755bd7388b86cddafa7.
+- benchmark_final_ntt.csv: 1,565 bytes; SHA-256 1cddc4cb6c8e90a45c367e1abd6e221851bd9922cd8f93fa098d70c9abefd616.
+- Both are under top_unknown_sources_1148/downloads/FFT. SOURCE_IDENTITIES.json preserves the full local paths and hashes.
+- The current coverage register identifies the missing later ENGINEERING_NTT_REVIEW.md by SHA-256 32b9e8e7c33b69633e1616188b59e0f9ad643677680bbb5b6175ee5900ddf4d8. This contract neither recovers that body nor asserts the CPP/CSV are its exact reviewed inputs.
+- The CSV is historical, unreplicated data. It supplies neither a hardware/build binding nor per-sample observations, seeds tied to serialized inputs, execution log, independent correctness evidence, or schedule-specific paid setup. Its numbers must not be promoted to current reproducible speedup evidence.
+
+All source line numbers below refer to the exact 400-line CPP above; CSV line numbers refer to the exact 37-line file.
+
+## 2. Exact mathematical and representation domain
+
+The required forward map is y[k] = sum over j=0..n-1 of x[j] * omega^(j*k) modulo p, with omega = 3^((p-1)/n) modulo p. This is the positive-exponent, unnormalized transform. The output is exactly n unsigned 32-bit canonical residues in k = 0..n-1 natural order. The input is exactly n canonical residues in [0, p-1] and must remain unchanged. No floating-point tolerance, scale factor, output permutation, subset of coordinates, or checksum-only equality is accepted.
+
+The source advertises powers of two 2 <= n <= 2^23 (lines 26–27). The timed full grid is strictly 2^10..2^18; the concrete correctness corpus covers 2^1..2^18. There is no measured or tested claim for 2^19..2^23 from this contract. Those larger admitted lengths need a separately recorded boundary evaluation before claiming tested coverage.
+
+Required guards, checked before allocation or any narrowing conversion:
+
+1. p is exactly 998244353; g is exactly 3; n is a representable positive integer, n >= 2, n <= 2^23, and n is a power of two.
+2. n divides p-1; omega^n = 1 and omega^(n/2) != 1. For powers of two this establishes exact order n. For n >= 4, imag = omega^(n/4) and imag^2 = -1 modulo p. Do not use imag in the n=2 base case.
+3. Check that the input length is exactly n and each entry is in [0,p-1]. The inherited Plan transform methods do not check this; the future adapter must. Reject malformed input in this contract rather than silently normalizing it.
+4. Require 32-bit unsigned coefficients, a multiplication intermediate at least 64 bits, and index/size arithmetic wide enough for every allocation and 4*m, 3*j*step, len and shifts. Here 2*(p-1) < 2^32 and (p-1)^2 < 2^64, so the source plus/minus/product arithmetic is within the unsigned widths on canonical residues. Record sizeof(int), uint32_t and uint64_t rather than silently assuming them.
+5. Use checked byte-size arithmetic and a preflight memory bound; never let a negative CLI length convert to vector size before validation. Require positive repetition counts. Guard every exponent/shift before shifting.
+
+MODULUS_ROOT_CERTIFICATE.json was produced by newly written integer arithmetic only: trial division established primality; p-1 = 2^23 * 7 * 17; 3^((p-1)/q) modulo p for q=2,7,17 equals 998244352, 779057549, 337827833 respectively, all different from 1. It also records exact order checks for every admitted power-of-two length. This is a certificate of these constants, not execution of the recovered NTT implementation. The future harness must verify the certificate independently.
+
+The non-power-of-two Bluestein path is outside this comparison. If evaluated separately, require n > 1, n | (p-1), and m = next_power_of_two(2*n-1) <= 2^23, and charge chirps, inverse factors, the kernel transform, padding, and both convolution transforms (source 178–221). Its n=1 constructor reaches Plan(1), which is rejected, although run_stdin handles n=1 separately (382). Never describe this fallback as supporting every integer length; 3, for example, is skipped by the source test (266–267).
+
+## 3. Byte-bound input corpus and exact correctness gate
+
+CORPUS_MANIFEST.json and corpus_inputs.bin freeze 288 vectors: 18 lengths times 16 cases. The binary has 33,554,304 bytes and SHA-256 f07e9e1c550420ae431ee64a60e73449b1dcffce105bf452653972dbb7a7bba7. It consists only of packed little-endian uint32 values, with offsets, lengths, and an individual SHA-256 for every vector.
+
+At each n the cases, in order, are zero; ones; p-1 everywhere; impulses at 0, 1 and floor(n/3); alternating 1,p-1; x[j]=j; and dense_0 through dense_7. Coincident impulse positions at tiny n remain intentionally distinct labeled cases. The timed workload cycles the eight dense vectors in case order; call t uses dense_(t mod 8). It is dense data, not selected low-entropy/sparse best cases.
+
+Dense generation is portable and independent of trial order. For block counters starting at 0, SHA-256 the ASCII string:
+
+paid-ntt-v1|2026-10-13|p=998244353|n={n}|case={case}|block={block}
+
+Interpret each digest as eight little-endian uint32 words. Reject words >= 3,992,977,412 = floor(2^32/p)*p. Reduce each retained word modulo p, append until n entries exist, and discard unused words in the final block. Case strings are dense_0,...,dense_7. This avoids relying on a library's distribution mapping or a random stream advanced by shuffle/case order. build_static_artifacts.py is new artifact-generation code; it contains no NTT transform and never loads or executes CPP code.
+
+Before timing, a separately written reference must compute the full expected output for every vector. For n <= 256, use the direct O(n^2) modular definition with independent exponentiation and arbitrary-precision integer arithmetic. For larger n, use a separately written exact radix-2 reference with its own indexing and stage roots, not the source's Plan, tables, or run_algo. Validate that reference against the direct definition at all small lengths. Store expected-output bytes and per-vector hashes. Expected outputs have intentionally not been generated by this source-only task.
+
+For every schedule and every corpus vector, compare all n output coordinates exactly, including length and canonical range. Report the first mismatch with n, algorithm, input hash/case, index, expected value and actual value; retain the complete failed vector. Independently check:
+
+- zeros map to zeros; ones map to DC=n and zero elsewhere; p-1 maps to DC=-n mod p;
+- impulse at j maps at every k to omega^(j*k);
+- the alternating vector maps to n at k=n/2 and zero elsewhere;
+- an independently implemented inverse, with omega inverse and multiplication by n inverse, returns x;
+- sum_k y[k] = n*x[0] mod p; these identities supplement, never replace, the full oracle comparison.
+
+The source inverse and source radix2 cannot jointly be the sole correctness oracle for all four schedules. The reference need not be a timed performance competitor. Explicit negative tests include 0, 1, -1, 3, 6, 2^23+1, 2^24, wrong input size, coefficients p/p+1/2^32-1, and nonpositive repetitions. They must reject before unsafe allocation or arithmetic. Run diagnostics/sanitizers in a separate correctness build and preserve logs; do not time that build.
+
+Repeat the all-coordinate comparison on every unique timed input before and after each timing session. A full-output sink prevents optimization during timing, but its digest is not a correctness proof. Any mismatch halts the evaluation and voids performance rankings.
+
+## 4. Schedule ownership and charged preparation
+
+The four contenders are the exact source schedules radix2, fused4, splitradix, dif4, each evaluated directly. forward_auto's n<=4096 choice (157–160) is not a contender: allowing it to choose a measured winner would confound the comparison.
+
+The source Plan allocates roots, rev and dif4_map for every method (29), recursively constructs a mixed-radix output map (31–38), constructs rev (39), and computes all n roots (40–41). Its single Plan is shared by all four algorithms in benchfair (344,354). A meaningful cold comparison requires separately owned minimal plans with the same representation and construction policy:
+
+- All methods: n and lg; a full n-entry uint32 root table generated by the same recurrence, with root exponentiation charged. Do not shorten/recompress one method's table in this evaluation.
+- radix2: n-entry int32 bit-reversal table. No DIF4 map and no unused imag setup.
+- fused4: the same reversal table and imag lookup when n>=4.
+- splitradix: the same reversal table and imag lookup when n>=4; account for recursion stack/work and output unpermutation.
+- dif4: n-entry int32 mixed-radix map with the source's exact ordering, and imag lookup. No unused bit-reversal table. Preserve the source map-construction algorithm; charge its recursive temporaries, reserve/capacity and destruction. Remove the source's unused preliminary dif4_map.resize(n) when moving to a dedicated constructor, and disclose that exact adapter difference.
+
+The future adapter may remove unused plan fields, add guards/instrumentation and expose ownership; it must not otherwise optimize butterflies, reorder stages, change modular arithmetic, replace recursion, pack roots or switch algorithms. Preserve an auditable source-to-adapter diff. Apply the same plan-pruning standard to the radix2 baseline. If measured, the original all-fields shared Plan is a separately labeled compatibility control, never silently substituted for a schedule-owned cold result.
+
+Charge each method for its own root generation, index maps, input/output/work buffers, zero initialization, every copy/gather/scatter/permutation, allocation/deallocation, recursive temporaries/stack, and plan destruction. No cached table may leak from another method or another cold trial. If a future variant preallocates output/workspace, charge that allocation in its plan and benchmark it as a separate variant for all methods.
+
+Memory ledger, with 4-byte coefficients and indices, excludes vector headers/alignment/capacity slack and must be verified by measurement: dedicated persistent root+index tables nominally use 8n bytes per schedule. With one 4n-byte input, radix2/fused4 have a 4n-byte result/scratch, giving 16n bytes total; dif4/splitradix retain a 4n-byte work vector while allocating a further 4n-byte ordered result, giving at least 20n bytes at that point. Add the eight-input pool, plan-construction temporaries, runtime/stack, allocator overhead and peak rather than treating these lower ledgers as measured RSS. The inherited all-fields Plan alone holds nominally 12n bytes. Allocator reuse and vector capacity must be reported, not treated as free.
+
+## 5. Measurement boundaries: cold, warm and completely paid
+
+The operation boundary is a CPU, single-threaded, resident-input NTT service. Its immutable fixture is the exact eight dense vectors for one n already present in a caller-owned byte pool. Each useful request independently allocates/materializes its n-entry canonical input from that pool, executes one schedule, returns a newly owned full natural-order output, visits all output entries through the identical observable sink, and destroys its input/output buffers. Input materialization and output lifetime are therefore inside the service timing. No file I/O, text formatting or corpus-generation work is hidden inside one algorithm alone.
+
+Record common fixture creation/generation, corpus verification, disk read/deserialization and pool allocation as T_fixture, including bytes, allocations and timestamps. They are reported in the fully paid workflow total. The service result itself is labeled resident-fixture, not whole-program or disk-to-disk latency. Loading pre-generated inputs is not charged as if they were regenerated for every transform. Regeneration cost belongs to a generate-on-demand workflow only; do not charge both alternative provenance routes at once. Verification/reference generation is benchmark audit overhead, separately measured, not computational work required to perform the NTT.
+
+Use one identical external no-inline sink, built without cross-module optimization, that reads every output word and updates a published uint64 accumulator with defined unsigned wraparound. Its fixed recurrence is acc = ((acc XOR uint64(output[j])) * 0x100000001B3) modulo 2^64, starting at 0x243F6A8885A308D3 at the beginning of each measured batch and visiting j in increasing order across calls. Publish acc to an observable volatile uint64 sink once per output vector. Preserve and hash its exact implementation; implementation review verifies this already-fixed definition. This common output-consumption cost stays in paid service time. Measure a stand-alone sink diagnostic if useful, but do not subtract it from the primary result. Exact validation occurs outside the timing window and never replaces the sink. Also record a transform-call diagnostic ending when the full owned output becomes available; it excludes input/sink/destruction and must never be called fully paid end-to-end speed.
+
+Three distinct quantities are mandatory:
+
+A. Plan-cold paid batch, K useful outputs: start before the schedule plan constructor, materialize each input and process each call with its allocation, output sink and buffer destruction, then destroy the plan before the final timestamp. There are no hidden discarded warm-ups. For K=1 this is cold one-shot service. K in {1,8,64} is a complete finite-use lifecycle. Cold means no reusable schedule plan/tables exist before the start; it does not assert flushed CPU caches, cold DRAM, cold filesystem, or a fresh process.
+
+B. Conditional warm batch, K useful outputs: construct a fresh owned plan, execute four designated warm-up requests, then measure K useful requests with the same paid request lifecycle. Stop warm timing before plan destruction. Record the plan construction, four warm-ups and destruction separately for this same trial. Warm means reusable plan plus four prior calls, not guaranteed L1/L2/LLC residency. The chosen working set may exceed cache.
+
+C. Paid warm amortization: (plan construction + four discarded warm-ups + K useful request times + plan destruction) / K. This is the actual cost per useful output when the evaluation deliberately warms before serving the K outputs. Do not report conditional warm time as if warm-ups or planning were free. Also report the ordinary plan-cold K batch per output: it has no discarded warm-ups and may be the more relevant finite-use service.
+
+For each service, also report workflow-paid time by adding that trial's T_fixture and required fixture teardown. When a fixture is reused for an explicitly stated number H of useful transforms, report T_fixture/H and the exact reuse count. For an already-existing caller-owned fixture, state that historical creation cost is outside this API boundary; never infer a whole-workflow speedup from the API result alone.
+
+Report measured totals directly, and use sums only as a diagnostic reconciliation. Instrumented stage timers have overhead and may not exactly sum to an independently measured full interval; quantify this. Never add independently selected medians to fabricate a cold median. A derived break-even K is optional only after actual P and S values exist, with uncertainty, correct lifecycle and amortization; no break-even is asserted here.
+
+## 6. Repetition, environment and baseline fairness
+
+The run manifest must bind physical CPU/model/stepping, available cores and selected core, NUMA placement, RAM, relevant cache sizes, OS/kernel, architecture, process affinity, thread count=1, SMT/sibling activity, frequency governor/turbo policy, observed frequency/thermal status, allocator and runtime; compiler name/version, standard library, exact command/flags, source/adapter/sink hashes and binary hash. Record process startup and filesystem-cache conditions. The source/CSV do not bind these fields, and this report does not invent them from the current cloud host.
+
+Select one environment and build configuration before seeing timings. Use one release toolchain, language standard and flags for all four schedules in one binary or identically configured binaries; no source-selected optimization annotations or ISA differences. Preserve a separate sanitizer/debug command. If a CPU-specific optimization flag is chosen, apply it uniformly and identify the target. Do not compare these portable scalar schedules to a differently optimized library and attribute the difference to the schedule. A vendor/production baseline would be a separate later experiment with its own API matching and tuning budget.
+
+PAIRED_ORDER.json freezes 48 blocks in two sessions, 24 blocks each. Each session uses all 24 permutations of the four algorithms; the second reverses their lexicographic order. Thus every algorithm occupies every order position equally, without a mutable input RNG. In each block and for each fixed n/K/metric, use identical input-case order and fresh independent plan ownership for each method. Interleave methods; do not time all radix2 trials before all DIF4 trials. The outer nesting is session, then the session's 24 block IDs, then n, then K, then metric, then the block's four algorithms. Session 0 traverses n and K ascending and metrics [plan-cold, warm]; session 1 traverses n and K descending and metrics [warm, plan-cold]. This fully fixes the trial schedule; emit its expanded manifest before timing. Every independently timed batch resets its sink and restarts the input-case cycle at dense_0.
+
+Use a monotonic high-resolution clock. Preserve raw integer nanoseconds and effective measured clock resolution; do not round to whole microseconds. No timed output printing. Record every trial and any externally identified interference. No silent removal of slow samples, no changing repeat count because a result looks favorable, and no selecting a winning input/length after measurement. If any condition's duration cannot be resolved to within 1% by the clock, stop and revise a single common repetition/measurement rule for all contenders before rerunning the affected comparison; never batch cold plan creation away.
+
+For every n/K/metric report each method's median, interquartile range and the paired median log-ratio against radix2, with a 95% paired bootstrap interval from 10,000 resamples of the 48 whole blocks (fixed analysis seed 20261013). For even-sized samples define the median as the arithmetic mean of the two middle sorted values; define the IQR by nearest-rank 25th and 75th percentiles (zero-based indices 11 and 35 for 48 observations). Retain session-specific results and raw observations; do not treat within-batch transforms as independent samples. Resample whole paired block IDs with replacement using SHA-256 of ASCII paid-ntt-bootstrap-v1|seed=20261013|replicate={r}|counter={c}, r=0..9999 and c starting at 0. Read eight little-endian uint32 words per digest; reject z >= floor(2^32/48)*48 and take z mod 48 until 48 IDs exist. The estimate is the median of log(T_radix2/T_candidate) on these paired blocks; exponentiate for the time ratio. For the 95% percentile interval sort 10,000 bootstrap estimates and use zero-based ranks 249 and 9749 before exponentiation. Preserve the resulting index file and analysis script. This uncertainty summary is conditional on the measured environment and workload, not a universal speed guarantee. Memory profiler/instruction counter runs are separate from uninstrumented wall-time runs.
+
+## 7. Source-level costs and discrepancies
+
+All four source schedules use A(n)=n*log2(n) modular add/subtract calls and M(n)=n*log2(n)/2 - n + 1 modular multiplication calls for n=2^l. These count plusm and minusm together, and count multiplication by imag as a real field multiplication. They omit planning, copies, indexing, allocation, comparison, the sink, inverse transforms and benchmark overhead.
+
+Proof from the pinned source:
+
+- radix2 (57–65; counter 240): every level has n add/subtract calls. At length L, nontrivial twiddles total (n/L)*(L/2-1)=n/2-n/L. Summing over l levels gives M(n)=nl/2-(n-1).
+- fused4 (74–100; counter 241): an optional radix2 layer has n additions and no multiplication. A radix4 block with m butterflies uses 8m additions and m+3(m-1)=4m-3 multiplications, since imag is multiplied even at j=0. Summing its radix4 layers yields the same A(n), M(n).
+- dif4 (111–126): at length L, q=L/4, each block has 8q add/subtract calls and q+3(q-1)=L-3 multiplication calls, then the optional terminal radix2 layer. Reversing the radix4 layer direction changes data flow, not these totals. The counter reused in benchfair 363 agrees for even and odd l.
+- splitradix (133–150; counter 242): A(n)=3n/2+A(n/2)+2A(n/4); M(n)=3n/4-2+M(n/2)+2M(n/4). With A(1)=M(1)=0, A(2)=2, M(2)=0, substitution gives the same A(n), M(n).
+
+The common source root-table construction also has an exact preparation count. With n=2^l, the exponent at line 40 is 119*2^(23-l), which has bit length 30-l and six set bits. The powm loop at 18 therefore contains 36-l multiplication calls, including its final squaring; the recurrence at 41 adds n-1, for n+35-l nominal source calls in root preparation. At n=8192 this is 8,214 additional modular multiplications before any transform, plus all allocation/index-map work. This count is not a claim about compiler-retained machine instructions.
+
+At n=8192, each schedule therefore has 106,496 add/subtract and 45,057 multiplication calls; the historical CSV lines 14–17 report exactly those identical counts. At n=262144, each has 4,718,592 and 2,097,153 (CSV 34–37). STATIC_COUNTS.csv lists the source-derived counts at every admitted power-of-two length. These are identities from the schedule, not measured retired-instruction counts. No arithmetic-operation savings over this radix2 baseline have been shown. Timing differences, if reproduced, would have to be explained by constants/data movement/layout/instruction behavior and paid setup, rather than fewer calls to these field primitives.
+
+Other exact source discrepancies that constrain use of the existing CSV:
+
+1. Plan preparation is not schedule-owned: 29–42 build both permutation families; benchfair constructs that one Plan at 344 and repeats the same ptime at 364. A reported cold_plan_us is neither a method-specific cold setup nor a measured cold plan-plus-transform latency.
+2. In benchfair, plan construction and input generation are outside the transform window (344–346 versus 353–355); the final returned vector is destroyed after the stop timestamp and checksum use (355–358). The internal work-vector cleanup in dif4/splitradix occurs before their return, unlike the returned-output cleanup. This is a real lifecycle boundary, not grounds to subtract guessed costs.
+3. benchfair performs no full-output comparison anywhere in 339–367. Its output sample checksum (357) does not certify correctness. Separate test/testheavy modes exist (244–336), but the CSV does not prove those modes ran successfully for the same binary. The old bench does compare once per method (290–293), but is a different path with only three contenders (291).
+4. The old bench header labels adds_per_input,muls_per_input (285) but prints c.add,c.mul without division by n (303–304). Those fields are totals per transform, not counts per coefficient. The recovered CSV uses adds,muls and is not affected by that particular header error.
+5. rng()%MOD appears in both old benchmarks (289,346). Since p does not divide 2^32, it is not exactly uniform on field elements. The frozen rejection-sampled corpus removes that distribution ambiguity; this is a corpus change that must be disclosed when comparing to historical CSV figures.
+
+## 8. Complexity and claims that remain out of scope
+
+Keep three separate reports: source field-operation counts; measured end-to-end service/workflow time; and a specified bit-complexity model. Equal field counts do not imply equal timing. A modular multiplication, table read, cache miss and integer addition are not interchangeable unit costs. The compiler may lower reduction modulo the fixed constant differently from a generic divider; only actual emitted code and measurements can establish that.
+
+For this fixed 30-bit prime and bounded n<=2^23, the code supplies a finite machine-word problem family. It is not by itself an asymptotic theorem for arbitrary n or prime size. A generalized b-bit modulus would need fresh root/order, storage, overflow and algorithm assumptions. In a simple bit model additions cost O(b), and a modular product has the selected multiplication-plus-reduction cost C_mod(b); a safe schoolbook implementation gives O(b^2) per modular product. The butterfly part then has O(n log n * (b + C_mod(b))) bit work, plus root/preparation, index work and movement of at least the n b-bit inputs and outputs. Changing b with n changes that conclusion. Inverse, integer-convolution/CRT reconstruction, communication, GPU transfer and non-power-of-two padding are not included in this bounded forward-transform experiment.
+
+No novelty, asymptotic improvement, production readiness, universal crossover, or measured speedup follows from this protocol. A complete pilot may establish only correctness on the stated tested corpus and empirical paid/conditional timings on the pinned environment.
+
+## 9. Completion artifacts and stop conditions
+
+Available now: this contract; source hashes; source-derived count table; exact root-constant certificate; byte-bound corpus and generator; exact paired algorithm order; machine-readable protocol and artifact checklist.
+
+Required from the authorized evaluation: reviewed source-to-adapter diff; oracle and full expected outputs; preflight/negative-test and postflight logs; environment/build/binary manifest; finalized trial schedule; per-trial raw timings and charge/memory ledger; full lifecycle aggregate timings; separate instrumented memory/operation diagnostics; analysis/resampling file; scoped conclusion with failures, exclusions and all hashes.
+
+Stop before timing if source/fixture identities change, a guard/root check fails, correctness differs at any coordinate, the platform/build is not pinned, plans or allocations cannot be separately accounted for, or the clock/resource preflight fails. Stop the bounded pilot after its required artifacts exist and the conclusion has been independently reviewed. A failure is a diagnosis target, not permission to modify the inherited algorithm or expand the experiment without recording the change.
