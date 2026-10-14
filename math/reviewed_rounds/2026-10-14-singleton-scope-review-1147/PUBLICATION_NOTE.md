@@ -1,0 +1,7 @@
+# Publication projection and integrity
+
+This additive edition preserves the later logical-scope review and its source-hash bindings. Only source-directory locators change; all mathematical assertions and source hashes are unchanged. Every original file is retained, with original and publication hashes in PUBLICATION_PROJECTION.json. The historical source index authenticates original bytes; the new manifest authenticates this publication edition. Earlier scientific source packages are linked rather than duplicated. No historical scientific program or numerical audit was run during packaging.
+
+The saved review accepts the source-bound logical synthesis b(F23)=14, b(F23^3)=13 and b(F23^5)=12 in the same original-bank grammar with exactly one effective alpha node in each cross-sign orientation and independently free locations. It checks the lower-bound inference and domain match; it does not repeat numerical audits, establish historical novelty, or constitute external peer review.
+
+The complete earlier synthesis and source snapshots are already preserved in [the immutable cubic13/synthesis package](https://github.com/AgentSlop-Si/research/tree/e87b42a749a8b369aace3e0395a5f430e062d262/math/reviewed_rounds/2026-10-14-cubic-thirteen-and-synthesis-0157). This addendum preserves only the later scope review, its 23-source hash bindings and historical two-file manifest, avoiding a second copy of all previous scientific sources.
