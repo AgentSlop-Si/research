@@ -1,0 +1,9 @@
+# Quadratic-bank and Q29 table receipt preservation
+
+The original receipt ZIP is preserved byte-for-byte, with all 73 manifest-bound payloads rechecked. SHA-256: 6fe6f15c3245069c0002b11e8a6a6181cef111c2880c453238fdfdd59aada86f.
+
+Full native application readback passed at 01:31:04 UTC on 14 October 2026: 20 intended text notes, 19 stable row identifiers and 21 immutable source-link spans. A separate reconstruction from the exact reviewed request and all 17 before/final snapshot segments confirms all 19,795 cells, zero unexpected differences and unchanged spreadsheet metadata. All earlier text, numeric priorities, formulas, formats and links are preserved. The new linked spans receive the native default blue/underline style; their following runs reset to inherited formatting. This is native cell verification, not a browser-rendered visual-fit audit.
+
+The standalone README, application/source/validation/final-verification files are exact archive members. RECEIPT_MANIFEST.json is the unchanged original archive MANIFEST.json under a descriptive filename. The publication MANIFEST.json separately authenticates these files, the exact ZIP and the second INDEPENDENT_TABLE_VERIFICATION.json. No live spreadsheet write or historical scientific program was run by this preservation check.
+
+This checkpoint follows the separate [38-cell application](../2026-10-14-table-later38-applied-0114/README.md) and earlier [229-cell application](../2026-10-14-table-applied-0055/README.md). These counts must not be added as distinct cells. Its frozen scope is the pinned quadratic-field minimum 14 and Q29 bounded normalization/local discriminant lower bound, with the stated global gaps unchanged. The later free-cross-singleton theorem is outside this freeze and requires its own dated evidence. Earlier checkpoints remain historical.
