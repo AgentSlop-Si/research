@@ -1,0 +1,5 @@
+# Literature comparison publication edition
+
+This is a publication-safe documentation projection, not the unchanged original report. Four local research-source locators at the end of REPORT.md are replaced by repository-relative references. All mathematical assertions, literature comparisons, exact public URLs, deductions, limitations and historical-novelty qualifications are otherwise byte-for-byte unchanged. The exact original report remains local and is pinned in SOURCE_BINDINGS.json; the published report has a different explicitly recorded hash.
+
+Historical novelty remains unresolved. The moment-to-Waring correspondence is labeled a mathematical deduction and is not claimed to be an equivalence with the full signed-bank problem. The report is a literature comparison, not another independent computational acceptance or a claim of ordinary journal peer review. It describes the alpha=4 pinned dictionary; future changes to the allowed cross-sign nodes require separately dated statements and do not rewrite this historical report.
