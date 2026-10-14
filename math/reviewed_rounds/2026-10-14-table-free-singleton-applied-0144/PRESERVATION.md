@@ -1,0 +1,11 @@
+# Free-cross-singleton table receipt preservation
+
+The original receipt ZIP is preserved byte-for-byte, with all 69 manifest-bound payloads checked. SHA-256: fc75cfb8bf61d915924152b60e9a03326d95d5ce62ad95f3219d1ef67955be64.
+
+Full native readback passed at 01:43:21 UTC on 14 October 2026: 12 reviewed text notes, 11 stable row identifiers and 12 new immutable review links. A separate reconstruction from the exact request and all 17 before/final native snapshots confirms all 19,795 cells, zero unexpected differences and unchanged spreadsheet metadata. All 13 older link spans in these edited cells retain their targets and exact styles at the shifted UTF-16 offsets. Old text, numeric priorities, formulas and unrelated cell fields remain unchanged. The new links use native blue/underline formatting; single-link computed hyperlink fields disappear where a cell now has multiple different links. This is native-data verification, not a browser-rendered visual-fit audit.
+
+README, application/source/validation/final-verification files are exact archive members. RECEIPT_MANIFEST.json is the unchanged archive MANIFEST.json under a descriptive filename. The publication MANIFEST.json binds these files, the exact ZIP and the second INDEPENDENT_TABLE_VERIFICATION.json. No live spreadsheet write or historical scientific program was executed by this preservation check.
+
+The source receipt distinctly binds the original independently reviewed archive and the published review edition, whose only text edits rename three directory locators. This checkpoint follows the separate [20-note quadratic/Q29 update](../2026-10-14-table-quadratic-q29-applied-0132/README.md). Counts from successive checkpoints are not counts of distinct cells.
+
+The accepted free-location minimum is fourteen only for the original F23, N=11, q=13 grammar retaining one effective cross-sign node in each orientation; the two locations are independently free. The explicit equal-(7,7) witness does not prove fourteen-bank attainment at every fixed pair. The earlier fixed-(4,4) minimum sixteen and other-field results remain intact. Unrestricted orientation allocations, novelty and general FFT-speed claims remain open or outside scope. Later Q29 precision-contract and H16 strategy documents are separate preservation artifacts, not part of this frozen table delta.
