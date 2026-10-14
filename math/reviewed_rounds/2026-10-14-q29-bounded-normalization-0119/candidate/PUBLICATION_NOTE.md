@@ -1,0 +1,7 @@
+# Candidate publication edition
+
+This is a publication-safe projection, not the unchanged original archive. Every scientific program and numerical output is retained byte-for-byte. Two mixed-project planning/source-index documents are omitted; their exact original hashes are retained, and Q29-only scientific context is supplied separately. Candidate report wording, source locators, one predecessor review's project bookkeeping, and diagnostics are projected to remove private metadata. All mathematical statements and original conclusions remain unchanged.
+
+ORIGINAL_SOURCE_MANIFEST.json and the exact archive seal identify the original local source. PUBLICATION_PROJECTION.json gives original and publication hashes for every original payload file. MANIFEST.json authenticates the publication edition. Historical source hashes still identify original inputs, including projected documentation; they are not new hashes of that documentation. The original archive remains unchanged locally. No scientific program was run during packaging.
+
+Extract this archive beside the independent-review edition: the sibling directories are q29_bounded_candidate and q29_independent_review. The candidate remains a bounded source artifact; later independent acceptance has the separate label PASS_BOUNDED_ONLY. Shared-center local valuation >=4092 is not a global ordinary-discriminant value. Full discriminant nonvanishing and all-center closure remain open. No novelty, general all-layer or FFT claim is made.
