@@ -1,0 +1,11 @@
+# Cubic thirteen and minima synthesis publication edition
+
+This is a publication-safe projection, not an unchanged original archive. Candidate construction, independent acceptance and subsequent synthesis retain three distinct directories. All original payload files, including alternative negative candidate cases and every synthesis source snapshot/binding, are retained. Directory and source-filename aliases are the only changes: inverse alias substitution reconstructs every original file byte-for-byte. Every mathematical assertion, numerical certificate, raw weight, inverse matrix and actual scientific checker is otherwise unchanged.
+
+Original archive hashes and complete file-level original/publication mappings are provided. Historical indexes are named ORIGINAL_SOURCE_INDEX and still give original hashes; new manifests authenticate this edition. Historical snapshot indexes can refer to fuller older packages rather than claiming their full contents are present here. The original archives and source directories remain intact. No scientific program or provenance binder was executed during packaging.
+
+The independent acceptance covers the successful cubic witness with cross nodes(15,7) and the source-bound combination with the separately accepted lower bound. Candidate alternatives with cross nodes10 or12 are retained as candidate evidence and are not independently accepted by this review. Original pending-review statements stay historical.
+
+The synthesis is a separately labeled dependency-matching note, not a new independent arithmetic audit. It records exact minima14,13,12 over F23, F23 cubed and F23 to the fifth in the same free-cross-singleton dictionary. The degree-five equality is a synthesized corollary of the accepted all-extension lower bound and earlier accepted twelve-bank witness. Historical novelty remains unresolved.
+
+The independent upper-witness checker is self-contained with its copied SOURCE_WITNESS.json. The synthesis provenance binder additionally expects fuller historical source packages; it is preserved as provenance code, not advertised as a standalone replay using only its selected snapshots. Locator-projected hash metadata can differ on later replay; the old receipts attest to original versions.
