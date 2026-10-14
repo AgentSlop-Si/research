@@ -1,0 +1,11 @@
+# Parameter gate and cubic exclusion publication edition
+
+This bundle is a publication-safe projection, not an unchanged original archive. The symbolic parameter candidate, cubic fixed-support failure candidate, and independent combined lower-bound review retain distinct directories and historical labels. Every original manifest payload and every unique scientific source is retained, together with the six inert historical comparison inputs. No historical code is required by the fresh independent checker.
+
+Changes are limited to source-directory aliases, including code path literals, inherited source filenames, output provenance strings, and reproduction commands. Inverse alias substitution reconstructs every original file byte-for-byte. Polynomial coefficients, matrices, field elements, branch inverses, census data and arithmetic instructions are unchanged. The new MANIFEST.json authenticates publication bytes. Original manifest indexes are named ORIGINAL_SOURCE_INDEX.json and retain original hashes; source names in the cubic index are aliased. Those historical hashes do not authenticate changed locator text.
+
+All original source directories, the original cubic candidate archive, and an exact local source snapshot remain unchanged. The projection map pins every original/publication byte version. No scientific code was executed during packaging. Original cold-replay receipts attest to original versions; source-hash metadata may change when the locator-projected edition is later replayed.
+
+Extract the archive and use its outer directory as the working directory. The source directory aliases match the bundled dependencies. The parameter candidate uses SymPy for discovery factorization and supplies exact certificates; the independent checker uses only the Python standard library. Candidate status labels remain historical; the separate independent review carries the accepted conclusions.
+
+The combined verdict excludes at most12 banks over F23 cubed only in the exactly-one-effective-cross-node-per-orientation architecture, allowing independently free locations and arbitrary legal beta. It establishes a lower bound13, with no attainment in this packet. Both cross nodes pinned at15 instead imply at least14 over every extension, without attainment. A separate thirteen-bank candidate or acceptance is not included or assumed here.
