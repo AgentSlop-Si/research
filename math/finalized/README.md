@@ -59,3 +59,7 @@ Applied and independently checked updates: [Q16 current-gate reconciliation](202
 - [NTT thirteen-cell historical review-source reconciliation readback](2026-10-15-ntt-review-source-reconciliation/TABLE_READBACK_RECEIPT.json)
 
 The refreshed open-record CSV/JSON retains 259 unique open IDs and unchanged priorities. All 259 now have a recorded URL, which can be owner-row navigation rather than recovered proof evidence. The exact-source gaps remain qualified. The latest snapshot confirms 68 CLOSED / 259 TO RESEARCH; no new mathematical acceptance follows from these metadata repairs. The approved Lean installation remains blocked by the execution/network environment; no Lean compilation or formal verification is claimed.
+
+## Original pending artifacts recovered, 23:16 UTC
+
+The execution workspace became readable again. The ten prepared original inventory/specification files were recovered, hash-checked, and archived without alteration: [recovered original artifacts](../archives/2026-10-15-recovered-pending-artifacts/README.md). Earlier statements that these bytes were inaccessible describe the earlier outage and are now superseded for these ten files. The original 22:02 inventory is a historical snapshot, separate from the later live index. Lean remains specification-only; the network-policy blocker was not bypassed.
