@@ -33,7 +33,7 @@ Each package records its exact model, assumptions, source identity, tests and li
 
 [Current recovery record](2026-10-15-recovery-status/README.md) distinguishes saved external updates from the local inventory and Lean pilot files whose final upload was interrupted. No Lean proof was compiled or formally verified. These counts are scoped record views, not counts of independent discoveries.
 
-[Rebuilt live open-record index (CSV and JSON)](2026-10-15-rebuilt-open-record-index/README.md): a fresh 259-record native snapshot, explicitly distinct from the unavailable original category artifact. Its source/history qualifications and known Q16 date mismatch remain documented.
+[Rebuilt live open-record index (CSV and JSON)](2026-10-15-rebuilt-open-record-index/README.md): a fresh 259-record native snapshot, explicitly distinct from the unavailable original category artifact. The 22:56 UTC refresh includes the applied Q16 gate reconciliation and repaired recorded links; source/history qualifications remain documented.
 
 ## Additional bounded source comparisons (applications separately audited)
 
@@ -42,12 +42,20 @@ Each package records its exact model, assumptions, source identity, tests and li
 - [Tree witness: directed rank profile and GIRS/TQS/frame source boundaries](2026-10-15-tree-source-comparison/REPORT.md). Previously completed Q04 is unchanged.
 - [Source-gate clarification assessment](2026-10-15-source-gate-clarifications/REPORT.md). All sixteen earlier native-edit proposals were withdrawn; existing owner goals are preserved.
 
-These authored reports identify the exact extent of independent mathematical review. They are not Lean/kernel verification and do not change the 68/259 ledger by themselves. Proposed native updates remain proposals until a verified application receipt is recorded.
+These authored reports identify the exact extent of independent mathematical review. They are not Lean/kernel verification and do not change the 68/259 ledger by themselves. Native applications are identified by the separate verified receipts below.
 
-[Independent resumed-comparison review and proposed prefixes](2026-10-15-resumed-source-review/REVIEW.md) records the bounded implications, explicit nonmatches and unchanged open gates. The accompanying prefix plan is a proposal until its native application is separately verified.
+[Independent resumed-comparison review and proposed prefixes](2026-10-15-resumed-source-review/REVIEW.md) records the bounded implications, explicit nonmatches and unchanged open gates. The accompanying prefix plan is preserved as the pre-application proposal; its later application is recorded in the receipt below.
 
 The 36 resumed source-comparison updates have now been independently read back, with unchanged 68/259 counts, statuses, scores and histories: [application receipt](2026-10-15-resumed-source-review/APPLICATION_RECEIPT.json).
 
-Additional reviewed proposals: [Q16 current-gate reconciliation](2026-10-15-q16-current-gate-reconciliation/README.md) and [fourteen source/navigation link repairs](2026-10-15-source-link-repairs/REPORT.md). Their application is separately verified; neither proposal changes theorem correctness, priorities or record counts.
+Applied and independently checked updates: [Q16 current-gate reconciliation](2026-10-15-q16-current-gate-reconciliation/README.md) and [fourteen source/navigation link repairs](2026-10-15-source-link-repairs/REPORT.md). Their application is separately verified; neither proposal changes theorem correctness, priorities or record counts.
 
 [NTT review-body source reconciliation](2026-10-15-ntt-review-source-reconciliation/INDEPENDENT_REVIEW.md) verifies the exact historical assessment prose only. It leaves all original-program, adapter, timing and production obligations distinct; the existing all-288-output acceptance is preserved.
+
+## Latest native readback and index refresh
+
+- [Q16 nine-cell current-gate readback](2026-10-15-q16-current-gate-reconciliation/INDEPENDENT_READBACK.json)
+- [Fourteen source/navigation link repair readback](2026-10-15-source-link-repairs/POSTWRITE_RECEIPT.json)
+- [NTT thirteen-cell historical review-source reconciliation readback](2026-10-15-ntt-review-source-reconciliation/TABLE_READBACK_RECEIPT.json)
+
+The refreshed open-record CSV/JSON retains 259 unique open IDs and unchanged priorities. All 259 now have a recorded URL, which can be owner-row navigation rather than recovered proof evidence. The exact-source gaps remain qualified. The latest snapshot confirms 68 CLOSED / 259 TO RESEARCH; no new mathematical acceptance follows from these metadata repairs. The approved Lean installation remains blocked by the execution/network environment; no Lean compilation or formal verification is claimed.

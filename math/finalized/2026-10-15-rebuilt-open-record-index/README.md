@@ -1,8 +1,10 @@
 # Rebuilt open-record index — 15 October 2026
 
+Updated **15 October 2026 at 2026-10-15T22:56:04.494Z**, from fresh native reads after the source-comparison, Q16 pass/stop, link, and NTT source-access updates. This refresh replaces the existing three derivative files in place; earlier snapshots remain available through Git history.
+
 This is a **fresh native-snapshot rebuild** of the live Google Sheets `Research overview` tab. It was read directly through the Google Sheets connector after the earlier execution environment became unavailable. It is **not recovery of the original local 259-record category artifact**, is not asserted byte-identical to that artifact, and does not reproduce or independently validate its former semantic category counts.
 
-This is **not a full proof audit** and **not a claim of 259 independent theories**. Rows may be related views, parent tasks, child scopes, implementation/replay obligations, source-access gates, or attribution work. Recorded acceptance language remains attributed to the Sheet; it was not newly proved or re-reviewed during this rebuild. No status, priority, mathematical scope, novelty, or speed claim is promoted here.
+This is **not a full proof audit** and **not a claim of 259 independent theories**. Rows may be related views, parent tasks, child scopes, implementation/replay obligations, source-access gates, or attribution work. Recorded acceptance language remains attributed to the Sheet; it was not newly proved or re-reviewed during this refresh. No status, priority, mathematical scope, novelty, or speed claim is promoted here.
 
 ## Source and snapshot
 
@@ -10,10 +12,11 @@ This is **not a full proof audit** and **not a claim of 259 independent theories
 - Tab: `Research overview`, sheet ID `1731260011`
 - Header row: 4; populated stable-ID rows: 5–331
 - Bounded reads covered rows 5–337, confirming no additional stable-ID rows in the remaining six rows.
-- Native connector reads completed: **2026-10-15T22:25:21.846Z**
+- Native connector reads completed: **2026-10-15T22:56:04.494Z**
 - Source columns: B stable ID; D title; E status; I source-row labels and links; J recorded evidence links; L numeric priority; P next bounded action; Q pass/stop condition.
+- Link reads include `textFormatRuns`, whole-cell `userEnteredFormat.textFormat.link`, and `hyperlink`. Whole-cell links normalized by Sheets are retained.
 - These were bounded live reads, not an atomic version-pinned workbook export. The dates within individual fields remain the dates recorded in the workbook.
-- The original Sheet was read only. Its complete rows and historical text remain unchanged.
+- This derivative refresh only read the original Sheet. Its complete rows and historical text were not changed by the refresh.
 
 ## Verified structural counts
 
@@ -22,10 +25,19 @@ This is **not a full proof audit** and **not a claim of 259 independent theories
 - 68 records with exact status `CLOSED`, not exported here
 - All 259 exported IDs are unique, all 259 priorities are finite numbers, and all 259 records have a nonempty recorded next action and recorded pass/stop condition.
 - Exported priorities range from 8 to 60. These are work-priority scores, not probabilities of correctness or novelty.
-- 251 exported records have at least one recorded source URL; 602 URL occurrences remain after per-record deduplication. All 259 have an overview-row URL.
-- Eight records have no source URL in the inspected link fields/current evidence prefix: `STRUCTURED-RESIDUAL-EXECUTOR-20261012`, `PHASE56-COMPLEX-GREEN-N5-N8-20261011`, `QTORUS-CONNECTED-MINOR-20261013`, `ACWL-20261012`, `GTSL-20261012`, `Q2-DENSE-TORUS-20261013`, `GENERIC-FUSION-GATE-20261012`, `BORROWED-FOURIER-COMPILER-20261012`. Their empty URL arrays are explicit missing data, not fabricated links.
+- All 259 exported records have at least one recorded URL; 625 URL occurrences remain after per-record deduplication. All 259 also have an overview-row URL.
+- Records with an empty `recorded_source_urls` array: **none**.
+- Against the preceding version of this index, 19 exported records have changed recorded text or URLs. Exported stable IDs, titles, statuses, priorities, row positions, source-row labels, and overview URLs are unchanged.
 
 No semantic classification or independent-theory count is inferred from these counts.
+
+## Recorded URLs and their limits
+
+The eight previously empty URL arrays now include the actually recorded link to the owning `Incoming queue` row. This resolves their owner-row navigation gaps. The links are read from native cell metadata rather than inferred from a label.
+
+Owner-row navigation and exact source/audit evidence are different. An owning Sheet-row URL is a pointer to the row containing the record and its context; it is not a recovered proof body, an independent audit, or evidence that every referenced archive is accessible. The `recorded_source_urls` array deliberately preserves the existing schema and can contain both kinds of recorded URL. An empty-array count of zero does not establish complete exact-source coverage.
+
+For `QTORUS-CONNECTED-MINOR-20261013` and `Q2-DENSE-TORUS-20261013`, the refreshed arrays also include the newly recorded commit-pinned audit or audit-archive link. The six other formerly empty arrays contain owner-row navigation only: `STRUCTURED-RESIDUAL-EXECUTOR-20261012`, `PHASE56-COMPLEX-GREEN-N5-N8-20261011`, `ACWL-20261012`, `GTSL-20261012`, `GENERIC-FUSION-GATE-20261012`, and `BORROWED-FOURIER-COMPILER-20261012`. No exact source or audit URL is invented for them.
 
 ## Files
 
@@ -42,11 +54,11 @@ No semantic classification or independent-theory count is inferred from these co
 | `status` | Column E; exact `TO RESEARCH` |
 | `priority` | Column L; numeric work-priority value, unchanged |
 | `overview_row` | One-based source row at snapshot time; not a permanent key |
-| `recorded_current_gate` | Leading recorded block of column P, `Next bounded action`; an attributed next-action/gate, not an independently certified current verdict |
-| `recorded_pass_stop_condition` | Leading recorded block of column Q, `Pass / stop condition`; retained separately because its date can lag P |
+| `recorded_current_gate` | Leading recorded block of column P, `Next bounded action`; attributed text, not an independently certified or necessarily complete current verdict |
+| `recorded_pass_stop_condition` | Leading recorded block of column Q, `Pass / stop condition`; retained separately because its date can differ from P |
 | `recorded_source_rows` | Column I source-row labels, unchanged |
-| `recorded_source_urls` | Deduplicated links actually recorded in I/J link metadata, plus HTTP(S) URLs in the retained current J/P/Q prefixes; no missing source bodies inferred recovered |
-| `overview_url` | Direct source overview-row navigation built from the observed workbook URL, sheet ID, and row number |
+| `recorded_source_urls` | Deduplicated HTTP(S) links actually recorded in I/J `textFormatRuns`, whole-cell `userEnteredFormat.textFormat.link`, or `hyperlink` metadata, plus HTTP(S) URLs in the retained J/P/Q prefixes; owning-row links do not imply source-body recovery |
+| `overview_url` | Direct full source overview-row navigation built from the observed workbook URL, sheet ID, and row number |
 
 ## Derivative-only history removal
 
@@ -57,13 +69,16 @@ The current-action and pass/stop fields are a compact derivative of the source c
 3. Preserve date labels, qualifications, limitations, and wording in the retained block. Do not paraphrase them into new claims.
 4. Apply the same prefix extraction to J only for finding current evidence URLs; the full J narrative is not exported into this compact index.
 
-This removed historical suffixes from 73 action cells and 50 condition cells. Full source history remains in the original workbook. Source-row link positions are a snapshot; stable IDs are the durable matching keys.
+This removed historical suffixes from 74 action cells and 50 condition cells. Full source history remains in the original workbook. Source-row link positions are a snapshot; stable IDs are the durable matching keys.
 
-## Known date mismatch: Q16-related rows
+A brief source-access reconciliation prefix can refer to unchanged engineering gates without restating them. In particular, `ENGINEERING-NTT-BASELINE-20261012` retains the new source-access prefix exactly as written. This index does not invent a remaining-gate list from that prefix or treat it as closure of the engineering parent. Follow `overview_url` to the complete row and its retained history.
 
-For `STR-Q1`, `F016`, `FUS-09`, and `Q16`, P contains a later 14 October update saying the static/reference gate is complete and naming the production-wrapper/sparse-output and bounded real-API next action. Q still carries a 13 October condition. Both are preserved under separate **recorded** field names; the older Q text is not promoted to a newly current acceptance requirement. This rebuild does not silently repair the source or establish a later scientific verdict.
+## Dates and updated Q16 pass/stop text
+
+For `STR-Q1`, `F016`, `FUS-09`, and `Q16`, P still contains the recorded 14 October update. Q now contains the recorded 15 October pass/stop reconciliation from the 14 October scoped reviews, including the production coefficient/association and authorized bounded real-API gate. The previous index's 13 October Q prefix has been superseded in the native cells and is preserved in their history.
+
+P and Q remain separate attributed fields. Older dates elsewhere are retained as written; they are not silently recast as new acceptance requirements. No proof, implementation, or novelty conclusion is established by this refresh.
 
 ## Verification boundary
 
-The rebuild checks source-row counts, unique stable IDs, exact status filtering, numeric priorities, nonempty extracted action/condition fields, and CSV/JSON content agreement. It does not reopen proof archives, run historical research programs, establish accessibility or validity of every linked source, deduplicate related theories, validate all scientific assertions, or recover the missing local artifact. Workbook access is still governed by its existing permissions.
-
+The refresh checks source-row counts, unique stable IDs, exact status filtering, finite numeric priorities, nonempty extracted action/condition fields, unchanged exported statuses/scores, exact recorded-link extraction, CSV/JSON round-trip content agreement, and UTF-8 Git blob readback. It does not reopen proof archives, run historical research programs, establish accessibility or validity of every linked source, deduplicate related theories, validate all scientific assertions, or recover the missing local artifact. Workbook access is still governed by its existing permissions.
