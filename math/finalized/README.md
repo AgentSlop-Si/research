@@ -49,3 +49,5 @@ These authored reports identify the exact extent of independent mathematical rev
 The 36 resumed source-comparison updates have now been independently read back, with unchanged 68/259 counts, statuses, scores and histories: [application receipt](2026-10-15-resumed-source-review/APPLICATION_RECEIPT.json).
 
 Additional reviewed proposals: [Q16 current-gate reconciliation](2026-10-15-q16-current-gate-reconciliation/README.md) and [fourteen source/navigation link repairs](2026-10-15-source-link-repairs/REPORT.md). Their application is separately verified; neither proposal changes theorem correctness, priorities or record counts.
+
+[NTT review-body source reconciliation](2026-10-15-ntt-review-source-reconciliation/INDEPENDENT_REVIEW.md) verifies the exact historical assessment prose only. It leaves all original-program, adapter, timing and production obligations distinct; the existing all-288-output acceptance is preserved.
