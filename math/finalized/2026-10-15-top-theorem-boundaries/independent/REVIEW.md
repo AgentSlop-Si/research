@@ -2,16 +2,16 @@
 
 15 October 2026 UTC. Read-only source and local-snapshot review. No external write, parent-family closure, numerical-score change or new discovery claim is authorized by this review.
 
-## Provisional decision pending the author's nine-cell packaging refresh
+## Decision: ACCEPT
 
-The three prose reports and the original seven proposed addenda are scientifically ACCEPTED at their stated scope. The author is adding two omitted F018 current-lead cells and repairing a stale manifest entry; those exact final bytes remain to be checked.
+The three prose reports and all nine proposed text addenda are ACCEPTED at their stated scope. The final nine-cell semantic request was checked against the author-captured fresh bounded connector response. Every stable ID, sheet ID, target text hash and full-cell data hash matches; all original seven addenda are unchanged. The two omitted F018 current leads are now included. All final author-manifest entries match, including SOURCE_VERIFICATION.json. This accepts the comparison and proposed semantics; it is not an external-write receipt.
 
 The original seven targets genuinely correct stale wording:
 
 - Prior work D5 and Source comparisons D4: supersede the false current assertion that the noncyclic matching upper is missing, while preserving the half-square, characteristic-zero and C07 limitations.
 - Research overview P258, Theorem register G26, Catalogue AE6, novelity breakthough Y176 and Prior work D8: retire the full Phase26 retrieval/comparison and original-A1/A2 comparison tasks, while retaining the exact reviewed-v2 source gap and the unmatched simultaneous-area clause.
 
-The two additional current leads are Research overview C258 and Prior work C8. Without their dated supersession the original seven-cell edit is valid but not a complete correction of the currently displayed F018 retrieval instructions. Preserve the old dated text beneath each new statement.
+The two additional accepted current leads are Research overview C258 and Prior work C8. Their dated supersession corrects the remaining currently displayed F018 retrieval instructions while retaining the old text as history. Neither new lead closes the reviewed-v2 gap or changes a score/status.
 
 ## Independent scientific checks
 
@@ -47,6 +47,8 @@ Fresh reading of [TW477, Lemma 12 and Corollary 21](https://www.cs.kuleuven.be/p
 
 Initial review found that the original MANIFEST.json bound LIVE_ALL_13_TABS.json at 11,157,369 bytes and SHA256 cafb6deba66af2315b5f218c019afb98ab061d5b3cadbffbc54edb05b4d4bf5a. The current local snapshot instead had 11,157,550 bytes and SHA256 297e6ccc849b734f5e4e0a8e3d79295e82e20aaf1bc56487bcb25933bdd8af5e. All seven target-cell hashes still matched. Every other original manifest entry matched at initial review.
 
-SCOPED_SOURCE_BINDINGS.json preserves exact target-cell preimages and selected supporting C02/STABLE-ARC/F018 cells without the giant workbook snapshot. These bindings are a local-snapshot audit, not a fresh connected-Sheets read. Before applying any text, re-read stable IDs and the exact current cells, preserve rich links and historical text, and stop/rebase on a changed preimage. A publication manifest must hash the actual publication files, including SOURCE_VERIFICATION.json, rather than pretend omitted inputs are bundled.
+SCOPED_SOURCE_BINDINGS.json preserves all nine exact target-cell preimages from the author-captured bounded connector response and selected supporting C02/STABLE-ARC/F018 contextual cells without the giant workbook snapshot. The bounded connector response SHA256 is 8226409cbaa3fecfb800c0d0a431ed8b1a3c6b4ac580b8edd70a1c3222370594. FINAL_NINE_CELL_AUDIT.json records the independently checked semantic-request and source hashes. The original manifest mismatch is repaired; the checked current full-snapshot hash remains 297e6ccc849b734f5e4e0a8e3d79295e82e20aaf1bc56487bcb25933bdd8af5e. Before applying any text, re-read stable IDs and the exact current cells, preserve rich links and historical text, and stop/rebase on a changed preimage. A publication manifest must hash the actual publication files, including SOURCE_VERIFICATION.json, rather than pretend omitted inputs are bundled.
 
 No proprietary journal PDFs or unrelated full-workbook data are needed in the publication. Original theorem bodies, the two relevant fragmentation review reports, scoped bindings, verification data and this review suffice for the narrow comparison claims. Immutable legacy sources must remain labeled as original historical sources; their older novelty wording is superseded by the current addenda.
+
+The reviewed request builder writes only userEnteredValue and textFormatRuns. Its fresh response contains no existing rich runs, chips, formula or inherited text link in any target, so adding one verified source link with UTF-16 offsets does not discard an existing link; other cell formatting/notes/validation remain outside its write mask. The immutable publication URL must be verified by the parent before binding. Keep the actual URL-bound patch and eventual write receipt separate from the scientific source commit to avoid circular provenance.
