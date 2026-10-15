@@ -32,3 +32,12 @@ Each package records its exact model, assumptions, source identity, tests and li
 [Current recovery record](2026-10-15-recovery-status/README.md) distinguishes saved external updates from the local inventory and Lean pilot files whose final upload was interrupted. No Lean proof was compiled or formally verified. These counts are scoped record views, not counts of independent discoveries.
 
 [Rebuilt live open-record index (CSV and JSON)](2026-10-15-rebuilt-open-record-index/README.md): a fresh 259-record native snapshot, explicitly distinct from the unavailable original category artifact. Its source/history qualifications and known Q16 date mismatch remain documented.
+
+## Additional bounded source comparisons (applications separately audited)
+
+- [F021: exact open-Waring/apolarity implication for generic legal-pole minima](2026-10-15-f021-open-waring-comparison/REPORT.md). Chirp-specific classification/cost/priority obligations remain open.
+- [C02: explicit critical-rectangle source comparisons and remaining universal gap](2026-10-15-dyadic-minimax-source-comparison/REPORT.md). Qualified clause-level nonmatches do not certify worldwide novelty.
+- [Tree witness: directed rank profile and GIRS/TQS/frame source boundaries](2026-10-15-tree-source-comparison/REPORT.md). Previously completed Q04 is unchanged.
+- [Source-gate clarification assessment](2026-10-15-source-gate-clarifications/REPORT.md). All sixteen earlier native-edit proposals were withdrawn; existing owner goals are preserved.
+
+These authored reports identify the exact extent of independent mathematical review. They are not Lean/kernel verification and do not change the 68/259 ledger by themselves. Proposed native updates remain proposals until a verified application receipt is recorded.
