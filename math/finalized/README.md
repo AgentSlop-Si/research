@@ -1,5 +1,7 @@
 # Research finalization index
 
+Repository access is private and unchanged. A repository commit is not an anonymous public release or peer-reviewed publication.
+
 Updated 15 October 2026. Verified status-column ledger: **68 CLOSED / 259 TO RESEARCH**, 327 scoped record views plus four intake aliases. Eight further existing scoped records were finalized in the latest round, following fifteen in the preceding pass. These are record closures, not discoveries. No general faster FFT or worldwide-first result is claimed.
 
 [Previous complete audit and remaining gates (60/267 snapshot)](2026-10-15-finalization-audit/README.md)
@@ -41,3 +43,5 @@ Each package records its exact model, assumptions, source identity, tests and li
 - [Source-gate clarification assessment](2026-10-15-source-gate-clarifications/REPORT.md). All sixteen earlier native-edit proposals were withdrawn; existing owner goals are preserved.
 
 These authored reports identify the exact extent of independent mathematical review. They are not Lean/kernel verification and do not change the 68/259 ledger by themselves. Proposed native updates remain proposals until a verified application receipt is recorded.
+
+[Independent resumed-comparison review and proposed prefixes](2026-10-15-resumed-source-review/REVIEW.md) records the bounded implications, explicit nonmatches and unchanged open gates. The accompanying prefix plan is a proposal until its native application is separately verified.
