@@ -63,3 +63,7 @@ The refreshed open-record CSV/JSON retains 259 unique open IDs and unchanged pri
 ## Original pending artifacts recovered, 23:16 UTC
 
 The execution workspace became readable again. The ten prepared original inventory/specification files were recovered, hash-checked, and archived without alteration: [recovered original artifacts](../archives/2026-10-15-recovered-pending-artifacts/README.md). Earlier statements that these bytes were inaccessible describe the earlier outage and are now superseded for these ten files. The original 22:02 inventory is a historical snapshot, separate from the later live index. Lean remains specification-only; the network-policy blocker was not bypassed.
+
+## 23:42 author/reviewer cycle
+
+[Bounded N256 preprocessing and three named source comparisons](2026-10-15-finalization-cycle-2342/README.md). These are standard exact reformulations and qualified source comparisons, not solved Fourier feasibility or new FFT asymptotics. Broader construction/attribution gates remain open; no parent-status or priority promotion.
