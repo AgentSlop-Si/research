@@ -1,8 +1,10 @@
 # Research finalization index
 
-Updated 15 October 2026. Verified ledger: **60 CLOSED / 267 TO RESEARCH**, 327 scoped record views plus four intake aliases. Fifteen existing records were finalized during this pass; this is not fifteen discoveries. No general faster FFT or worldwide-first result is claimed.
+Updated 15 October 2026. Verified status-column ledger: **67 CLOSED / 260 TO RESEARCH**, 327 scoped record views plus four intake aliases. Seven further existing scoped records were finalized in the latest round, following fifteen in the preceding pass. These are record closures, not discoveries. No general faster FFT or worldwide-first result is claimed.
 
-[Current audit and remaining gates](2026-10-15-finalization-audit/README.md)
+[Previous complete audit and remaining gates (60/267 snapshot)](2026-10-15-finalization-audit/README.md)
+
+Latest scoped acceptances and source holds: [four follow-on closures](2026-10-15-follow-on-closures/README.md) and [Weyl/parity/tensor closures](2026-10-15-weyl-parity-tensor-closures/README.md). The actual native status column and dashboard were read after application at 67/260; final whole-workbook reconciliation for this round is pending separately.
 
 [Existing Google workbook](https://docs.google.com/spreadsheets/d/1BHaGJHkXxf_UfZdyTKF2zrWNFzIP4IvhaqFMj-83BjU/edit)
 
