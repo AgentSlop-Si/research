@@ -30,3 +30,5 @@ Each package records its exact model, assumptions, source identity, tests and li
 [Primary comparisons and qualified C03 checkpoint](2026-10-15-primary-comparison-completion/README.md) were published at commit `21aac668f52b5680b8b22eb99d53a850ae0cd394`. ALG-037 is closed under its explicit qualified-comparison stopping condition; Mathé (1991) remains unread and exact historical priority unverified. ALG-041 and ALG-060 comparisons are complete while their genuine construction/implementation gates stay open. PACK-01 remains source-blocked.
 
 [Current recovery record](2026-10-15-recovery-status/README.md) distinguishes saved external updates from the local inventory and Lean pilot files whose final upload was interrupted. No Lean proof was compiled or formally verified. These counts are scoped record views, not counts of independent discoveries.
+
+[Rebuilt live open-record index (CSV and JSON)](2026-10-15-rebuilt-open-record-index/README.md): a fresh 259-record native snapshot, explicitly distinct from the unavailable original category artifact. Its source/history qualifications and known Q16 date mismatch remain documented.
