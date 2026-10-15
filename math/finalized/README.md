@@ -45,3 +45,7 @@ Each package records its exact model, assumptions, source identity, tests and li
 These authored reports identify the exact extent of independent mathematical review. They are not Lean/kernel verification and do not change the 68/259 ledger by themselves. Proposed native updates remain proposals until a verified application receipt is recorded.
 
 [Independent resumed-comparison review and proposed prefixes](2026-10-15-resumed-source-review/REVIEW.md) records the bounded implications, explicit nonmatches and unchanged open gates. The accompanying prefix plan is a proposal until its native application is separately verified.
+
+The 36 resumed source-comparison updates have now been independently read back, with unchanged 68/259 counts, statuses, scores and histories: [application receipt](2026-10-15-resumed-source-review/APPLICATION_RECEIPT.json).
+
+Additional reviewed proposals: [Q16 current-gate reconciliation](2026-10-15-q16-current-gate-reconciliation/README.md) and [fourteen source/navigation link repairs](2026-10-15-source-link-repairs/REPORT.md). Their application is separately verified; neither proposal changes theorem correctness, priorities or record counts.
