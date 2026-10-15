@@ -4,7 +4,7 @@ Updated 15 October 2026. Verified status-column ledger: **67 CLOSED / 260 TO RES
 
 [Previous complete audit and remaining gates (60/267 snapshot)](2026-10-15-finalization-audit/README.md)
 
-Latest scoped acceptances and source holds: [four follow-on closures](2026-10-15-follow-on-closures/README.md) and [Weyl/parity/tensor closures](2026-10-15-weyl-parity-tensor-closures/README.md). The actual native status column and dashboard were read after application at 67/260; final whole-workbook reconciliation for this round is pending separately.
+Latest scoped acceptances and source holds: [four follow-on closures](2026-10-15-follow-on-closures/README.md) and [Weyl/parity/tensor closures](2026-10-15-weyl-parity-tensor-closures/README.md). The complete 13-tab reconciliation confirms 67/260, all 178 formulas and 2,443 historical notes preserved, and zero unexpected changes. [Verified application and remaining gates](2026-10-15-follow-on-application/SOURCE_AND_COMPLETION_SUMMARY.md).
 
 [Existing Google workbook](https://docs.google.com/spreadsheets/d/1BHaGJHkXxf_UfZdyTKF2zrWNFzIP4IvhaqFMj-83BjU/edit)
 
