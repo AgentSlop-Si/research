@@ -1,3 +1,15 @@
+# Current open-record index: bounded refinements and one activity archive
+
+The census is **239 open / 88 closed / 327 existing record views**. M-CRT-TRANSFER leaves active open-index selection only because its accepted current finite task is exhausted. Its native record, priority, evidence and complete history remain; broader sizes, bases, applications, numerical questions and historical priority remain unresolved or deferred.
+
+Eight parent views receive targeted current-gate, pass/stop and source-evidence updates: ALG-040, ALG-043, ALG-044, ALG-049, M-MAGNETIC-SPAN, NEW-17, Q35 and NEXT-MAGNETIC-SIGNED. All eight remain open. The other **231 retained record objects are unchanged**. All retained IDs, ordering, row positions, titles, statuses and priorities are preserved, and CSV/JSON round-trip exactly. This is a targeted refresh, not a fresh proof audit of every open record.
+
+The [bounded-results report](../2026-10-16-research-finalization-2101/README.md), [independent review](../2026-10-16-research-finalization-2101/independent_review/INDEPENDENT_REVIEW.md) and [application receipt](../2026-10-16-research-finalization-2101/APPLICATION_COMPLETE.md) state the exact scope and preservation checks. No unrestricted Fourier speed, production qualification or novelty promotion is implied.
+
+Earlier index documentation is preserved verbatim below as dated history.
+
+---
+
 # Current open-record index: three further bounded advances
 
 The census remains **240 open / 87 closed / 327 record views**. ALG-032 receives a source-evidence refresh; ALG-039 and C10 receive current-gate, pass/stop and source-evidence refreshes. Each parent remains open at its existing numerical priority. No ID is removed or created.
