@@ -4,6 +4,7 @@ Verified census: **83 CLOSED/archived and 244 TO RESEARCH**, 327 scoped record v
 
 - [Applied finalization round, independent acceptance and preserved evidence](2026-10-16-finalization-round/README.md)
 - [Current 244-open CSV/JSON index](2026-10-15-rebuilt-open-record-index/README.md)
+- [Full 244-open coverage audit: 12 selected source/owner views across nine groups; no new parent closures](2026-10-16-full-open-index-coverage-audit/README.md)
 - [F020 precise open mathematical gate](2026-10-16-finalization-round/reports/f020/REPORT.md)
 - [Q29 accepted exact reduction and unresolved noncancellation](2026-10-16-finalization-round/reports/q29/REPORT.md)
 - [R14 attributed complex-rank corollary; no faster FFT or new canonical row](2026-10-16-finalization-round/reports/r14/README.md)
