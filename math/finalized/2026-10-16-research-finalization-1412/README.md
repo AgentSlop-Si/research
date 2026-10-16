@@ -1,3 +1,11 @@
+# Applied and verified
+
+The accepted 50-cell native update and existing open-index refresh are complete. Census: **85 CLOSED + 242 TO RESEARCH = 327 views**. See the [application receipt](APPLICATION_COMPLETE.md) and independent native/index acceptance. Q32 and ALG-057 are archived research activities; their broader excluded obligations remain unresolved.
+
+The original report-stage documentation is preserved below.
+
+---
+
 # Bounded research finalization: 16 October 2026
 
 This round accepts five bounded algebra/algorithm developments and two research-activity archival decisions. The [independent review](independent_review/INDEPENDENT_REVIEW.md) states the hypotheses, source limits and independent checks.

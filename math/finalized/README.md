@@ -1,3 +1,13 @@
+# Latest bounded research finalization
+
+16 October 2026: [five bounded results and two research-activity archival decisions](2026-10-16-research-finalization-1412/README.md) are independently reviewed, published and applied. Q32 and ALG-057 are archived only at their stated active-research scopes. ALG-048, ALG-050, ALG-053 and ALG-064 remain open. All numerical priorities, proof/novelty classifications and prior history are preserved.
+
+Current census: **85 CLOSED + 242 TO RESEARCH = 327 views**. The [existing open-record index](2026-10-15-rebuilt-open-record-index/README.md) excludes only the two archived activities and refreshes four retained records; 238 retained objects are unchanged. The [application receipt](2026-10-16-research-finalization-1412/APPLICATION_COMPLETE.md) links exact native and index verification. Source-blocked comparisons remain unchanged.
+
+Earlier documentation is preserved verbatim below as dated history.
+
+---
+
 # Latest bounded mathematical development — 16 October 2026
 
 Five independently reviewed developments now have source-bound native gate/evidence summaries: F020 uniform deflation, Q29 route obstructions, Q2 paid inversion, ALG-070 capped replay/rebase, and ALG-071 budgeted materialization. No whole parent closes; the census remains **83 CLOSED / 244 TO RESEARCH / 327 views**. Priorities and proof/novelty classifications remain unchanged.
