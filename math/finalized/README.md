@@ -75,3 +75,7 @@ The 23:42 cycle's 28 native updates now have independent postwrite receipts; all
 [ALG-034 restricted policy, Q29 inherited endpoint and Q14 cancellation comparison](2026-10-16-finalization-cycle-0001/README.md) have independent scoped reviews. Their original broader proof/implementation gates remain open. No new FFT speed or global novelty is asserted.
 
 The 00:01 cycle's six native prefixes now have independent postwrite receipts, and the same open-record index reflects the 00:15 UTC snapshot. The ledger remains68 CLOSED /259 TO RESEARCH; all327 status/priority values are unchanged.
+
+## 16 October, 00:18 breadth finalization
+
+[Six scoped comparisons and one eligible certificate-record closure](2026-10-16-finalization-cycle-0018/README.md) are independently reviewed. Native application and counts will be recorded in separate receipts; broader parents and numerical/constructor work remain distinct.
