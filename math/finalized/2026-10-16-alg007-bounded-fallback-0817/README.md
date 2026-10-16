@@ -1,3 +1,11 @@
+# ALG-007: applied and independently verified
+
+16 October 2026. [The recorded compatible-model implementation gate is complete and applied](APPLICATION_COMPLETE.md). ALG-007 is CLOSED at unchanged priority 42; the verified ledger contains **75 CLOSED / 252 TO RESEARCH**. The [existing open-record index](../2026-10-15-rebuilt-open-record-index/README.md) is refreshed from the independently accepted native snapshot. This is a bounded implementation/completeness repair of accepted formulas; no novel mathematical theorem or asymptotic improvement is established. Historical supplied code remains unchanged and unrun.
+
+The report-stage account below is preserved as dated history. Its statements that native application and index verification were still pending describe the earlier checkpoint and are superseded only by the application and independent acceptance receipts above.
+
+## Earlier report-stage account (preserved verbatim)
+
 # ALG-007: compatible-model rejection/fallback implementation
 
 16 October 2026. Report-stage publication in the existing private research repository.

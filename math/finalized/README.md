@@ -132,3 +132,10 @@ The 18 owner-value changes, sole status-fill change and two dashboard-value upda
 
 [The ALG-007 implementation contract, source-bound adapter and independent review](2026-10-16-alg007-bounded-fallback-0817/README.md) complete the recorded compatible-model rejection/fallback implementation and charging gate. This is a bounded implementation/completeness repair of already accepted formulas, with no novel mathematical theorem or asymptotic improvement established. The fixed field is F_2013265921 with eligible dyadic Q<=2^27. Cold roots/inverses, all recognition and partial decoding, seed sums, full fallback and explicit outputs remain paid. Original historical programs are unchanged and unrun. The earlier primary comparison is complete; the recorded owner stage is eligible for closure at priority 42. Native application and census/index readback are recorded separately, so this report-stage publication does not assert that they have changed.
 
+
+
+## 16 October, 09:04 ALG-007: applied and independently verified
+
+[ALG-007's compatible-model implementation and charging gate is complete and applied](2026-10-16-alg007-bounded-fallback-0817/APPLICATION_COMPLETE.md). Its owner is CLOSED at unchanged priority 42. Independent native verification preserves all 327 IDs, priorities and row positions; the current ledger is **75 CLOSED / 252 TO RESEARCH**.
+
+The [same open-record index](2026-10-15-rebuilt-open-record-index/README.md) now records the independently accepted 09:04:30.285 UTC snapshot: 252 open records and 633 recorded source-URL occurrences. Only ALG-007 leaves the accepted ALG-015 baseline; every retained record and its order remain exactly unchanged. Existing schema and history/URL policies are preserved. This is a bounded fixed-prime/dyadic implementation-completeness repair of accepted formulas, with no novel mathematical theorem or asymptotic improvement established. Original historical programs remain unchanged and unrun. Earlier entries remain historical evidence.

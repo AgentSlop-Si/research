@@ -1,12 +1,12 @@
 # Rebuilt open-record index — 16 October 2026
 
-Updated **16 October 2026 at 2026-10-16T08:30:22.414Z**, from fresh native reads after independent ALG-015 postwrite acceptance. The derivative now contains **253 open records, 74 closed records and 327 total overview records**. Only ALG-015 changed to CLOSED at its recorded bounded-comparison scope; its priority remains 42. All 253 retained open records are exactly unchanged in every exported field and remain in their earlier order. The established schema, source selection, history-prefix extraction and URL policy are unchanged. Earlier snapshots remain historical; the derivative is replaced in place with preceding versions retained in Git history.
+Updated **16 October 2026 at 2026-10-16T09:04:30.285Z**, from fresh native reads after independent ALG-007 postwrite acceptance. The derivative now contains **252 open records, 75 closed records and 327 total overview records**. Only ALG-007 changed to CLOSED after completion of its recorded comparison and bounded compatible-model implementation gate; its priority remains 42. All 252 retained open records are exactly unchanged in every exported field and stay in the earlier order. The established schema, source selection, history-prefix extraction and URL policy are unchanged. Earlier snapshots remain historical; preceding derivative versions remain in Git history. This is a technical completeness repair of accepted formulas, with no novel mathematical theorem or asymptotic improvement established.
 
 This is a **fresh native-snapshot rebuild** of the live Google Sheets `Research overview` tab, read directly through the Google Sheets connector. It remains a separate derivative from the original 259-record category inventory and is not asserted byte-identical to it. This refresh does not reproduce or independently validate that inventory's semantic category counts.
 
 The original inventory was previously inaccessible during an execution-workspace outage, then recovered and archived at [commit e5c9c53f7d34e8d858e781d2d5321393aec7e85c](https://github.com/AgentSlop-Si/research/commit/e5c9c53f7d34e8d858e781d2d5321393aec7e85c). Its [preserved original files](https://github.com/AgentSlop-Si/research/blob/e5c9c53f7d34e8d858e781d2d5321393aec7e85c/math/archives/2026-10-15-recovered-pending-artifacts/original-category-inventory-2202/README.md) describe the historical 22:02:36–22:02:51 UTC snapshot. Earlier access-failure statements are superseded for those recovered files. That archival recovery is distinct from this later live-row derivative and does not establish recovery or verification of every mathematical source referenced by the records.
 
-This is **not a full proof audit** and **not a claim of 253 independent theories**. Rows may be related views, parent tasks, child scopes, implementation/replay obligations, source-access gates or attribution work. Recorded acceptance language remains attributed to the Sheet; it was not newly proved or re-reviewed during this index refresh. Progress wording is copied from the Sheet at its stated scope; this derivative records the independently accepted native status changes without making status decisions. This derivative does not independently promote any mathematical scope, priority, novelty or speed claim.
+This is **not a full proof audit** and **not a claim of 252 independent theories**. Rows may be related views, parent tasks, child scopes, implementation/replay obligations, source-access gates or attribution work. Recorded acceptance language remains attributed to the Sheet; it was not newly proved or re-reviewed during this index refresh. Progress wording is copied from the Sheet at its stated scope; this derivative records the independently accepted native status changes without making status decisions. This derivative does not independently promote any mathematical scope, priority, novelty or speed claim.
 
 ## Source and snapshot
 
@@ -14,7 +14,7 @@ This is **not a full proof audit** and **not a claim of 253 independent theories
 - Tab: `Research overview`, sheet ID `1731260011`
 - Header row: 4; populated stable-ID rows: 5–331
 - Bounded reads covered rows 5–337, confirming no additional stable-ID rows in the remaining six rows.
-- Native connector reads completed: **2026-10-16T08:30:22.414Z**, after independent native postwrite acceptance.
+- Native connector reads completed: **2026-10-16T09:04:30.285Z**, after independent native postwrite acceptance.
 - Source columns: B stable ID; D title; E status; I source-row labels and links; J recorded evidence links; L numeric priority; P next bounded action; Q pass/stop condition.
 - Link reads include `textFormatRuns`, whole-cell `userEnteredFormat.textFormat.link` and `hyperlink`. Whole-cell links normalized by Sheets are retained.
 - These were bounded live reads, not an atomic version-pinned workbook export. A final ID/status/priority sentinel read confirmed the same census. Dates within individual fields remain those recorded in the workbook.
@@ -23,21 +23,23 @@ This is **not a full proof audit** and **not a claim of 253 independent theories
 ## Verified structural counts
 
 - 327 populated overview records with 327 unique stable IDs
-- 253 records with exact status `TO RESEARCH`, exported here
-- 74 records with exact status `CLOSED`, excluded from the open index
-- All 253 exported records have unique IDs, finite numeric priorities, nonempty next actions and pass/stop conditions, and recorded source URLs.
-- Priorities still range from 8 to 60; these are work-priority scores, not correctness or novelty probabilities.
-- 637 recorded source-URL occurrences remain after unchanged per-record deduplication; no array is empty.
-- Baseline: [the 08:12:57.806 UTC snapshot at commit b16111d2](https://github.com/AgentSlop-Si/research/commit/b16111d252010343c4f8ca52c82f589f009202c4).
-- All 327 stable IDs, priorities and row positions are unchanged. The sole status change is ALG-015, row 56, from `TO RESEARCH` to `CLOSED`.
-- The 253 retained open records equal the baseline records after removing only ALG-015, in the same order and with every exported field unchanged.
-- Only the scope disclaimer's live-record count changes from 254 to 253; all other scope, source, selection, extraction and schema metadata are unchanged.
+- 252 records with exact status `TO RESEARCH`, exported here
+- 75 records with exact status `CLOSED`, excluded from the open index
+- All 252 exported records have unique IDs, finite numeric priorities, nonempty next actions and pass/stop conditions, and recorded source URLs.
+- Priorities still range from 8 to 60; they are workflow scores, not correctness, novelty or mathematical-value probabilities.
+- 633 recorded source-URL occurrences remain after unchanged per-record deduplication; no array is empty.
+- Baseline: [the 08:30:22.414 UTC snapshot at the independently verified ALG-015 seal](https://github.com/AgentSlop-Si/research/commit/9f7a0cd7c6f4b45ff65d3e4eae29dd8e781a11ba).
+- All 327 stable IDs, priorities and row positions are unchanged. The sole status change is ALG-007, row 50, from `TO RESEARCH` to `CLOSED`.
+- The 252 retained open records equal the baseline after removing only ALG-007, in the same order and with every exported field unchanged.
+- Only the scope disclaimer's live-record count changes from 253 to 252; other source, selection, extraction and schema metadata are unchanged.
 
-The [ALG-015 report and independent review](https://github.com/AgentSlop-Si/research/blob/77b086e3827d2af2ede09e8dcf88b54836d5b5f7/math/finalized/2026-10-16-alg015-comparison-0814/README.md) support its bounded-comparison closure. Parameter discovery remains unimplemented outside the accepted supplied-parameter theorem. This index records the accepted native disposition without adding proof, novelty, unrestricted-runtime or production acceptance.
+The [ALG-007 contract and independent review](https://github.com/AgentSlop-Si/research/blob/b2d09669f20d2a757762e620d65847fe716dcff7/math/finalized/2026-10-16-alg007-bounded-fallback-0817/README.md) establish completion of the recorded bounded implementation gate. The new module is limited to F_2013265921 and eligible dyadic Q<=2^27; historical supplied programs remain unchanged and unrun. This is a useful implementation/completeness repair, not a novel mathematical theorem, general-field implementation or asymptotic FFT improvement. Technical closure does not establish high mathematical research value.
+
+The preceding [ALG-015 comparison](https://github.com/AgentSlop-Si/research/blob/77b086e3827d2af2ede09e8dcf88b54836d5b5f7/math/finalized/2026-10-16-alg015-comparison-0814/README.md) and its scoped closure remain unchanged historical evidence.
 
 ## Historical and current counts
 
-The original archived 15 October 22:02 inventory and rebuilt snapshots through 16 October 00:15 recorded 259 open rows and 68 closed rows. The 00:32 snapshot recorded 258/69 after the scoped `M-WEYL-TWIRL` closure. The 00:59 snapshot recorded 257/70 after the additional scoped `ALG-MONOMIAL-CENTRALIZER` closure. The 01:24 snapshot recorded 256/71 after the scoped `M-SEED-BALANCE` closure and progress for ALG-018, ALG-019, M-QUADRATIC-FEEDBACK and M-SPECTRAL-FEEDBACK. The 01:57 snapshot remained 256/71 and changed only the ALG-WEIL-LOCAL and ALG-009 progress/evidence fields; it added no closure. The preceding 2026-10-16T08:12:57.806Z snapshot recorded 254/73 after ALG-011 and ALG-013 were closed and ALG-007 received a remaining-work update; all priority scores were preserved. The current 2026-10-16T08:30:22.414Z snapshot records 253/74 after ALG-015's bounded-comparison closure, with all remaining open-index fields unchanged. All earlier counts are preserved historical snapshots. The directory name stays unchanged so the derivative keeps its established location.
+The original archived 15 October 22:02 inventory and rebuilt snapshots through 16 October 00:15 recorded 259 open rows and 68 closed rows. The 00:32 snapshot recorded 258/69 after the scoped `M-WEYL-TWIRL` closure. The 00:59 snapshot recorded 257/70 after the additional scoped `ALG-MONOMIAL-CENTRALIZER` closure. The 01:24 snapshot recorded 256/71 after the scoped `M-SEED-BALANCE` closure and progress for ALG-018, ALG-019, M-QUADRATIC-FEEDBACK and M-SPECTRAL-FEEDBACK. The 01:57 snapshot remained 256/71 and changed only the ALG-WEIL-LOCAL and ALG-009 progress/evidence fields; it added no closure. The preceding 2026-10-16T08:12:57.806Z snapshot recorded 254/73 after ALG-011 and ALG-013 were closed and ALG-007 received a remaining-work update; all priority scores were preserved. The preceding 2026-10-16T08:30:22.414Z snapshot recorded 253/74 after ALG-015's bounded-comparison closure, with all remaining open-index fields unchanged. The current 2026-10-16T09:04:30.285Z snapshot records 252/75 after ALG-007's recorded bounded implementation/comparison completion; all remaining open-index fields are unchanged. All earlier counts are preserved historical snapshots. The directory name stays unchanged so the derivative keeps its established location.
 
 ### Previous 01:57 update, retained for historical context
 
@@ -53,8 +55,8 @@ For `QTORUS-CONNECTED-MINOR-20261013` and `Q2-DENSE-TORUS-20261013`, the arrays 
 
 ## Files
 
-- `open-record-index.csv`: UTF-8, comma-separated, header plus 253 records; RFC-style quoting and CRLF record separators. Text fields can contain quoted newlines. `recorded_source_urls` is a JSON array encoded within the CSV field.
-- `open-record-index.json`: UTF-8 JSON object with snapshot/source metadata, structural counts, and a `records` array containing the same 253 records in the same order.
+- `open-record-index.csv`: UTF-8, comma-separated, header plus 252 records; RFC-style quoting and CRLF record separators. Text fields can contain quoted newlines. `recorded_source_urls` is a JSON array encoded within the CSV field.
+- `open-record-index.json`: UTF-8 JSON object with snapshot/source metadata, structural counts, and a `records` array containing the same 252 records in the same order.
 - `README.md`: this provenance, scope, extraction, and schema note.
 
 ## Schema
@@ -81,7 +83,7 @@ The current-action and pass/stop fields are a compact derivative of the source c
 3. Preserve date labels, qualifications, limitations, and wording in the retained block. Do not paraphrase them into new claims.
 4. Apply the same prefix extraction to J only for finding current evidence URLs; the full J narrative is not exported into this compact index.
 
-This removed historical suffixes from 90 action cells and 67 condition cells. Full source history remains in the original workbook. Source-row link positions are a snapshot; stable IDs are the durable matching keys.
+This removed historical suffixes from 89 action cells and 66 condition cells. Full source history remains in the original workbook. Source-row link positions are a snapshot; stable IDs are the durable matching keys.
 
 A brief source-access reconciliation prefix can refer to unchanged engineering gates without restating them. In particular, `ENGINEERING-NTT-BASELINE-20261012` retains the recorded 15 October source-access prefix exactly as written. This index does not invent a remaining-gate list from that prefix or treat it as closure of the engineering parent. Follow `overview_url` to the complete row and its retained history.
 
@@ -93,6 +95,6 @@ P and Q remain separate attributed fields. Older dates elsewhere are retained as
 
 ## Verification boundary
 
-This refresh checks source-row counts, unique stable IDs, exact status filtering, finite numeric priorities, nonempty extracted action/condition fields, exactly the sole accepted ALG-015 status change against the prior snapshot, unchanged priorities and positions for all 327 records, exact equality of all 253 retained open records, exact recorded-link extraction and CSV/JSON round-trip content agreement. The companion validation receipt records file hashes and the structural delta; publisher readback is a separate verification step.
+This refresh checks source-row counts, unique stable IDs, exact status filtering, finite numeric priorities, nonempty extracted action/condition fields, exactly the sole accepted ALG-007 status change against the prior snapshot, unchanged priorities and positions for all 327 records, exact equality of all 252 retained open records, exact recorded-link extraction and CSV/JSON round-trip content agreement. The companion validation receipt records file hashes and the structural delta; publisher readback is a separate verification step.
 
 It does not reopen proof archives, run historical research programs, establish accessibility or validity of every linked source, deduplicate related theories, validate all scientific assertions or reconstruct the separately archived historical inventory. Workbook access remains governed by its existing permissions. Private native-cell snapshots, notes and preimages are not included in the publication files.
