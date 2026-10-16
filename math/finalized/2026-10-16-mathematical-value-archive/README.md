@@ -1,3 +1,15 @@
+# Applied mathematical-value archival disposition
+
+Applied on **16 October 2026** and independently verified in the native research table. Q16, STR-Q1, FUS-09 and ENGINEERING-NTT-BASELINE-20261012 are **CLOSED: archived for low identified mathematical novelty/value in their current continuations**. These are four existing views across two continuation families. Accepted mathematics, all evidence and unfinished engineering remain preserved; there is no new proof or implementation-completion claim.
+
+The verified census is **79 closed/archived and 248 open views, 327 total**. All numeric priorities, stable IDs, row positions, proof verdicts and other overview statuses are unchanged. Retained priority scores are historical/inactive for the four archived views.
+
+See [the applied-disposition receipt](APPLICATION_COMPLETE.md), [independent native acceptance](ROOT_ARCHIVAL_POSTWRITE_ACCEPTANCE.json), and [independent index acceptance](ROOT_INDEX_ACCEPTANCE.json). The [current open-record index](../2026-10-15-rebuilt-open-record-index/README.md) excludes the four archived views.
+
+The original pre-application rationale follows verbatim as dated history. Its proposal wording describes the stage before the verified application above; `ARCHIVAL_DISPOSITIONS.json` is likewise preserved as the exact accepted proposal, with actual application recorded separately.
+
+---
+
 # Proposed archival disposition: Q16 continuation and fixed-modulus NTT baseline
 
 16 October 2026 UTC. **Proposal, not an application receipt.** This document does not claim that repository or research-table statuses have already changed.

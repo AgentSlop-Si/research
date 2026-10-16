@@ -1,3 +1,17 @@
+# Current finalization position — 16 October 2026
+
+Verified status-column census: **79 CLOSED/archived and 248 TO RESEARCH**, 327 scoped record views. The latest change archives **four existing views across two mathematical continuation families**: Q16, STR-Q1, FUS-09 and ENGINEERING-NTT-BASELINE-20261012. Their current implementation/validation continuations have low identified mathematical novelty/value. Accepted mathematics and unfinished engineering are preserved. This is not four new completed theorems or an engineering-completion claim. All stable IDs, priorities and positions are unchanged; retained priorities on those four views are historical/inactive.
+
+- [Applied archival disposition and mathematical reasons](2026-10-16-mathematical-value-archive/README.md)
+- [Independent native acceptance](2026-10-16-mathematical-value-archive/ROOT_ARCHIVAL_POSTWRITE_ACCEPTANCE.json)
+- [Current open-record CSV/JSON index: 248 open views](2026-10-15-rebuilt-open-record-index/README.md)
+
+F016, FUS-01, Q32 and other sibling scopes retain their own statuses. No files were deleted, no proof verdict was changed and no new mathematical-originality credit was assigned. Private repository access is unchanged.
+
+All entries below are preserved historical snapshots. Their older counts and stage-specific statements are superseded by the current census above where they differ.
+
+---
+
 # Research finalization index
 
 Repository access is private and unchanged. A repository commit is not an anonymous public release or peer-reviewed publication.
