@@ -1,6 +1,6 @@
-# Rebuilt open-record index — 15 October 2026
+# Rebuilt open-record index — 16 October 2026
 
-Updated **15 October 2026 at 2026-10-15T23:56:51.814Z**, from fresh native reads after the 23:42 source/gate cycle, including the F021, N256, ALG-028, and ALG-065 prefixes. This refresh replaces the existing three derivative files in place; earlier snapshots remain available through Git history.
+Updated **16 October 2026 at 2026-10-16T00:15:42.997Z**, from fresh native reads after the reviewed ALG-034, Q29, and Q14 prefixes. This refresh replaces the existing three derivative files in place; earlier snapshots remain available through Git history.
 
 This is a **fresh native-snapshot rebuild** of the live Google Sheets `Research overview` tab, read directly through the Google Sheets connector. It remains a separate derivative from the original 259-record category inventory and is not asserted byte-identical to it; this refresh does not reproduce or independently validate that inventory's semantic category counts.
 
@@ -14,7 +14,7 @@ This is **not a full proof audit** and **not a claim of 259 independent theories
 - Tab: `Research overview`, sheet ID `1731260011`
 - Header row: 4; populated stable-ID rows: 5–331
 - Bounded reads covered rows 5–337, confirming no additional stable-ID rows in the remaining six rows.
-- Native connector reads completed: **2026-10-15T23:56:51.814Z**
+- Native connector reads completed: **2026-10-16T00:15:42.997Z**
 - Source columns: B stable ID; D title; E status; I source-row labels and links; J recorded evidence links; L numeric priority; P next bounded action; Q pass/stop condition.
 - Link reads include `textFormatRuns`, whole-cell `userEnteredFormat.textFormat.link`, and `hyperlink`. Whole-cell links normalized by Sheets are retained.
 - These were bounded live reads, not an atomic version-pinned workbook export. The dates within individual fields remain the dates recorded in the workbook.
@@ -27,9 +27,9 @@ This is **not a full proof audit** and **not a claim of 259 independent theories
 - 68 records with exact status `CLOSED`, not exported here
 - All 259 exported IDs are unique, all 259 priorities are finite numbers, and all 259 records have a nonempty recorded next action and recorded pass/stop condition.
 - Exported priorities range from 8 to 60. These are work-priority scores, not probabilities of correctness or novelty.
-- All 259 exported records have at least one recorded URL; 628 URL occurrences remain after per-record deduplication. All 259 also have an overview-row URL.
+- All 259 exported records have at least one recorded URL; 630 URL occurrences remain after per-record deduplication. All 259 also have an overview-row URL.
 - Records with an empty `recorded_source_urls` array: **none**.
-- Against the preceding 22:56 version of this index, five exported records have changed recorded text or URLs: `F021`, `N256-FULL-MODEL-20261011`, `N256-SOLVER-SATURATION-20261011`, `ALG-028`, and `ALG-065`. This covers five next-action prefixes, two pass/stop prefixes, and three additional primary-source URLs across two records. Exported stable IDs, titles, statuses, priorities, row positions, source-row labels, and overview URLs are unchanged.
+- Against the preceding 15 October 23:56 version of this index, three exported records have changed recorded text or URLs: `Q29`, `ALG-034`, and `Q14`. This covers three next-action prefixes, one pass/stop prefix, and two additional source URLs for Q29. All previously recorded URLs are retained. Exported stable IDs, titles, statuses, priorities, row positions, source-row labels, and overview URLs are unchanged.
 
 No semantic classification or independent-theory count is inferred from these counts.
 
@@ -71,7 +71,7 @@ The current-action and pass/stop fields are a compact derivative of the source c
 3. Preserve date labels, qualifications, limitations, and wording in the retained block. Do not paraphrase them into new claims.
 4. Apply the same prefix extraction to J only for finding current evidence URLs; the full J narrative is not exported into this compact index.
 
-This removed historical suffixes from 78 action cells and 52 condition cells. Full source history remains in the original workbook. Source-row link positions are a snapshot; stable IDs are the durable matching keys.
+This removed historical suffixes from 79 action cells and 52 condition cells. Full source history remains in the original workbook. Source-row link positions are a snapshot; stable IDs are the durable matching keys.
 
 A brief source-access reconciliation prefix can refer to unchanged engineering gates without restating them. In particular, `ENGINEERING-NTT-BASELINE-20261012` retains the recorded 15 October source-access prefix exactly as written. This index does not invent a remaining-gate list from that prefix or treat it as closure of the engineering parent. Follow `overview_url` to the complete row and its retained history.
 
