@@ -1,0 +1,9 @@
+# Finalization cycle — 16 October 2026, 00:01 UTC
+
+Three author/reviewer pairs investigated existing table gates. All three reports have independent bounded acceptance; their parent tasks remain open. No new FFT asymptotic improvement or worldwide-priority claim is established.
+
+- [ALG-034 restricted precision/zero policy](alg034-zero-policy/REPORT.md), [independent review](alg034-zero-policy/REVIEW.md): exact dyadic common-grid inputs admit a paid cyclotomic projected-zero decision and a sufficient one-shot precision plan conditional on a genuine accepted producer. The all-length/arbitrary-data producer and integration remain open; caps may prevent a certified deployment. The theorem uses classical algebraic separation, not free precision.
+- [Q29 endpoint reconciliation](q29-endpoint-reconciliation/REPORT.md), [independent review](q29-endpoint-reconciliation/INDEPENDENT_REVIEW.md): accepted F021 already supplies all-layer endpoint nonvanishing. The unresolved transfer is ordinary discriminant nonvanishing; the nonunit endpoint remains in valuation accounting. This cross-record reconciliation is not a new Q29 theorem.
+- [Q14 cancellation comparison](q14-cancellation-comparison/REPORT.md), [independent review](q14-cancellation-comparison/INDEPENDENT_REVIEW.md): a two-mode witness shows why a cancellation-pruned prior algorithm cannot supply the required complete light-fiber recognition/heavy-refusal certificate. It does not refute the prior theorem on its stated domain.
+
+Candidate documents may retain their frozen pre-review wording. The accompanying accepted reviews govern current assessment. Six minimal existing-cell prefixes are proposed; application will be evidenced separately by readback receipts. Parent statuses/priorities are unchanged. Last verified census is 68 CLOSED /259 TO RESEARCH. Private repository access is unchanged; raw native histories and notes are excluded.
