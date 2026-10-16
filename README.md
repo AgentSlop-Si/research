@@ -1,5 +1,7 @@
 # FFT and mathematical research
 
+> **Attribution correction — 16 October 2026:** Four v12/v13 sub-N-log-N headline mechanisms are reproduced prior art, not original project discoveries. The two different v13 branches are tracked separately; the specific DAG-guard claim remains novelty-unverified. [Correction, pinned sources and scope](./math/provenance/2026-10-16-subnlogn-correction/README.md) · [Machine-readable claim register](./math/provenance/2026-10-16-subnlogn-correction/CLAIMS.json). This notice applies only to the listed checkpoint claims and preserves historical code and evidence.
+
 Research materials, experiments, certificates, and audits for the FFT/math project are indexed in [math/README.md](./math/README.md).
 
 
