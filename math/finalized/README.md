@@ -105,3 +105,7 @@ The [same rebuilt open-record index](2026-10-15-rebuilt-open-record-index/README
 ## 16 October, 01:26 source repairs: applied and independently verified
 
 [The source-repair round is applied and independently verified](2026-10-16-source-repairs-0126/APPLICATION_COMPLETE.md): 27 owning-row string updates plus one Progress summary, with all prior text, notes, formatting, validation and rich links preserved within the checked scope. Two independent postwrite reviews accepted the result. ALG-009 and ALG-WEIL-LOCAL remain TO RESEARCH at priority 42, and the ledger remains **71 CLOSED / 256 TO RESEARCH**. The same 256-open-record index is refreshed from the checked postwrite state. Source execution, broader owner obligations and historical priority remain unclaimed. Prior report-stage entries and seals are retained as history.
+
+## 16 October, 07:43 bounded primary-source comparisons
+
+[Accepted reports and independent reviews for ALG-007, ALG-011 and ALG-013](2026-10-16-comparisons-0743/README.md) are published before native-table application. ALG-007 completes its named comparison while retaining its compatible-model fallback obligation. ALG-011 and ALG-013 meet their recorded bounded-comparison endpoints and are eligible for scoped owner closure after separately verified application. Priorities remain 42; accepted proofs, historical-priority limitations and full cost guards are preserved. This publication does not change native statuses or aggregate counts.
