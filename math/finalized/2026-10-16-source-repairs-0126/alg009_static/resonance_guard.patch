@@ -1,0 +1,18 @@
+--- original/resultant_gate.py
++++ corrected/resultant_gate.py
+@@ -221,10 +221,11 @@
+         if any(hankel_numeric(adjusted,k,p,work) for k in (2,3)):
+             meta.spectral_rejections+=1
+             continue
+-        # A resonant binomial has gcd(delta,N) singular frequencies.
+-        # Recover the one singular frequency by a charged direct Fourier dot
+-        # when delta is coprime; reject larger resonant sets in this branch.
+-        if pow(alpha,n,p)==1 and gcd(d,n)!=1:continue
++        # There are g singular frequencies iff alpha**(n//g) == 1,
++        # where g=gcd(d,n); otherwise there are none. Keep the existing
++        # charged direct Fourier repair when g=1 and reject only multipoles.
++        resonance_gcd=gcd(d,n)
++        if resonance_gcd>1 and pow(alpha,n//resonance_gcd,p)==1:continue
+         meta.full_defect_scans+=1
+         h={}
+         for j in range(n):

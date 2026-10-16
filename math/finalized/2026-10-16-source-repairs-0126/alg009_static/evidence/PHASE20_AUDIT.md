@@ -1,0 +1,135 @@
+# Hero #1 Phase20: independent resultant-gate review
+
+Date: 2026-10-09 UTC. No uploaded code was executed, imported, or modified.
+
+## Verdict
+
+The Hankel-elimination construction is sound: the two cubic constraints have a resultant of degree at most 45 in the unknown shift root; a nonzero resultant bounds the candidate shifts by a constant; a linear specialized gcd recovers a candidate multiplier; and a full time-domain defect certificate makes accepted outputs exact. With paid probes, root evaluation, candidate scans, and bounded resonance repair, this gives O(N) exact field arithmetic on a conditional two-defect family. It genuinely recovers the resonant wrap-collision example that the Phase19 ratio detector missed.
+
+Accept that scoped mathematical advance, with a material implementation/completeness correction:
+
+- The source rejects every noncoprime candidate with alpha^N=1. This is too broad. Actual resonance requires alpha^(N/gcd(N,delta))=1. We independently found a nonresonant, nondegenerate two-defect example that the source guard rejects. Exact fallback safety survives, but the claimed fast-family completeness must be narrowed or the guard changed.
+- The main arithmetic proxy omits a newly rebuilt root table and pruned sign operations, alongside smaller fixed-algebra omissions and inherited qualifications. Its finite benchmark totals are not exact whole-program counts.
+- The default shared-probe hybrid needs an N≥8 restriction or a small-length guard. It indexes eight root powers before checking whether that many exist.
+
+There is no generic-input sub-N log N FFT, floating-point or bit-complexity result, or established historical-priority claim.
+
+## 1. Exact source, duplicate upload, and lineage
+
+Initial source: Library `libfile_f5e5345835108191ba179192b2cbaf67`, `fft_hero1_phase20_20261010.zip`, 9,679,918 bytes, SHA-256 `c20b633a0e8a7be1ee81ab65765a15e3fb77a39d3315c7139cef5d88aa1333c3`.
+
+The subsequent direct user upload, Library `libfile_865297fdce048191a1e3d77463e4eced`, backing file `file_00000000202081fbab78f2f2d35bb91d`, is byte-for-byte identical. Both source identities are preserved in this package; no mathematical work was duplicated merely because the file was uploaded again.
+
+All 44 source-manifest entries verify. The nested original Phase19 archive has SHA-256 `ab110c544f28b8c2d6e750ffcd07776a036de2f8c5ed8ff0dd805b5eccfbdd55`. Ten copied Python files are unchanged from Phase19, including the Green solver, rational forcing, old detectors, and old tests. Two same-name auxiliary files, `build_checkpoint.py` and `exact_basis_audit.py`, are new versions. `inverse_reuse.py` is a separate shared-prefix adaptation. Full comparisons are in `LINEAGE_CHECKS.json`.
+
+All new modules, proofs, tests, and benchmark drivers were inspected statically. Source logs and their dates remain publisher records, not independently rerun or authenticated execution histories. Our separate checker uses only the standard library and no uploaded imports.
+
+## 2. Necessary equations and the conservative degree bound
+
+For positive-sign Fourier convention, let h=(I−alpha S^delta)r and w=omega^delta. Then
+
+    Y_k=R_k(1−alpha w^k)=(Fh)_k.
+
+If h has at most two nonzero entries, Y is a sum of at most two exponential sequences, so every 3-by-3 Hankel determinant vanishes. In particular the two determinants beginning at samples 0 and 1 give P_0(alpha,w)=P_1(alpha,w)=0.
+
+Each determinant is at most cubic in alpha. In a determinant term, the three sample indices sum to 3u+6, so its w-degree is at most 6 for P_0 and 9 for P_1. The fixed six-by-six Sylvester determinant is homogeneous of degree three in the coefficients of each padded cubic. Consequently its w-degree is at most 3·6+3·9=45. This remains a valid polynomial bound even at specializations where leading coefficients vanish.
+
+Every true common alpha root makes the padded resultant zero. The converse is not assumed: leading-degree drops can create extra resultant roots, and common factors can be degenerate. On a nonzero resultant, at most 45 distinct subgroup nodes can be candidates. At each, a degree-one monic gcd determines its sole alpha root. The source additionally checks two later Hankel determinants from the eight probes, then checks every time-domain defect coordinate before acceptance. Neither a resultant root nor a short spectral fit is treated as a final certificate.
+
+The source correctly distinguishes this conditional completeness from all-input soundness. A zero resultant or higher-degree gcd does not prove that no useful graph model exists; it only defeats this particular gate. In particular, “generic completeness” in a helper docstring must be read as the explicit nondegeneracy condition, not as an established uniform success probability or proof that all two-defect models are covered.
+
+## 3. Interpolation and actual linear arithmetic cost
+
+Over the source's prime fields p>55, the 46 nodes 0,...,45 and three extra check nodes are distinct. A polynomial of degree at most 45 is uniquely determined by the first 46 evaluations. Its interpolation is therefore a fixed amount of per-input field work. Three additional evaluations are useful corruption controls; the mathematical degree proof, rather than those three points alone, justifies exact reconstruction.
+
+Removing powers of w or w−1 is safe only after exact divisibility checks on the current polynomial, because trial delays have w≠0,1. The source does this. It does not rely on the empirically observed factorization `w^13(w−1)^9 U(w)` or palindromic degree-ten U. Those are still observed patterns, not a proved universal simplification.
+
+Eight directly computed Fourier dot products cost O(N). Evaluating a degree-at-most-45 polynomial on all N roots costs O(N), for example by at most 46 geometric streams. At most 45 candidate complete support scans also cost O(N). Accepted one/two-impulse forcing, spectral division, and the Green maps are linear; one directly repaired Fourier bin adds O(N). These bounds have potentially large constants, but no full length-N FFT is hidden in the new root search.
+
+The uploaded implementation uses a pruned dyadic transform for its fixed-sparse coefficient vector, or inherited short-polynomial convolution on other lengths. This is consistent with linear asymptotics at fixed sparsity, subject to that backend's root-supply requirements. The abstract geometric-stream implementation needs only the supplied Nth root; the actual nondyadic backend may require additional short roots. All-input fallback also needs the extra Bluestein roots discussed below.
+
+## 4. Material correction: noncoprime resonance is over-rejected
+
+Let g=gcd(N,delta). The map k→omega^(k delta) visits N/g distinct roots, each g times. Thus
+
+    Z = g if alpha^(N/g)=1, and Z=0 otherwise,
+
+where Z is the number of zero denominators `1−alpha omega^(k delta)`.
+
+The source instead skips a candidate when `alpha^N=1 and gcd(delta,N)!=1` (`resultant_gate.py`, line 227). Actual resonance implies alpha^N=1, but the converse need not hold for noncoprime delta.
+
+An explicit exact counterexample is:
+
+    N=8, p=97, omega=64, delta=2, alpha=64,
+    r=(1,50,64,96,22,33,50,75),
+    h=(I−64 S²)r=(2,3,0,0,0,0,0,0).
+
+Here alpha^8=1, but alpha^4=96=−1, so there are no zero denominators. The true specialized gcd is `a+33`, with the unique root a=64. The resultant is nonzero: T(2)=95 modulo 97. All advertised algebraic nondegeneracy conditions therefore hold, yet the source's conservative guard rejects all acceptable candidates and falls back. Our independent detector with the corrected resonance condition accepts this input and matches the entire direct DFT.
+
+### Proposed correction, not applied to uploaded source
+
+After alpha≠0 has been checked, use:
+
+    g = gcd(delta, N)
+    reject this candidate only if g > 1 and alpha^(N/g) = 1.
+
+Keep the existing coprime single-frequency repair. Charge the exponentiation and gcd work. This rejects exactly the candidates requiring more than one repair. Alternatively, leave the code unchanged and explicitly narrow its completeness promise to candidate descriptions with gcd(delta,N)=1 or alpha^N≠1.
+
+Our independent checker exhaustively compares the corrected predicate with actual denominator-zero counts for 8,352 (N,delta,alpha) combinations over GF(97), at N=8,12,16,24,32. They agree in every case. The old predicate has 702 nonresonant false rejections in this parameter set. These are predicate-level counts, not claims that all 702 correspond to nondegenerate two-defect vectors.
+
+The corrected guard still rejects genuine multi-pole cases. For example at N8, GF(97), delta=2, alpha=1, take r=(3,7,3,7,5,7,5,7). Its defect is (95,0,0,0,2,0,0,0), and denominators vanish at bins 0 and 4. The corrected guard rejects that candidate. Independently repairing both bins does recover the DFT, but would cost two direct O(N) sums; any future bounded-g extension must charge them. We have not patched or executed the uploaded source.
+
+This issue affects fast-path completeness, not accepted-output soundness. A rejected candidate leads to a valid fallback in the stated implementation domain.
+
+## 5. Eight probes do not certify arbitrary input
+
+The sparse-rational uniqueness lemma is correct with its explicit conditions: if both numerators have at most K terms, both denominators at most s terms, sampled denominators are nonzero, and there are 2Ks consecutive samples, then the cross-product has at most 2Ks monomials after exponents are combined modulo N. Its initial consecutive evaluations form a nonsingular Vandermonde system. Therefore the cross-product vanishes on the entire root subgroup.
+
+This proves equality on subgroup points where both rational functions are defined, not equality as formal rational functions everywhere, nor uniqueness of a physical factor description. It assumes the two sparse-rational models exist. It cannot promote eight coinciding samples of an arbitrary dense vector into a global sparsity certificate. It also cannot be applied across sampled poles without its nonzero-denominator assumption; the Hankel necessary equations themselves do remain valid at resonance.
+
+Our N128 adversary adds the inverse Fourier character supported at bin 8. The first eight R samples and all resulting algebraic proposals remain identical, but an unprobed Fourier coordinate changes. The full defect checks reject the mutant after two candidate scans. This independently validates the necessity of the all-coordinate time-domain gate.
+
+## 6. Source-code domain and cost qualifications
+
+### Inherited and small-length restrictions
+
+The Green algebra `LF=FP` is unchanged. However, the inherited constructor still inverts every diagonal entry, a stronger condition than nonsingularity. The GF(17), N16, omega=3 counterexample remains: the L and P diagonals vanish at indices 3 and 11 although both determinants are 16. Thus “invertible Green matrices” alone is not an adequate characterization of source admissibility.
+
+For fallback, the uploaded Bluestein routine requires a compatible primitive 2Nth root and a power-of-two convolution root of length `nextpow2(2N−1)`. An Nth root alone does not guarantee those. Growing-field root derivation and short-NTT planning must supply the relevant roots or charge their exponentiation work; no constant bit-time claim follows from a unit field-inversion model.
+
+The standalone resultant entry point declines N<8 before accessing probes. The default hybrid, however, builds eight probes before the inverse/resultant size guards. At N2 or N4 the ratio detector rejects because 2K+1>N for K=2, then the hybrid indexes outside its N-element root table. For other N<8 a ratio rejection has the same problem. Restrict that hybrid's documented domain to N≥8 or guard the shared-prefix construction. This is separate from the main theorem, which already assumes N≥8.
+
+The fixed-cap hybrid's generic field bound remains O(N log N) when its fallback is available. Variable inverse-tap caps retain O(Ns+s³), and variable graph-defect caps retain their exponential candidate dependence from Phase19.
+
+### Newly omitted arithmetic in the printed proxy
+
+1. `sparse_group_eval` constructs a fresh `SparseInputDFT`, whose constructor rebuilds N powers. Although the returned `Cost` includes N−1 root products, only its butterfly products are added to the main `Work`. The comment claiming shared root setup avoids double charging is inaccurate for this literal code: a fresh table is actually built. Either reuse the existing table or charge these N−1 products.
+2. The same transfer omits `Cost.ntt_negs`, which counts odd-only-branch negations.
+3. The small-polynomial helpers leave several operations outside the main tally: coefficient scaling by 2 in `add_scaled`, monic-gcd normalization products, some explicit negations, factor-test summations, and coefficient-folding additions. The candidate resonance exponentiation is also uncharged. Some small counters use overestimates elsewhere, so a single additive adjustment is not an exact audited grand total.
+4. Old graph subtraction omissions and inherited rational-series sign omissions persist in unchanged code.
+
+At N4096, adding the newly rebuilt root table alone would add 4095 products whenever the resultant root evaluator runs. For example 241,638 becomes 245,733 before addressing the other omissions/overestimates. This is a static correction to a saved proxy, not a rerun benchmark or exact corrected total. The modifications preserve the fixed-degree linear asymptotics. Reported fractions are not timings, bit costs, optimal FFT comparisons, or complete machine-instruction counts.
+
+The shared eight-sample bank is genuinely shared between the inverse and resultant detectors within a single hybrid invocation. No previous-input transform cache is used. Input-dependent reconstruction remains paid.
+
+## 7. Independent results and limitations of testing
+
+The independent checker derives Hankel cubics by signed determinant permutations, uses its own polynomial Euclidean algorithm, reconstructs resultant polynomials by Lagrange interpolation rather than the uploaded Newton routine, and checks subgroup candidates through an independently authored constant-degree-gcd scan. A nonzero resultant witness certifies that the polynomial is not identically zero; when all 46 degree-bounding evaluations vanish it declines as degenerate. No uploaded helper or test program is imported.
+
+Verified controls include:
+
+- The exact specified 2,240-case GF(97), N8 support/parameter grid: 2,184 accepted certificates and 56 declines, independently matching the source selector counts. All 2,184 accepted residual transforms match complete direct DFTs, totaling 17,472 output comparisons. The uploaded fallback implementation was not executed on the declined cases.
+- Fifteen additional accepted two-defect inputs across N17,30,60,128,384, with complete residual-DFT equality.
+- Fifteen interpolation/degree/factor/root-folding cases across three fields and five input families, including zero resultants; five exact interpolation controls at degrees 0,1,10,32,45.
+- The previously rejected Phase19 N128 resonant wrap-collision, now accepted with one correct direct-frequency repair.
+- The unchanged-eight-probe adversary, 60 unrelated random-input soundness controls, the noncoprime false-rejection counterexample, and all 8,352 resonance predicate checks.
+
+The 56 small-grid declines in our reconstruction have no accepted certificate, despite a nonzero resultant witness. They demonstrate that the structured family is not unconditionally covered; we do not relabel them as successful discoveries. We did not rerun the source's 807-input audit, 53,778 reported outputs, wall-clock experiments, or full copied regression suite.
+
+## 8. Scope, precision, and prior art
+
+For fixed nonresonant delay and two defect positions, alpha and two amplitudes give at most three continuous complex parameters. The union over discrete choices is still a low-dimensional family. Coprime resonant repairs do not establish coverage of generic N-dimensional inputs. Resultant root selection, gcd degree, exact support tests, and division near a pole can be numerically unstable; exact modular soundness supplies no floating-point error or bit-complexity theorem.
+
+The [author-hosted 2020 paper on sparse rational interpolation](https://www.texmacs.org/joris/sparserat/sparserat.html) is by Joris van der Hoeven and Grégoire Lecerf and explicitly builds on Cuyt–Lee sparse rational interpolation. The source citation should retain both authors. We use this primary source only to verify the historical existence of sparse-rational reconstruction methods; it does not establish equivalence or priority for the specific gate here. Prony/Hankel constraints, Sylvester elimination, and Fourier shift diagonalization are established tools. No exhaustive novelty review is claimed.
+
+Final disposition: accept the conditional elimination method and safe full-certificate integration, with the explicit noncoprime guard correction or narrowed completeness scope, small-length hybrid restriction, admissible-field conditions, and incomplete-counter qualifications. The source remains preserved unchanged.

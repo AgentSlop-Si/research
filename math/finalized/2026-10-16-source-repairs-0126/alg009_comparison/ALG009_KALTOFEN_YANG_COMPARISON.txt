@@ -1,0 +1,69 @@
+ALG-009: named sparse-rational comparison
+Prepared 2026-10-16 01:35 UTC; bounded research comparison
+
+DECISION
+Qualified nonmatch for Kaltofen–Yang (2007), Lemmas 2.1–2.2 and Section 3. The named comparison is complete at this scope. It does not establish a cost-preserving reduction of ALG-009 to that paper, historical novelty, an improved general FFT, or closure of ALG-009. Retain the accepted conditional mathematical scope, priority 42, and separate source-implementation repair obligations.
+
+PRIMARY-SOURCE DIGEST
+Kaltofen–Yang, “On Exact and Approximate Interpolation of Sparse Rational Functions,” ISSAC 2007, pp. 203–210: https://kaltofen.math.ncsu.edu/bibliography/07/KaYa07.pdf
+
+Lemma 2.1 (p.204) is deterministic. For coprime F,G over K, degree bounds dbar,ebar and deg(H)<m=dbar+ebar+1, assume F=GH modulo product_i(X−i_i). Repeated i_i are allowed in this congruence statement. Extended Euclid gives the bounded numerator/denominator pair, recovering F,G up to common scaling when their bounds hold.
+
+Lemma 2.2 (pp.204–205) assumes coprime multivariate f,g, degrees d,e, shifts B preserving the denominator leading coefficient, and J distinct exponent vectors in {1,...,t}^n, first vector all ones. Uniform independent coordinates from finite S give simultaneous coprime line images with probability at least 1−2((J−1)t+1)de/|S|.
+
+The known-degree evaluation algorithm (pp.205–206) uses d+e+1 distinct finite black-box values, at most d+2e+1 trials under degree preservation, interpolation and Euclid. Unknown degrees add randomized validation. Section 3 (pp.206–207) combines randomized shifts/anchors, simultaneous sparse polynomial interpolation and early termination; once one polynomial is complete, one rational evaluation can supply the other. This is chosen-point oracle recovery, not a fixed-data acceptance theorem.
+
+OWNER STATEMENT AND EXACT BINDING
+The three complete ALG-009 owner records were checked: Catalogue!A74:AF74, novelity breakthough!A35:Z35, and Research overview!A52:Q52. The stable ID is ALG-009 in Catalogue A74, novelty C35 and overview B52. Numeric priority is 42 in Catalogue AA74, novelty U35 and overview L52.
+
+The owner-pinned summary was fetched successfully at Git commit 877bd407be43845d453286e4d1406a7b15844631. Its content is 11,512 bytes and SHA256 25714db4a29fb0d86f50cd18d252904482c68088ae45c3b91f9d38dd8efc77aa:
+https://github.com/AgentSlop-Si/research/blob/877bd407be43845d453286e4d1406a7b15844631/math/archive/objects/25/25714db4a29fb0d86f50cd18d252904482c68088ae45c3b91f9d38dd8efc77aa__INTEGRATED_RESULTS.md
+
+The static theorem source is fft_hero1_phase20/THEOREM.md, SHA256 b49a3863273c2c80cb211e71711d0575cd3ac96bac32f4ac293f48a77b0f7ec9, 9,788 bytes. The exact historical independent review is PHASE20_AUDIT.md, SHA256 4e6b45aeab8f22872d9cb6ea37cb74b2c06b55492ac53c8fa1991ac7d60678e9, 17,292 bytes. The preserved historical gate is resultant_gate.py, SHA256 4a1c07d1d6933a399871655eef547451fe8cb24fd026ab70b733b45bda9d8038, 9,158 bytes. These were read only as text; no supplied program was imported, executed or installed. Their archive bindings and exact byte checks are recorded in SOURCE_BINDINGS.json.
+
+ALG-009 INPUT, FORMULA, GUARDS AND OUTPUT
+Let R_k=sum_j r_j omega^(kj), S r_j=r_(j−1 mod N), and h=(I−alpha S^delta)r. The conditional family has support(h)<=2, unknown nonzero alpha and 1<=delta<N. The owner implementation requires N>=8, prime p>55 and a supplied primitive Nth root omega. General exact-field reasoning and literal backend admissibility must not be conflated.
+
+Eight fixed consecutive Fourier probes R_0,...,R_7 are computed from the raw vector. Put w=omega^delta and Y_k=R_k(1−alpha w^k). The two 3x3 Hankel determinants P_0,P_1 are cubic in alpha with w-degrees at most 6 and 9. Their padded six-by-six Sylvester resultant T(w) has degree at most 3*6+3*9=45. Degree drops may introduce spurious candidate roots. Therefore T nonzero, a degree-one specialized gcd, later Hankel filters, and full raw defect certification have distinct roles. A zero resultant or nonlinear gcd is gate decline; it is not evidence that no two-defect description exists.
+
+The full defect certificate computes every coordinate of h for any accepted candidate and checks support<=2. An eight-probe fit alone does not establish membership for arbitrary raw input. The finite-subgroup uniqueness lemma concerns TWO EXISTING sparse-rational descriptions, nonzero sampled denominators and N>=2Ks; K=s=2 gives eight samples. It proves equality only at subgroup points where both fractions are defined, not formal rational-function equality or a unique physical factorization. It cannot be applied across sampled poles.
+
+EXACT INTERFACE COMPARISON: OUR DERIVATION
+Write R(z)=sum_(j=0)^(N−1) r_j z^j, H(z)=sum_j h_j z^j and Q(z)=1−alpha z^delta. Cyclic shifting gives
+    Q(z)R(z) = H(z) modulo z^N−1.
+Thus R(omega^k)=H(omega^k)/Q(omega^k) only when Q(omega^k) is nonzero. The raw polynomial R(z) can be evaluated elsewhere, but those values need not equal H(z)/Q(z). This precise missing oracle is the main reason the named prior theorem does not immediately discharge the owner claim. Merely renaming Fourier samples as rational-function evaluations does not construct that oracle. Reconstructing all of R instead generally changes the target to a degree-(N−1) polynomial.
+
+Sparsity and degree are separate. H can have two terms while deg(H)=N−1; Q has two terms while deg(Q)=delta. Substituting term counts for d,e is invalid. A promised sparse-rational description and recoverable degrees also do not certify that an arbitrary input vector has that description. The missing reduction would have to show where every requested value comes from, how failures are detected, how original raw values are preserved and what all those steps cost.
+
+POLES ARE PART OF THE RAW OUTPUT
+Let g=gcd(N,delta). The map k -> omega^(k delta) has N/g distinct values, each repeated g times. Therefore the number of zero denominators is g if alpha^(N/g)=1 and zero otherwise. At each zero, the cyclic relation says H(omega^k)=0 and places no restriction on R_k. The kernel of I−alpha S^delta supplies exactly those free Fourier coordinates. Reducing common factors of H and Q can erase that information; it cannot recover the original raw vector's missing transform coordinates. This is a mathematical interface obstruction, independent of any code bug.
+
+The accepted branch handles at most one resonant frequency by a separately charged full direct Fourier sum. Genuine noncoprime resonance requires g repaired coordinates and is outside that bounded branch. Any extension using direct sums costs O(gN), rather than silently inheriting O(N) when g varies. Freshly authored independent interface controls accompany the review; they distinguish a previously accepted nondegenerate witness from a separately labeled general two-defect pole example. They are explanatory finite checks, not a new correctness theorem or priority result.
+
+FULL COST INTERFACE
+The owner field-work bound on an accepted nondegenerate family charges:
+1. O(N) root/engine setup and admissible Green preparation when those wrappers are used.
+2. Eight raw Fourier dot products, each O(N).
+3. Constant-size determinant arithmetic and interpolation at 46 distinct field points, plus three additional source checks. The degree proof supplies interpolation correctness; the three checks alone do not.
+4. O(N) evaluation of a degree<=45 polynomial on the root subgroup, with at most 45 candidate shifts, constant-degree gcds and later filters.
+5. All failed candidate defect scans and the full accepted scan, at most 45 O(N) scans.
+6. O(N) sparse forcing, all nonpole divisions, any one O(N) pole repair, and O(N) output/Green recovery. The resonance exponentiation and gcd must also be charged.
+7. On decline, the cost already spent plus an admissible fully paid fallback. The source's claimed O(N log N) arbitrary-input fallback additionally needs its backend roots and legal engine domain.
+
+For any proposed oracle reduction, the corresponding total must be written as
+    setup + sum over oracle calls(cost to produce that value) + recovery algebra
+    + root/search work + all failed proposals + raw verification + pole repair
+    + output conversion + any fallback.
+This is our accounting requirement, not a complexity claim attributed to the prior paper. A black-box probe is not a unit-cost raw Fourier dot product; nor does a probe-count comparison establish a whole-program improvement. No tight implementation counter total or timing ratio is established here.
+
+SOURCE IMPLEMENTATION IS A SEPARATE TRACK
+The preserved historical line 227 rejects noncoprime candidates whenever alpha^N=1. It can falsely reject a zero-pole candidate; the correct at-most-one-pole rejection predicate is g>1 and alpha^(N/g)=1. Full certification preserves accepted-output soundness in the valid fallback domain. A separate independent review accepts only the static predicate replacement in corrected copy SHA256 09ef37694af956394b82f55bf366e121849cbaf7f4d89caff5527aad9a142ef4; no original or corrected research program execution is claimed. That static candidate does not complete implementation validation. The early hybrid N>=8 guard, actual Green diagonal assumptions, extra convolution/fallback roots, omitted rebuilt roots/negations/fixed algebra and full cost audit remain separate obligations. Do not replace historical source pins with corrected-file hashes or imply production code was rerun.
+
+RECORD SCOPE
+The named prior-art comparison and separately reviewed static source candidate are distinct. The accepted conditional correctness scope, numeric priority 42 and broader unresolved historical priority are unchanged. Implementation execution validation, the early-hybrid length safeguard and complete cost/root/fallback accounting remain open. Historical research source bytes are preserved.
+
+NEXT BOUNDED RESEARCH STEP
+Find one theorem with the fixed cyclic root-grid/raw-data interface and explicit acceptance and pole semantics, or supply a cost-preserving oracle reduction. The present qualified nonmatch is limited to this named primary-source comparison. Historical priority remains unresolved; the accepted conditional correctness proof is unchanged.
+
+READ LIMITS
+The primary paper's extracted text was inspected through the relevant exact sections; independent review checked the same distinction. PDF screenshot retrieval failed at both the author host and institutional mirror, so visual formula verification and primary PDF-byte hashing are not claimed. Owner source bytes and pinned GitHub content were checked exactly. There was no imported-code execution, installation or external mutation.
