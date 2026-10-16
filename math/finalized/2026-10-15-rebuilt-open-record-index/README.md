@@ -1,3 +1,15 @@
+# Current open-record index: targeted 16 October coverage reconciliation
+
+The census remains **244 open / 83 closed / 327 record views**. The full baseline snapshot was read at 10:54:44 UTC. This targeted refresh follows the 11:39:55 UTC exact native readback of the independently accepted coverage reconciliation; it does not claim a fresh full-source or proof audit of every row.
+
+Only two existing exported records change: QTORUS's recorded current action, and ALG-071's recorded current action, pass/stop condition and source URLs. The other **242 record objects are exactly unchanged**, as are all 244 IDs, order, positions and numeric priorities. Q2's two stale summary corrections are outside the exported fields. All CSV/JSON records round-trip exactly. URL occurrences increase from 606 to 607 because the ALG-071 organizer source is explicitly bound. Established prefix extraction and URL policies remain unchanged.
+
+The [full coverage audit](../2026-10-16-full-open-index-coverage-audit/README.md) distinguishes 244 recorded-obligation triages from 12 selected written-source/owner views across nine groups. No new parent closure or mathematical discovery is claimed. The separate [application receipt](../2026-10-16-full-open-index-coverage-audit/APPLICATION_COMPLETE.md) records the native write and independent preservation checks.
+
+The previous index documentation below is preserved verbatim as dated history.
+
+---
+
 # Current open-record index — 16 October 2026
 
 Fresh native reads completed at **2026-10-16T10:54:44Z**, after independent archival postwrite acceptance. The derivative contains **244 open, 83 closed and 327 total overview views**. It is a recorded activity index, not a full proof audit or 244 independent mathematical theories.

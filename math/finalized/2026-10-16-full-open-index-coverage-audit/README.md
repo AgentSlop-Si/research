@@ -1,3 +1,11 @@
+# Applied coverage reconciliation
+
+The full 244-record audit and its 17 limited prose/dashboard updates are applied and independently verified. Census unchanged: **83 closed / 244 open / 327 scoped views**. All 327 identities/statuses and protected priority/proof/novelty metadata are preserved. [Application and index-refresh evidence](APPLICATION_COMPLETE.md).
+
+The original report-stage account below is preserved verbatim as dated history. Its proposal-only wording describes the earlier stage; the application record above supersedes that stage description.
+
+---
+
 # Full 244-open-record coverage audit
 
 16 October 2026. Baseline: `e5d46232f0d819af518bff7dcbedbcbf2e3d0286` in the private AgentSlop-Si/research repository.
