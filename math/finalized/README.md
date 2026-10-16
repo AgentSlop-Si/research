@@ -101,3 +101,7 @@ The [same rebuilt open-record index](2026-10-15-rebuilt-open-record-index/README
 ## 16 October, 01:26 source repairs: report-stage acceptance
 
 [Two static source repairs and one named sparse-rational comparison](2026-10-16-source-repairs-0126/README.md) have independent scoped acceptance. ALG-009 and ALG-WEIL-LOCAL remain TO RESEARCH at priority 42; the ledger stays **71 CLOSED / 256 TO RESEARCH**. Original source/history is preserved, and neither supplied nor patched research code was executed. The earlier Weil review is readable as a verified sanitized publication derivative; its three exact original acceptance/API objects remain unrecovered. Native application and postwrite verification are not claimed by this report-stage publication.
+
+## 16 October, 01:26 source repairs: applied and independently verified
+
+[The source-repair round is applied and independently verified](2026-10-16-source-repairs-0126/APPLICATION_COMPLETE.md): 27 owning-row string updates plus one Progress summary, with all prior text, notes, formatting, validation and rich links preserved within the checked scope. Two independent postwrite reviews accepted the result. ALG-009 and ALG-WEIL-LOCAL remain TO RESEARCH at priority 42, and the ledger remains **71 CLOSED / 256 TO RESEARCH**. The same 256-open-record index is refreshed from the checked postwrite state. Source execution, broader owner obligations and historical priority remain unclaimed. Prior report-stage entries and seals are retained as history.
