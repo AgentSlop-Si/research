@@ -2,7 +2,7 @@
 
 Repository access is private and unchanged. A repository commit is not an anonymous public release or peer-reviewed publication.
 
-Updated 16 October 2026. Verified status-column ledger: **69 CLOSED / 258 TO RESEARCH**, 327 scoped record views plus four intake aliases. The 15 October continuation finalized eight further existing scoped records following fifteen in the preceding pass; the 16 October breadth pass additionally finalized M-WEYL-TWIRL. These are record closures, not discoveries. No general faster FFT or worldwide-first result is claimed.
+Updated 16 October 2026. Verified status-column ledger: **70 CLOSED / 257 TO RESEARCH**, 327 scoped record views plus four intake aliases. The 15 October continuation finalized eight further existing scoped records following fifteen in the preceding pass; the 16 October breadth passes additionally finalized M-WEYL-TWIRL and ALG-MONOMIAL-CENTRALIZER. These are record closures, not discoveries. No general faster FFT or worldwide-first result is claimed.
 
 [Previous complete audit and remaining gates (60/267 snapshot)](2026-10-15-finalization-audit/README.md)
 
@@ -87,3 +87,7 @@ The 00:18 breadth batch is independently verified and applied: 53 value changes,
 ## 16 October, 00:42 comparisons
 
 [Six further named comparisons](2026-10-16-finalization-cycle-0042/README.md) are independently accepted. The monomial-centralizer record is closure-eligible at its owned classification/comparison scope. Application and census changes are verified separately; broader construction and precision obligations remain explicit.
+
+The00:42 batch is independently applied and verified:57 value changes, one status fill, all priorities/IDs retained, current **70 CLOSED /257 TO RESEARCH**. Existing open index refreshed to00:59 UTC.
+
+[v12 bounded layout/certificate review](../intake/2026-10-16-v12-direct-layout/README.md) now includes a byte-bound original package, fresh conditional checks and a separate independent review. The epsilon=1/21 witness improves the supplied v12 exponent by40/21 under the same explicit conditions. No whole-machine, practical speed, general DFT, novelty or table-status acceptance is inferred.
