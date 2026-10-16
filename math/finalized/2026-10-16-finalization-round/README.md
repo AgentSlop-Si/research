@@ -1,3 +1,36 @@
+# Applied finalization round — 16 October 2026
+
+The four accepted current-continuation archival dispositions are applied and independently verified in the existing native workbook. **83 CLOSED/archived + 244 TO RESEARCH = 327 scoped record views.**
+
+- **ALG-060:** completed restricted inverse-support theorem/comparison retained; understood modulation implementation qualification archived. Broader evaluator models remain unresolved.
+- **ALG-067:** classical CRT-15/codelet result and exact-count correction retained; production benchmarking archived.
+- **ALG-069:** completed restricted resolvent, trajectory and feedback results retained; production qualification archived. Arbitrary fresh-input Fourier remains unresolved.
+- **ALG-072:** exact structured-product/reference-backend results retained; production/competitive-performance qualification archived. Alternative exact-recovery methods are not excluded.
+
+These are four archival workflow decisions, not four newly completed theorems or finished implementations. Scores 42/12/12/12 are preserved as historical/inactive. All 327 IDs, priorities and row positions are unchanged. Historical narratives, proof/novelty verdicts, notes, links and unfinished engineering are retained. No supplied research program was executed.
+
+## Independently accepted evidence and remaining gates
+
+- [F020 proof boundary](reports/f020/REPORT.md): full actual-family paired-support gate remains OPEN58; endpoint gate remains OPEN53. Classical identities and the synthetic shortcut countermodel do not supply a uniform theorem or actual-family counterexample.
+- [Q29 exact reduction](reports/q29/REPORT.md): ordinary kernel/resultant and ramification charge are accepted. Uniform noncancellation remains open. Park repeated finite-layer/endpoint work without a genuinely new variable-layer mechanism; broader owners remain open. This tower cannot improve the already exact scalar-bank minimum from F021.
+- [R14 rank result](reports/r14/README.md): accepted complex-rank minimax N/4+1 for finite abelian orders N divisible by four, N>=8, with order 4 exceptional at 1. It is an attributed project-scope corollary. Worldwide originality is unverified; no faster FFT, new canonical row or universal circuit lower bound is claimed.
+- [Independent F020/Q29/R14 scope acceptance](reports/scope_review/INDEPENDENT_ACCEPTANCE.md), with new bounded checkers and saved exact controls.
+- [ALG-025/026 Reif comparison](reports/reif/REPORT.md): full source body remains unavailable via the checked routes; both comparisons and unfinished driver/model qualification remain open and unchanged. Access failures are not closure or nonnovelty evidence.
+
+## Applied state and preservation
+
+The accepted decision was first published at [6dc40e148e61e5f872579586a5a1b3acadad7953](https://github.com/AgentSlop-Si/research/commit/6dc40e148e61e5f872579586a5a1b3acadad7953). Its six safe files passed exact immutable readback before the native application. The single guarded application changed 56 owner/overview values, two dashboard values and four red CLOSED fills. The [independent native postwrite acceptance](INDEPENDENT_NATIVE_POSTWRITE_ACCEPTANCE.json) verifies all four and only four status transitions, all 236 protected cells, and the complete current overview. Progress history and all 48 original rich-text runs remain intact.
+
+The [open-record index](../2026-10-15-rebuilt-open-record-index/README.md) now contains 244 records. Fresh native reads completed at 10:54:44 UTC; all 244 retained records exactly match the previous index after removing only the four archived IDs. Schema, order, field extraction and URL policy are unchanged. CSV/JSON exact round-trip and final ID/status/priority sentinel passed. See [independent index acceptance](INDEPENDENT_INDEX_ACCEPTANCE.json).
+
+The supplied R14 packet is preserved as its 14 original safe archive members under reports/r14/original/. Its historical run and review-stage statements remain provenance; supplied programs were inspected, never executed. New independent checker outputs are separate and bounded. Research report path/snapshot-reference sanitization is documented in reports/PUBLICATION_PROVENANCE.json; no mathematical conclusion was strengthened.
+
+Raw native snapshots, exact private cell preimages, conversation records and unneeded personal data are excluded. Repository access remains private. Prior files and historical report text remain preserved; stage-specific pending/read-only statements below describe their original stage and are superseded by the verified state above.
+
+## Original accepted pre-application decision, preserved as history
+
+---
+
 # Accepted four-record archival disposition
 
 16 October 2026. Independently accepted scoped workflow decision; native application is not yet certified by this decision packet. This decision preserves accepted mathematics and unfinished engineering. It claims no new theorem, universal nonnovelty, arbitrary-input Fourier improvement or implementation completion.

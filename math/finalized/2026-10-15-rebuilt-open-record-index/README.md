@@ -1,3 +1,17 @@
+# Current open-record index — 16 October 2026
+
+Fresh native reads completed at **2026-10-16T10:54:44Z**, after independent archival postwrite acceptance. The derivative contains **244 open, 83 closed and 327 total overview views**. It is a recorded activity index, not a full proof audit or 244 independent mathematical theories.
+
+Exactly four additional current continuations were archived: ALG-060, ALG-067, ALG-069 and ALG-072. Accepted scoped mathematics and unfinished engineering remain preserved. No new theorem, worldwide nonnovelty, implementation completion or Fourier speedup is claimed. All 327 IDs, priorities and row positions are unchanged; the archived priorities 42/12/12/12 are historical/inactive.
+
+All 244 retained open records are byte-for-byte equivalent in exported field values and order to the previous 248-open index after removing only those four IDs. The established schema, source selection, dated-history prefix extraction and source-URL policy are unchanged. CSV and JSON round-trip exactly. Every retained record has a finite numeric priority, nonempty action/pass-stop text and recorded source links. The final stable-ID/status/priority sentinel matches the paged read.
+
+F020 and Q29 remain open at their precise mathematical gates. ALG-025/026 remain source-blocked and unchanged. The reviewed R14 complex-rank corollary creates no new canonical row. See the [finalization report](../2026-10-16-finalization-round/README.md) and [validation receipt](VALIDATION.json).
+
+The prior index documentation below is preserved verbatim as dated history. Its older counts and application stages are superseded by the current snapshot above.
+
+---
+
 # Rebuilt open-record index — 16 October 2026
 
 Updated **16 October 2026 at 2026-10-16T09:12:43.049Z**, from fresh native reads with independent archival-postwrite acceptance. The derivative now contains **248 open records, 79 closed records and 327 total overview records**. Four existing views across two continuation families, Q16, STR-Q1, FUS-09 and ENGINEERING-NTT-BASELINE-20261012, are archived from active mathematical research for low identified novelty/value in their current continuations. This is not four newly completed theorems or a claim of finished engineering. All 248 retained open records are exactly unchanged in every exported field and stay in their earlier order. The established schema, source selection, history-prefix extraction and URL policy are unchanged. Earlier versions remain in Git history.
