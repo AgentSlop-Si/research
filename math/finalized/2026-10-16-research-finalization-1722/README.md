@@ -1,3 +1,15 @@
+# Applied and independently verified: seven bounded advances
+
+All 79 dated prefixes have been applied to the existing research table and independently read back. The separate fresh read covered 6,114 cells: exactly 79 authorized changes and 6,035 untouched cells, with captured historical text, notes, rich links, formats, chips and validation preserved. All 327 IDs, statuses and numerical priorities remain unchanged; the census is **87 closed / 240 open / 327 views**.
+
+The [application receipt](APPLICATION_COMPLETE.md) and [independent report/native readback](independent_review/REPORT_AND_NATIVE_READBACK.json) record the precise scope. The [existing open-record index](../2026-10-15-rebuilt-open-record-index/README.md) has a separately accepted seven-object refresh; the other 233 objects are unchanged. Every parent remains open. These bounded results do not finish the table or establish a general FFT algorithm, historical novelty or production readiness.
+
+The four mathematical reports and independent scientific review were published and all 34 actual UTF-8 bodies verified at immutable report commit `a462b0f54fc0e05da1fe689b7d1de665bd147944`. No binary-file readback is claimed. The final archive adds the application and index verification records without changing those scientific report bytes.
+
+Earlier preparation and scientific-review notes follow as dated history.
+
+---
+
 # Seven bounded research advances, with parent obligations retained
 
 16 October 2026 UTC. Repository baseline: `0339a31eb6109f0b96074ab8321f8653641e7530`.

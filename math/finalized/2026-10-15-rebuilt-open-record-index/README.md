@@ -1,3 +1,15 @@
+# Current open-record index: seven bounded advances, parents retained
+
+The census remains **240 open / 87 closed / 327 record views**. Seven records receive current-gate, pass/stop and source-URL refreshes: ALG-036, ALG-042, ALG-052, M-NILPOTENT-FOLD, M-SYMMETRY, ALG-048 and F020. Each parent remains open at its existing numerical priority. No ID is removed or created.
+
+The other **233 record objects are unchanged**. All 240 retained IDs, ordering, row positions, titles, statuses and priorities are preserved. CSV and JSON round-trip exactly under the established prefix/source extraction policy. This is a targeted update, not a new proof audit of all open records.
+
+The [seven-owner report](../2026-10-16-research-finalization-1722/README.md), [independent review](../2026-10-16-research-finalization-1722/independent_review/INDEPENDENT_REVIEW.md) and [application receipt](../2026-10-16-research-finalization-1722/APPLICATION_COMPLETE.md) state the bounded results, remaining obligations and preservation checks. Narrative proof/novelty evidence was updated for two matrix-gate owners while their earlier categorical assessments remain preserved as history. No novelty upgrade or general FFT claim follows.
+
+Earlier index documentation is preserved verbatim below as dated history.
+
+---
+
 # Current open-record index: bounded contracts and activity archives
 
 The census is **240 open / 87 closed / 327 record views**. ALG-050 and STRUCTURED-RESIDUAL-EXECUTOR-20261012 leave active open-index selection after independently accepted research-activity archival. Their native records, numerical priorities and histories remain. Broader ALG-050 bidirectional constructions, structured replay/counter/caller qualification and any specific execution authorization remain unresolved or pending, not fulfilled or cancelled.

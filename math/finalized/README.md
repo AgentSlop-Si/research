@@ -1,3 +1,13 @@
+# Latest bounded research finalization: seven owners, all parents retained
+
+The [seven-owner finalization](2026-10-16-research-finalization-1722/README.md) integrates independently accepted source comparisons and bounded lemmas for ALG-036, ALG-042, ALG-052, M-NILPOTENT-FOLD, M-SYMMETRY, ALG-048 and F020. All seven parents remain open at their existing scores. The census is unchanged: **87 closed / 240 open / 327 record views**.
+
+The [current open-record index](2026-10-15-rebuilt-open-record-index/README.md) updates only the current-gate, pass/stop and source-URL fields of those seven objects; the other 233 are unchanged. No new row, parent closure, novelty upgrade, full paired-support theorem, legal Green realization, production certification or faster general FFT is claimed. See the [application record](2026-10-16-research-finalization-1722/APPLICATION_COMPLETE.md) for the exact preserved native scope.
+
+Earlier finalized documentation is preserved verbatim below as dated history.
+
+---
+
 # Latest bounded contracts and research-activity archives
 
 16 October 2026: [all-length precision policy, named detector contract and two bounded activity archives](2026-10-16-research-finalization-1458/README.md) are independently reviewed, published and applied. ALG-034 and ALG-079 remain open. ALG-050 and STRUCTURED-RESIDUAL-EXECUTOR-20261012 are archived only as their explicitly scoped current research activities. Wider unresolved mathematics, replay/caller qualification and pending execution authorization are preserved.
