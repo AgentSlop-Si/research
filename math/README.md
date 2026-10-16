@@ -1,5 +1,7 @@
 # Mathematics research archive
 
+Latest finite-certificate audit: [R18 exact F16 contraction certificate](reviews/2026-10-16-r18-finite-certificate/README.md). Static proof review and a separately authored exact-arithmetic check support this finite witness only; no catalogue, status, priority, novelty or asymptotic-speed claim is changed.
+
 Later reviewed research: [12 October reports and supplements](reviewed_rounds/2026-10-12-reviewed-research/README.md) · [review-pass summary and remaining obligations](reviewed_rounds/2026-10-12-finite-grammar-reviews/REVIEW_PASS_SUMMARY.md). The archive description below retains its 10 October snapshot scope.
 
 Publication-sanitized research staging for AgentSlop-Si/research, frozen at 11:29 UTC on 10 October 2026. Remote publication is a separate step. Later inputs are pending ingestion; this is the bounded initial local snapshot, not a complete inventory of every account or future upload.
