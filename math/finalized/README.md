@@ -109,3 +109,9 @@ The [same rebuilt open-record index](2026-10-15-rebuilt-open-record-index/README
 ## 16 October, 07:43 bounded primary-source comparisons
 
 [Accepted reports and independent reviews for ALG-007, ALG-011 and ALG-013](2026-10-16-comparisons-0743/README.md) are published before native-table application. ALG-007 completes its named comparison while retaining its compatible-model fallback obligation. ALG-011 and ALG-013 meet their recorded bounded-comparison endpoints and are eligible for scoped owner closure after separately verified application. Priorities remain 42; accepted proofs, historical-priority limitations and full cost guards are preserved. This publication does not change native statuses or aggregate counts.
+
+## 16 October, 07:43 comparisons: applied and independently verified
+
+[The three-owner comparison round is applied and independently verified](2026-10-16-comparisons-0743/APPLICATION_COMPLETE.md). ALG-011 and ALG-013 are CLOSED at their accepted recorded scope. ALG-007's named comparison is complete; its compatible-field/length fallback implementation and charging obligation remains open. All three remain at priority 42. The current ledger is **73 CLOSED / 254 TO RESEARCH**, with all 327 stable IDs, row positions and priorities preserved.
+
+The 38 owner-value changes, two status-fill changes and two dashboard-value changes have three independent postwrite acceptances. All 36 prefixed histories and existing notes, links, validation and unrelated formats are retained within the checked scope. The [established open-record index](2026-10-15-rebuilt-open-record-index/README.md) now reflects the independently accepted 08:12:57.806 UTC native snapshot: 254 open records and 640 recorded source-URL occurrences. Original report-stage evidence and earlier count snapshots remain historical. The derivative is not a new proof audit; no novelty, breakthrough or general FFT-speed claim is added.
