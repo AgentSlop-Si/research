@@ -1,3 +1,11 @@
+# Applied and independently verified
+
+The accepted 34-cell native update and existing open-index refresh are complete. Census: **87 CLOSED + 240 TO RESEARCH = 327 views**. See the [application receipt](APPLICATION_COMPLETE.md) and independent native/index verification. Both activity archives are limited decisions; excluded mathematical and engineering obligations remain unresolved.
+
+Original report-stage documentation is preserved below.
+
+---
+
 # Bounded mathematical contracts and research-activity archives
 
 16 October 2026. Baseline: `35d9dcdc3f3869de75b33b2b09705222e8d09e8d`.

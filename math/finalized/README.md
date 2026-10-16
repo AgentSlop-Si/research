@@ -1,3 +1,13 @@
+# Latest bounded contracts and research-activity archives
+
+16 October 2026: [all-length precision policy, named detector contract and two bounded activity archives](2026-10-16-research-finalization-1458/README.md) are independently reviewed, published and applied. ALG-034 and ALG-079 remain open. ALG-050 and STRUCTURED-RESIDUAL-EXECUTOR-20261012 are archived only as their explicitly scoped current research activities. Wider unresolved mathematics, replay/caller qualification and pending execution authorization are preserved.
+
+Current census: **87 CLOSED + 240 TO RESEARCH = 327 views**. The [existing open-record index](2026-10-15-rebuilt-open-record-index/README.md) excludes only the two archived activities and refreshes ALG-034/ALG-079; 238 retained objects are unchanged. The [application receipt](2026-10-16-research-finalization-1458/APPLICATION_COMPLETE.md) links the exact independent native and index verification. All IDs, numerical priorities, proof/novelty classifications and prior histories remain.
+
+Earlier documentation is preserved verbatim below as dated history.
+
+---
+
 # Latest bounded research finalization
 
 16 October 2026: [five bounded results and two research-activity archival decisions](2026-10-16-research-finalization-1412/README.md) are independently reviewed, published and applied. Q32 and ALG-057 are archived only at their stated active-research scopes. ALG-048, ALG-050, ALG-053 and ALG-064 remain open. All numerical priorities, proof/novelty classifications and prior history are preserved.

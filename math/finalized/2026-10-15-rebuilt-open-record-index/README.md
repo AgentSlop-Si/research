@@ -1,3 +1,15 @@
+# Current open-record index: bounded contracts and activity archives
+
+The census is **240 open / 87 closed / 327 record views**. ALG-050 and STRUCTURED-RESIDUAL-EXECUTOR-20261012 leave active open-index selection after independently accepted research-activity archival. Their native records, numerical priorities and histories remain. Broader ALG-050 bidirectional constructions, structured replay/counter/caller qualification and any specific execution authorization remain unresolved or pending, not fulfilled or cancelled.
+
+ALG-034 and ALG-079 receive only current-gate, pass/stop and source-URL refreshes. Their parents remain open. The other **238 retained record objects are unchanged**. Retained IDs, ordering, row positions, titles, statuses and priorities are preserved. No new ID is created. CSV and JSON round-trip exactly under the established prefix/source extraction policy.
+
+The [bounded-contract report](../2026-10-16-research-finalization-1458/README.md), [independent review](../2026-10-16-research-finalization-1458/independent_review/INDEPENDENT_REVIEW.md) and [application receipt](../2026-10-16-research-finalization-1458/APPLICATION_COMPLETE.md) state the accepted scopes and preservation checks. This is a targeted refresh, not a new proof audit of every open record.
+
+Earlier index documentation is preserved verbatim below as dated history.
+
+---
+
 # Current open-record index: bounded finalization refresh
 
 The census is now **242 open / 85 closed / 327 record views**. Q32 and ALG-057 are removed from active open-index selection after independently accepted research-activity archival. Their native records, numerical priorities and complete histories remain; deferred or changed-interface obligations are not certified complete.
