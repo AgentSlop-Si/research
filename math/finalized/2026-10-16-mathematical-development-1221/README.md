@@ -1,3 +1,11 @@
+# Applied and independently verified
+
+The 38-cell native synchronization is complete, with all prior histories, 75 rich-text runs and seven notes preserved. The targeted five-record index refresh and unchanged census are recorded in the [application receipt](APPLICATION_COMPLETE.md). The bounded mathematical scopes and open parents below are unchanged.
+
+The original report-stage description follows verbatim as dated history.
+
+---
+
 # Five independently reviewed mathematical developments
 
 16 October 2026. Baseline: `de5dc664448d8e3e219df9651b2805d5a2cecbb1`.

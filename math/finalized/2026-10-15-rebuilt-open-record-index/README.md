@@ -1,3 +1,15 @@
+# Current open-record index: bounded mathematical-development refresh
+
+The census remains **244 open / 83 closed / 327 record views**. This targeted refresh follows the 16 October 12:34:17 UTC native readback of five independently reviewed mathematical continuations. It retains the established full baseline and earlier targeted refresh; it does not claim a fresh proof audit of all 244 open views.
+
+Only five exported records change: F020, Q29, Q2, ALG-070 and ALG-071. Changes are limited to their recorded current gates, applicable pass/stop conditions, and extracted source URLs. The other **239 record objects are exactly unchanged**, and every ID, row position, title, status and priority is preserved. CSV/JSON round-trip exactly. Existing current-prefix and source-URL extraction policies are unchanged. Source-URL occurrence and historical-suffix counts are recorded in VALIDATION.json.
+
+The [five-development report](../2026-10-16-mathematical-development-1221/README.md) and [independent mathematical review](../2026-10-16-mathematical-development-1221/independent_review/INDEPENDENT_REVIEW.md) state the accepted bounds and open parent gates. The [application receipt](../2026-10-16-mathematical-development-1221/APPLICATION_COMPLETE.md) records native and index verification. No whole-parent closure, priority change, historical-novelty promotion or FFT breakthrough is claimed.
+
+The previous index documentation below is preserved verbatim as dated history.
+
+---
+
 # Current open-record index: targeted 16 October coverage reconciliation
 
 The census remains **244 open / 83 closed / 327 record views**. The full baseline snapshot was read at 10:54:44 UTC. This targeted refresh follows the 11:39:55 UTC exact native readback of the independently accepted coverage reconciliation; it does not claim a fresh full-source or proof audit of every row.
