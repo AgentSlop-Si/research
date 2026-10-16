@@ -120,3 +120,9 @@ The 38 owner-value changes, two status-fill changes and two dashboard-value chan
 ## 16 October, 08:14 ALG-015 primary comparison
 
 [The ALG-015 comparison and independent review](2026-10-16-alg015-comparison-0814/README.md) complete its recorded bounded primary-source gate with a qualified nonmatch to classical lifting cascades and explicit dispositions of all older comparator leads. The accepted supplied-parameter theorem and priority 42 are unchanged. Parameter discovery, singular reconstruction and broader runtime/production conclusions remain outside this acceptance. Native application and current counts are verified separately; this report-stage publication does not change them.
+
+## 16 October, 08:14 ALG-015: applied and independently verified
+
+[ALG-015's bounded primary comparison is applied and independently verified](2026-10-16-alg015-comparison-0814/APPLICATION_COMPLETE.md). Its owner is CLOSED at unchanged priority 42; parameter discovery remains unimplemented outside the supplied-parameter theorem. All 327 IDs, positions and priorities are preserved. Current ledger: **74 CLOSED / 253 TO RESEARCH**.
+
+The 18 owner-value changes, sole status-fill change and two dashboard-value updates preserve their existing histories, notes, formulas, validation and rich links within the verified scope. The [same open-record index](2026-10-15-rebuilt-open-record-index/README.md) now records the independently accepted 08:30:22.414 UTC snapshot: 253 open records and 637 recorded source-URL occurrences. Only ALG-015 leaves the open index; every retained record remains exactly unchanged. The schema and history/URL policy are preserved. Earlier dated entries and report-stage evidence remain historical; no novelty, general FFT-speed or production claim is added.
