@@ -83,3 +83,7 @@ The 00:01 cycle's six native prefixes now have independent postwrite receipts, a
 The 00:18 breadth batch is independently verified and applied: 53 value changes, one status fill, only M-WEYL-TWIRL newly CLOSED, and all priorities preserved. Current ledger: **69 CLOSED /258 TO RESEARCH**. The same open-record index reflects the 00:32 UTC native snapshot.
 
 [Queued v12 direct-layout source intake](../intake/2026-10-16-v12-direct-layout/PRELIMINARY_SOURCE_CHECK.md) records a limited primary-clause check, not independent package acceptance. A new worker launch hit the thread limit; no bypass or new scientific/table promotion occurred.
+
+## 16 October, 00:42 comparisons
+
+[Six further named comparisons](2026-10-16-finalization-cycle-0042/README.md) are independently accepted. The monomial-centralizer record is closure-eligible at its owned classification/comparison scope. Application and census changes are verified separately; broader construction and precision obligations remain explicit.
