@@ -2,7 +2,7 @@
 
 Repository access is private and unchanged. A repository commit is not an anonymous public release or peer-reviewed publication.
 
-Updated 16 October 2026. Verified status-column ledger: **70 CLOSED / 257 TO RESEARCH**, 327 scoped record views plus four intake aliases. The 15 October continuation finalized eight further existing scoped records following fifteen in the preceding pass; the 16 October breadth passes additionally finalized M-WEYL-TWIRL and ALG-MONOMIAL-CENTRALIZER. These are record closures, not discoveries. No general faster FFT or worldwide-first result is claimed.
+Updated 16 October 2026. Verified status-column ledger: **71 CLOSED / 256 TO RESEARCH**, 327 scoped record views plus four intake aliases. The 15 October continuation finalized eight further existing scoped records following fifteen in the preceding pass; the 16 October breadth passes additionally finalized M-WEYL-TWIRL and ALG-MONOMIAL-CENTRALIZER. The 01:06 cycle additionally finalized M-SEED-BALANCE at its guarded seed/comparison scope. These are record closures, not discoveries. No general faster FFT or worldwide-first result is claimed.
 
 [Previous complete audit and remaining gates (60/267 snapshot)](2026-10-15-finalization-audit/README.md)
 
@@ -91,3 +91,9 @@ The 00:18 breadth batch is independently verified and applied: 53 value changes,
 The00:42 batch is independently applied and verified:57 value changes, one status fill, all priorities/IDs retained, current **70 CLOSED /257 TO RESEARCH**. Existing open index refreshed to00:59 UTC.
 
 [v12 bounded layout/certificate review](../intake/2026-10-16-v12-direct-layout/README.md) now includes a byte-bound original package, fresh conditional checks and a separate independent review. The epsilon=1/21 witness improves the supplied v12 exponent by40/21 under the same explicit conditions. No whole-machine, practical speed, general DFT, novelty or table-status acceptance is inferred.
+
+## 16 October, 01:06 cycle: applied and independently verified
+
+[Scoped seed closure and four completed named comparisons](2026-10-16-finalization-cycle-0106/APPLICATION_COMPLETE.md) now have final native application receipts and three independent postwrite acceptances. Exactly 49 value changes plus the sole E95 status fill were applied. Only M-SEED-BALANCE changed to CLOSED; all 327 IDs, row positions and priorities were preserved. The current ledger is **71 CLOSED / 256 TO RESEARCH**. ALG-018, ALG-019, M-QUADRATIC-FEEDBACK and M-SPECTRAL-FEEDBACK retain their actual open construction/numerical obligations.
+
+The [same rebuilt open-record index](2026-10-15-rebuilt-open-record-index/README.md) has been refreshed from the independently checked final native snapshot. Its CSV/JSON are recorded-work derivatives, not independent theorem counts or a replacement for original historical source artifacts. Prior dated entries and earlier count snapshots above remain historical evidence. No global FFT speedup, production acceptance or worldwide-first claim follows.
