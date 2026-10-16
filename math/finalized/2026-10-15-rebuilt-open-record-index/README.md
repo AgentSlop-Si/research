@@ -1,12 +1,12 @@
 # Rebuilt open-record index — 16 October 2026
 
-Updated **16 October 2026 at 2026-10-16T00:15:42.997Z**, from fresh native reads after the reviewed ALG-034, Q29, and Q14 prefixes. This refresh replaces the existing three derivative files in place; earlier snapshots remain available through Git history.
+Updated **16 October 2026 at 2026-10-16T00:32:11.864Z**, from fresh native reads after the recorded M-WEYL-TWIRL scoped closure and five further source-comparison/gate updates. The current derivative contains **258 open records**; earlier 259-record snapshots are historical. This refresh replaces the existing three derivative files in place; earlier snapshots remain available through Git history.
 
 This is a **fresh native-snapshot rebuild** of the live Google Sheets `Research overview` tab, read directly through the Google Sheets connector. It remains a separate derivative from the original 259-record category inventory and is not asserted byte-identical to it; this refresh does not reproduce or independently validate that inventory's semantic category counts.
 
 The original inventory was previously inaccessible during an execution-workspace outage, then recovered and archived at [commit e5c9c53f7d34e8d858e781d2d5321393aec7e85c](https://github.com/AgentSlop-Si/research/commit/e5c9c53f7d34e8d858e781d2d5321393aec7e85c). Its [preserved original files](https://github.com/AgentSlop-Si/research/blob/e5c9c53f7d34e8d858e781d2d5321393aec7e85c/math/archives/2026-10-15-recovered-pending-artifacts/original-category-inventory-2202/README.md) describe the historical 22:02:36–22:02:51 UTC snapshot. Earlier statements that those inventory bytes were inaccessible describe the earlier outage and are superseded for the recovered files. That archival recovery is distinct from this later live-row derivative and does not establish recovery or verification of every mathematical source referenced by the records.
 
-This is **not a full proof audit** and **not a claim of 259 independent theories**. Rows may be related views, parent tasks, child scopes, implementation/replay obligations, source-access gates, or attribution work. Recorded acceptance language remains attributed to the Sheet; it was not newly proved or re-reviewed during this refresh. No status, priority, mathematical scope, novelty, or speed claim is promoted here.
+This is **not a full proof audit** and **not a claim of 258 independent theories**. Rows may be related views, parent tasks, child scopes, implementation/replay obligations, source-access gates, or attribution work. Recorded acceptance language remains attributed to the Sheet; it was not newly proved or re-reviewed during this refresh. The recorded status change is copied from the Sheet at its stated scope. This derivative does not independently promote any mathematical scope, priority, novelty, or speed claim.
 
 ## Source and snapshot
 
@@ -14,7 +14,7 @@ This is **not a full proof audit** and **not a claim of 259 independent theories
 - Tab: `Research overview`, sheet ID `1731260011`
 - Header row: 4; populated stable-ID rows: 5–331
 - Bounded reads covered rows 5–337, confirming no additional stable-ID rows in the remaining six rows.
-- Native connector reads completed: **2026-10-16T00:15:42.997Z**
+- Native connector reads completed: **2026-10-16T00:32:11.864Z**
 - Source columns: B stable ID; D title; E status; I source-row labels and links; J recorded evidence links; L numeric priority; P next bounded action; Q pass/stop condition.
 - Link reads include `textFormatRuns`, whole-cell `userEnteredFormat.textFormat.link`, and `hyperlink`. Whole-cell links normalized by Sheets are retained.
 - These were bounded live reads, not an atomic version-pinned workbook export. The dates within individual fields remain the dates recorded in the workbook.
@@ -23,15 +23,21 @@ This is **not a full proof audit** and **not a claim of 259 independent theories
 ## Verified structural counts
 
 - 327 populated overview records with 327 unique stable IDs
-- 259 records with exact status `TO RESEARCH`, exported here
-- 68 records with exact status `CLOSED`, not exported here
-- All 259 exported IDs are unique, all 259 priorities are finite numbers, and all 259 records have a nonempty recorded next action and recorded pass/stop condition.
+- 258 records with exact status `TO RESEARCH`, exported here
+- 69 records with exact status `CLOSED`, not exported here
+- All 258 exported IDs are unique, all 258 priorities are finite numbers, and all 258 records have a nonempty recorded next action and recorded pass/stop condition.
 - Exported priorities range from 8 to 60. These are work-priority scores, not probabilities of correctness or novelty.
-- All 259 exported records have at least one recorded URL; 630 URL occurrences remain after per-record deduplication. All 259 also have an overview-row URL.
+- All 258 exported records have at least one recorded URL; 638 URL occurrences remain after per-record deduplication. All 258 also have an overview-row URL.
 - Records with an empty `recorded_source_urls` array: **none**.
-- Against the preceding 15 October 23:56 version of this index, three exported records have changed recorded text or URLs: `Q29`, `ALG-034`, and `Q14`. This covers three next-action prefixes, one pass/stop prefix, and two additional source URLs for Q29. All previously recorded URLs are retained. Exported stable IDs, titles, statuses, priorities, row positions, source-row labels, and overview URLs are unchanged.
+- Against the preceding 16 October 00:15 snapshot, `M-WEYL-TWIRL` at overview row 108 is the sole status change among the prior 259 indexed records: `TO RESEARCH` to `CLOSED`, with priority 42 unchanged. It is therefore excluded from this open-only derivative. Its recorded closure is limited to the fixed-candidate Weyl-twirl certification and corrected fixed-coordinate Green-cut scope; sibling construction tasks are not closed by it.
+- The remaining five changed exported records are `M-SPARSE-DEFECT` (row 98), `ALG-014` (188), `M-CHIRP-CUBIC` (221), `ALG-024` (289), and `ALG-027` (290). Each has a changed recorded next action, pass/stop condition, and URL array. Eleven source URLs were added across these five records; no URL was removed from a retained record. The closed record's three prior URLs leave the open-only export with that record.
+- All 259 previously indexed priorities are unchanged, and all 327 currently read priorities are finite. The 258 retained records preserve their IDs, titles, statuses, priorities, relative order, row positions, source-row labels, and overview URLs. No new open ID was added.
 
 No semantic classification or independent-theory count is inferred from these counts.
+
+## Historical and current counts
+
+The original archived 15 October 22:02 inventory and the earlier rebuilt snapshots each recorded 259 open rows and 68 closed rows. Those are preserved historical snapshots. This 16 October snapshot records 258 open rows and 69 closed rows after the one scoped closure described above. The directory name remains unchanged so the live derivative keeps its established location; Git history preserves its preceding versions.
 
 ## Recorded URLs and their limits
 
@@ -43,8 +49,8 @@ For `QTORUS-CONNECTED-MINOR-20261013` and `Q2-DENSE-TORUS-20261013`, the arrays 
 
 ## Files
 
-- `open-record-index.csv`: UTF-8, comma-separated, header plus 259 records; RFC-style quoting and CRLF record separators. Text fields can contain quoted newlines. `recorded_source_urls` is a JSON array encoded within the CSV field.
-- `open-record-index.json`: UTF-8 JSON object with snapshot/source metadata, structural counts, and a `records` array containing the same 259 records in the same order.
+- `open-record-index.csv`: UTF-8, comma-separated, header plus 258 records; RFC-style quoting and CRLF record separators. Text fields can contain quoted newlines. `recorded_source_urls` is a JSON array encoded within the CSV field.
+- `open-record-index.json`: UTF-8 JSON object with snapshot/source metadata, structural counts, and a `records` array containing the same 258 records in the same order.
 - `README.md`: this provenance, scope, extraction, and schema note.
 
 ## Schema
@@ -71,7 +77,7 @@ The current-action and pass/stop fields are a compact derivative of the source c
 3. Preserve date labels, qualifications, limitations, and wording in the retained block. Do not paraphrase them into new claims.
 4. Apply the same prefix extraction to J only for finding current evidence URLs; the full J narrative is not exported into this compact index.
 
-This removed historical suffixes from 79 action cells and 52 condition cells. Full source history remains in the original workbook. Source-row link positions are a snapshot; stable IDs are the durable matching keys.
+This removed historical suffixes from 84 action cells and 57 condition cells. Full source history remains in the original workbook. Source-row link positions are a snapshot; stable IDs are the durable matching keys.
 
 A brief source-access reconciliation prefix can refer to unchanged engineering gates without restating them. In particular, `ENGINEERING-NTT-BASELINE-20261012` retains the recorded 15 October source-access prefix exactly as written. This index does not invent a remaining-gate list from that prefix or treat it as closure of the engineering parent. Follow `overview_url` to the complete row and its retained history.
 
@@ -83,4 +89,4 @@ P and Q remain separate attributed fields. Older dates elsewhere are retained as
 
 ## Verification boundary
 
-The refresh checks source-row counts, unique stable IDs, exact status filtering, finite numeric priorities, nonempty extracted action/condition fields, unchanged exported statuses/scores, exact recorded-link extraction, CSV/JSON round-trip content agreement, and UTF-8 Git blob readback. It does not reopen proof archives, run historical research programs, establish accessibility or validity of every linked source, deduplicate related theories, validate all scientific assertions, or reconstruct the separately archived historical inventory. Workbook access is still governed by its existing permissions.
+The refresh checks source-row counts, unique stable IDs, exact status filtering, finite numeric priorities, nonempty extracted action/condition fields, the single recorded status change against the prior index, unchanged previously indexed priorities, exact recorded-link extraction, CSV/JSON round-trip content agreement, and UTF-8 Git blob readback. It does not reopen proof archives, run historical research programs, establish accessibility or validity of every linked source, deduplicate related theories, validate all scientific assertions, or reconstruct the separately archived historical inventory. Workbook access is still governed by its existing permissions.

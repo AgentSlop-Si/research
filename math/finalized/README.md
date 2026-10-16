@@ -2,7 +2,7 @@
 
 Repository access is private and unchanged. A repository commit is not an anonymous public release or peer-reviewed publication.
 
-Updated 15 October 2026. Verified status-column ledger: **68 CLOSED / 259 TO RESEARCH**, 327 scoped record views plus four intake aliases. Eight further existing scoped records were finalized in the latest round, following fifteen in the preceding pass. These are record closures, not discoveries. No general faster FFT or worldwide-first result is claimed.
+Updated 16 October 2026. Verified status-column ledger: **69 CLOSED / 258 TO RESEARCH**, 327 scoped record views plus four intake aliases. The 15 October continuation finalized eight further existing scoped records following fifteen in the preceding pass; the 16 October breadth pass additionally finalized M-WEYL-TWIRL. These are record closures, not discoveries. No general faster FFT or worldwide-first result is claimed.
 
 [Previous complete audit and remaining gates (60/267 snapshot)](2026-10-15-finalization-audit/README.md)
 
@@ -79,3 +79,7 @@ The 00:01 cycle's six native prefixes now have independent postwrite receipts, a
 ## 16 October, 00:18 breadth finalization
 
 [Six scoped comparisons and one eligible certificate-record closure](2026-10-16-finalization-cycle-0018/README.md) are independently reviewed. Native application and counts will be recorded in separate receipts; broader parents and numerical/constructor work remain distinct.
+
+The 00:18 breadth batch is independently verified and applied: 53 value changes, one status fill, only M-WEYL-TWIRL newly CLOSED, and all priorities preserved. Current ledger: **69 CLOSED /258 TO RESEARCH**. The same open-record index reflects the 00:32 UTC native snapshot.
+
+[Queued v12 direct-layout source intake](../intake/2026-10-16-v12-direct-layout/PRELIMINARY_SOURCE_CHECK.md) records a limited primary-clause check, not independent package acceptance. A new worker launch hit the thread limit; no bypass or new scientific/table promotion occurred.
