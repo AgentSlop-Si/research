@@ -1,3 +1,13 @@
+# Latest bounded advances: ALG-032, ALG-039 and C10
+
+The [three-owner publication](2026-10-16-research-finalization-1749/README.md) records independently accepted even-affine single-sketch obstruction, polynomial tree-operator extension, and selected necessary row-subsystem solver results. Their parent comparison and construction obligations remain open.
+
+The [application receipt](2026-10-16-research-finalization-1749/APPLICATION_COMPLETE.md) documents 26 history-preserving table prefixes and a targeted refresh of three existing open-record objects. The [existing index](2026-10-15-rebuilt-open-record-index/README.md) retains all 240 open IDs; the table census remains **87 closed / 240 open / 327 record views**. All priorities and owner statuses remain unchanged.
+
+Earlier finalized-research documentation is preserved verbatim below as dated history.
+
+---
+
 # Latest bounded research finalization: seven owners, all parents retained
 
 The [seven-owner finalization](2026-10-16-research-finalization-1722/README.md) integrates independently accepted source comparisons and bounded lemmas for ALG-036, ALG-042, ALG-052, M-NILPOTENT-FOLD, M-SYMMETRY, ALG-048 and F020. All seven parents remain open at their existing scores. The census is unchanged: **87 closed / 240 open / 327 record views**.

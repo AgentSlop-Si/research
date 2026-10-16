@@ -1,3 +1,13 @@
+# Application update: three bounded results recorded
+
+The native table now contains the exact **26 independently reviewed history-preserving prefixes** for ALG-032, ALG-039 and C10. The census remains **87 closed / 240 open / 327 record views**; all three owners retain TO RESEARCH and priority 34. The existing index refreshes only the affected fields of those three records, preserving the other 237 record objects.
+
+See the [application receipt](APPLICATION_COMPLETE.md), [applied prefix ledger](APPLIED_TARGETS.json), and [existing index](../2026-10-15-rebuilt-open-record-index/README.md). The immutable report commit is [228288f489fef7bd534275a54d4c4c2c842cff38](https://github.com/AgentSlop-Si/research/commit/228288f489fef7bd534275a54d4c4c2c842cff38). Original author pending-review labels below remain preparation chronology and are superseded by the accepted independent scientific review.
+
+The original report README is preserved verbatim below.
+
+---
+
 # Three bounded theorem increments, with all parents retained
 
 16 October 2026 UTC. Publication baseline: `bf4561628a9d1cdf0fde0dd124e8e6e667d7c28f`. This is separate from the preceding seven-owner update.
