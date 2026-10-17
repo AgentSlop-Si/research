@@ -1,0 +1,125 @@
+Public input and trust boundary
+
+Public call: adapt(payload, certificate), from src/paid_source.py.
+No ledger, prepared state, source callback, class factory, certificate verifier,
+root table or numerical backend is a public argument.
+
+payload is an exact tuple or exact list with three entries:
+  (N, kappa, rows)
+rows is an exact tuple or list of exactly N entries. Each entry is an exact
+tuple or list (a_j,b_j), representing (a_j+i b_j)*2^kappa. Scalar fields must be
+exact Python integers: bool and int subclasses are rejected. N is a power of
+two in [4,4096]. Every numerator has at most 65536 magnitude bits; zero uses
+one charged magnitude bit. kappa has at most 256 magnitude bits.
+
+Only ordinary built-in containers are accepted, avoiding callbacks, custom
+iterators and custom field access. This is an in-memory grammar, not a JSON,
+network, text, pickle or hostile-Python deserializer. No caller mutation may
+occur during a call. Later caller mutation is safe: the returned source retains
+no mutable input container. Monkeypatching, hostile imports, object.__setattr__,
+reflection into private state and interpreter tampering are outside the trusted
+program model. Resolve the pinned buckets and compact_window modules from this
+packet when importing the adapter, preserving the single accepted class identity.
+
+certificate is an exact tuple or list of 17 entries in this order:
+  0 producer: 'ALG034-SERIAL-FIXED-POINT-v1'
+  1 target: 'U_negative(P_balanced_longer_first(x))'
+  2 phases: 'ALG034-accepted-phase-embedding-v1'
+  3 order: 'frequency-index-order'
+  4 premise: 'I attest all accepted ALG034 producer, phase, rounding, range and input premises'
+  5 input_sha256: 64 lowercase hexadecimal characters
+  6 output_sha256: 64 lowercase hexadecimal characters
+  7 N
+  8 B_A
+  9 a
+ 10 beta_A
+ 11 F_in
+ 12 W_in
+ 13 p
+ 14 t
+ 15 C
+ 16 original_input_zero, exact integer 0 or 1
+
+Every text field is an exact str, at most 256 code points. Scientific integer
+fields use the 256-bit metadata cap except C, which uses 16384 bits. Widths are
+charged before their width rejection; fields after a rejected prefix are not
+claimed to have been inspected. F_in is SIGNED, matching the accepted common
+input grid 2^(-F_in). All scalar encodings remain paid, including very large
+absolute exponents, p and t. The adapter never expands 2^p, 2^t or 2^kappa.
+
+Common state constraints
+
+N must match payload.N; 3<=B_A<=N; 0<a<N and a odd; 0<=beta_A<N. For this dyadic
+N, odd a is exactly the coprimality condition. Blocks are the actual balanced
+positive contiguous partition, longer blocks first. The accepted exact intended
+phase embedding and frequency-index ordering are fixed by the tags and premise.
+The map P is the accepted phase-weighted block map, without an added orthogonal
+projection normalization 1/block_length.
+
+Nonzero original-input contract
+
+original_input_zero=0; W_in>=1; p>=W_in; t>=0; kappa=W_in-F_in-p.
+Recompute H=min(binomial(N+B_A-1,B_A),2^(N-B_A)) and
+C=64 H B_A 2^B_A N^2 exactly, then compare the declared C to that result.
+The exact condition 2 C 2^(-p)<=2^(-t) must hold. This is the accepted condition;
+the displayed upstream precision formula is a sufficient way to arrange it.
+
+The trusted upstream party asserts that the original exact input really has
+common grid exponent F_in and maximum Cartesian numerator width W_in, is the
+input identified by input_sha256, and that the accepted specified serial
+fixed-point producer ran with these exact states and precision. All accepted
+phase accuracy, nearest-grid multiplication, exact index, normalization, stored
+range, double-width accumulator and output-order premises apply. Its actual
+returned array is this exact payload, with certified complex maximum-coordinate
+error <= Delta=C*2^kappa from Y=U_N P_(a,beta_A)x.
+
+The adapter recomputes no original input or producer trace. Merely writing the
+attestation text does not make it true. If these assertions are false or do not
+apply to this exact payload, the mathematical target-error conclusion does not
+follow. Input and output digest labels provide identification and mismatch
+checking; the theorem still requires true exact-payload binding independently
+of digest collisions or forged declarations.
+
+Exact-zero original-input contract
+
+original_input_zero=1; W_in=p=t=C=kappa=0. F_in may remain any supported signed
+metadata integer. All output numerators must be zero. This canonical zero
+serialization is a deliberate v1 grammar restriction. The upstream party
+asserts that the original input was exactly zero, rather than merely that a
+finite-precision producer returned zero. The conclusion Y=0 is conditional on
+that assertion. The adapter cannot distinguish a fabricated assertion by itself.
+
+Output digest encoding
+
+Start with ASCII bytes 'ALG034-OUTPUT-v1' followed by a zero byte. Append N,
+kappa and then a_0,b_0,...,a_(N-1),b_(N-1), each encoded as follows:
+  one sign byte (0 nonnegative, 1 negative);
+  four-byte unsigned big-endian magnitude-byte length;
+  the minimal unsigned big-endian magnitude bytes.
+Zero has length zero and no magnitude bytes. SHA-256 of this complete byte
+stream must equal output_sha256. All encoded byte lengths are below 2^32 under
+these explicit caps. This format is independent of tuple/list choice and avoids
+large decimal conversions. There is no public helper that manufactures a trusted
+producer certificate; tests create explicitly synthetic fixtures.
+
+Returned records
+
+Every result is a frozen SourceResult with immutable nested fields and a frozen
+Receipt. The exact Q16 DyadicSource is frozen and deeply immutable as constructed.
+producer_contract stores the copied immutable declaration in documented order.
+conditional_soundness is always CONDITIONAL_ON_TRUSTED_UPSTREAM_CONTRACT.
+
+VALID_SOURCE: source is populated; alpha_exponent encodes alpha=2^alpha_exponent;
+normalization_L and doubling disclose the normalization; delta=(C,kappa),
+rho=(1,-Pq), requantization_error=(1,1-F), Pq=16m+16 and F=Pq+1.
+target_budget is TARGET_BUDGET_PASS or TARGET_BUDGET_NOT_ESTABLISHED.
+
+ZERO_APPROXIMATION: all declared output numerators were zero, but the original
+input was declared nonzero. No normalized source/alpha exists. Delta is retained.
+EXACT_ZERO_INPUT: all declared output numerators were zero under the separately
+asserted exact-zero-input contract. No normalized source/alpha exists.
+Both zero statuses carry target_budget=NO_NORMALIZED_SOURCE.
+
+A semantic invalid input raises Rejection(code,path,receipt), preserving paid
+work up to the rejection. Memory exhaustion or interpreter/runtime failures are
+not converted into mathematical certificates or proof of host totality.
