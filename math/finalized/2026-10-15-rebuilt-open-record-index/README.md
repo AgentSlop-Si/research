@@ -1,3 +1,15 @@
+# Current open-record index: three mathematical advances, seven current-gate updates
+
+17 October 2026. The verified census remains **90 CLOSED / 237 TO RESEARCH / 327 record views**. Seven existing owners receive only current-gate, pass/stop and scientific-source updates: the four N13 views, ALG-064, M-NONLINEAR-COMPATIBILITY and C03. All statuses, priorities, titles, positions and IDs remain unchanged; the other **230 record objects and raw CSV records are identical**.
+
+The [accepted scientific packet](../2026-10-17-resumed-mathematics-0916/README.md) adds degree-seven N13 attainment, two restricted Fourier target-fiber obstructions, and an exact-data numerical reference bridge. The C03/F015 closure audit supports no parent closure; C03 receives only a precise remaining-gate clarification, and F015 stays unchanged. No unrestricted target solution, practical-speed, production or worldwide-priority claim follows.
+
+Actual immutable remote report bytes were checked. The native update preserves every old character, seven edited-cell notes, UTF-16 rich-link offsets, guarded styles/formulas/validation and the global identity/status/priority/classification data. Scientific evidence was independently accepted; the later application audit is attributed to the coordinator. CSV and JSON round-trip exactly, CRLF record boundaries remain, and all earlier source URLs are retained with fifteen immutable scientific URLs appended. No new private native mapping is exported.
+
+This is a targeted refresh, not a full proof audit of all 237 open views. [Application evidence](../2026-10-17-resumed-mathematics-0916/APPLICATION_COMPLETE.md). Earlier documentation follows verbatim as dated history.
+
+---
+
 # Current open-record index: three bounded source comparisons
 
 17 October 2026. The verified census remains **90 CLOSED / 237 TO RESEARCH / 327 record views**. ALG-077, ALG-047 and ALG-012 receive only current-gate, pass/stop and scientific-source updates after their bounded primary-source comparisons. Each remains open at priority 34. All statuses, priorities, titles, positions and IDs remain unchanged; the other **234 record objects and raw CSV rows are identical**.

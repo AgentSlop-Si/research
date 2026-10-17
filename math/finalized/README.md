@@ -1,3 +1,11 @@
+# 17 October 2026: accepted bounded advances and verified current gates
+
+[Resumed mathematics packet](2026-10-17-resumed-mathematics-0916/README.md): degree-seven N13 attainment, two restricted Fourier target-fiber obstructions, and the ALG-064 exact-data reference bridge. A two-record closure audit clarifies C03 without closing either parent. The seven updated open views retain every status and priority; census remains **90 CLOSED / 237 TO RESEARCH / 327 views**. [Application and preservation evidence](2026-10-17-resumed-mathematics-0916/APPLICATION_COMPLETE.md); [current open index](2026-10-15-rebuilt-open-record-index/README.md).
+
+The scientific results were independently accepted. Native application and index preservation are separately checked by the publisher and coordinator. These bounded results do not settle the unrestricted Fourier target, full field classification, stable/noisy recognition, production integration or worldwide priority. Earlier documentation follows verbatim.
+
+---
+
 # Latest verified results: three bounded primary-source comparisons
 
 17 October 2026. [Three independently accepted comparisons](2026-10-17-source-comparisons-0248/README.md) cover ALG-077 precision/word-RAM contracts, ALG-047 ordered Weyl-pair formulas, and ALG-012 dyadic Ramanujan coordinates. Their exact qualified conclusions are now recorded in the existing native table and open index.
