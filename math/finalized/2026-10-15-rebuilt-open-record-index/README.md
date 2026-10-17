@@ -1,3 +1,17 @@
+# Current OPEN index: completed construction subgates
+
+17 October 2026. The independently verified native table remains **98 CLOSED / 229 TO RESEARCH / 327 views**. No record is added, removed or newly closed in this refresh.
+
+ALG-034 remains open at priority 48. Its restricted exact ideal-target producer and actual N=2^28 producer-to-original-ideal-BUCKETS integration are complete, with all 131,072 bucket coordinates certified within 2^-464 and bounded paid accounting. Full sparse recovery, a general decision rule/probability contract, separate outer transfer including t<M, and wider input/deployment classes remain distinct gates. Rounded-serial equivalence is not established.
+
+FUS-06 remains open at priority 37. Its specified branch-preserving normalization-only candidate is negatively resolved under the declared physical error models. The next construction must change architecture or prove additional error structure, fixed-right-hand-side stability, or fully charged structured preparation. The inverse sensitivity formula concerns inverting the perturbed forward bank. No universal deterministic-rounding lower bound or stable production executor is claimed.
+
+Only these two records have refreshed leading current-gate/pass-stop fields and six appended immutable proof/review URLs. Every older source URL is retained. The other **227 raw JSON record objects and raw CSV records are byte-identical**, with ordering, priorities, statuses and other fields preserved. The adaptive independent-call packing result and its linear-time sharing escapes remain an unbound supplement; no existing owner is inferred.
+
+Accepted source and reviews: [immutable construction packet](https://github.com/AgentSlop-Si/research/tree/94af9e53ac64773f0fd6dc01d378ea56a610ee30/math/finalized/2026-10-17-construction-results-2102). [Verified native application](../2026-10-17-construction-results-2102/application/STATUS_APPLICATION.json). Previous index documentation follows verbatim.
+
+---
+
 # Current OPEN index: four accepted bounded activities closed
 
 17 October 2026. The verified native table has **98 CLOSED / 229 TO RESEARCH / 327 views**. This derivative removes exactly ALG-FIXED-PENCIL-CERTS, NEW-01, NEW-11 and NEW-15 after their already accepted bounded activity stopping conditions were applied and independently verified.
