@@ -1,3 +1,13 @@
+# Current index: F020 theorem and accepted-child reconciliation
+
+17 October 2026. Census remains **90 CLOSED / 237 TO RESEARCH / 327 views**. Four existing open owners receive only current-gate, pass/stop and scientific-source updates: F020, ALG-063, M-CUT-EXPANDER and Q18. All titles, positions, IDs, statuses and priorities are preserved. The other **233 record objects and raw CSV rows are byte-identical**.
+
+The [F020 packet](../2026-10-17-f020-prime-discriminants-1152/README.md) accepts uniform overlap simplicity, all odd-prime orders and only the b<p prime-power subfamily. The exact prior-art map credits established Laguerre/CD and quasi-Laguerre machinery. Full paired support remains OPEN58, endpoint OPEN53, and historical novelty unverified. ALG-063, M-CUT-EXPANDER and Q18 changes retire stale requests for child reviews already completed, without closing parents or claiming unrun tests. STR-Q1 remains archived; its one native target-field clarification is outside this open index.
+
+The [separate R24 engineering review](../2026-10-17-r24-static-engineering-review-1152/README.md) audits static identities and author data only. It supplies no independently rerun timing, optimized-NTT or new complexity claim. Earlier documentation follows verbatim.
+
+---
+
 # Current open-record index: three mathematical advances, seven current-gate updates
 
 17 October 2026. The verified census remains **90 CLOSED / 237 TO RESEARCH / 327 record views**. Seven existing owners receive only current-gate, pass/stop and scientific-source updates: the four N13 views, ALG-064, M-NONLINEAR-COMPATIBILITY and C03. All statuses, priorities, titles, positions and IDs remain unchanged; the other **230 record objects and raw CSV records are identical**.
