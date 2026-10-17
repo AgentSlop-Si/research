@@ -1,3 +1,11 @@
+# Application complete: three comparisons, census unchanged
+
+The three reports below are published at immutable commit `f6d67deca2163974a2711036fe0beff9e3b4db31` with exact remote-byte verification and independent acceptance. Twenty-four action/evidence values across three existing owners were updated by prefix only, preserving full prior history and notes. All statuses and numerical priorities remain unchanged at their prior values.
+
+See [verified application](APPLICATION_COMPLETE.md) and the [refreshed open index](../2026-10-15-rebuilt-open-record-index/README.md). The reports-first statement below remains dated provenance.
+
+---
+
 # Three bounded primary-source comparisons
 
 17 October 2026. These three comparisons have independent scientific acceptance. They refine existing action gates and attribution boundaries; all three parent records remain TO RESEARCH at priority 34. No parent closure, numerical priority change, worldwide-priority claim or production certification follows. The baseline census remains **90 CLOSED / 237 TO RESEARCH / 327 record views**.

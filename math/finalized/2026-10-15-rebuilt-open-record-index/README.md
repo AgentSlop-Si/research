@@ -1,3 +1,13 @@
+# Current open-record index: three bounded source comparisons
+
+17 October 2026. The verified census remains **90 CLOSED / 237 TO RESEARCH / 327 record views**. ALG-077, ALG-047 and ALG-012 receive only current-gate, pass/stop and scientific-source updates after their bounded primary-source comparisons. Each remains open at priority 34. All statuses, priorities, titles, positions and IDs remain unchanged; the other **234 record objects and raw CSV rows are identical**.
+
+The [accepted reports](../2026-10-17-source-comparisons-0248/README.md) distinguish qualified model nonmatches from exact algebraic coordinate correspondences. They do not establish worldwide priority, production certification or parent closure. ALG-012's earlier execution-boundary deviation is disclosed; only repaired formula-only controls support the accepted comparison. CSV and JSON round-trip exactly; CSV record terminators retain CRLF. Earlier source URLs and historical documentation remain intact, with six immutable scientific evidence URLs appended. No new private native mapping is exported.
+
+This is a targeted refresh, not a full proof audit of all 237 open views. [Verified application](../2026-10-17-source-comparisons-0248/APPLICATION_COMPLETE.md). Earlier documentation follows verbatim as dated history.
+
+---
+
 # Current open-record index: five bounded updates, census unchanged
 
 17 October 2026. The verified census remains **90 CLOSED / 237 TO RESEARCH / 327 record views**. Five existing open owners receive only current-gate, pass/stop and scientific-source updates: ALG-002, ALG-PRIMITIVE-HOLONOMY, M-NONLINEAR-COMPATIBILITY, HERO0-PHASE26-20261011 and FUS-01. All statuses, priorities, titles, positions and IDs remain unchanged; the other **232 record objects and raw CSV rows are identical**.

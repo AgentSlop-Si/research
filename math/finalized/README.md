@@ -1,3 +1,13 @@
+# Latest verified results: three bounded primary-source comparisons
+
+17 October 2026. [Three independently accepted comparisons](2026-10-17-source-comparisons-0248/README.md) cover ALG-077 precision/word-RAM contracts, ALG-047 ordered Weyl-pair formulas, and ALG-012 dyadic Ramanujan coordinates. Their exact qualified conclusions are now recorded in the existing native table and open index.
+
+The census remains **90 closed / 237 open / 327 existing record views**. No parent status or priority changes. [Application and preservation checks](2026-10-17-source-comparisons-0248/APPLICATION_COMPLETE.md); [current open-record index](2026-10-15-rebuilt-open-record-index/README.md).
+
+Earlier finalized documentation is preserved verbatim below.
+
+---
+
 # Latest verified results: scoped comparisons and coefficient/conversion boundaries
 
 17 October 2026. [Five independently accepted scopes](2026-10-17-research-finalization-0222/README.md) are published and applied where an existing owner exists. They cover fixed-N8 coefficient compatibility, the single-cycle equality/metric comparison, ALG-002's qualified source nonmatch/publication hold, the square-packed bilinear conversion invoice, and two already-completed child activities.
