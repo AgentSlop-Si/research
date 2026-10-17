@@ -1,3 +1,11 @@
+# Application complete: census remains 90 closed / 237 open
+
+The five scoped reports below are published at immutable commit `0d4f45777df399d5f51b0bd801149172ee305cc0` with exact remote-byte verification and independent acceptance. Thirty-five action/evidence values across five existing owners were updated by prefix only, preserving full prior history. All statuses and numerical priorities remain unchanged. The base-conversion supplement has no matching owner and changes no native/index record.
+
+See [verified application](APPLICATION_COMPLETE.md) and the [refreshed open index](../2026-10-15-rebuilt-open-record-index/README.md). The reports-first statement below remains dated provenance.
+
+---
+
 # Scoped research results and completed-child reconciliation
 
 17 October 2026. Five bounded scopes have [independent acceptance](independent_review/INDEPENDENT_REVIEW.md). All existing parent statuses and numerical priorities remain unchanged. The baseline census is **90 CLOSED / 237 TO RESEARCH / 327 record views**. This is the reports-first publication; native application and the subsequent open-index refresh are documented separately after exact readback.

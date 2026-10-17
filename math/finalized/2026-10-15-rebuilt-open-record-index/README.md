@@ -1,3 +1,13 @@
+# Current open-record index: five bounded updates, census unchanged
+
+17 October 2026. The verified census remains **90 CLOSED / 237 TO RESEARCH / 327 record views**. Five existing open owners receive only current-gate, pass/stop and scientific-source updates: ALG-002, ALG-PRIMITIVE-HOLONOMY, M-NONLINEAR-COMPATIBILITY, HERO0-PHASE26-20261011 and FUS-01. All statuses, priorities, titles, positions and IDs remain unchanged; the other **232 record objects and raw CSV rows are identical**.
+
+The [accepted reports](../2026-10-17-research-finalization-0222/README.md) distinguish new bounded mathematics, completed primary comparisons and already-completed child activities. The base-conversion supplement creates no row. CSV and JSON round-trip exactly; CSV record terminators retain CRLF. Previously recorded source URLs remain, with scientific GitHub evidence appended. One new Q16 cross-owner navigation line is omitted from FUS-01's public current gate and pass/stop condition, while its scientific/activity wording and full native history remain.
+
+This is a targeted refresh, not a full proof audit of all 237 open views. [Verified application](../2026-10-17-research-finalization-0222/APPLICATION_COMPLETE.md). Earlier documentation follows verbatim as dated history.
+
+---
+
 # Current open-record index: positive-phase comparison completed
 
 17 October 2026. The verified census is **90 CLOSED / 237 TO RESEARCH / 327 record views**. M-POSITIVE-PHASE leaves active open-index selection after its bounded positive-middle theorem/comparison stage meets the recorded stop. Its native record and historical priority 42 remain. Exact mask bit complexity, production work, general-input speed and worldwide priority are not resolved by this closure.

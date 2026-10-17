@@ -1,3 +1,13 @@
+# Latest verified results: scoped comparisons and coefficient/conversion boundaries
+
+17 October 2026. [Five independently accepted scopes](2026-10-17-research-finalization-0222/README.md) are published and applied where an existing owner exists. They cover fixed-N8 coefficient compatibility, the single-cycle equality/metric comparison, ALG-002's qualified source nonmatch/publication hold, the square-packed bilinear conversion invoice, and two already-completed child activities.
+
+The census remains **90 closed / 237 open / 327 existing record views**. No parent status or priority changes. [Application and preservation checks](2026-10-17-research-finalization-0222/APPLICATION_COMPLETE.md); [current open-record index](2026-10-15-rebuilt-open-record-index/README.md).
+
+Earlier finalized documentation is preserved verbatim below.
+
+---
+
 # Latest verified results: positive-phase completion and two construction gates
 
 17 October 2026. [Three accepted results and independent reviews](2026-10-17-research-finalization-0126/README.md) are published and applied. Only M-POSITIVE-PHASE closes its current theorem/comparison activity. ALG-063 and M-CUT-EXPANDER remain open with bounded recognition and coefficient results recorded; all numerical priorities remain.
