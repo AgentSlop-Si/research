@@ -1,0 +1,18 @@
+# Research cycle: bounded results and consistency repairs
+
+17 October 2026 UTC. This publication collects the independently reviewed scopes linked below. The canonical workbook census is **88 CLOSED / 239 TO RESEARCH / 327 record views**. All existing owner statuses and numerical priorities are retained. This report publication alone does not establish that proposed native edits were applied; consult the subsequent application receipt.
+
+## Results
+
+- **N13 original signed-bank grammar:** [quadratic and cubic literal witnesses](n13/REPORT.md) establish exact sixteen-bank attainment over F_(53^2), F_(53^3), and by scalar extension F_(53^4). Together with the accepted base-field minimum eighteen, the least extension degree attaining sixteen is two. The four associated parent views remain open at priority 56. [Independent literal-matrix review](independent_review/n13/INDEPENDENT_REVIEW.md) binds the raw certificates and preserves the field-classification, unrestricted-allocation, novelty and speed limits.
+- **M-FCUT and M-SPARSE-PREFIX:** [four named primary-source comparisons](structural/REPORT.md) settle the selected ingredient matches and interface nonmatches. The [independent comparison review](independent_review/structural/INDEPENDENT_REVIEW.md) checks the exact source mapping. Both parents remain open at priority 42; historical attribution remains unresolved. The prior final Delvaux–Van Barel comparison is inherited evidence and its final paper was not freshly recovered in this pass.
+- **Original adaptive base/matrix route:** [the paid grouped-Mersenne divider and complete implementation invoice](base_matrix/REPORT.md) supplies a bounded supplemental cost lemma. Fully materialized O(dN) division requires dm=O(N); the specified repeated full-scan converter has worst-case Theta(N^2/m) work in its stated regime. The separately executed block-pair matrix implementation does not obtain a contracting recursion. The [independent cost review](independent_review/base_matrix/INDEPENDENT_REVIEW.md) states the precise accepted implementation bounds. No exact existing workbook record was identified for this supplemental result, so it causes no native edit or new canonical ID.
+- **Whole-table consistency:** [the bounded audit](consistency/REPORT.md) identifies eight history-preserving prose corrections, six missing source-row links and an outdated repository headline. It is a structural/current-field audit, not 327 scientific proof audits. Exact histories, IDs, scores, source relationships and scoped proof/novelty limits are retained.
+
+Independent review means separately authored assistant analysis and checks, not external human peer review or formal verification. Fresh controls supplement the written proofs; no supplied historical research program was executed, imported or compiled in this cycle. No general faster FFT, unrestricted multiplication breakthrough, historical novelty or practical-speed result follows.
+
+The [R19 conditional comparator review](../../2026-10-17-r19-conditional-comparator-review/README.md) was published separately. Its arithmetic acceptance does not close its exact-array physical/interface obligations or replace the original research route.
+
+## Publication and application
+
+The author manifests and independent review receipts pin the exact accepted text/data/code artifacts. Native proposals preserve complete prior text and formatting; immutable report links are inserted only after report publication. Actual application, targeted open-index refresh and postwrite preservation are recorded separately in APPLICATION_COMPLETE.md when verified.
