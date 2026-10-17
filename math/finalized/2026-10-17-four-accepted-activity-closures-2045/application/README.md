@@ -1,0 +1,5 @@
+# Verified bounded activity closure application
+
+The four previously accepted stopping conditions were applied to their existing native activity views, with independent verification of all 1,653 guarded cells. Exactly 72 cells changed: 67 history-preserving prefixes, four CLOSED statuses, and one current census. Two rich-text histories retained their old runs and link targets at the correct UTF-16 offsets. All 327 identities and numerical priorities, unrelated statuses, original proof/novelty classifications, and broad related owners remain unchanged. No new theorem or completion beyond the accepted activities is claimed. Native style metadata was checked; rendering was not inspected.
+
+The active open-record derivative removes only the four closed IDs. All 229 retained JSON record objects and raw CSV records are byte-identical, including their sources, gates, priorities and order. Historical records remain in the native table. The census is 98 CLOSED + 229 TO RESEARCH = 327 views. See STATUS_APPLICATION.json for the machine-readable scope.

@@ -1,3 +1,15 @@
+# Current OPEN index: four accepted bounded activities closed
+
+17 October 2026. The verified native table has **98 CLOSED / 229 TO RESEARCH / 327 views**. This derivative removes exactly ALG-FIXED-PENCIL-CERTS, NEW-01, NEW-11 and NEW-15 after their already accepted bounded activity stopping conditions were applied and independently verified.
+
+The fixed-pencil closure retains only the accepted six-size certificate and named comparison. NEW-01 closes the bounded weak-norm/scale and sampling/rank-work comparison. NEW-11 closes classical attribution and the isolated exact-support/degeneracy/cost interface. NEW-15 closes the finite-witness/final-paper application comparison. Accepted proofs, fixed scopes, scores, classifications and broader related obligations remain unchanged. No new theorem, proof replay, discovery, novelty promotion or production completion is claimed.
+
+All **229 retained JSON record objects and raw CSV records are byte-identical** to the preceding index. Every prior source URL, gate, priority and relative order is preserved. The four closed records remain in the complete native table/history. The separately completed NEW-12 closure remains intact.
+
+Accepted source and reviews: [immutable closure packet](https://github.com/AgentSlop-Si/research/tree/23c91105840544473f44261152594ad5e0434d42/math/finalized/2026-10-17-four-accepted-activity-closures-2045). [Verified native application](../2026-10-17-four-accepted-activity-closures-2045/application/STATUS_APPLICATION.json). Previous index documentation follows verbatim.
+
+---
+
 # Current OPEN index: completed final-stage results
 
 17 October 2026. The native table has been independently verified at **94 CLOSED / 233 TO RESEARCH / 327 views**. This derivative removes only NEW-12 after its exact Fourier energy/metric primary comparison and qualified nonmatch satisfied the named stopping condition. It preserves NEW-12 in the full native history and makes no new theorem or worldwide-priority claim.
