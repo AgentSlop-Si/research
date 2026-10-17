@@ -1,0 +1,30 @@
+"""Fresh verifier of inert census bytes; own current-cycle code only."""
+import json,hashlib
+from pathlib import Path
+import n13_independent as I
+B=Path('/workspace/shared/n13_degree7_20261017'); O=Path(__file__).parent
+c=json.loads((B/'DEGREE7_CENSUS.json').read_text());e=json.loads((O/'N13_ENUMERATION.json').read_text())
+assert len(c['census'])==2756 and {(r['y'],r['lambda']) for r in c['census']}=={(y,l) for y in range(1,53) for l in range(53)}
+counts={};differences=[]
+for row in c['census']:
+ y=row['y'];lam=row['lambda'];h=row['H'];a,s=I.affine(y)
+ assert h==[(x+lam*t)%53 for x,t in zip(a,s)]+[1]
+ pw=[(I.ppower([0,1],r,h)+[0]*7)[:7] for r in range(13)]
+ mat=[]
+ for k in range(13):mat.append([I.G(1,1,k,3)*v%53 for v in pw[k]]+[I.G(-1,1,k,3)*pow(y,-k%13,53)%53,I.G(1,-1,k,3)*pow(y,k,53)%53]+[I.G(-1,-1,k,3)*v%53 for v in pw[-k%13]])
+ sol,rank=I.solve(mat,[I.f(k,3) for k in range(13)])
+ if sol is None:status='sector3_necessary_failure'
+ elif not h[0]:status='zero_support_root'
+ elif I.gcd(h,[(j*h[j])%53 for j in range(1,len(h))])!=[1]:status='repeated_support_root'
+ elif I.ppower([0,1],53**7,h)!=[0,1]:status='does_not_split_degree7'
+ else:
+  assert I.sectors(h,y) is not None;status='witness'
+ counts[status]=counts.get(status,0)+1
+ if status!=row['status']:differences.append({'pair':[y,lam],'author':row['status'],'independent':status})
+assert not differences,differences
+assert counts==c['counts']
+assert {(w['y'],w['lambda']) for w in c['witnesses']}=={(w['y'],w['lambda']) for w in e['full_sector_witnesses']}
+m=json.loads((B/'SHA256SUMS.json').read_text())
+assert all(hashlib.sha256((B/k).read_bytes()).hexdigest()==v for k,v in m.items())
+out={'status':'PASS','pairs':2756,'checks':'Every affine H, unique exhaustive pair coverage, literal full b3 linear system, guard/splitting status, and full sector survivors independently recomputed','counts':counts,'frozen_manifest_sha256':hashlib.sha256((B/'SHA256SUMS.json').read_bytes()).hexdigest(),'report_sha256':m['REPORT.md'],'source_files':len(m)}
+(O/'N13_CENSUS_BINDING.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(out,indent=2))
