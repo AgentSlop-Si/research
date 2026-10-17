@@ -1,3 +1,11 @@
+# Recovered bounded research and C03 metadata reconciliation — 17 October 2026
+
+The [recovered research packet](2026-10-17-recovered-research-0058/README.md) records a scoped heterogeneous-pair matching reduction, a supplemental balanced-base-conversion analysis, and the C03 assessment reconciliation. The [application receipt](2026-10-17-recovered-research-0058/C03_APPLICATION_RECEIPT.json) covers exactly two history-preserving native cells, S198 and T198. No owner status, score, proof status, discovery count, or open research obligation changes. The established census remains **88 closed / 239 open / 327 record views**.
+
+Earlier finalized-research documentation is preserved verbatim below as dated history.
+
+---
+
 # Current research cycle — 17 October 2026
 
 The [latest reviewed cycle](2026-10-17-research-finalization-0006/README.md) records exact N13 sixteen-bank attainment over quadratic and cubic extensions, degree-four transfer, the least extension degree two, two scoped primary-source comparisons and an independently reviewed supplemental grouped-Mersenne cost lemma. Broader parent obligations remain open.
