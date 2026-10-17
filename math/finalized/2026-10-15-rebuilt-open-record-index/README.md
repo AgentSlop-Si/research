@@ -1,3 +1,15 @@
+# Current open-record index: N13 attainment and structural comparisons
+
+17 October 2026. The census remains **88 closed / 239 open / 327 record views**. Four N13 owner views now record exact sixteen-bank attainment in degrees two, three and four, with minimum extension degree two; two structural owner views record completion of the four named primary-source comparisons. Their broader parent obligations remain open at their existing numerical priorities.
+
+Only these six existing objects have current gate, pass/stop and scientific source-reference changes. **The other 233 objects are unchanged**. All 239 IDs, order, row positions, titles, statuses and scores are preserved. CSV and JSON round-trip exactly. This is a targeted refresh, not a new proof audit of every open view.
+
+The native workbook also receives six navigation-only source-link repairs. Those new navigation URLs are deliberately excluded from this public index so no new native workbook identifier is exported. Existing public source metadata and earlier references are preserved.
+
+See the [cycle report](../2026-10-17-research-finalization-0006/README.md) and [verified application record](../2026-10-17-research-finalization-0006/APPLICATION_COMPLETE.md). Earlier documentation is preserved verbatim below as dated history.
+
+---
+
 # Current open-record index: bounded refinements and one activity archive
 
 The census is **239 open / 88 closed / 327 existing record views**. M-CRT-TRANSFER leaves active open-index selection only because its accepted current finite task is exhausted. Its native record, priority, evidence and complete history remain; broader sizes, bases, applications, numerical questions and historical priority remain unresolved or deferred.

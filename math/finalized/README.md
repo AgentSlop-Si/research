@@ -1,3 +1,11 @@
+# Current research cycle — 17 October 2026
+
+The [latest reviewed cycle](2026-10-17-research-finalization-0006/README.md) records exact N13 sixteen-bank attainment over quadratic and cubic extensions, degree-four transfer, the least extension degree two, two scoped primary-source comparisons and an independently reviewed supplemental grouped-Mersenne cost lemma. Broader parent obligations remain open.
+
+The [verified application record](2026-10-17-research-finalization-0006/APPLICATION_COMPLETE.md) covers **66 existing-cell updates** and a targeted refresh of six scientific objects in the [current open-record index](2026-10-15-rebuilt-open-record-index/README.md). Current census: **88 closed / 239 open / 327 record views**. No owner status or numerical priority changes. Earlier finalized-research documentation is preserved verbatim below as dated history.
+
+---
+
 # Latest bounded advances: ALG-032, ALG-039 and C10
 
 The [three-owner publication](2026-10-16-research-finalization-1749/README.md) records independently accepted even-affine single-sketch obstruction, polynomial tree-operator extension, and selected necessary row-subsystem solver results. Their parent comparison and construction obligations remain open.

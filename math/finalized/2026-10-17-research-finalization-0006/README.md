@@ -1,3 +1,9 @@
+# Applied and verified: 66 existing-cell updates
+
+The [application record](APPLICATION_COMPLETE.md) documents 60 history-preserving prefixes, six source-link repairs and a six-object scientific index refresh. The census remains **88 closed / 239 open / 327 views**; all existing owner statuses and numerical priorities are preserved. Earlier report-stage wording below is retained as dated history.
+
+---
+
 # Research cycle: bounded results and consistency repairs
 
 17 October 2026 UTC. This publication collects the independently reviewed scopes linked below. The canonical workbook census is **88 CLOSED / 239 TO RESEARCH / 327 record views**. All existing owner statuses and numerical priorities are retained. This report publication alone does not establish that proposed native edits were applied; consult the subsequent application receipt.
