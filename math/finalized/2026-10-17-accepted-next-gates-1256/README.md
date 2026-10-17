@@ -1,0 +1,12 @@
+# Accepted bounded mathematics and open research gates
+
+17 October 2026. The [scientific packet](scientific_packet/README.md) contains four separately accepted result groups. All 67 packet files and the four publication-review files are retained byte-for-byte. The [publication review](publication_review/PUBLICATION_REVIEW.md) binds the exact scientific allowlist; it is a publication/scope review, not a new mathematical execution.
+
+- F020: characteristic-zero ordinary squarefreeness and deflated-node separation at every residual for d=9 and d=25, using the inherited low-residual theorem. The all-A discriminant consequence also uses separately accepted overlap and local theorems. The finite-reduction-order sufficient criterion addresses ordinary squarefreeness only. Arbitrary-order residuals, characteristic-two paired support OPEN58, and general endpoint OPEN53 remain open. F020/F023 and priority 58 remain unchanged.
+- Weil: the negative-chirp formula gate on cyclic Z/qZ for q an odd prime power, over an exact coefficient field of characteristic different from its prime. Characteristic 2 is allowed. Corrected-candidate execution, the 13 derivative groups and wider implementation gates remain open. Existing ALG-WEIL-LOCAL and related Q18 remain distinct at priorities 42 and 37.
+- Mersenne Taylor packing: exact materialized-volume bounds, a degree-safe fixed-linear-state obstruction and the paid elementary invoice. This remains an unbound supplement, without a faster multiplication claim.
+- Streamed fused Taylor: an explicit exact producer and degree-safe linear observation-rank/state bounds. The stated schoolbook implementation has at least quadratic work for s<K. This remains an unbound supplement, without a general bit-complexity lower bound or near-output-size speed claim.
+
+See [proved versus open](scientific_packet/PROVED_AND_OPEN.md) for the exact scopes, evidence distinctions and limitations. The [separate supplements](../2026-10-17-research-supplements-1256/README.md) preserve their own review boundaries. No new canonical row, status, priority or historical-novelty promotion follows from publication. ALG034 is outside this release.
+
+Any later native application requires separately verified immutable source bytes, exact reviewed prefixes, fresh prewrite guards and an exact after-read. This directory alone does not record a native application. Private snapshots, native mappings and their fingerprints are excluded. Scientific content hashes remain as provenance.
