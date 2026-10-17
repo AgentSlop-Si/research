@@ -1,3 +1,13 @@
+# Current index: bounded F020 residuals and Weil formula gate
+
+17 October 2026. Three existing open records receive current-gate, pass/stop and retained-plus-appended scientific-source updates: F020, ALG-WEIL-LOCAL and related Q18. Every ID, order, title, status and priority is preserved. The other **234 record objects and raw CSV rows remain byte-identical**. Census remains **90 CLOSED / 237 TO RESEARCH / 327 views**.
+
+The [accepted mathematics packet](../2026-10-17-accepted-next-gates-1256/README.md) covers characteristic-zero F020 residuals at every primitive order-9 and order-25 root, retaining the inherited all-A proof inputs. Its separate finite-reduction-order criterion establishes ordinary squarefreeness only. Full paired support stays OPEN58 and general endpoint OPEN53. Weil acceptance is restricted to the negative-chirp formula gate on cyclic odd-prime-power indices; its exact coefficient field may have characteristic two under the root assumptions. Candidate execution, the 13 derivative groups and wider implementation gates remain open. ALG-WEIL-LOCAL and Q18 retain their distinct priorities 42 and 37; F020 remains 58.
+
+The [separate supplements](../2026-10-17-research-supplements-1256/README.md) retain their narrower paired-support-budget, Taylor prior-art, Newton representation/carry and R25 static/data scopes. Mersenne packing and the fused producer remain unbound mathematical supplements. No canonical row, broad lower bound, general speedup or historical-novelty promotion is added. Earlier documentation follows verbatim.
+
+---
+
 # Current index: F020 theorem and accepted-child reconciliation
 
 17 October 2026. Census remains **90 CLOSED / 237 TO RESEARCH / 327 views**. Four existing open owners receive only current-gate, pass/stop and scientific-source updates: F020, ALG-063, M-CUT-EXPANDER and Q18. All titles, positions, IDs, statuses and priorities are preserved. The other **233 record objects and raw CSV rows are byte-identical**.
