@@ -1,0 +1,688 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern,amsmath,amssymb,amsthm,mathtools}
+\usepackage[margin=0.86in]{geometry}
+\usepackage{microtype,booktabs,longtable,array,enumitem}
+\usepackage{xcolor,hyperref,fancyhdr}
+\definecolor{ink}{HTML}{153A56}
+\hypersetup{colorlinks=true,linkcolor=ink,urlcolor=ink,citecolor=ink,
+pdftitle={Rogers--Szego discriminants: removing the cyclotomic guards},
+pdfauthor={Research working note}}
+\pagestyle{fancy}\fancyhf{}\fancyhead[L]{\small Rogers--Szeg\H{o} discriminants}
+\fancyhead[R]{\small 17 October 2026}\fancyfoot[C]{\thepage}
+\setlength{\headheight}{14pt}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+\setlist{nosep,leftmargin=1.5em}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{remark}\newtheorem{remark}[theorem]{Remark}
+\newcommand{\He}{\operatorname{He}}
+\newcommand{\Disc}{\operatorname{Disc}}
+\newcommand{\Res}{\operatorname{Res}}
+\newcommand{\ord}{\operatorname{ord}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\F}{\mathbb{F}}
+\newcommand{\poch}[3]{(#1;#2)_{#3}}
+\title{\color{ink}Rogers--Szeg\H{o} discriminants:\\
+removing the cyclotomic guards}
+\author{Extension of the existing local-discriminant research}
+\date{17 October 2026}
+\begin{document}
+\maketitle
+\begin{abstract}
+The previous local ordinary-discriminant theorem required residual
+squarefreeness, separation, and simplicity of an auxiliary Hermite
+polynomial. We remove the auxiliary condition for every odd root order
+and every odd residual degree. We also remove the static conditions for
+all residual degrees at every odd prime order. Consequently the exact
+prime cyclotomic order of the Rogers--Szeg\H{o} ordinary discriminant is
+unconditional, in all degrees. The new arithmetic step proves that every
+root of an adjacent parity-Hermite Wronskian satisfies
+$v_2(y-1)=1/2$, excluding collisions over odd cyclotomic fields.
+The proof extends the earlier theorem; its local expansion and leading
+coefficient formulas are retained as established inputs.
+This is mathematical progress in the algebraic branch. It supplies no
+improved FFT complexity bound. Historical priority beyond the comparisons
+recorded here remains unresolved.
+\end{abstract}
+
+\section{The result and the exact gain}
+
+Define
+\[
+H_n(z;q)=\sum_{k=0}^n \genfrac{[}{]}{0pt}{}{n}{k}_q z^k,\qquad
+D_n(q)=\Disc_z H_n(z;q)\in\Z[q].
+\]
+Gaussian binomial coefficients are evaluated as polynomials, including
+at roots of unity. All discriminants use the ordinary derivative in
+$z$. Our convention is $\Disc(1)=\Disc(\text{monic linear})=1$.
+
+\begin{theorem}[Exact odd-prime cyclotomic orders]\label{thm:main}
+Let $p$ be an odd prime and write $n=Ap+b$, where $A\geq0$ and
+$0\leq b<p$. Then
+\[
+\boxed{\ord_{\Phi_p(q)}D_n(q)
+       =p\binom{A}{2}+A(b\bmod2).}
+\tag{1}
+\]
+Here the order is exact: one additional factor of $\Phi_p$ does not
+divide the remaining quotient. More generally, if $d=p^s$, $s\geq1$,
+and $n=Ad+b$ with $0\leq b<p$, then
+\[
+\boxed{\ord_{\Phi_d(q)}D_n(q)
+       =d\binom{A}{2}+A(b\bmod2).}
+\tag{2}
+\]
+For $A\geq1$, the complete leading coefficients in
+Section~\ref{sec:leading} are nonzero without extra hypotheses.
+\end{theorem}
+
+The prime-power statement deliberately retains $b<p$, rather than the
+larger range $b<d$. The theorem includes $A=0$, where the order is zero,
+and $n=0,1$ under the conventions above.
+
+The comparison with the previous checkpoint is precise. Version 3 of
+\emph{Local ordinary discriminants of Rogers--Szeg\H{o} polynomials at
+odd roots of unity}, dated 11 October 2026, assumes the following
+nonvanishing conditions:
+\[
+\begin{array}{ll}
+\text{even }b:&\Disc(G)\Res(F,G)\ne0,\\
+\text{odd }b:&g\ne0,\quad
+\Disc(U)\Res(F,U)\Disc(J_{A+1})\ne0,
+\end{array}
+\tag{3}
+\]
+where $F=1+z^d$, $G=H_b(z;\omega)$, $G=(z+1)U$ in the odd case,
+and $g=U(-1)$. A later accepted review removed every condition only
+for $b=1,3$. The extension here proves:
+
+\begin{center}
+\begin{tabular}{>{\raggedright\arraybackslash}p{0.30\linewidth}>{\raggedright\arraybackslash}p{0.59\linewidth}}
+\toprule
+Condition removed & Proven range\\
+\midrule
+$g\ne0$ & Every odd $d\geq3$ and odd $1\leq b<d$.\\
+$\Disc(J_{A+1})\ne0$ & The same full range, for every $A\geq1$.\\
+Residual squarefreeness and separation & Every $d=p^s$ with
+odd prime $p$ and $0\leq b<p$.\\
+All conditions together & Every odd prime $d=p$, every
+$0\leq b<p$, and every $A\geq1$.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Thus (1) extends the earlier result to an unconditional theorem
+uniform in the prime order, residual degree, and block count.
+
+\section{The overlap parameter for every odd residual}
+
+Fix an odd $d=2h+1\geq3$, a primitive $d$th root $\omega$, and
+$b=2r+1<d$. Use the original normalization
+\[
+W_b=\frac{\poch{\omega}{\omega}{b}}
+              {\poch{\omega^2}{\omega^2}{(d+b)/2}},
+\quad
+\tau_b=\frac{dW_b}{g_b},
+\quad
+J_{A+1}(x;\tau)
+=x\He_A(x)-A\tau\He_{A-1}(x).
+\tag{4}
+\]
+The Hermite polynomials are monic probabilists' Hermite polynomials:
+$\He_0=1$, $\He_1=x$, and
+$\He_{n+1}=x\He_n-n\He_{n-1}$.
+
+\begin{lemma}[Partial sums and nonreality]\label{lem:partial}
+Set
+\[
+t_k=\frac{\poch{\omega}{\omega^2}{k}}
+           {\poch{\omega^2}{\omega^2}{k}},
+\qquad S_j=\sum_{k=0}^j t_k.
+\]
+Then
+\[
+g_b=\poch{\omega^2}{\omega^2}{r}S_r\ne0,
+\qquad
+\boxed{\tau_b=\frac{S_h}{S_r}.}
+\tag{5}
+\]
+In the principal embedding $\omega=e^{2\pi i/d}$, one has
+$\operatorname{Im}\tau_b<0$. In particular $\tau_b$ is neither
+$0$ nor any rational real number.
+\end{lemma}
+
+\begin{proof}
+The classical Rogers--Szeg\H{o} recurrence and values at $-1$ are
+\[
+H_{n+1}=(1+z)H_n-z(1-q^n)H_{n-1},\qquad
+H_{2j}(-1;q)=\poch{q}{q^2}{j},\quad H_{2j+1}(-1;q)=0.
+\]
+Differentiate the recurrence with respect to $z$ at $z=-1$:
+\[
+g_{2r+1}(q)=\poch{q}{q^2}{r}
+              +(1-q^{2r})g_{2r-1}(q).
+\]
+Divide by $\poch{q^2}{q^2}{r}$ and induct from $g_1=1$.
+This proves the first identity in (5) wherever the denominators
+are nonzero. They are all nonzero at $\omega$, since $2r<d$.
+
+Put $E=\poch{\omega^2}{\omega^2}{h}$. Cancellation of the odd
+factors in (4) gives $W_b=\poch{\omega^2}{\omega^2}{r}/E$.
+Also $H_d(z;\omega)=1+z^d$, so the same derivative identity at
+$r=h$ gives $S_h=d/E$. This proves the ratio in (5).
+
+For the principal embedding, write $\theta=\pi/d$. Every factor
+has the exact phase giving
+\[
+t_k=a_k e^{-ik\theta},\qquad
+a_k=\prod_{j=1}^k
+\frac{\sin((2j-1)\theta)}{\sin(2j\theta)}>0.
+\tag{6}
+\]
+The arguments lie in $[-h\theta,0]\subset(-\pi/2,0]$.
+Hence $\operatorname{Re}S_r>0$, proving $g_b\ne0$.
+Moreover, since $r<h$,
+\[
+\operatorname{Im}\big((S_h-S_r)\overline{S_r}\big)
+=-\sum_{j=r+1}^{h}\sum_{k=0}^{r}
+a_ja_k\sin((j-k)\theta)<0.
+\]
+Divide by $|S_r|^2$ to obtain $\operatorname{Im}\tau_b<0$.
+The nonvanishing conclusions are algebraic, so they transfer to
+every primitive embedding. Nonreality transfers as well because
+cyclotomic automorphisms commute with complex conjugation.
+\end{proof}
+
+There is an additional exact symmetry. For the complementary odd
+residual $b'=d-b-1$,
+\[
+\tau_{b'}=\overline{\frac{\tau_b}{\tau_b-1}},\qquad
+|\tau_b-1|^2|\tau_{b'}-1|^2=1.
+\tag{7}
+\]
+Indeed $t_{h-k}=t_h\overline{t_k}$, $|t_h|=1$, and
+$S_h-S_r=t_h\overline{S_{h-r-1}}$. The principal-embedding
+quantities $|S_j|$ increase strictly, since every pair of terms in
+(6) makes an angle smaller than $\pi/2$. Therefore
+$|\tau_b-1|\leq1$ precisely when $2b\geq d-1$. This gave an initial
+extension to the upper half of the residual range. The arithmetic
+argument below removes that restriction entirely.
+
+\section{The new arithmetic step: a fixed half-integer valuation}
+
+Normalize every extension of the $2$-adic valuation by $v_2(2)=1$.
+Define integral monic parity polynomials
+\[
+\He_{2m}(x)=U_m(x^2),\qquad
+\He_{2m+1}(x)=xV_m(x^2).
+\]
+For either family $R=U$ or $R=V$, define
+\[
+\mathcal W_m^R(y)
+=R_m'(y)R_{m-1}(y)-R_m(y)R_{m-1}'(y),
+\qquad m\geq1.
+\]
+It is monic of degree $2m-2$; $\mathcal W_1^R=1$.
+
+\begin{theorem}[Exact valuation of parity-Wronskian roots]
+\label{thm:valuation}
+For $m\geq2$, every root $y$ of either $\mathcal W_m^U$ or
+$\mathcal W_m^V$, in an algebraic closure of $\Q_2$, satisfies
+\[
+\boxed{v_2(y-1)=\frac12.}
+\tag{8}
+\]
+Equivalently, the lower Newton polygon of
+$\mathcal W_m^R(1+z)$ is the single segment from $(0,m-1)$ to
+$(2m-2,0)$.
+\end{theorem}
+
+\begin{proof}
+Two steps of the Hermite recurrence give
+\begin{align*}
+U_{m+1}&=(y-4m-1)U_m-2m(2m-1)U_{m-1},\\
+V_{m+1}&=(y-4m-3)V_m-2m(2m+1)V_{m-1},
+\end{align*}
+with $U_0=V_0=1$, $U_1=y-1$, and $V_1=y-3$.
+Choose $\pi$ with $\pi^2=2$ and put
+\[
+P_m(X)=\pi^{-m}U_m(1+\pi X),\qquad
+Q_m(X)=\pi^{-m}V_m(1+\pi X).
+\]
+The exact scaled recurrences are
+\begin{align*}
+P_{m+1}&=(X-2\pi m)P_m-m(2m-1)P_{m-1},\\
+Q_{m+1}&=(X-\pi(2m+1))Q_m-m(2m+1)Q_{m-1}.
+\end{align*}
+Their initial values are $P_0=Q_0=1$, $P_1=X$, $Q_1=X-\pi$.
+Thus $P_m,Q_m$ belong to $\Z[\pi][X]$. Modulo the uniformizer
+$\pi$ of $\Q_2(\pi)$, both families reduce to
+\[
+\rho_m(X)=X^{m\bmod2}(X^2+1)^{\lfloor m/2\rfloor}
+\quad\text{in }\F_2[X].
+\tag{9}
+\]
+This follows directly from
+$\rho_{m+1}=X\rho_m+(m\bmod2)\rho_{m-1}$.
+
+The chain rule yields
+\[
+\pi^{-2m+2}\mathcal W_m^R(1+\pi X)
+=\widetilde R_m'\widetilde R_{m-1}
+ -\widetilde R_m\widetilde R_{m-1}',
+\tag{10}
+\]
+where $\widetilde R=P$ or $Q$. Differentiation commutes with
+reduction. In characteristic two, the derivative of the even-index
+$\rho$ is zero and that of the odd-index $\rho$ is the remaining
+power of $X^2+1$. Hence
+\[
+\pi^{-2m+2}\mathcal W_m^R(1+\pi X)
+\equiv (X^2+1)^{m-1}\pmod\pi.
+\tag{11}
+\]
+The polynomial on the left is monic and integral, with a unit constant
+coefficient. Every root $X$ has valuation zero: a negative valuation
+would make the leading monomial the unique term of least valuation;
+a positive valuation would make the constant term the unique such
+term. Either is incompatible with a zero sum.
+Since $y-1=\pi X$, (8) follows.
+
+For the Newton-polygon statement, write
+$\mathcal W_m^R(1+z)=\sum_j c_jz^j$.
+Integrality in (10) says
+$v_2(c_j)\geq m-1-j/2$; (11) makes the constant coefficient
+attain equality, while the leading coefficient is $1$.
+These facts give exactly the stated segment.
+\end{proof}
+
+\begin{theorem}[Collision exclusion over unramified fields]
+\label{thm:unramified}
+Let $K\subseteq\Q_2^{\mathrm{nr}}$, the maximal unramified algebraic
+extension of $\Q_2$, and let $\tau\in K$. For every $A\geq1$,
+\[
+\begin{array}{ll}
+A\text{ odd}:&
+J_{A+1}(x;\tau)\text{ is squarefree}\ \Longleftrightarrow\ \tau\ne0,\\[2pt]
+A\text{ even}:&
+J_{A+1}(x;\tau)\text{ is squarefree}\ \Longleftrightarrow\ \tau\ne-1/A.
+\end{array}
+\tag{12}
+\]
+\end{theorem}
+
+\begin{proof}
+Suppose first that $x\ne0$ is a repeated root. Consecutive Hermite
+polynomials are coprime by their recurrence, so
+$\He_{A-1}(x)\ne0$. Differentiate $J$ and eliminate $\He_A$:
+\[
+J'=(1+A\tau)\He_A+A(1-\tau)x\He_{A-1},\qquad
+(\tau-1)x^2=\tau(A\tau+1).
+\tag{13}
+\]
+If $\tau=1$, the last equality contradicts $A+1\ne0$.
+Otherwise
+\[
+y=x^2=\frac{\tau(A\tau+1)}{\tau-1}\in K.
+\tag{14}
+\]
+For $A=2m-1$ or $A=2m$, respectively,
+\begin{align*}
+J_{2m}(x;\tau)&=U_m(y)-A(\tau-1)U_{m-1}(y),\\
+J_{2m+1}(x;\tau)&=x\bigl(V_m(y)-A(\tau-1)V_{m-1}(y)\bigr).
+\end{align*}
+Since $x\ne0$, repetition gives a common root of the relevant
+polynomial in $y$ and its derivative. Eliminating $A(\tau-1)$
+gives $\mathcal W_m^R(y)=0$. For $m=1$ this is impossible because
+the Wronskian is $1$. For $m\geq2$, Theorem~\ref{thm:valuation}
+contradicts $y\in K$: an unramified extension has integer
+valuation group.
+
+It remains to consider zero. If $A$ is odd,
+$J(0)=-A\tau\He_{A-1}(0)$, and the even Hermite value is nonzero.
+Thus zero is a root only for $\tau=0$; then $J=x\He_A$ has a
+double zero. If $A$ is even, $J$ is odd and
+$J'(0)=(1+A\tau)\He_A(0)$, giving exactly $\tau=-1/A$.
+All nonzero roots have already been treated. The small cases are
+$J_2=x^2-\tau$ and $J_3=x(x^2-1-2\tau)$, consistent with (12).
+\end{proof}
+
+\begin{corollary}[All odd-root-order overlap guards]\label{cor:allJ}
+For every odd $d\geq3$, every primitive $d$th root $\omega$, every
+odd $1\leq b<d$, and every $A\geq1$,
+\[
+g_b\ne0,\qquad \Disc_xJ_{A+1}(x;\tau_b)\ne0.
+\tag{15}
+\]
+\end{corollary}
+
+\begin{proof}
+An odd cyclotomic field embeds into an unramified extension of
+$\Q_2$. Explicitly, choose $f$ with $d\mid2^f-1$; a residue-field
+element of order $d$ has a unique Hensel lift among the roots of
+$X^d-1$ in the degree-$f$ unramified extension, since $d$ is odd.
+Lemma~\ref{lem:partial} excludes both rational exceptional parameters
+in (12). Apply Theorem~\ref{thm:unramified}.
+\end{proof}
+
+\section{Removing the static conditions at prime orders}
+
+\begin{theorem}[Prime-power static nonvanishing]\label{thm:static}
+Let $d=p^s$ with $p$ an odd prime, and let $0\leq b<p$.
+For a primitive $d$th root $\omega$, $H_b(z;\omega)$ is squarefree.
+If $b$ is even, it is relatively prime to $1+z^d$.
+If $b$ is odd and $H_b=(z+1)U_b$, then $U_b$ is squarefree,
+$U_b(-1)\ne0$, and $\Res(1+z^d,U_b)\ne0$.
+\end{theorem}
+
+\begin{proof}
+The recurrence gives an integral Hermite initial form. Substitute
+$q=1+t^2$, $z=-1+tx$ and induct:
+\[
+H_b(-1+tx;1+t^2)=t^b K_b(x,t),\qquad
+K_b\in\Z[x,t],\quad K_b(x,0)=\He_b(x).
+\tag{16}
+\]
+The polynomial $K_b$ is monic in $x$. Taking discriminants gives
+\[
+D_b(1+t^2)=t^{b(b-1)}\Disc_x K_b(x,t).
+\]
+Therefore
+\[
+D_b(q)=(q-1)^{b(b-1)/2}V_b(q),\qquad
+V_b\in\Z[q],\qquad V_b(1)=\prod_{j=1}^b j^j.
+\tag{17}
+\]
+Here $\Disc(\He_b)=\prod_{j=1}^b j^j$ is the classical Hermite
+discriminant, also obtained from $\He_b'=b\He_{b-1}$ and the
+recurrence for consecutive resultants.
+
+If $D_b(\omega)=0$, then $V_b(\omega)=0$, because $\omega\ne1$.
+The monic minimal polynomial $\Phi_{p^s}$ divides $V_b$ in
+$\Z[q]$. At $q=1$ this forces
+$p=\Phi_{p^s}(1)\mid\prod_{j=1}^b j^j$, impossible since $b<p$.
+This proves squarefreeness.
+
+All roots of $1+z^d$ are $-\omega^j$, $0\leq j<d$.
+For $b=2r+1$, the identity $H_b(-1;q)=0$ gives
+$H_b(z;q)=(z+1)U_b(z;q)$ in $\Z[z,q]$.
+Dividing (16) by $tx$ gives
+\[
+U_b(-1+tx;1+t^2)=t^{2r}L_b(x,t),\qquad
+L_b(x,0)=\He_b(x)/x.
+\]
+For each $j\geq0$, substitute
+$x_j(t)=(1-(1+t^2)^j)/t\in t\Z[t]$.
+It follows, as an identity of integral polynomials, that
+\[
+U_b(-q^j;q)=(q-1)^rB_{b,j}(q),\qquad
+B_{b,j}(1)=(-1)^r b!!.
+\tag{18}
+\]
+The integrality of the quotient follows from division by the monic
+polynomial $(q-1)^r$. If $U_b(-\omega^j;\omega)=0$, then
+$\Phi_{p^s}\mid B_{b,j}$, forcing $p\mid b!!$, again impossible.
+This includes $j=0$ and proves every odd residual condition.
+
+For $b=2r$, the same substitution directly in (16) gives
+\[
+H_b(-q^j;q)=(q-1)^rC_{b,j}(q),\qquad
+C_{b,j}(1)=(-1)^r(2r-1)!!.
+\tag{19}
+\]
+Its value cannot be divisible by $p>b$, proving separation.
+For $b=0$ the polynomial is $1$; for $b=1$ the quotient $U_b$ is
+$1$. Both boundary cases agree with the argument.
+\end{proof}
+
+\section{Composition with the existing local theorem}\label{sec:leading}
+
+We now state the established local expansion in the notation needed
+to compose the new results. Equations (20)--(25) are used under
+conditions (3), now proved automatically for $d=p^s$ and $b<p$.
+Fix odd $d$, $n=Ad+b$, $A\geq1$,
+and use
+\[
+q(\eps)=\omega(1+\eps^2)^{1/d},\qquad q(\eps)^d-1=\eps^2,
+\quad F=1+z^d,\quad G=H_b(z;\omega),\quad
+\mathcal P_A=\prod_{j=1}^A j^j.
+\]
+At a separated fixed root $\alpha$ of $F$, the existing theorem gives
+\[
+H_n(\alpha+\eps x;q(\eps))
+=\eps^A(-1)^A d^{A/2}G(\alpha)
+ \He_A\!\left(\frac{\sqrt d\,x}{\alpha}\right)
++O(\eps^{A+1}).
+\tag{20}
+\]
+At the simple overlap $-1$ for odd $b$, it gives
+\[
+H_n(-1+\eps x;q(\eps))
+=\eps^{A+1}d^{(A-1)/2}g
+ J_{A+1}(\sqrt d\,x;\tau_b)+O(\eps^{A+2}).
+\tag{21}
+\]
+These are the prior version-3 results, not claimed as new here.
+The conditions in (3) ensure that the initial roots are distinct
+and that the root clusters account for the full degree.
+
+For even $b$, define $M_{\rm sep}=dA(A-1)/2$. The previous
+root-cluster calculation gives
+\[
+D_n(q(\eps))=\eps^{2M_{\rm sep}}
+ \bigl(C_{\rm sep}+O(\eps^2)\bigr),
+\]
+\[
+\boxed{
+C_{\rm sep}=(-1)^{A(d-1)/2}
+d^{dA(A+1)/2}\mathcal P_A^d
+\Disc(G)\Res(F,G)^{2A}.}
+\tag{22}
+\]
+For odd $b$, write $G=(z+1)U$, $g=U(-1)$ and
+$M_{\rm ov}=dA(A-1)/2+A$. Then
+\[
+D_n(q(\eps))=\eps^{2M_{\rm ov}}
+ \bigl(C_{\rm ov}+O(\eps^2)\bigr),
+\]
+\begin{align}
+\boxed{\begin{aligned}
+C_{\rm ov}={}&(-1)^{A(d-1)/2}
+d^{dA(A+1)/2+A}\mathcal P_A^{d-1}
+\Disc(J_{A+1})\\[-2pt]
+&{}\cdot\Disc(U)\Res(F,U)^{2A}g^2.
+\end{aligned}}
+\tag{23}
+\end{align}
+
+For $d=p^s$ and $b<p$, Theorem~\ref{thm:static} makes all static
+factors nonzero; Corollary~\ref{cor:allJ} supplies the remaining
+odd-case factor. Hence (22) or (23) is nonzero, proving (2).
+The prime case gives (1). For $A=0$, Theorem~\ref{thm:static}
+directly gives $D_b(\omega)\ne0$.
+
+The parameter conversion is material. If $M$ is the relevant order
+and $C$ the coefficient in (22) or (23), then
+\[
+\lim_{q\to\omega}\frac{D_n(q)}{(q^d-1)^M}=C,
+\qquad
+\lim_{q\to\omega}\frac{D_n(q)}{(q-\omega)^M}
+=C(d\omega^{-1})^M.
+\tag{24}
+\]
+For the polynomial factor $\Phi_d(q)$ itself,
+\[
+\left.\frac{D_n(q)}{\Phi_d(q)^M}\right|_{q=\omega}
+=C\left(\frac{d\omega^{-1}}{\Phi_d'(\omega)}\right)^M\ne0.
+\tag{25}
+\]
+No coefficient in one local parameter has been substituted for a
+coefficient in another.
+For $d=p^s$, the identity
+$(q^d-1)/\Phi_d(q)=q^{d/p}-1$ simplifies (25) to
+\[
+\boxed{\left.\frac{D_n(q)}{\Phi_d(q)^M}\right|_{q=\omega}
+=C(\omega^{d/p}-1)^M.}
+\]
+At prime order $d=p$, the conversion factor is simply $(\omega-1)^M$.
+
+\section{Examples and immediate consequences}
+
+Equation (1) applies to all odd prime factors, without an exceptional
+residual list. Several examples beyond the old $b=1,3$ result are:
+\begin{center}
+\begin{tabular}{rrrrl}
+\toprule
+$p$ & $A$ & $b$ & $n$ & Exact $\Phi_p$ order\\
+\midrule
+7 & 1 & 5 & 12 & $1$\\
+7 & 2 & 5 & 19 & $9$\\
+11 & 1 & 5 & 16 & $1$\\
+11 & 2 & 7 & 29 & $13$\\
+13 & 3 & 5 & 44 & $42$\\
+11 & 2 & 6 & 28 & $11$\\
+\bottomrule
+\end{tabular}
+\end{center}
+These are substitutions into the proven formula, not six independent
+claims inferred from experiments. In particular, for every $A\geq0$,
+\[
+\ord_{\Phi_{11}}D_{11A+7}
+=\frac{11A^2-9A}{2}.
+\]
+
+There is also a useful formal decomposition. Put
+$e_p(n)=p\binom{\lfloor n/p\rfloor}{2}
++\lfloor n/p\rfloor((n\bmod p)\bmod2)$. Then
+\[
+D_n(q)=
+\left(\prod_{\substack{p\leq n\\p\text{ odd prime}}}
+\Phi_p(q)^{e_p(n)}\right)R_n(q),\qquad R_n\in\Z[q],
+\]
+and no odd-prime cyclotomic polynomial divides $R_n$.
+This does not identify the remaining composite-order factors or the
+noncyclotomic part of $R_n$.
+
+\section{Verification, source comparison, and scope}
+
+The general statements above rest on the proofs. Finite calculations
+were used to identify the arithmetic mechanism and to check
+normalizations. They are supplied as short, standard-library Python
+programs, with exact integer, rational, or finite-field arithmetic.
+The partial-sum controls test the cyclotomic identities independently
+of the complex sector proof. The static controls reconstruct small
+ordinary discriminants and the integral node quotients in
+(17)--(19), and include the excluded boundary $b=p$.
+The parity-Wronskian argument has been checked by a second derivation:
+an integral recurrence proves
+$\mathcal W_m^R(1+2u)\equiv2^{m-1}\pmod{2^m}$, which independently
+excludes unramified roots. The stronger proof in
+Theorem~\ref{thm:valuation} determines their exact valuation.
+
+One independent control reconstructs the actual $H_{12}$ and its first
+$q$-derivative in $\Q(\omega)$, where $\omega$ has order $7$.
+Using the reciprocal factorization
+$H_{12}(z;q)=z^6R(z+z^{-1};q)$ and
+$D_{12}=R(2)R(-2)\Disc(R)^2$, it computes the entire local
+coefficient and confirms exactly
+\[
+D_{12}'(\omega)=7\omega^{-1}C_{\rm ov}\ne0
+\qquad(A=1,\ b=5).
+\]
+Both the $q^7-1$ and $\Phi_7(q)$ conversions also pass.
+This tests the sign and all powers in a complete case beyond the
+previous $b=1,3$ families. The accompanying composition review checks
+all boundary cases and the precise prime-power restriction.
+
+The comparison made in this work is bounded and explicit:
+\begin{itemize}
+\item The classical Gaussian-binomial recurrence, the Hermite
+recurrence and discriminant, and the Hermite--Laguerre quadratic
+relations are established inputs. They are not originality claims.
+\item Sawa and Uchida's published Theorem 3.6 gives discriminants of
+$L_m^{(\alpha)}+cL_{m-1}^{(\alpha)}$. Our parity family fits it with
+$A+1=2m+s$, $\alpha=s-\tfrac12$ and
+$c=A(\tau-1)/(2m)$. Thus the general quasi-Laguerre discriminant
+formula is not new. The additional assertion proved here is the
+exclusion of its nonzero collision parameters over unramified
+$2$-adic fields, and its use for the RS parameters.
+\item Grosu and Grosu's Theorem 7 gives Newton-slope bounds for
+Wronskian Hermite polynomials at primes
+$p>\max\{2,2m-1\}$, with an additional Vandermonde condition.
+Their Theorem 8 uses odd moduli. Those stated results do not
+directly cover the shifted valuation at $p=2$ in (8).
+\item Bonneux, Dunning and Stevens give broad coefficient formulas
+and Hermite--Laguerre Wronskian correspondences. The formulas are
+relevant prior work; the present short proof does not establish
+that no equivalent valuation consequence exists elsewhere.
+\item Lubinsky and Saff's 1987 paper is relevant to static
+Rogers--Szeg\H{o} zeros and root-of-unity specializations.
+The publisher's abstract and the author's publication record were
+checked. The complete relevant body was unavailable in this session,
+so no assertion of nonoverlap with every theorem in that paper
+is made.
+\end{itemize}
+
+The exact project increment is therefore secure relative to the
+version-3 theorem and the accepted two-residual review: their
+unresolved hypotheses have been removed in the ranges stated above.
+The stronger arithmetic lemma is a candidate for publication-level
+novelty, subject to a complete literature comparison.
+
+For a general odd composite $d$, (15) holds in the full odd residual
+range, but the two static conditions remain open here outside
+Theorem~\ref{thm:static}. Nothing in this note treats even $d$, gives a
+positive-characteristic version of the main theorem, or supplies a
+uniform numerical conditioning estimate as $n$ grows.
+In particular, the original arbitrary-input FFT target and its
+exponent $\kappa$ remain unchanged.
+
+\clearpage
+\section*{References and previous research inputs}
+\begingroup\small\raggedright
+\begin{enumerate}[label={[\arabic*]},leftmargin=2em]
+\item \emph{Local ordinary discriminants of Rogers--Szeg\H{o}
+polynomials at odd roots of unity}, working note version 3,
+11 October 2026, Section 3, equations (1)--(10).
+Retained source identity:\par
+\nolinkurl{private-source-locator-omitted}.
+\item \emph{RS overlap simplicity: independent mathematical review},
+accepted two-subfamily theorem, 11 October 2026.
+Retained source identity:\par
+\nolinkurl{private-source-locator-omitted}.
+\item NIST Digital Library of Mathematical Functions,
+\href{https://dlmf.nist.gov/18.7}{Section 18.7}
+and \href{https://dlmf.nist.gov/18.9}{Section 18.9}.
+\item M. Sawa and Y. Uchida,
+\emph{Discriminants of classical quasi-orthogonal polynomials
+with application to Diophantine equations},
+Journal of the Mathematical Society of Japan 71 (2019), 831--860.
+\href{https://www.jstage.jst.go.jp/article/jmath/71/3/71_831/_pdf}
+{Published primary text}, Theorem 3.6, p.~845.
+The preprint is \href{https://arxiv.org/abs/1802.00605}{arXiv:1802.00605}.
+\item C. Grosu and C. Grosu,
+\emph{The irreducibility of some Wronskian Hermite polynomials},
+\href{https://arxiv.org/html/2007.00065v1}{arXiv:2007.00065v1},
+Theorems 7--8 and Section 4.
+\item N. Bonneux, C. Dunning and M. Stevens,
+\emph{Coefficients of Wronskian Hermite polynomials},
+\href{https://arxiv.org/abs/1909.03874}{arXiv:1909.03874}.
+\item N. Bonneux and M. Stevens,
+\emph{Recurrence relations for Wronskian Laguerre polynomials},
+\href{https://arxiv.org/abs/1905.12312}{arXiv:1905.12312}.
+\item D. S. Lubinsky and E. B. Saff,
+\emph{Convergence of Pad\'e approximants of partial theta functions
+and the Rogers--Szeg\H{o} polynomials},
+Constructive Approximation 3 (1987), 331--361,
+\href{https://doi.org/10.1007/BF01890574}{doi:10.1007/BF01890574}.
+Publisher abstract and author bibliography inspected; full-body
+comparison remains incomplete.
+\end{enumerate}
+\endgroup
+\end{document}
