@@ -1,3 +1,15 @@
+# Current OPEN index: completed final-stage results
+
+17 October 2026. The native table has been independently verified at **94 CLOSED / 233 TO RESEARCH / 327 views**. This derivative removes only NEW-12 after its exact Fourier energy/metric primary comparison and qualified nonmatch satisfied the named stopping condition. It preserves NEW-12 in the full native history and makes no new theorem or worldwide-priority claim.
+
+ALG-034 remains open at priority 48. Its bounded genuine-producer binding and semantic replay are complete, with trusted-program/resource limits. The current adapter cannot admit a theorem-sparse instance; wider producer/adapter deployment and valid downstream integration remain open. FUS-06 remains open at priority 37. The conditioning obstruction applies only to the source-bound compact-parameter family, canonical positive embedding and unscaled square Vandermonde. Broader stability, basis/rescaling, preparation and executor questions remain separate.
+
+Only those two retained records have refreshed current-gate/pass-stop text and appended immutable evidence URLs. Their earlier URLs and all other fields are retained. The other **231 record objects and raw CSV records remain byte-identical**. The accepted binary-packing result stays an unbound supplement with its mandatory centering clarification; no existing packing owner or new row is inferred. All other queued closures are excluded.
+
+Completed source and final reviews: [immutable result packet](https://github.com/AgentSlop-Si/research/tree/e7d11e0060f146d1893a7cdba9bbb66c00c50c6e/math/finalized/2026-10-17-completed-research-results-1603). The [native application evidence](../2026-10-17-completed-research-results-1603/application/STATUS_APPLICATION.json) records the narrow update and verified readback. Previous index documentation follows verbatim.
+
+---
+
 # Current OPEN index: three completed activities archived
 
 17 October 2026. ALG-024, ALG-080 and F132 have been closed only as their independently reviewed completed research activities. This derivative removes those three records from its TO RESEARCH selection. All **234 retained JSON record objects and raw CSV records remain byte-identical**, including the preceding F020, ALG-WEIL-LOCAL and Q18 updates. The complete catalogue, 327 workflow views, all source history, accepted proofs and numerical priorities remain intact. Current census: **93 CLOSED / 234 TO RESEARCH / 327 views**.
