@@ -1,0 +1,13 @@
+# Next ten open activities: independently accepted bounded audit
+
+17 October 2026. Separate additive supplement to the accepted finalization checkpoints. The [scientific packet](scientific_packet/REPORT.md) is author-final and [independently accepted](scientific_packet/INDEPENDENT_REVIEW.md); all eight files, including its manifest, are copied unchanged from that accepted packet.
+
+The exact disposition is one proposed completed-activity archive for F132 and nine selected owners retained open. This publication candidate applies no status changes. F132 retains priority 15 as historical/inactive if a later archival is verified. Its accepted positive finite-word theorem is preserved. The frozen eager-design resource refusal is not a theorem refutation or a proof that every changed design is impossible.
+
+Q01 remains open at priority 15. Its named FG2013/complete-contract historical-priority question and the general numerical executor, complete coefficients/tables, fixed-word or paid multiword costs, literal wrapper/backend budgets, fallback and full outputs remain unresolved. The already completed FG2009 comparison is not redispatched.
+
+For the frozen nonzero eager all-length path, the accepted audit records v >= 704, N >= 2^701 + 1 and response cardinality exceeding 2^352. Preparation caps and output-write caps impose distinct refusals. Zero/scalar fallbacks are not excluded by preparation caps alone. The literal source cap M = 2^704 passes the v704 response-cardinality check; complete preparation remains unverified. Consult the unchanged scientific report and review for all quantifiers and qualifications.
+
+No native plan is silently added to the separate ALG-024/ALG-080 two-owner proposal. A future F132 status write or combined plan needs its own exact accepted scope, immutable evidence binding, fresh target/census/metadata guards and independent complete readback. No active-open derivative changes before that verification. Every original record, source, proof, score and historical correction stays preserved; no new theorem, discovery or duplicate child credit is claimed.
+
+[MANIFEST.json](scientific_packet/MANIFEST.json) pins the original seven scientific/review artifacts. [SAFE_MANIFEST.json](SAFE_MANIFEST.json) additionally pins that unchanged manifest and this wrapper. No raw archive, private native material or actual executor path is published. This assembly does not execute historical research code or reproduce prior scientific test counts. External publication, native application and index synchronization remain distinct later gates described in the [main gate plan](../2026-10-17-finalization-checkpoints-1320/GATE_PLAN.json).
