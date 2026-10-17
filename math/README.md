@@ -43,3 +43,5 @@ Original numeric arrays and compressed numeric certificates are included as iner
 Original source hashes identify the evidence before publication cleanup. Export hashes identify the actual bytes here. Files with private-link/path or metadata cleanup can differ from their source; redacted code has not been revalidated and may require local path repair. Historical internal manifests refer to their original packages. The top-level [SHA256SUMS](SHA256SUMS) and export manifests are authoritative for this tree.
 
 No blanket redistribution license is assigned by this export. Public scholarly references remain cited. Third-party papers and separately identified upstream code were omitted where redistribution/attribution packaging was not established.
+
+- [R19 conditional comparator review](2026-10-17-r19-conditional-comparator-review/README.md): stated moment independently rechecked; exact-array physical/interface obligations remain open; no status or score upgrade.
