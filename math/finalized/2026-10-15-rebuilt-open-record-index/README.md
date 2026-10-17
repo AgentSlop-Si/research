@@ -1,3 +1,13 @@
+# Current open-record index: affine comparison completed
+
+17 October 2026. The verified census is **89 CLOSED / 238 TO RESEARCH / 327 record views**. M-AFFINE-STEP leaves active open-index selection after its bounded theorem/comparison stage meets the recorded stop. Its native record and historical priority 42 remain. Non-affine routing, free-DAG costs, production readiness and worldwide priority are not resolved by this closure.
+
+ALG-049 now records the fixed-prefix nonuniform Möbius exclusion; ALG-064 records the supplied-dyadic residual-aware numerical evaluator. Both remain open at priority 42. Only their current gates, pass/stop conditions and scientific source URLs change; **the other 236 retained objects are unchanged**. CSV and JSON round-trip exactly. This targeted refresh is not a full proof audit of all open views.
+
+See the [three-result report](../2026-10-17-research-finalization-0110/README.md) and [verified application](../2026-10-17-research-finalization-0110/APPLICATION_COMPLETE.md). Earlier documentation follows unchanged as dated history.
+
+---
+
 # Current open-record index: N13 attainment and structural comparisons
 
 17 October 2026. The census remains **88 closed / 239 open / 327 record views**. Four N13 owner views now record exact sixteen-bank attainment in degrees two, three and four, with minimum extension degree two; two structural owner views record completion of the four named primary-source comparisons. Their broader parent obligations remain open at their existing numerical priorities.

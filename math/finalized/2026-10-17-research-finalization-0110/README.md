@@ -1,3 +1,11 @@
+# Application complete: 89 closed / 238 open
+
+The three accepted results below have been published at immutable report commit `5f76c073d35877c12d4d57be1e5e0cb3321dfa35` and applied to the native workbook with independent exact postwrite verification. Only M-AFFINE-STEP closes its bounded theorem/comparison stage; historical priority 42 remains. ALG-049 and ALG-064 stay open at priority 42.
+
+The [application record](APPLICATION_COMPLETE.md) binds the exact plan and preservation receipts. The [current open index](../2026-10-15-rebuilt-open-record-index/README.md) has 238 records. The original reports-first statement below remains as dated publication history, not the current application state.
+
+---
+
 # ALG-049, ALG-064 and affine-step scoped finalization
 
 17 October 2026. These reports have [independent, artifact-bound scoped acceptance](independent_review/README.md). This is the reports-first publication; native application and the later census/index refresh are documented by separate application receipts when completed. The baseline census is 88 CLOSED / 239 TO RESEARCH / 327 scoped record views. Repository access is unchanged.

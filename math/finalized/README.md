@@ -1,3 +1,13 @@
+# Latest verified results: Möbius exclusion, certified evaluator and affine completion
+
+17 October 2026. [Three scoped results and their independent reviews](2026-10-17-research-finalization-0110/README.md) are published and applied with exact native readback. Only M-AFFINE-STEP closes its current theorem/comparison stage. ALG-049 and ALG-064 remain open, with their new bounded results recorded and all numerical priorities retained.
+
+The current census is **89 closed / 238 open / 327 existing record views**. The [open-record index](2026-10-15-rebuilt-open-record-index/README.md) removes only the completed affine stage, refreshes the two open owners and retains the other 236 objects unchanged. [Application details and preservation checks](2026-10-17-research-finalization-0110/APPLICATION_COMPLETE.md).
+
+Earlier finalized documentation is preserved verbatim below.
+
+---
+
 # Recovered bounded research and C03 metadata reconciliation — 17 October 2026
 
 The [recovered research packet](2026-10-17-recovered-research-0058/README.md) records a scoped heterogeneous-pair matching reduction, a supplemental balanced-base-conversion analysis, and the C03 assessment reconciliation. The [application receipt](2026-10-17-recovered-research-0058/C03_APPLICATION_RECEIPT.json) covers exactly two history-preserving native cells, S198 and T198. No owner status, score, proof status, discovery count, or open research obligation changes. The established census remains **88 closed / 239 open / 327 record views**.
