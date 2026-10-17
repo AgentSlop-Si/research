@@ -1,3 +1,13 @@
+# Latest verified results: positive-phase completion and two construction gates
+
+17 October 2026. [Three accepted results and independent reviews](2026-10-17-research-finalization-0126/README.md) are published and applied. Only M-POSITIVE-PHASE closes its current theorem/comparison activity. ALG-063 and M-CUT-EXPANDER remain open with bounded recognition and coefficient results recorded; all numerical priorities remain.
+
+The census is **90 closed / 237 open / 327 existing record views**. The [open index](2026-10-15-rebuilt-open-record-index/README.md) removes only positive-phase, refreshes the two open owners and retains 235 other objects unchanged. [Application and preservation evidence](2026-10-17-research-finalization-0126/APPLICATION_COMPLETE.md).
+
+Earlier finalized documentation is preserved verbatim below.
+
+---
+
 # Latest verified results: Möbius exclusion, certified evaluator and affine completion
 
 17 October 2026. [Three scoped results and their independent reviews](2026-10-17-research-finalization-0110/README.md) are published and applied with exact native readback. Only M-AFFINE-STEP closes its current theorem/comparison stage. ALG-049 and ALG-064 remain open, with their new bounded results recorded and all numerical priorities retained.

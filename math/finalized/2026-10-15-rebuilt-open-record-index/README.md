@@ -1,3 +1,13 @@
+# Current open-record index: positive-phase comparison completed
+
+17 October 2026. The verified census is **90 CLOSED / 237 TO RESEARCH / 327 record views**. M-POSITIVE-PHASE leaves active open-index selection after its bounded positive-middle theorem/comparison stage meets the recorded stop. Its native record and historical priority 42 remain. Exact mask bit complexity, production work, general-input speed and worldwide priority are not resolved by this closure.
+
+ALG-063 records the raw-input sparse-or-twisted-residual recognizer/evaluator; M-CUT-EXPANDER records explicit finite coefficient attainment and the homogeneous-weight obstruction. Both stay open at priority 42. Only their gates, pass/stop conditions and scientific URLs change; **the other 235 retained objects are unchanged**. CSV and JSON round-trip exactly. This is a targeted refresh, not a full proof audit.
+
+See the [three-result report](../2026-10-17-research-finalization-0126/README.md) and [verified application](../2026-10-17-research-finalization-0126/APPLICATION_COMPLETE.md). Earlier documentation follows unchanged as dated history.
+
+---
+
 # Current open-record index: affine comparison completed
 
 17 October 2026. The verified census is **89 CLOSED / 238 TO RESEARCH / 327 record views**. M-AFFINE-STEP leaves active open-index selection after its bounded theorem/comparison stage meets the recorded stop. Its native record and historical priority 42 remain. Non-affine routing, free-DAG costs, production readiness and worldwide priority are not resolved by this closure.

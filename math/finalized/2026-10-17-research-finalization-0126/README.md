@@ -1,3 +1,11 @@
+# Application complete: 90 closed / 237 open
+
+The three accepted results below are published at immutable report commit `1ae2d0f6c7d675d17400ab474c405785f8b216cb` and applied with exact native postwrite verification. Only M-POSITIVE-PHASE closes its bounded theorem/comparison activity; historical priority 42 remains. ALG-063 and M-CUT-EXPANDER stay open at priority 42.
+
+See [application evidence](APPLICATION_COMPLETE.md) and the [237-record open index](../2026-10-15-rebuilt-open-record-index/README.md). The reports-first statement below remains unchanged as dated publication history, not the current application state.
+
+---
+
 # Positive-phase comparison, raw-input recognition and explicit cut coefficients
 
 17 October 2026. Three bounded results have independent artifact-bound acceptance. This is a reports-first publication; native application and the resulting index/census changes require separate exact plan, guard and readback receipts. The current baseline is 89 CLOSED / 238 TO RESEARCH / 327 existing record views. Repository access is unchanged.
