@@ -1,3 +1,13 @@
+# Current OPEN index: three completed activities archived
+
+17 October 2026. ALG-024, ALG-080 and F132 have been closed only as their independently reviewed completed research activities. This derivative removes those three records from its TO RESEARCH selection. All **234 retained JSON record objects and raw CSV records remain byte-identical**, including the preceding F020, ALG-WEIL-LOCAL and Q18 updates. The complete catalogue, 327 workflow views, all source history, accepted proofs and numerical priorities remain intact. Current census: **93 CLOSED / 234 TO RESEARCH / 327 views**.
+
+ALG-024 retains its completed supporting-lemma and named-comparison scope; F016 retains the broader obligations. ALG-080 retains its completed classical gate-toll, specified-field-count and model-comparison scope; Q06 remains open, and its bounded STR-Q3 construction remains complete. F132 retains its positive finite-word theorem and completed bounded comparison/refusal activity. Q01 remains open for complete preparation, literal budgets, fallback/output, qualified changed-design execution and historical priority. Its frozen eager-design finite-cap refusal is not universal impossibility or a source-literal-budget failure. ALG-034 remains open at priority 48; its checkpoint is source publication only.
+
+See the [checkpoint and first activity audit](../2026-10-17-finalization-checkpoints-1320/README.md), [next activity audit](../2026-10-17-next-ten-activity-audit-1320/README.md) and [verified application receipt](../2026-10-17-finalization-checkpoints-1320/application/ACTIVITY_APPLICATION.json). Earlier index documentation follows verbatim.
+
+---
+
 # Current index: bounded F020 residuals and Weil formula gate
 
 17 October 2026. Three existing open records receive current-gate, pass/stop and retained-plus-appended scientific-source updates: F020, ALG-WEIL-LOCAL and related Q18. Every ID, order, title, status and priority is preserved. The other **234 record objects and raw CSV rows remain byte-identical**. Census remains **90 CLOSED / 237 TO RESEARCH / 327 views**.
