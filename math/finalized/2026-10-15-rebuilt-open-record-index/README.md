@@ -1,3 +1,36 @@
+# Current OPEN index: degree 19, bounded variation and three exact structural advances
+
+This derivative projects the independently verified 77-cell native update into nine existing open records. There are 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. IDs, statuses, priorities, novelty classifications and record ordering are unchanged.
+
+- Four N13 parent views: degree-19 original physical-bank attainment gives minimum sixteen in the free-cross-singleton grammar. The sufficient divisor list is {2,3,5,7,11,13,17,19}; remaining d>1 is coprime to 9699690, first 23. This is not an iff classification. Since 53^23 has 132 bits, verified wider/multiprecision exponent arithmetic is required before continuing. Older restricted obstructions keep gcd(d,210)=1. Bank count is not arithmetic cost; priorities remain 56.
+- ALG-034: a genuinely nonconstant 512-entry, three-block bounded-variation original passed actual source recognition, approximation, replay, median and complete outer execution. All 21,609 retained coefficient evaluations and all 512 outputs were produced; output complex error is at most 5.30% of the actual original Euclidean norm for this fixture. Retain the q-block factor, full replay/history costs and finite execution ceilings. The stated composed asymptotic bound requires fixed variation budget, W,f=O(m), bounded prior history and a bounded number of full source replays. This is not general original recovery, all-length deployment or a practical speedup; priority remains 48.
+- M-RECTANGLE-TILING: prime-cube rank-three separation for p>=5 prime resolves N=1331 at 175,692, with rank-one full-coset equality and a valid, not claimed sharp, higher-rank-area penalty 1/484. The accepted-domain union covers 2 through 1858; mixed-prime N=1859 is next at rank three. Preserve the actual complex, disjoint/no-sharing endpoint-incidence model. General nonsquare composites remain open at 42.
+- M-SPARSE-DEFECT: codimension-three floor equality is equivalent to 3 dividing N; all weight-three equality masks have full triple blocks satisfying an exact phase test. The general no-mask bound adds s^6/[2^22 N^10 (N-s)^(2 phi(N)-2)] to the squared floor. It is not an exact nonsharp optimum or an optimal gap rate. Other composite budgets remain open at 42.
+- M-MULTISCALE-CHIRP / Q24: the selected eight-point literal pure-shift-resolvent stage minimum is seven in characteristic zero. The lower bound applies to characteristic-zero fields containing the root; construction may require a finite splitting extension, so attainment over Q(zeta) itself is not claimed. An explicit minimum-seven witness over F_(17^3) is restricted to zeta=3. Inherited F17 minima 10 or 11 remain valid. No operation-count or runtime advantage follows; priorities remain 42 and 37.
+
+Only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change for the nine owners. Gate and stop fields are exact independently read leading native P/Q prefixes. Eighteen appended entries use ten immutable report/review URLs; every older URL remains in its prior order. The other 220 raw JSON objects and CSV records remain byte-identical. All nine previous full owner objects, complete earlier validation and prior README bytes are retained.
+
+Native review verifies all 77 changed cells, 462 protected row cells, 107 headers, 214 historical text runs, 70 historical links and 18 target notes. No row, formula, status, priority or novelty change is made. The Mersenne product-interface remains a published unbound supplement. Scientific acceptance binds original bytes; disclosed public-copy adaptations are separately recorded and reviewed through COPY_BINDINGS.json.
+
+Scientific source commit: `081a311d3e3486071ff89502a412974001a78ae1`. Base-index commit: `f061f7972e259010b2e2cc8d6d56b09d796910fd`. Exact native payload SHA-256: `9a7ad7c8dc21508023af8c60dc3d49c6092ffe99d92c2a9624333aa375274204`.
+
+Immutable scientific evidence:
+- [degree19 candidate](https://github.com/AgentSlop-Si/research/blob/081a311d3e3486071ff89502a412974001a78ae1/math/finalized/2026-10-18-nextcycle-six-outcomes-1347/degree19/candidate/REPORT.md)
+- [degree19 review](https://github.com/AgentSlop-Si/research/blob/081a311d3e3486071ff89502a412974001a78ae1/math/finalized/2026-10-18-nextcycle-six-outcomes-1347/degree19/review/INDEPENDENT_REVIEW.md)
+- [bounded_variation candidate](https://github.com/AgentSlop-Si/research/blob/081a311d3e3486071ff89502a412974001a78ae1/math/finalized/2026-10-18-nextcycle-six-outcomes-1347/centered_bv/candidate/REPORT.md)
+- [bounded_variation review](https://github.com/AgentSlop-Si/research/blob/081a311d3e3486071ff89502a412974001a78ae1/math/finalized/2026-10-18-nextcycle-six-outcomes-1347/centered_bv/review/REVIEW.md)
+- [rank_three candidate](https://github.com/AgentSlop-Si/research/blob/081a311d3e3486071ff89502a412974001a78ae1/math/finalized/2026-10-18-nextcycle-six-outcomes-1347/prime_cube/candidate/REPORT.md)
+- [rank_three review](https://github.com/AgentSlop-Si/research/blob/081a311d3e3486071ff89502a412974001a78ae1/math/finalized/2026-10-18-nextcycle-six-outcomes-1347/prime_cube/review/REVIEW.md)
+- [sparse_codimension_three candidate](https://github.com/AgentSlop-Si/research/blob/081a311d3e3486071ff89502a412974001a78ae1/math/finalized/2026-10-18-nextcycle-six-outcomes-1347/sparse_codimension_three/candidate/REPORT.md)
+- [sparse_codimension_three review](https://github.com/AgentSlop-Si/research/blob/081a311d3e3486071ff89502a412974001a78ae1/math/finalized/2026-10-18-nextcycle-six-outcomes-1347/sparse_codimension_three/review/REVIEW.md)
+- [multiscale_charzero candidate](https://github.com/AgentSlop-Si/research/blob/081a311d3e3486071ff89502a412974001a78ae1/math/finalized/2026-10-18-nextcycle-six-outcomes-1347/charzero_chirp/candidate/REPORT.md)
+- [multiscale_charzero review](https://github.com/AgentSlop-Si/research/blob/081a311d3e3486071ff89502a412974001a78ae1/math/finalized/2026-10-18-nextcycle-six-outcomes-1347/charzero_chirp/review/REVIEW.md)
+- [Published copy bindings](https://github.com/AgentSlop-Si/research/blob/081a311d3e3486071ff89502a412974001a78ae1/math/finalized/2026-10-18-nextcycle-six-outcomes-1347/COPY_BINDINGS.json)
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: degree-17 banks, executed centered integration and three structural boundaries
 
 This derivative projects the independently verified 72-cell native update into eight existing open records. There are 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. All IDs, statuses, priorities, novelty classifications and ordering remain unchanged.
