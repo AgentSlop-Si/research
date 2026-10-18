@@ -1,3 +1,147 @@
+# Current OPEN index: degree 29 and four structural advances
+
+This derivative projects an independently verified 77-cell native update into nine existing open records. There are 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. IDs, statuses, priorities, novelty classifications and record ordering are unchanged.
+
+The five mapped results below are quoted from the new leading native source/gate/stop prefixes after independent native readback. The sixth result, restricted Mersenne product guards, remains a published unbound supplement with no guessed native owner.
+
+## degree29
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+Degree-29 attainment is independently accepted: B(F_(53^29))=16 for N=13, q=16 and the negative unnormalized Fourier target in the original free-cross-singleton physical-bank grammar, retaining arbitrary legal beta and raw weights. The literal allocation is (7,1,1,7), with nonstable same-sign supports and nonbase cross nodes. All 208 branch inverses, 416 two-sided inverse identities and 169 target entries pass independent literal checks. Unbounded GMP exponents and ordinary convolution resolve the 167-bit exponent and 16-bit packed-carry hazards; 17-bit packed controls also pass.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/degree29/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/degree29/review/INDEPENDENT_REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+The degree-29 gate is complete. The sufficient attaining divisor list is {2,3,5,7,11,13,17,19,23,29}; apart from solved d=1, residual d>1 satisfy gcd(d,6469693230)=1, beginning at d=31. Retain unbounded exponents and safe ordinary or proved-width convolution, reassess coefficient/reduction bounds for the selected field, then prove an original-bank witness or scope-matched obstruction with complete literal guards and all-row checks.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/degree29/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/degree29/review/INDEPENDENT_REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+The attaining divisor list is sufficient, not an iff classification; degree 31 remains unresolved. The older prime-field-cross and Frobenius-stable-support obstructions retain gcd(d,210)=1. Nonbase cross nodes and nonstable supports describe this witness without proving necessity. The inherited large lower-minor computation and complete first-split search were not independently rerun. Complete field classification, other allocations, practical evaluation, cofinite existence and historical priority remain open. All four parent views retain status and priority 56; sixteen physical banks are not sixteen scalar operations.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/degree29/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/degree29/review/INDEPENDENT_REVIEW.md
+
+## operator chirp
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+Independent acceptance gives exact triangular-chirp convolution-operator cores in the paired low/high interleaved digit order. For N=2^n, W=2^floor((n+1)/3), and n>=3, the optimal maximum MPO width is 2W-1 with O(W^2) cold core preparation/storage. The complete dense-input executor pays N*M_core/2 multiplications and the same number of additions: Theta(N^(5/3)) work and Theta(N^(4/3)) live storage. Any algorithm explicitly materializing the named pre-bridge frontier pays Omega(NW) writes, including the original positive-density selected mask. In the same order the DFT itself has optimal MPO width W^2.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/chirp_operator/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/chirp_operator/review/INDEPENDENT_REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+The subtraction-interface and literal-contraction gate is complete, with an explicit paid executor and a scoped materialized-frontier barrier. To advance toward T_E(N)=o(N log N), supply a different contraction order or a factored frontier with full arbitrary-input, mask, summation, root/core preparation and selected-output charges, or prove an obstruction in that precise model. Cheap fixed-operator cores alone are insufficient. A certified approximate route must also pay core discovery, rounding and operator/selected-output error.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/chirp_operator/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/chirp_operator/review/INDEPENDENT_REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+This is a materialized-frontier obstruction only, not a lower bound for arbitrary contraction orders, compressed frontiers, FFTs or general linear circuits. Root supply, address work, input/output routing, initialization, mask construction and Fourier diagonals are charged separately; arbitrary inputs are not assumed to have low TT rank. The n=2 convolution rank is 2, while the uniform reference uses width 3. Cheap chirp diagonals do not preserve operator ranks. No sub-N-log-N application, finite-precision stability, bit-complexity, global-order optimality or historical-priority claim follows. ALG-043 remains TO RESEARCH at priority 34.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/chirp_operator/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/chirp_operator/review/INDEPENDENT_REVIEW.md
+
+## prime cube
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+Independent acceptance proves that for every prime p>=5, every rank-at-most-three rectangle of the complex Fourier matrix F_(p^3) has min(a,b)<=3p. The exact minimum rank-three endpoint-cost density is (p+3)/p^2. At N=2197=13^3 the disjoint endpoint-incidence optimum is 399854, attained only by 2197 rank-one full subgroup-coset/annihilator-coset tiles with unordered side sizes {13,169}. The valid, not claimed sharp, higher-rank-area penalty is 1/676.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/prime_cube/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/prime_cube/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+The N=2197 gate is complete. The precisely retained accepted-domain union covers every length from 2 through 2872. The next residual is N=2873=13^2*17, with D_N=186 and rank three the remaining gate. This length is outside the preceding distinct-prime N=p*q^2 theorem because the repeated prime is smaller. Prove a Fourier-specific rank-three density or structural refinement at this exact length; selected minors or scalar feasibility alone cannot settle it.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/prime_cube/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/prime_cube/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+Preserve actual complex ranks, arbitrary Cartesian row/column subsets, entry-disjoint/no-sharing endpoint-incidence cost sum r(a+b), separate root/coefficient preparation, storage and I/O, and the inherited possible N extra additions for literal zero-initialized accumulation. The sharp rank-three density does not classify all rank-three equality rectangles; the target penalty is not claimed sharp. No unrestricted Fourier-circuit, overlap/cancellation, general basis-change, finite-field rigidity, performance or worldwide-priority claim follows. M-RECTANGLE-TILING remains TO RESEARCH at priority 42.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/prime_cube/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/prime_cube/review/REVIEW.md
+
+## sparse inverse
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+Independent acceptance excludes F_N=B P A in the complex separated-generator stage chart for every middle permutation when A^(-1)=S+R, every column of S has at most s nonzeros, rank(R)<=r, and N>=(s+1)(r+2), for integers s>=1 and r>=0. S may be singular and its supports are arbitrary. The transposed statement requires row sparsity for B^(-1). The one-debit rank lemma improves diagonal-plus-rank-r exclusion to N>=2r+4. At F8 this excludes diagonal-plus-rank-two inverses on either stage, arbitrary three-sparse A^(-1) columns and three-sparse B^(-1) rows.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sparse_inverse/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sparse_inverse/review/INDEPENDENT_REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+The arbitrary-sparse-core inverse restriction is complete. The unrestricted 64-equation F8 target ideal remains undecided. Supply an exact all-entry algebraic solution or characteristic-zero infeasibility certificate for that unrestricted target, or explicitly select another restricted family with a precise support/rank contract. Decomposition recognition, coefficient preparation and numerical tolerance are separate unresolved tasks; a rank-profile or generic dimension argument cannot replace the target certificate.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sparse_inverse/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sparse_inverse/review/INDEPENDENT_REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+Preserve the exact separated-generator chart, unnormalized complex Fourier target, invertible stages, every middle permutation, arbitrary sparse supports and singular-core allowance. A^(-1) requires column sparsity; B^(-1) requires row sparsity. Invertible diagonal target rescalings are covered, arbitrary endpoint permutations are not claimed. The local k-r rank bound is sharp, but the final size cutoff is not proved sharp, nor is existence below it. The dense boundary lies outside the two explicit F8 corollaries, not every sparse-core decomposition. No unrestricted-owner closure, Fourier-runtime lower bound or worldwide-priority claim follows. M-NONLINEAR-COMPATIBILITY remains TO RESEARCH at priority 34.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sparse_inverse/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sparse_inverse/review/INDEPENDENT_REVIEW.md
+
+## sixteen chirp
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+Independent acceptance proves that every legal sixteen-point chirp representation requires at least eight odd-stride factors in characteristic zero and in characteristic 97. Thirty exact ideal certificates cover all 120 normalized seven-factor stride patterns; the characteristic-zero transfer separately checks projective boundary and zero-product issues. Thus 8<=minimum<=15 over C and a finite splitting extension of Q(zeta). For zeta=46, the same interval holds over F_(97^12); the lower bound holds over every characteristic-97 field containing a primitive 32nd root.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sixteen_point/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sixteen_point/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+The N=16 lower-bound gate improves to eight. Determine the exact minimum in a precisely stated coefficient field, or strengthen an endpoint with an independently verified literal all-row construction or obstruction and factorwise legality. The unrestricted parity threshold is sharp at eight, but its displayed eight-factor solution is singular and is not a legal construction; further lower bounds must use invertibility or more of the full target. Attainment over Q(zeta) itself and efficient coefficient discovery remain open.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sixteen_point/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sixteen_point/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fourth-cycle six-result continuation]
+Retain the original scalar Weyl-monomial/resolvent grammar and stride-sensitive pole guard. The characteristic-17 interval remains 7<=minimum<=15 only in the inherited zeta^2=3 setting, with attainment over F_(17^12); it is not improved, and other characteristics are not inferred. With fifteen parameters supplied, setup plus one vector costs 541 field multiplications, 465 additions and 15 inversions; field/root discovery, reciprocals, embeddings and conversion stay separate. Sixteen data elements and two work registers exclude thirty stored parameters/precomputed inverses. No exact-minimum, bit-complexity, numerical-stability, FFT-speed, historical-priority or parent-closure claim follows. Both owners retain statuses and priorities.
+Report: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sixteen_point/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sixteen_point/review/REVIEW.md
+
+Only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change for the nine owners. Gate and stop fields are exact independently read leading native P/Q prefixes. Eighteen appended entries use ten immutable report/review URLs; every older URL remains in its prior order. The other 220 raw JSON objects and CSV records remain byte-identical. All nine previous full owner objects, complete earlier validation and prior README bytes are retained.
+
+Native review verifies all 77 changed cells, 462 protected row cells, 107 owner-tab headers plus other-tab guards, 234 historical text runs, 70 historical links and 19 target notes. No row, formula, status, priority or novelty change is made. Scientific acceptance binds original bytes; disclosed public-copy adaptations are separately recorded and reviewed through COPY_BINDINGS.json. None of these scoped results closes a broader parent or establishes a practical FFT speedup or historical priority.
+
+Scientific source commit: `bc72ff42397a5c81bb61cd5bd43af84df7294c27`. Base-index commit: `e6273471e459bd9fdf2e3ec38a468cd9ea592ae6`. Exact native payload SHA-256: `354dba7efaa0a44f6e82c80364fd040a8b2d51739f4dda00808d5fc991f80c40`.
+
+Immutable scientific evidence:
+- [degree29 candidate](https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/degree29/candidate/REPORT.md)
+- [degree29 review](https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/degree29/review/INDEPENDENT_REVIEW.md)
+- [prime_cube candidate](https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/prime_cube/candidate/REPORT.md)
+- [prime_cube review](https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/prime_cube/review/REVIEW.md)
+- [sparse_inverse candidate](https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sparse_inverse/candidate/REPORT.md)
+- [sparse_inverse review](https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sparse_inverse/review/INDEPENDENT_REVIEW.md)
+- [sixteen_chirp candidate](https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sixteen_point/candidate/REPORT.md)
+- [sixteen_chirp review](https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/sixteen_point/review/REVIEW.md)
+- [operator_chirp candidate](https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/chirp_operator/candidate/REPORT.md)
+- [operator_chirp review](https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/chirp_operator/review/INDEPENDENT_REVIEW.md)
+- [Published copy bindings](https://github.com/AgentSlop-Si/research/blob/bc72ff42397a5c81bb61cd5bd43af84df7294c27/math/finalized/2026-10-18-fourth-cycle-six-results-1802/COPY_BINDINGS.json)
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: degree 23 and four exact structural advances
 
 This derivative projects the independently verified 77-cell native update into nine existing open records. There are 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. IDs, statuses, priorities, novelty classifications and record ordering are unchanged.
