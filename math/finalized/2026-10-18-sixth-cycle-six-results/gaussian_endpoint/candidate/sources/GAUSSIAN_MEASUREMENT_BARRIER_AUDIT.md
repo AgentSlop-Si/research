@@ -1,0 +1,179 @@
+# Independent audit: Phase 5 Gaussian measurement-only accuracy barrier
+
+## Verdict
+
+**Phase 5 §5 is valid under its stated nonadaptive, input-independent measurement-only assumptions.** Its argument applies to arbitrary measurable nonlinear decoders and independent decoder randomness. It correctly rules out a high-probability guarantee for every fixed input when `M=Theta(log N)`, `s<M`, and fixed `alpha>1/2`. It is a restriction on information retained about the input, not an arithmetic lower bound for the FFT.
+
+The proof can be made more explicit with an exact Gaussian norm tail. A simple multidimensional small-ball argument strengthens its conclusion from polynomially vanishing success to **exponentially vanishing success** in this same architecture. A carefully defined adaptive linear-query extension is also valid. Neither strengthening requires executing the supplied implementation.
+
+The rank-deficit magnitude is essential. Rank deficiency alone does not establish this accuracy barrier; an explicit randomized rank-`N-1` counterexample appears below.
+
+Scope: read-only mathematical review of `THEOREMS.md` §5, relevant §4 claims, and the text of `measurement_rank_barrier.py` and its supplied JSON. Cross-checked the conditional Phase 4 result against `/workspace/shared/materials_2027/gaussian_crosscheck/GAUSSIAN_ALL_LENGTH_AUDIT.md` and the fixed/adaptive rank gates in the Phase 14 audit. No supplied program was imported, executed, or dynamically loaded. No new computational experiment was needed for these exact arguments.
+
+## 1. Precise nonadaptive theorem
+
+Let `x ~ CN(0,I_N)`, with the convention `E|x_j|^2=1`. Let `R` contain all algorithmic randomness and be independent of `x`. For every seed `r`, let `A_r` be a complex-linear measurement matrix with
+
+`d_r := N-rank(A_r) >= d_0 > 0`.
+
+The decoder receives only `r` and `A_r x`, and produces any measurable estimate `Xhat`. Random decoding is included by placing its independent coins in `R`. Let `U` be any fixed unitary `N x N` matrix, in particular the unitary DFT. For any `C>0` and real `alpha`,
+
+`P(||Xhat-Ux||_infinity <= C N^(-alpha)||x||_2)`
+
+`<= min(1, 4 C^2 N^(2-2alpha)/d_0 + exp[-(3-log 4)N])`.
+
+All probability upper bounds below are also capped at one. Constants `C` and `alpha` are fixed independently of `N` for the asymptotic conclusions below. An `N`-dependent constant must instead be retained in the displayed bound.
+
+### Proof
+
+Fix the seed and condition on `A_r x`. Orthogonal decomposition gives
+
+`x = m + g`, where `m=A_r^dagger A_r x` and `g ~ CN(0,P_ker(A_r))`.
+
+The residual `g` is independent of the observations. In Fourier coordinates its covariance is `U P_ker(A_r) U*`, of trace `d_r`. Hence some coordinate has conditional variance `nu >= d_r/N`. It can be chosen by a deterministic tie rule from the seed; there is no requirement that the same coordinate work for every seed.
+
+At that coordinate, conditional on everything known to the decoder, the unknown residual has complex Gaussian density bounded by `1/(pi nu)`. Whatever center the decoder chooses, its chance to land within a disk of radius `rho` is at most `min(1,rho^2/nu)`.
+
+Put `G={||x||_2<=2 sqrt(N)}`. The all-bin success event intersected with `G` implies that the chosen coordinate error has magnitude at most `rho=2C N^(1/2-alpha)`. Apply the conditional disk estimate to this larger event, then average over observations and seeds. Crucially, **do not condition the Gaussian posterior on `G`**. The argument is an event inclusion followed by adding `P(G^c)`.
+
+Since `||x||_2^2` is the sum of `N` independent mean-one exponential variables, Chernoff with parameter `3/4` gives
+
+`P(||x||_2^2>4N) <= exp[-(3-log 4)N]`.
+
+This proves the bound, including its constants.
+
+More generally, replacing `2 sqrt(N)` by `t sqrt(N)`, `t>1`, replaces `4` by `t^2` and the tail exponent by `t^2-1-log(t^2)`.
+
+## 2. Application to the padded Green measurements
+
+Each fully occupied block has `M` unknown original-input coordinates and at most `s` complex-linear observations supported on that block. Their rank is at most `s`, independently of any invertible diagonal preweight, chirp choice, or dependency among rows. Thus each full block contributes at least `M-s` kernel dimensions.
+
+For the centered circular embedding, at most two occupied blocks are partial, and the submission's conservative estimate
+
+`B >= floor(N/M)-2`
+
+is sufficient. The measurement matrix is block-local, so
+
+`d=N-rank(A) >= B(M-s)`.
+
+For `N>=6M`, `floor(N/M)-2 >= N/(2M)`. Therefore
+
+`d/N >= (M-s)/(2M)`.
+
+Consequently, Phase 5's all-bin success probability is at most
+
+`8 C^2 [M/(M-s)] N^(1-2alpha) + exp[-(3-log 4)N]`.
+
+In particular, if `M=Theta(log N)`, `s<=M-1`, and `alpha>1/2` is fixed, success tends to zero. The submitted `O(C^2 M N^(1-2alpha))` is a correct, slightly weaker form. The general sufficient condition for this single-coordinate proof is
+
+`d_0 >> C^2 N^(2-2alpha)`.
+
+The deficit must hold for every permitted seed, or almost surely with respect to the independent seed law. If the cap can fail with probability `eta_N`, add `eta_N` to the bound. A large deficit only in expectation is insufficient: a scheme that observes the complete input on half its seeds and observes nothing on the other half has expected deficit `N/2` but success at least `1/2`.
+
+### Static check of the recorded 509-point example
+
+For `N=509`, `Q=2057=187*11`, and center `254`, the occupied original coordinates are `[0,254]` and `[1803,2056]` in the padded indexing. They comprise 46 complete 11-point blocks and two partial blocks of sizes 2 and 1. Three full-rank rows per complete block and full information in the partial blocks give rank
+
+`46*3+2+1=141`,
+
+hence deficit `509-141=368=46*(11-3)`. This independently confirms the supplied integer count. The source's SVD/nullspace/Fourier-variance checks are finite floating-point regression evidence; their provided values were read, not reproduced here. The asymptotic theorem does not depend on their numerical thresholds or reported residuals.
+
+The source correctly includes Gaussian preweights in `A` and places the isotropic Gaussian prior on the original `x`. Applying an isotropic-prior covariance identity to the preweighted vector instead, without adjusting its covariance, would be a different and generally incorrect argument.
+
+## 3. Stronger small-ball conclusion: exponential failure probability
+
+The same conditional residual is an isotropic complex Gaussian in the subspace
+
+`H=U ker(A)`, of complex dimension `d`.
+
+On the all-bin success event and `G`,
+
+`||Xhat-Ux||_2 <= sqrt(N) C N^(-alpha) ||x||_2 <= R_N`,
+
+where `R_N=2C N^(1-alpha)`. Orthogonally projecting the estimation error onto `H` can only reduce its norm. Conditional on the transcript, the projected error is a fixed shift of an isotropic Gaussian in `H`.
+
+The Gaussian density is at most `pi^(-d)`, and the volume of a complex `d`-ball of radius `R_N` is `pi^d R_N^(2d)/d!`. Thus, for a fixed transcript rank,
+
+`P(success) <= min(1, [4C^2 N^(2-2alpha)]^d/d!) + exp[-(3-log 4)N]`,
+
+with the conditional bound averaged over transcripts if `d` varies. For a uniform integer bound `d>=d_0` and `d_0>=4e C^2 N^(2-2alpha)`, the elementary inequality `d! >= (d/e)^d` yields the convenient uniform estimate
+
+`P(success) <= [4e C^2 N^(2-2alpha)/d_0]^d_0 + exp[-(3-log 4)N]`.
+
+In the Green setting, `d>=N/(2M)` and `M<=b log N` for some constant `b`. For any fixed `alpha>1/2`, the logarithm of the bracket is at most `-(2alpha-1)log N/2` for all sufficiently large `N`. Multiplying by `d>=N/(2b log N)` gives
+
+`P(success) <= exp[-(2alpha-1)N/(4b)] + exp[-(3-log 4)N]`.
+
+Hence success is `exp[-Omega(N)]`, with the threshold depending on `C`, `alpha`, and the upper constant for `M/log N`. This is an elementary strengthening of the submitted scoped result, not a general FFT claim. The other independent Phase 5 proof reviewer derived the same density-times-volume bound.
+
+## 4. Quantifiers: every fixed input versus one uniform random map
+
+Let
+
+`p_N(x)=P_R(success on x)`.
+
+The Gaussian theorem proves `E_x p_N(x)<=epsilon_N`, where `epsilon_N` tends to zero, and in the strengthened version is exponentially small.
+
+If an algorithm promised `p_N(x)>=1-delta_N` for **every fixed input** `x`, integration would give `1-delta_N<=epsilon_N`. Thus the theorem really does refute such a per-fixed-input high-probability guarantee; it does not merely choose an adversarial input after seeing the random seed.
+
+For every `N` there exists a deterministic input `x_N`, independent of the subsequently drawn seed, with success at most `epsilon_N`. In fact, for any `eta>0`, Markov gives
+
+`P_x(p_N(x)>eta) <= epsilon_N/eta`.
+
+Therefore most Gaussian inputs have low success over the algorithm's independent randomness. This is stronger than the existence statement needed to contradict an every-fixed-input guarantee.
+
+By contrast, a fixed-seed nullspace witness only proves the different quantifier `for every seed there exists a bad input`, and a mean-square lower bound alone does not prove high-probability failure. Phase 5's Gaussian anti-concentration supplies the missing step.
+
+## 5. Precisely permitted adaptive extension
+
+The submission explicitly states a nonadaptive theorem. It can safely be extended to the following standard adaptive linear-query model, but not to arbitrary input-dependent measurement selection.
+
+After drawing independent random coins, at step `t` the algorithm chooses the complex-linear query row `a_t*` as a measurable function only of previous query responses (and those coins), then receives `y_t=a_t*x`. It may stop based only on this same transcript. No raw-input reads, input-dependent coefficient information, nonlinear statistics of `x`, or other side channels are available outside the charged query responses. Suppose the terminal query matrix has deficit at least `d_0` on every transcript, almost surely.
+
+Conditional Gaussianity follows inductively. If the current posterior is `CN(m,P)` on an affine subspace and `a` is now fixed by the previous transcript, the next nondegenerate query updates its covariance to
+
+`P - P a a* P/(a*P a)`.
+
+This is the orthogonal projector onto the old residual subspace intersected with the new query kernel. A query with zero conditional variance reveals nothing new. Consequently, conditional on the complete terminal transcript and coins, the residual covariance is exactly the projector onto the terminal query kernel. The stopping decision adds no information beyond that transcript.
+
+The previous small-ball proofs then apply, with the coordinate or residual subspace allowed to depend on the transcript. A transcriptwise cap of at most `s` rows on each fixed input block preserves `d>=B(M-s)`, even when those rows are selected adaptively.
+
+This does **not** cover examining the raw input to choose a state and then pretending only the final matrix rank was revealed. For example, choosing the row `a*=x*` after an independent full read makes the row/state itself reveal all of `x`; its matrix rank is only one. Conditioning on such an input-dependent row does not leave a Gaussian kernel residual. This is why the permitted transcript and state-selection mechanism must be explicit.
+
+Independent additive measurement noise cannot invalidate the lower bound: a noisy transcript can be simulated from noiseless responses plus independent coins. Input-correlated side information is a different observation model.
+
+## 6. Counterexample to a broader rank-deficiency claim
+
+For `1/2<alpha<1`, choose a uniformly random index `J`, read all input coordinates except `x_J`, set that one coordinate to zero, and return the exact DFT of the resulting vector. This has rank deficit one and no extra information about `x_J`.
+
+Since every unitary-DFT entry has magnitude `N^(-1/2)`, its all-bin error is exactly
+
+`||Xhat-Ux||_infinity=|x_J|/sqrt(N)`.
+
+For every fixed nonzero input,
+
+`P_J(failure) = P_J(|x_J|^2 > C^2 N^(1-2alpha)||x||_2^2)`
+
+`<= C^(-2) N^(2alpha-2) -> 0`.
+
+Thus a rank-deficient measurement-only algorithm can satisfy an every-fixed-input high-probability guarantee with `alpha>1/2` when its deficit is small enough. This is not a faster Fourier algorithm; it is a counterexample only to dropping Phase 5's quantitative rank-deficit condition. It is consistent with the general bound, which is inconclusive for `d=1` and `alpha<1`.
+
+## 7. Relationship to rank/noise gates and the Phase 4 positive theorem
+
+- **Exact rank gate:** A deficient linear map has an unseen kernel, obstructing exact recovery for all inputs. A deterministic zero-transcript proof covers exact adaptive linear recovery, but alone does not resolve per-fixed-input randomized approximate accuracy.
+- **Mean-square noise gate:** For fixed `A`, any decoder has conditional squared `l2` risk at least `d`; the conditional mean attains it. Phase 5 §4's exact finite-population moment is instead a property of its specific unbiased phase estimator. Neither expectation statement alone implies high-probability failure. The Gaussian density bound does.
+- **Phase 4 positive approximation:** The earlier Gaussian audit supports the conditional ideal-arithmetic, fresh-randomness theorem for `alpha<1/2`: a fixed number of independent rows, coordinatewise medians, all `N` explicit outputs, `O_{alpha,c}(N log log N)` work, and polynomially small failure after choosing enough rows. It remains conditional on the exact Green/covariance premises and the stated coefficient/RAM/randomness model; it is neither an exact nor a binary64-certified FFT.
+- **No conflict:** For `alpha<1/2`, the tolerance `N^(-alpha)||x||_2` exceeds the usual Gaussian per-bin scale by a growing power of `N`. An `l_infinity/l2` approximation can therefore coexist with a large lost subspace and substantial global `l2` error. The Phase 5 obstruction concerns the opposite exponent regime.
+- **Endpoint:** The submitted estimate makes no general claim at `alpha=1/2`, and neither should the integration. Extra architecture or constant-specific analysis would be necessary.
+- **No complexity lower bound:** The proof does not restrict unrestricted algorithms that read the entire input and retain additional information. It charges retained measurements, not arithmetic gates. It supplies no novelty or publication-priority conclusion.
+
+## 8. Integration-ready statement
+
+For Green decoders receiving at most `s<M` linear measurements per occupied fixed length-`M` block, with `M=Theta(log N)`, no other input information, and measurement randomness independent of the fresh input, a Gaussian input defeats all measurable nonlinear decoders at all-bin tolerance `C N^(-alpha)||x||_2` for every fixed `alpha>1/2`: average success is at most `exp[-Omega(N)]`. Consequently there is no high-probability every-fixed-input guarantee in this architecture. The same conclusion extends to transcript-only adaptive linear queries with the same pathwise rank cap. It does not apply merely because an arbitrary algorithm has some nonzero rank deficit, and it gives no unrestricted Fourier arithmetic lower bound.
+
+## Source fingerprints
+
+- Phase 5 `THEOREMS.md`: `488d5c9beee1745dc9a5e580604089aca56db161bf6c20a8bf0a024c606ceaef`
+- `measurement_rank_barrier.py`: `12975a29ad4829c0adec49de1c7ab940dd58f9cc6695bf2ffe8c5af11e5310bf`
+- `measurement_barrier.json`: `3d1342d1e5cd0ee4cf375fb07712d5360d0a7f76e94db8b281f6865293a8e650`
+- Prior Gaussian audit: `eced2bc72d85f7cf4666dac4d1ba9faaf2c268cb343bcc497261edd2bb206cad`
