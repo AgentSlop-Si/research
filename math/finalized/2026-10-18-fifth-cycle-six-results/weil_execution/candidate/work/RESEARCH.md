@@ -1,0 +1,460 @@
+# Local-ring Weil valuation hierarchy and the cyclic prime-power FFT gate — v25 sign correction
+
+**16 October 2026 correction:** This is a separately pinned derivative. The original archive is unchanged. The operator convention and all dependent signs below are corrected. Historical execution statements in Section 8 are attributed to the original source, not rerun certificates for this derivative. See README.md.
+
+**Checkpoint:** 10 October 2026  
+**Primary target:** exact full-output DFT of an arbitrary fresh input in fully charged sequential `o(N log N)` arithmetic.  
+**Status:** the one-dimensional Weil representation over `R=Z/p^k Z` is classified at the computational-kernel level. The intermediate p-adic cells are exact direct sums of shorter **cyclic** Fourier transforms, but every exact word for the full length-`p^k` Fourier element must already contain a full-Fourier-equivalent cell. **No faster exact FFT is constructed.**
+
+## 1. Starting point and reproducibility audit
+
+v24 classified higher-dimensional Weil operators over `F_p`: they give partial **tensor** Fourier transforms, while the cyclic length-`p^k` Fourier matrix is excluded by a cross-ratio order invariant. The exact next gate was the finite local ring
+
+\[
+R=\mathbb Z/p^k\mathbb Z,
+\]
+
+where primitive `p^k`-th phases are native.
+
+The conversation-mounted v24 directory omitted its nested predecessor archive, so its predecessor-hash test failed in place. The canonical v24 ZIP itself **does contain** `PRIOR_v23_COMPLETE.zip`; a clean extraction passes all 10 tests. v25 embeds that complete v24 ZIP and verifies its SHA-256.
+
+Throughout, `p` is an odd prime, `q=p^k`, and
+
+\[
+\psi(t)=\zeta_q^t
+\]
+
+is a faithful additive character.
+
+---
+
+## 2. Generators in the position model
+
+Use the standard one-dimensional symplectic generators
+
+\[
+L(c)=\begin{pmatrix}1&0\\ c&1\end{pmatrix},\qquad
+D(a)=\begin{pmatrix}a&0\\0&a^{-1}\end{pmatrix},\qquad
+W=\begin{pmatrix}0&-1\\1&0\end{pmatrix},
+\]
+
+with `a` a unit of `R`. Projectively, their Weil operators are:
+
+* `rho(L(c))`: diagonal quadratic chirp `psi(c x^2/2)`;
+* `rho(D(a))`: a coordinate permutation, up to a scalar character;
+* `rho(W)`: the cyclic `q`-point Fourier transform.
+
+For the upper shear
+
+\[
+U(b)=\begin{pmatrix}1&b\\0&1\end{pmatrix},
+\]
+
+we use the unambiguous operator model
+
+\[
+\rho(U(b))=F_q^{-1}C_{-b}F_q,
+\]
+
+where `F_q[x,y]=psi(xy)` and `C_b[x,x]=psi(bx^2/2)`. Indeed, `W^(-1)L(-b)W=U(b)`. The positive chirp `F_q^(-1)C_b F_q` represents `U(-b)`, not `U(b)`.
+
+The finite-ring Weil representation for symplectic groups over `Z/p^k Z` is established in the literature; the project contribution here is the exact support/block classification and its operation-level consequence.
+
+---
+
+## 3. Exact quadratic-Gauss kernel
+
+The upper-shear kernel is
+
+\[
+K_b(x,y)
+=\frac1q\sum_{z\bmod q}
+\psi\!\left(-\frac b2z^2+(y-x)z\right).
+\tag{3.1}
+\]
+
+Write
+
+\[
+b=p^v u,
+\qquad 0\le v<k,
+\qquad u\in(\mathbb Z/p^{k-v}\mathbb Z)^\times,
+\]
+
+and put
+
+\[
+g=p^v,\qquad q'=p^{k-v}.
+\]
+
+### Lemma 3.1 — support condition
+
+\[
+\boxed{K_b(x,y)=0\quad\text{unless}\quad x\equiv y\pmod g.}
+\]
+
+**Proof.** Shift the summation variable by `q/g`. The quadratic part changes by a multiple of `q`; the linear part is multiplied by
+
+\[
+\exp(2\pi i(y-x)/g).
+\]
+
+Averaging around that length-`g` orbit vanishes unless `g | (y-x)`. QED.
+
+### Lemma 3.2 — exact reduced Gauss sum
+
+If
+
+\[
+x=r+gX,\qquad y=r+gY,
+\]
+
+then
+
+\[
+K_b(x,y)
+=\kappa_{u,q'}
+\zeta_{q'}^{(Y-X)^2/(2u)},
+\tag{3.2}
+\]
+
+where
+
+\[
+\kappa_{u,q'}
+=\frac1{q'}\sum_{z\bmod q'}
+\zeta_{q'}^{-u z^2/2}
+e0.
+\]
+
+The proof reduces (3.1) by the factor `g` and completes the square over `Z/q'Z`.
+
+Expanding the square gives
+
+\[
+K_b(x,y)
+=\kappa_{u,q'}
+\zeta_{q'}^{X^2/(2u)}
+\zeta_{q'}^{-XY/u}
+\zeta_{q'}^{Y^2/(2u)}.
+\tag{3.3}
+\]
+
+The middle factor is a cyclic `q'`-point Fourier matrix after multiplying one coordinate by the unit `-u^{-1}`.
+
+---
+
+## 4. Main positive theorem: the valuation hierarchy
+
+### Theorem 4.1 — exact computational core
+
+Let `0<=v<=k`, using `v=k` for `b=0`. Up to invertible diagonal scalings and coordinate permutations,
+
+\[
+\boxed{
+\rho(U(b))
+\sim
+\bigoplus_{r=0}^{p^v-1}F_{p^{k-v}}.
+}
+\tag{4.1}
+\]
+
+Thus every row and every column contains exactly
+
+\[
+\boxed{p^{k-v}}
+\]
+
+nonzero entries.
+
+For `v=k`, the core is the identity/monomial class. For `v=0`, it is the complete cyclic `F_{p^k}`.
+
+### Exact phase-depth invariant
+
+Inside one nonzero block, use local rows `X=0,1` and columns `Y=0,1`. The four-entry cross ratio is
+
+\[
+\zeta_{p^{k-v}}^{-u^{-1}},
+\]
+
+which has exact order
+
+\[
+\boxed{p^{k-v}}.
+\tag{4.2}
+\]
+
+So the same valuation simultaneously controls:
+
+* row/column support size;
+* cyclic Fourier block length;
+* maximum native root order in a nonzero block.
+
+### Important group-theoretic nuance
+
+The **computational** class depends only on `v_p(b)`, but the actual lower-parabolic double-coset space can be finer. Exhaustive enumeration for `SL_2(Z/9Z)` finds four double cosets: the valuation-one stratum splits into two group double cosets. Both nevertheless have the same three-copy `F_3` computational core.
+
+Therefore v25 does **not** claim that parabolic double cosets are indexed only by valuation.
+
+---
+
+## 5. General ring-Weil element
+
+Let
+
+\[
+S=\begin{pmatrix}a&b\\c&d\end{pmatrix}\in SL_2(R).
+\]
+
+### Nonunit `b`
+
+If `p | b`, then reducing the determinant equation modulo `p` shows that `a` is a unit. There is an exact factorization
+
+\[
+\boxed{
+S=L(ca^{-1})D(a)U(a^{-1}b).
+}
+\tag{5.1}
+\]
+
+The first two factors are monomial. Hence the computational core of `rho(S)` is still (4.1), with `v=v_p(b)`.
+
+### Unit `b`
+
+If `b` is a unit, the ordinary Bruhat factorization works over the ring:
+
+\[
+\boxed{
+S=L(db^{-1})D(-b)W L(ab^{-1}).
+}
+\tag{5.2}
+\]
+
+Therefore
+
+\[
+\boxed{
+\rho(S)=\text{monomial}\times F_q\times\text{monomial}
+}
+\tag{5.3}
+\]
+
+projectively. A valuation-zero cell is full-DFT-equivalent in both directions.
+
+---
+
+## 6. Exact all-depth obstruction
+
+For `1<=t<=k`, define
+
+\[
+\Gamma_t=
+\left\{
+S\in SL_2(R):p^t\mid b(S)
+\right\}.
+\]
+
+### Lemma 6.1 — congruence-parabolic filtration
+
+Each `Gamma_t` is a subgroup.
+
+Indeed, for matrices `S,T`,
+
+\[
+b(ST)=a(S)b(T)+b(S)d(T),
+\]
+
+so divisibility by `p^t` is preserved by products; it is also preserved by inversion because `b(S^{-1})=-b(S)`.
+
+The Fourier Weyl element
+
+\[
+W=\begin{pmatrix}0&-1\\1&0\end{pmatrix}
+\]
+
+has unit upper-right entry and is outside `Gamma_1`.
+
+### Theorem 6.2 — factor-by-factor ring-Weil rigidity
+
+Any ring-metaplectic word whose product is the cyclic Fourier Weyl element must contain at least one factor with unit upper-right entry.
+
+That factor is already monomially equivalent to the complete cyclic `F_q` by (5.3). Consequently:
+
+\[
+\boxed{
+\text{no factor-by-factor exact FFT over }Z/p^kZ
+\text{ can use only proper partial cyclic cells.}
+}
+\tag{6.1}
+\]
+
+Arbitrary depth does not evade the gate. Multiplying the `2 x 2` symplectic matrices first collapses the complete word to one valuation class; if the result is `W`, that class is valuation zero.
+
+### Why this does not contradict radix-`p` Cooley--Tukey
+
+The class `v=k-1` really is `p^{k-1}` independent `p`-point Fourier blocks, resembling one radix-`p` layer. But the monomial factors available inside this one-dimensional ring-Weil group preserve the `p`-adic congruence filtration. The digit-transpose permutations that move information between successive radix layers are not such ring-affine symplectic monomials.
+
+Thus the ordinary radix algorithm leaves the restricted one-dimensional ring-Weil stage class between layers.
+
+---
+
+## 7. Fully charged operation ledger
+
+The canonical valuation-`v` core contains
+
+\[
+p^v
+\]
+
+transforms of length
+
+\[
+p^{k-v}.
+\]
+
+Using the ordinary radix-`p` implementation for each block gives
+
+\[
+\boxed{
+T_v(q)=\Theta_p\bigl(q(k-v)\bigr).
+}
+\tag{7.1}
+\]
+
+If a dense `p x p` butterfly is counted as `p^2` multiply-add terms, the explicit count is
+
+\[
+\boxed{
+(k-v)pq.
+}
+\tag{7.2}
+\]
+
+Monomial chirps/permutations add `O(q)` preparation/application work.
+
+| valuation `v` | blocks | block length | radix depth |
+|---:|---:|---:|---:|
+| `0` | `1` | `p^k` | `k` |
+| `1` | `p` | `p^(k-1)` | `k-1` |
+| `v` | `p^v` | `p^(k-v)` | `k-v` |
+| `k-1` | `p^(k-1)` | `p` | `1` |
+| `k` | `p^k` | `1` | `0` |
+
+The hierarchy is exact, but Theorem 6.2 prevents using only the cheaper nonunit stages to reach the full cyclic DFT inside the ring-Weil representation.
+
+---
+
+## 8. Reproducibility
+
+The package uses exact arithmetic in finite coefficient fields containing primitive `p^k`-th roots.
+
+### Historical automated suite (not rerun for this derivative)
+
+The original archive reports `10/10` test groups passing under its old operator label. This is historical attributed evidence only. The derivative now contains 13 groups, including negative-chirp, signed-phase and Weyl-covariance regression tests. None of those derivative tests has been executed in the static repair pass. The original reported groups were:
+
+1. direct `F^{-1} C_b F` kernel = direct Gauss sum = closed formula (the original operator is `U(-b)`; the corrected source uses `C_(-b)`);
+2. exact row/column support hierarchy;
+3. exact residual cross-ratio order;
+4. exhaustive `SL_2(Z/9Z)` and `SL_2(Z/25Z)` valuation counts;
+5. exact nonunit-cell factorization;
+6. exhaustive subgroup closure for `Gamma_1,Gamma_2` over `Z/9Z`;
+7. full Fourier Weyl element outside the easy subgroup;
+8. the `Z/9Z` double-coset refinement safeguard;
+9. operation-ledger identities;
+10. complete v24 predecessor archive hash.
+
+### Exact dimensions checked
+
+\[
+9,\ 25,\ 27,\ 49.
+\]
+
+There are `13` independent valuation/support/cross-ratio certificates across those dimensions.
+
+### Exact group counts
+
+For `q=9`:
+
+\[
+|SL_2(Z/9Z)|=648,
+\]
+
+with valuation counts
+
+\[
+486,\ 108,\ 54
+\]
+
+for `v=0,1,2`.
+
+For `q=25`:
+
+\[
+|SL_2(Z/25Z)|=15000,
+\]
+
+with valuation counts
+
+\[
+12500,\ 2000,\ 500
+\]
+
+for `v=0,1,2`.
+
+The original source reports an independently written verifier reproducing the support/root-order certificates and exhaustive `Z/9Z` subgroup gate without importing the primary module. Those reported runs are not reclassified as fresh checks here. The derivative verifier has its negative-chirp and signed-phase convention corrected, but remains unrun in this static repair pass.
+
+---
+
+## 9. Prior-art and claim boundary
+
+Classical ingredients include:
+
+* construction of Weil representations of symplectic groups over finite local rings, including `Z/p^k Z` for odd `p`;
+* quadratic Gauss sums over finite rings;
+* Bruhat/parabolic generators;
+* cyclic prime-power FFTs and radix-`p` Cooley--Tukey.
+
+Primary references include:
+
+* G. Cliff, D. McNeilly, F. Szechtman, *Weil representations of symplectic groups over rings*, J. London Math. Soc. 62 (2000), 423–436, DOI `10.1112/S0024610700001381`.
+* F. Szechtman, *Quadratic Gauss Sums over Finite Commutative Rings*, J. Number Theory 95 (2002).
+
+The project-specific contribution is the combined computational gate:
+
+1. derive the exact support/block/root-order hierarchy from the degenerate Gauss kernel;
+2. distinguish computational valuation classes from finer group double cosets;
+3. prove the congruence-parabolic subgroup obstruction;
+4. charge the partial cyclic cores and explain why the hierarchy cannot assemble the full Fourier element internally.
+
+This is not a literature-wide novelty proof, a bit-complexity result, or a practical speed record.
+
+---
+
+## 10. Honest conclusion and next gate
+
+We still do **not** have an exact `o(N log N)` cyclic FFT.
+
+What v25 proves is:
+
+\[
+\boxed{
+\text{local-ring Weil cells are exactly partial cyclic prime-power Fourier cores.}
+}
+\]
+
+But:
+
+\[
+\boxed{
+\text{all proper partial cells lie in a subgroup that cannot reach the full Fourier Weyl element.}
+}
+\]
+
+Thus the finite-local-ring metaplectic route is closed in the same factor-by-factor sense as v23, now with a genuine p-adic intermediate hierarchy.
+
+The next exact route must leave one-dimensional ring-Weil words. The two serious survivors are:
+
+1. a higher-dimensional symplectic representation **over the local ring** with transformations not reducible to the one-dimensional congruence filtration, together with a complete operation ledger; or
+2. a non-Weil, high-treewidth global operator with an explicit exact non-Krylov `O(N)` or `O(N log log N)` solver.
+
+A candidate must explain how it exchanges p-adic digit layers without simply reintroducing Cooley--Tukey permutations or a full cyclic Fourier core.
