@@ -1,0 +1,3 @@
+# Exploratory stronger-minor tests (not a theorem)
+
+Before the proved five-residue selection route, `explore.cpp` tested the stronger conjecture that every four-by-four F_(p³) minor with both index sets injective modulo p² is nonsingular. Exact signed permutation sums and cyclotomic coefficient-fiber tests found no counterexample in 1,000,000 samples each at p=5,11 and 10,000,000 each at p=3,7, with fixed seed 732921. These tests are not used in the proof, and no stronger 3p side bound is asserted. The executable is only a generated local build artifact; the source is retained for reproducibility.
