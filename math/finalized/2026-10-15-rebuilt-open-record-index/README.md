@@ -1,3 +1,36 @@
+# Current OPEN index: degree 23 and four exact structural advances
+
+This derivative projects the independently verified 77-cell native update into nine existing open records. There are 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. IDs, statuses, priorities, novelty classifications and record ordering are unchanged.
+
+- Four N13 parent views: degree-23 original physical-bank attainment gives minimum sixteen in the free-cross-singleton grammar. The sufficient divisor list is {2,3,5,7,11,13,17,19,23}; residual d>1 is coprime to 223092870, first 29. This is not an iff classification. Active unbounded GMP exponents resolve the prior overflow blocker. For degree 29, retain GMP and widen independent packed-convolution slots to at least 17 bits or use ordinary convolution; reassess reduction bounds. Older restricted obstructions keep gcd(d,210)=1. Bank count is not scalar cost; priorities remain 56.
+- M-RECTANGLE-TILING: a mixed-prime rank-three dichotomy proves the exact disjoint-tile optimum 132q^3 for N=11q^2, prime q>11, rank-one full-coset equality and a valid, not claimed sharp, higher-rank-area penalty 1/(44q). At N=1859 the optimum is 290004, with penalty 1/572. The accepted-domain union covers every length through 2196; N=2197=13^3 is next at rank three. Preserve actual complex ranks and the disjoint/no-sharing endpoint-incidence model; priority remains 42.
+- M-SPARSE-DEFECT: entrywise matching-diagonal PSD stability and paired cyclotomic embeddings strengthen the general no-mask squared gap to 1/[10 N (N-s)^(phi(N)-1)], with a sharper radical inequality. The codimension-three family 3 not dividing N has additive squared gap 1/(30N^3); odd codimension two has 1/(5N^3), in their stated domains. These estimates hold for every admissible invertible matrix with simultaneous inverse-row sparsity before taking the infimum. Composite classifications, exact nonsharp optima and optimal gap rates remain open at 42.
+- M-MULTISCALE-CHIRP / Q24: legal length-L dyadic representations descend to L+e, where e counts even strides. At N=16, the minimum is at least seven in characteristic zero and characteristic 17 with zeta^2=3; fifteen legal stages suffice over C, a finite splitting extension of Q(zeta), and F_(17^12) in that setting. The accepted result is an interval 7 to 15, not an exact minimum or attainment over Q(zeta). Coefficient discovery and numerical certification remain separately charged; priorities remain 42 and 37.
+- ALG-043: in the specified low/high interleaving, exact chirp cut ranks are 2^min(ceil(k/2),n-k), with optimal maximum TT width in that order 2^floor((n+1)/3). Explicit exact cores have O(N^(2/3)) ideal field/coefficient-address preparation and storage. A canonical-complex TT-SVD existence bound gives width 46 at n=30 and relative vector error 10^-6; it is not a fast certified approximate executor. The changed order does not contradict the older ordinary-order obstruction. Arbitrary-input subtraction/borrow contraction, selected masks, summation and outputs remain unpaid by this representation; priority remains 34.
+
+Only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change for the nine owners. Gate and stop fields are exact independently read leading native P/Q prefixes. Eighteen appended entries use ten immutable report/review URLs; every older URL remains in its prior order. The other 220 raw JSON objects and CSV records remain byte-identical. All nine previous full owner objects, complete earlier validation and prior README bytes are retained.
+
+Native review verifies all 77 changed cells, 462 protected row cells, 107 headers, 224 historical text runs, 70 historical links and 18 target notes. No row, formula, status, priority or novelty change is made. The Mersenne bilinear guard remains a published unbound supplement. Scientific acceptance binds original bytes; disclosed public-copy adaptations are separately recorded and reviewed through COPY_BINDINGS.json. None of these scoped results closes a broader parent or establishes a practical FFT speedup or historical priority.
+
+Scientific source commit: `91eb99feeed09938b7152fd5916b2e95fc9fead0`. Base-index commit: `b68c06608e61955365ebf5542e1ae18a321d143a`. Exact native payload SHA-256: `df03fcd623b41953997012fae90adff3128d7123746d48110f4a3f52886c5936`.
+
+Immutable scientific evidence:
+- [degree23 candidate](https://github.com/AgentSlop-Si/research/blob/91eb99feeed09938b7152fd5916b2e95fc9fead0/math/finalized/2026-10-18-third-cycle-six-results-1519/degree23/candidate/REPORT.md)
+- [degree23 review](https://github.com/AgentSlop-Si/research/blob/91eb99feeed09938b7152fd5916b2e95fc9fead0/math/finalized/2026-10-18-third-cycle-six-results-1519/degree23/review/INDEPENDENT_REVIEW.md)
+- [mixed_prime candidate](https://github.com/AgentSlop-Si/research/blob/91eb99feeed09938b7152fd5916b2e95fc9fead0/math/finalized/2026-10-18-third-cycle-six-results-1519/mixed_prime/candidate/REPORT.md)
+- [mixed_prime review](https://github.com/AgentSlop-Si/research/blob/91eb99feeed09938b7152fd5916b2e95fc9fead0/math/finalized/2026-10-18-third-cycle-six-results-1519/mixed_prime/review/REVIEW.md)
+- [sparse_gap candidate](https://github.com/AgentSlop-Si/research/blob/91eb99feeed09938b7152fd5916b2e95fc9fead0/math/finalized/2026-10-18-third-cycle-six-results-1519/sparse_entrywise/candidate/REPORT.md)
+- [sparse_gap review](https://github.com/AgentSlop-Si/research/blob/91eb99feeed09938b7152fd5916b2e95fc9fead0/math/finalized/2026-10-18-third-cycle-six-results-1519/sparse_entrywise/review/REVIEW.md)
+- [dyadic_chirp candidate](https://github.com/AgentSlop-Si/research/blob/91eb99feeed09938b7152fd5916b2e95fc9fead0/math/finalized/2026-10-18-third-cycle-six-results-1519/dyadic_stage/candidate/REPORT.md)
+- [dyadic_chirp review](https://github.com/AgentSlop-Si/research/blob/91eb99feeed09938b7152fd5916b2e95fc9fead0/math/finalized/2026-10-18-third-cycle-six-results-1519/dyadic_stage/review/REVIEW.md)
+- [interleaved_chirp candidate](https://github.com/AgentSlop-Si/research/blob/91eb99feeed09938b7152fd5916b2e95fc9fead0/math/finalized/2026-10-18-third-cycle-six-results-1519/interleaved_chirp/candidate/REPORT.md)
+- [interleaved_chirp review](https://github.com/AgentSlop-Si/research/blob/91eb99feeed09938b7152fd5916b2e95fc9fead0/math/finalized/2026-10-18-third-cycle-six-results-1519/interleaved_chirp/review/INDEPENDENT_REVIEW.md)
+- [Published copy bindings](https://github.com/AgentSlop-Si/research/blob/91eb99feeed09938b7152fd5916b2e95fc9fead0/math/finalized/2026-10-18-third-cycle-six-results-1519/COPY_BINDINGS.json)
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: degree 19, bounded variation and three exact structural advances
 
 This derivative projects the independently verified 77-cell native update into nine existing open records. There are 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. IDs, statuses, priorities, novelty classifications and record ordering are unchanged.
