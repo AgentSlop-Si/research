@@ -1,3 +1,178 @@
+# Current OPEN index: fifth-cycle scoped results
+
+This derivative projects an independently verified 71-cell native update into seven existing open records across six scientific results. The overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. All IDs, statuses, priorities, novelty classifications and record ordering are unchanged.
+
+## ALG-064
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Independently accepted: an all-length certified Bluestein/radix-2 fallback for exact complex-dyadic inputs, rational absolute tolerance 0<epsilon<=1, positive unnormalized DFT and all N outputs. The all-size error and termination proof pays root construction, finite precision, bit/storage costs and failed-discovery invoices; 50 independent cases/1,191 bins are transcription controls. The O(N log N) improvement is the transform kernel arithmetic count, not total bit complexity or measured speed. Classical Bluestein is attributed.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/certified_fft/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/certified_fft/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Park the accepted all-length fallback interface. Stable/noisy recurrence recognition, conditioning, non-dyadic inputs, historical/production integration, resource-limited certification, root/bit-cost optimization and runtime benchmarking remain separate open obligations. Do not redispatch the completed fallback or treat predecessor work as free.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/certified_fft/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/certified_fft/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Acceptance is limited to the frozen exact-dyadic absolute-error fallback. Preserve all paid failed-discovery and arbitrary invoice-processing costs; upstream invoice completeness remains an integration premise. No relative-error, global O(N log N) bit-cost, novelty, practical-speed or owner-closure claim. ALG-064 remains TO RESEARCH at priority 42.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/certified_fft/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/certified_fft/review/REVIEW.md
+
+## ALG-070
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Independently accepted: with immutable complete N-entry views, one equal-size slot per view, fixed known positive tariffs, capacity K>=1 and empty initial caches, deterministic reset-credit caching satisfies M_online<=K M_OPT for every finite active sequence, with no additive startup constant and all offline speculation paid. K is the optimal deterministic asymptotic factor over the admitted tariff class. The policy/potential are classical GreedyDual/Landlord; the result supplies the charged owner-specific realization, not a novelty claim.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weighted_cache/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weighted_cache/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Park the accepted fixed-price/equal-slot complete-view interface. Partial/compressed representations, shared intermediates, changing or state-dependent tariffs/capacity, cost learning, unrestricted algebraic evaluation, numerical certification and production performance remain separate open obligations. Do not extend the comparator grammar or select another interface automatically.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weighted_cache/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weighted_cache/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+The charged total bound is G+M_online+E<=G+K M_OPT+E, with scheduler cost E explicit. Optional-build sharpness is not an unconditional full-cost or machine-runtime factor K; with common cost g the equal-price lower ratio is (F+g)/(F/K+g). Tariffs must be valid on both sides; rational implementation does not certify arbitrary interval-described reals. ALG-070 remains TO RESEARCH at priority 12.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weighted_cache/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weighted_cache/review/REVIEW.md
+
+## F020
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Independently accepted in characteristic zero: for every odd d>=3, every primitive embedding and 0<=b<d, gcd(U_b,1+z^d)=1, with U_b=H_b for even b and H_b/(z+1) for odd b; the forced odd root is simple. Also gcd(H_b,z^d-1)=1. The ordinary discriminant D_b and integral deflation V_b are monic, so V_b mod p is nonzero and t_p(b) finite. Ordinary squarefreeness in the unrestricted prime-power range remains unproved.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/uniform_guards/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/uniform_guards/review/INDEPENDENT_REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+The fixed-node separation gate is complete uniformly at all odd orders. The precise remaining ordinary-squarefreeness gate is the accepted equivalent Christoffel-Darboux kernel nonisotropy lemma (L), or another actual-family uniform nonvanishing proof. Do not enlarge the root-order census. Preserve accepted ordinary-squarefree ranges, local signed normalizations, OPEN58 paired support, OPEN53 endpoint and historical-priority obligations.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/uniform_guards/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/uniform_guards/review/INDEPENDENT_REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+The strict finite-t criterion is only sufficient: t_3(4)=8 exceeds phi(9)=6 although H_4 is squarefree at primitive ninth roots. Monicity or a failed modular bound does not establish a collision or uniform ordinary squarefreeness. No automatic all-A extension beyond accepted ordinary-squarefree ranges, separate arithmetic-gate closure, novelty or census change. F020/F023 remains TO RESEARCH at priority 58.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/uniform_guards/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/uniform_guards/review/INDEPENDENT_REVIEW.md
+
+## M-SCAN-DIMENSION
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Independently accepted: at good inverse-tridiagonal anchors, inversion identifies the original separated-generator tangent with the full pentadiagonal space and preserves product-Jacobian rank. For N=2^m with odd m>=5, the repeated identical centrosymmetric anchor T=3I+L+L^T is deficient at every positive depth. Original-chart transfer requires nonzero neighbors and nonzero leading/trailing principal minors. This rejects that anchor family, not generic repeated-bit-reversal saturation.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/bit_reversal/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/bit_reversal/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+The explicit regular endpoint-perturbed anchor leaves one precise blocker: prove its full N^2-row minor, equivalent dual uniqueness, or valid size-lifting/Schur-block nonvanishing for every dyadic N>=8 at t=N/4+1. Breaking centrosymmetry is insufficient. No next finite-size sample substitutes for this lemma; an endpoint-family counterexample would not refute original generic dominance.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/bit_reversal/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/bit_reversal/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+All-dyadic threshold dominance remains neither proved nor refuted. Preserve the accepted all-size upper bound, original finite certificates and later depth-two dimension 9N-12/generic raw kernel N+12 result. Degenerate inverse-tridiagonal raw representations are outside the accepted tangent transfer. Intermediate-depth gauge completeness, Fourier membership/construction, coefficient costs, performance and priority remain separate. M-SCAN-DIMENSION stays TO RESEARCH at priority 34.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/bit_reversal/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/bit_reversal/review/REVIEW.md
+
+## M-NONLINEAR-COMPATIBILITY
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Independently accepted: the complete 64-equation original F8=BPA ideal over Q(zeta_8), with p=(7,0,6,3,4,1,2,5), preserves every generator-zero component; removing eight absent endpoint variables is equivalent to the 80-parameter chart. The necessary inverse system has 65 variables, 280 ladder quadrics and t det(C)-1. Its zero-safe inverse reduction and support-aware lifting criterion are proved. The unrestricted target is still UNDECIDED.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/fourier_target/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/fourier_target/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+The full original ideal remains unresolved; no zero-support component is exhausted. Completion needs an exact algebraic original witness with all 64 equations, a lifted unit identity for the original or necessary inverse ideal, or a proved image-vanishing polynomial nonzero at F8. The recorded 180-second soft-CPU/1-GiB elimination attempt hit its CPU limit without a basis or certificate; no minimum resource requirement is established.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/fourier_target/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/fourier_target/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+A proper inverse ideal alone is not an original witness: both C^-1 and F8 C P^-1 must pass the support-aware lift. Singular principal blocks and zero generators cannot be discarded. Numerical residuals, finite-field emptiness, tangent probes and bounded timeout are not characteristic-zero infeasibility. Prior restricted obstructions remain pruning lemmas. No target closure, novelty or runtime lower bound; M-NONLINEAR-COMPATIBILITY stays TO RESEARCH at priority 34.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/fourier_target/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/fourier_target/review/REVIEW.md
+
+## ALG-WEIL-LOCAL
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Independently accepted finite implementation gate: all 13 corrected derivative test groups pass on the exact v25 sign-fix ZIP (SHA-256 e159b6a6148c8020c925afc7f56ea50d4362e64a86988c2cacd58b80eb09a556). Fresh signed candidate records, covariance, additive composition, support, parameter dispatch and emitted hierarchy records were independently checked as data. The acceptance oracle reports 102,500 assertions; the separate reviewer reports 102,590 checks, not an additional package execution. All historical files and predecessor ZIP remain byte-identical.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Park the accepted corrected 13-group implementation interface. Original historical source replay and exhaustive suites, exact earlier unrecovered API/review bytes, malformed-input hardening, global normalization, higher-dimensional extensions, numerical production and full preparation/bit/storage costs remain separate open obligations. Do not repeat the accepted derivative solely because the parent remains open.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Acceptance binds only the exact corrected derivative and recorded finite runs. The independent final reviewer checked archive/source/log/matrix data without rerunning the downloaded package. Fresh corrected q9/q25 checks do not count as replay of original historical exhaustive suites or recovery of missing original API bytes. Logs are evidence snapshots, not execution attestations. No general FFT speed, novelty or owner closure; ALG-WEIL-LOCAL remains TO RESEARCH at priority 42.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/review/REVIEW.md
+
+## Q18
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+The shared corrected-derivative execution gate is independently accepted: all 13 test groups pass on the exact v25 sign-fix ZIP (SHA-256 e159b6a6148c8020c925afc7f56ea50d4362e64a86988c2cacd58b80eb09a556), with fresh signed candidate records and independent data-only verification. This supplements Q18 without replacing its earlier bounded API/formula acceptances. Original historical files and predecessor ZIP remain unchanged; Q18 is a distinct priority-37 view.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Q18 need not repeat the accepted corrected 13-group derivative gate. Original historical source/exhaustive-suite replay and exact earlier API/review-byte recovery remain separate open obligations, alongside hardened-input, normalization, wider-domain, numerical-production and preparation/bit limits. Preserve its earlier bounded API and formula evidence; do not transfer the ALG-WEIL-LOCAL priority.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed fifth-cycle scoped continuation]
+Close only Q18’s shared corrected-derivative execution subgate. Fresh corrected finite tests and independent data-only review are not original historical exhaustive-suite replay, a second downloaded-package execution, missing-original recovery, global normalization, production qualification or novelty clearance. Q18 remains TO RESEARCH at priority 37, separate from ALG-WEIL-LOCAL at priority 42.
+Report: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/weil_execution/review/REVIEW.md
+
+Only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change for these seven records. Fourteen appended evidence entries use twelve distinct immutable URLs. All older URLs remain ordered; 222 unrelated raw JSON objects and CSV records stay byte-identical. The seven prior full owner objects, complete previous validation and README bytes are retained. Native review protects all 493 guarded cells outside 71 prefixes, including six formulas, fifteen rich-text runs/links, all sixty-six notes and the seventeen target-cell notes. Q18 remains distinct; F020 historical Prior work is unchanged. No owner closure or novelty promotion follows. Native visual fit was not rendered; layout and formatting were preserved.
+
+Scientific source commit: `b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e`. Base-index commit: `c8843f101dcb400195b9a79b30e3803f1805f541`. Exact native payload SHA-256: `629953a100465159bc26e7e084529e9df6c6c856d349eb6c49519effd01ae512`.
+
+[Scientific copy bindings](https://github.com/AgentSlop-Si/research/blob/b1093eb6705fbef4e6dfcc0e29e69f6a5d31e21e/math/finalized/2026-10-18-fifth-cycle-six-results/COPY_BINDINGS.json).
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: degree 29 and four structural advances
 
 This derivative projects an independently verified 77-cell native update into nine existing open records. There are 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. IDs, statuses, priorities, novelty classifications and record ordering are unchanged.
