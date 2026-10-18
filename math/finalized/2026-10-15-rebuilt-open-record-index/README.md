@@ -1,3 +1,33 @@
+# Current OPEN index: degree-13 banks, dominant-prime tilings, sparse-defect slices and a centered-source family
+
+This narrow derivative projects the independently verified 104-cell follow-on Sheet update into seven existing open records. There are still 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. No ID, row, status, priority, novelty classification or ordering changes.
+
+- M-MAGNETIC-SPAN, NEW-17, Q35 and NEXT-MAGNETIC-SIGNED: degree-13 original-bank attainment gives minimum sixteen in the free-cross-singleton grammar. Divisibility by one of {2,3,5,7,11,13} is sufficient. Residual unclassified degrees are d>1 coprime to 30030, first 17; this is not an iff classification. The older restricted obstructions retain their gcd(d,210)=1 hypotheses. Priorities remain 56; no bank-count/runtime identification.
+- M-RECTANGLE-TILING: the complex disjoint rank-weighted objective is optimal at N D_N for N=mp with p prime and 1<=m<p. This settles N=57 at 1254, all N=3p and every semiprime when combined with prior results. Outside the combined domains, 343 and 847 remain through 1000. Priority remains 42; no shared-circuit or FFT-speed conclusion.
+- M-SPARSE-DEFECT: simultaneous inverse-row sparsity has exact even half-density optimum 1/sqrt(2), a strict singleton gap for N>=3, and exact N=3 optimum sqrt(3)/2. General support budgets and larger exact singleton optima remain open. The complex normalized Fourier operator-norm model and priority 42 are retained.
+- ALG-034: the restricted constant-original centered provider has exact support 3N+1 and a certified sparse approximant meeting the source-level outer premise. The exact target and approximation are different objects. Conservative dense front-end work is O(N L^6+S L^7); the qualified combined fixed-family bound is O(N m^6+M^(1/4) m^7), with no linear-word claim. Integrated outer execution, generic recovery, arbitrary originals and fast DFT remain open at priority 48. The unchanged old exact-sparse supplier remains incompatible.
+
+Only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change for these seven owners. The two text fields are exact leading native P/Q prefixes. Fourteen new source entries use eight distinct immutable report/review URLs. Every old source URL remains in order. The other 222 raw JSON record objects and raw CSV records are byte-identical. Seven previous full derivative objects and the complete previous validation are retained in VALIDATION.json; all previous README bytes follow below. The original Sheet retains every historical suffix. Independent native postread verified all 104 changed cells, 331 protected cells, 107 headers, seven owners, 213 historical runs, 77 links and 28 notes, with statuses/priorities/novelty and census unchanged.
+
+Scientific acceptance binds the original inspected bytes. Seven of the eight linked published documents are byte-identical to those originals; the sparse-defect review has a disclosed local-path sanitization. Its published SHA-256 is a9ce3050ad29f6f2379b124a1dfbdd16d4f0e249f40c224b264e9cb77f660b9a, distinct from accepted original cdee425a609892f0c220de1ed4174ff96164534c766091745f298f0584495997. The published COPY_BINDINGS.json preserves that mapping. This does not add a new scientific acceptance or change any proof claim.
+
+The source and base-index commit is `87a3cb7b99c1a85ba9e290afef385b5bc99eba5a`; exact native payload SHA-256 is `9dc98bc04902a55b36c0aeb6a7cec6beb6ab91b036a6c6eab8f8480951a4696f`. No new owner is assigned to unrelated supplements.
+
+Immutable scientific evidence:
+- [n13_degree13 candidate](https://github.com/AgentSlop-Si/research/blob/87a3cb7b99c1a85ba9e290afef385b5bc99eba5a/math/finalized/2026-10-18-cycle-completions-1151/degree13/candidate/REPORT.md)
+- [n13_degree13 review](https://github.com/AgentSlop-Si/research/blob/87a3cb7b99c1a85ba9e290afef385b5bc99eba5a/math/finalized/2026-10-18-cycle-completions-1151/degree13/review/INDEPENDENT_REVIEW.md)
+- [rectangle_dominant_prime candidate](https://github.com/AgentSlop-Si/research/blob/87a3cb7b99c1a85ba9e290afef385b5bc99eba5a/math/finalized/2026-10-18-cycle-completions-1151/dominant_prime/candidate/REPORT.md)
+- [rectangle_dominant_prime review](https://github.com/AgentSlop-Si/research/blob/87a3cb7b99c1a85ba9e290afef385b5bc99eba5a/math/finalized/2026-10-18-cycle-completions-1151/dominant_prime/review/REVIEW.md)
+- [sparse_defect candidate](https://github.com/AgentSlop-Si/research/blob/87a3cb7b99c1a85ba9e290afef385b5bc99eba5a/math/finalized/2026-10-18-cycle-completions-1151/sparse_defect/candidate/REPORT.md)
+- [sparse_defect review](https://github.com/AgentSlop-Si/research/blob/87a3cb7b99c1a85ba9e290afef385b5bc99eba5a/math/finalized/2026-10-18-cycle-completions-1151/sparse_defect/review/REVIEW.md)
+- [centered_source_family candidate](https://github.com/AgentSlop-Si/research/blob/87a3cb7b99c1a85ba9e290afef385b5bc99eba5a/math/finalized/2026-10-18-cycle-completions-1151/centered_family/candidate/PROOF.md)
+- [centered_source_family review](https://github.com/AgentSlop-Si/research/blob/87a3cb7b99c1a85ba9e290afef385b5bc99eba5a/math/finalized/2026-10-18-cycle-completions-1151/centered_family/review/REVIEW.md)
+- [Published copy bindings](https://github.com/AgentSlop-Si/research/blob/87a3cb7b99c1a85ba9e290afef385b5bc99eba5a/math/finalized/2026-10-18-cycle-completions-1151/COPY_BINDINGS.json)
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: centering obstruction, bounded dense reference, degree-11 banks and rectangle extensions
 
 The 18 October 2026 independently verified 87-cell native update is now projected into the six existing open records below. This derivative contains 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views.
