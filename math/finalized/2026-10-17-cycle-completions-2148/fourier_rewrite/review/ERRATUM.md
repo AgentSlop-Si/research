@@ -1,0 +1,8 @@
+# Additive scope clarification for §7.1
+
+Applies to PROOF.md in `fourier_rewrite_completion_20261017_2130`, SHA-256 `475a32ecfadd70dabe8e815a793241a213138e620a177d3e8bc00a5d5914ff9c`.
+No mathematical formula in that proof needs changing. Add the following clarification to §7.1 before its sequential arithmetic conclusion:
+
+> Here representation means an exact identity of N×N linear maps acting on the same N complex coordinates, for every input, with no auxiliary-coordinate embedding, projection, nonlinear encoding, or compressed/packed representation. Every monomial boundary map is invertible, so its scale coefficients are nonzero. The DFT matrix itself has no zero entries. Runtime input and intermediate values may nevertheless be zero; no no-cancellation or nonzero-input assumption is used in the row-support bound, since cancellations can only reduce support. The 4ND real-addition statement separately charges the literal sequential rho=±3 scalar evaluator, with all of its prescribed per-coordinate operations evaluated on arbitrary inputs and no data-dependent zero shortcuts or algebraic optimization across factors. It is not a minimum arithmetic bound for other evaluators, partial windows, shared computation, or representation conversions. If exact Fourier-root boundary coefficients are allowed, their representation and application must also be supplied and charged; their formal availability does not establish compatibility with R30's implemented Gaussian-dyadic fixed-grid evaluator.
+
+After incorporation, update hashes and any distributed archive. Alternatively retain this clarification as an explicit companion to the original immutable release.
