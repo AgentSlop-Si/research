@@ -1,3 +1,17 @@
+# Current OPEN index: verified bounded component progress
+
+18 October 2026. The independently verified native table remains **98 CLOSED / 229 TO RESEARCH / 327 views**. This checkpoint applies only the accepted 17 October six-scope packet; later-cycle sources are not imported here.
+
+ALG-034 remains open at priority 48. Its generalized exact sparse supplier/query and nonconstant original finite-BUCKETS components are complete within their declared domains. Local Cartesian-median production and semantic replay, lazy outer incidence enumeration and selected-coefficient binding are also recorded with the mandatory address/counter/storage cost erratum. Full recovery, complete outer transfer, original-input provenance, broader dense/non-singleton/all-length deployment and independent amplification remain distinct at this checkpoint. The retained target distinction is R(x)/alpha in the singleton family and R(Px)/alpha generally; no rounded-serial equivalence or complete FFT execution is inferred.
+
+Only ALG-034's leading current-gate/pass-stop projections and eight appended immutable evidence URLs change. All earlier source URLs remain. The other **228 raw JSON record objects and raw CSV records are byte-identical**, and every ID, status, priority and relative position is unchanged. The previous ALG-034 derivative object is retained in VALIDATION.json. Full native text histories remain verbatim, and all earlier README and validation history is preserved below.
+
+ALG-038 is unchanged because its precise source bridge is still absent. Q16 and STR-Q1 remain archived. Fourier/R30 and shared-adaptive results retain their independent qualified scopes without a guessed native owner. No new row, closure, classification or score change is made.
+
+Evidence: [immutable six-scope packet](https://github.com/AgentSlop-Si/research/tree/e89f7c6b83c799e53b5f8c043cd6c55f3a5c53bd/math/finalized/2026-10-17-cycle-completions-2148); [native application receipt](../2026-10-17-cycle-completions-2148/application/STATUS_APPLICATION.json). Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: completed construction subgates
 
 17 October 2026. The independently verified native table remains **98 CLOSED / 229 TO RESEARCH / 327 views**. No record is added, removed or newly closed in this refresh.
