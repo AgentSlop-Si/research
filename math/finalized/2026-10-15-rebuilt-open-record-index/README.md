@@ -1,3 +1,19 @@
+# Current OPEN index: retained outer transfer, approximate recovery and stable-support descent
+
+18 October 2026. The independently verified native table remains **98 CLOSED / 229 TO RESEARCH / 327 views**. This sequential continuation follows the preceding 14-cell update and preserves its complete native text history.
+
+ALG-034 remains open at priority 48. Complete retained outer transfer and restricted support-blind approximate recovery are separately accepted. The recovered R(x)/alpha target and centered outer-source premises have not been composed into a full original-input transform. The strict outer guard, unavailable original signal for its dense branch, fixed-family cost/storage qualifications, trusted-context provenance, fixed demonstration tapes and separate independent-randomness/amplification obligations remain explicit. The radius-only exact-support obstruction does not contradict the accepted approximate-recovery theorem and amplitude floor.
+
+M-MAGNETIC-SPAN, NEW-17, Q35 and NEXT-MAGNETIC-SIGNED remain open at priority 56. In the original N13, q=16 free-cross-singleton grammar over F_(53^d), gcd(d,210)=1 excludes either seven-node same-sign support being prime-Frobenius-stable. Both stable same-sign supports therefore have exact minimum 18 banks. The unrestricted nonstable 16- and 17-bank cases remain open. The required zero-constant-term explanatory correction, arbitrary legal beta/cross nodes/weights and inherited witnesses are preserved.
+
+Only these five records have refreshed exact leading gate/stop projections, with 12 appended source-link entries using six distinct new immutable report/review URLs. Every older source URL, including the original cost erratum, remains. The other **224 raw JSON record objects and raw CSV records are byte-identical**. Prior complete objects for the five refreshed owners are retained in VALIDATION.json. All IDs, statuses, priorities and ordering remain unchanged; no new row, parent closure, classification or score change is made.
+
+Shared run-difference multiplication, Mersenne setup and the R30 two-shear interface retain accepted research results without a guessed native owner. R30's negative stopping decision concerns only the literal adapter optimization attempt. ALG-038 and archived Q16/STR-Q1 are unchanged.
+
+Evidence: [immutable six-scope packet](https://github.com/AgentSlop-Si/research/tree/d1c6910aa9fc4ef861981358e8bf3e0c71585689/math/finalized/2026-10-18-cycle-completions); [native application receipt](../2026-10-18-cycle-completions/application/STATUS_APPLICATION.json). Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: verified bounded component progress
 
 18 October 2026. The independently verified native table remains **98 CLOSED / 229 TO RESEARCH / 327 views**. This checkpoint applies only the accepted 17 October six-scope packet; later-cycle sources are not imported here.
