@@ -1,3 +1,36 @@
+# Current OPEN index: degree-17 banks, executed centered integration and three structural boundaries
+
+This derivative projects the independently verified 72-cell native update into eight existing open records. There are 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. All IDs, statuses, priorities, novelty classifications and ordering remain unchanged.
+
+- Four N13 parent views: degree-17 original physical-bank attainment gives the same minimum sixteen in the free-cross-singleton grammar. The sufficient divisor list is {2,3,5,7,11,13,17}; remaining d>1 is coprime to 510510, first 19. This is not an iff classification. The older restricted obstructions retain gcd(d,210)=1. Physical bank count is not runtime; priority remains 56.
+- ALG-034: the restricted constant-original provider actually executed through median/replay and full outer transfer. All 5,733 coefficients and 512 final outputs were independently checked against both retained operator and original transform. The complex infinity-norm output error divided by original Euclidean norm is at most 0.02213 for this fixture. The exact centered support is 1,537; thirteen is approximate support. Combined work O(N m^6+M^(1/4)m^7) requires W,f=O(m), bounded histories and the general H-dependent ledger. Arbitrary originals, general recovery, all-length deployment and practical speed remain open at priority 48.
+- M-RECTANGLE-TILING: rank-two unit-modulus rigidity rules out rank-two tiles in every optimum. The exact complex disjoint/no-sharing objective is N D_N for D_N^2<12N. N=343 and 847 are resolved at 19,208 and 74,536; together with the dominant-prime theorem all lengths through 1000 are covered. Rank three at N=1331 is the next obstruction. No shared-circuit or FFT-speed consequence follows; priority stays 42.
+- M-SPARSE-DEFECT: a complementary Fourier-mask iff characterizes simultaneous inverse-row floor equality and all minimizers. Exact Delta(N,N-d)=sqrt(d/N) holds for every proper divisor d|N; codimension-two sharpness is equivalent to even N, and in prime dimension p the floor is sharp exactly at s=p-1. Remaining nonsharp exact values, quantitative gaps and composite masks stay open at priority 42. The complex spectral-norm model is unchanged.
+- ALG-070: the explicit equal-tariff immutable complete-view cache grammar has classical deterministic materialization factor K and LRU resource-augmentation factor K/(K-h+1). The realized filtered-convolution requests establish this restricted comparator, not algebraic hardness. The common-cost diluted lower bound (F+g)/(F/K+g) compares declared tariffs G+F*OPT_materializations; extra comparator scheduling/runtime charges must be bounded and included in the denominator or justified common cost. LRU bookkeeping is additive. Larger representations, nonuniform tariffs and runtime/bit/numerical claims remain open at priority 12.
+
+Only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change for these eight owners. The gate and stop fields are exact independently read leading native P/Q prefixes. Sixteen appended entries use ten immutable report/review URLs; every older URL is retained in order. The other 221 raw JSON objects and raw CSV records remain byte-identical. Eight previous full owner objects and the complete earlier validation are preserved below, and all previous README bytes follow verbatim. Native review verifies all 72 changed cells, 438 protected cells, 107 headers, 204 historical text runs, 70 historical links and 16 target notes.
+
+The Mersenne continuation remains a published unbound supplement. No guessed owner, new row, closure or priority change is made. Scientific acceptance binds original bytes. Nine of the ten linked documents are byte-identical to those originals; only the sparse-mask review has two disclosed local-path substitutions, mapped by COPY_BINDINGS.json. No new scientific acceptance is implied by that adaptation.
+
+Scientific source commit: `320f4691d6e72abcabfb4d50593a91f1e87eb33d`. Base-index commit: `2292e5e6d4856acb8c9f8ff28af5dca0c6d662da`. Exact native payload SHA-256: `9084b4576aa7c88f84343ed39cec6adeb24a373826cb1e3185c73c0bf80decff`.
+
+Immutable scientific evidence:
+- [degree17 candidate](https://github.com/AgentSlop-Si/research/blob/320f4691d6e72abcabfb4d50593a91f1e87eb33d/math/finalized/2026-10-18-six-result-cycle-1252/degree17/candidate/REPORT.md)
+- [degree17 review](https://github.com/AgentSlop-Si/research/blob/320f4691d6e72abcabfb4d50593a91f1e87eb33d/math/finalized/2026-10-18-six-result-cycle-1252/degree17/review/INDEPENDENT_REVIEW.md)
+- [centered_integration candidate](https://github.com/AgentSlop-Si/research/blob/320f4691d6e72abcabfb4d50593a91f1e87eb33d/math/finalized/2026-10-18-six-result-cycle-1252/centered_integration/candidate/REPORT.md)
+- [centered_integration review](https://github.com/AgentSlop-Si/research/blob/320f4691d6e72abcabfb4d50593a91f1e87eb33d/math/finalized/2026-10-18-six-result-cycle-1252/centered_integration/review/REVIEW.md)
+- [rank_two candidate](https://github.com/AgentSlop-Si/research/blob/320f4691d6e72abcabfb4d50593a91f1e87eb33d/math/finalized/2026-10-18-six-result-cycle-1252/rank_two/candidate/REPORT.md)
+- [rank_two review](https://github.com/AgentSlop-Si/research/blob/320f4691d6e72abcabfb4d50593a91f1e87eb33d/math/finalized/2026-10-18-six-result-cycle-1252/rank_two/review/REVIEW.md)
+- [sparse_masks candidate](https://github.com/AgentSlop-Si/research/blob/320f4691d6e72abcabfb4d50593a91f1e87eb33d/math/finalized/2026-10-18-six-result-cycle-1252/sparse_masks/candidate/REPORT.md)
+- [sparse_masks review](https://github.com/AgentSlop-Si/research/blob/320f4691d6e72abcabfb4d50593a91f1e87eb33d/math/finalized/2026-10-18-six-result-cycle-1252/sparse_masks/review/REVIEW.md)
+- [persistent_cache candidate](https://github.com/AgentSlop-Si/research/blob/320f4691d6e72abcabfb4d50593a91f1e87eb33d/math/finalized/2026-10-18-six-result-cycle-1252/persistent_cache/candidate/REPORT.md)
+- [persistent_cache review](https://github.com/AgentSlop-Si/research/blob/320f4691d6e72abcabfb4d50593a91f1e87eb33d/math/finalized/2026-10-18-six-result-cycle-1252/persistent_cache/review/INDEPENDENT_REVIEW.md)
+- [Published copy bindings](https://github.com/AgentSlop-Si/research/blob/320f4691d6e72abcabfb4d50593a91f1e87eb33d/math/finalized/2026-10-18-six-result-cycle-1252/COPY_BINDINGS.json)
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: degree-13 banks, dominant-prime tilings, sparse-defect slices and a centered-source family
 
 This narrow derivative projects the independently verified 104-cell follow-on Sheet update into seven existing open records. There are still 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. No ID, row, status, priority, novelty classification or ordering changes.
