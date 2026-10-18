@@ -1,3 +1,29 @@
+# Current OPEN index: centering obstruction, bounded dense reference, degree-11 banks and rectangle extensions
+
+The 18 October 2026 independently verified 87-cell native update is now projected into the six existing open records below. This derivative contains 229 TO RESEARCH records; the native overview remains 98 CLOSED / 229 TO RESEARCH / 327 views.
+
+- ALG-034: the unchanged sparse-recovery and centered outer-source contracts have no nonzero exact overlap. The repaired bounded direct-DFT reference supplies an explicit source/target and paid fallback, but no admitted same-source, same-target fast sparse branch. The parent remains open at priority 48.
+- M-MAGNETIC-SPAN, NEW-17, Q35 and NEXT-MAGNETIC-SIGNED: literal degree-11 attainment gives 16 banks. Divisibility by one of {2,3,5,7,11} is sufficient; the remaining unclassified degrees satisfy d>1 and gcd(d,2310)=1, first 13. This is not an if-and-only-if classification. Residual sixteen-bank witnesses need both seven-node supports nonstable and at least one nonbase cross node; both cross nodes are not required to be nonbase. All four parent views remain open at priority 56.
+- M-RECTANGLE-TILING: the disjoint rank-weighted complex Fourier objective is settled on the balanced-divisor domain D_N^2<8N and at N=2p for odd prime p. The general parent remains open at priority 42; N=57 is a concrete remaining length. These results do not imply an unrestricted circuit bound or FFT speedup.
+
+Only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change for these six owners. The two text fields are exact leading native P/Q prefixes. Every earlier source URL is retained in order; fourteen link entries add eight distinct immutable, independently byte-verified report/review URLs. The other 223 raw JSON record objects and raw CSV records are byte-identical. IDs, titles, statuses, priorities, overview rows, source-row descriptions, navigation URLs, record order and historical extraction counters are preserved. Full old native histories, 202 rich-text runs, 77 hyperlinks and observed notes/cell formatting passed independent native readback. The six prior complete derivative objects are retained in VALIDATION.json, along with the complete earlier validation.
+
+This derivative does not create owners for the shared-product, Mersenne or R30 work. It does not close any parent or change scores. The research source commit is `c3a882a7e6e61af05fe1045145bc1a43038d77c6`; the exact 87-cell native payload SHA-256 is `9a38c4de6a94232686ca89549728a9f9ea0707b374c7d2714110f8d196e4c3b4`.
+
+Immutable scientific evidence:
+- [centering candidate](https://github.com/AgentSlop-Si/research/blob/c3a882a7e6e61af05fe1045145bc1a43038d77c6/math/finalized/2026-10-18-cycle-completions-1100/centering/candidate/PROOF.md)
+- [centering review](https://github.com/AgentSlop-Si/research/blob/c3a882a7e6e61af05fe1045145bc1a43038d77c6/math/finalized/2026-10-18-cycle-completions-1100/centering/review/REVIEW.md)
+- [dense_dispatch candidate](https://github.com/AgentSlop-Si/research/blob/c3a882a7e6e61af05fe1045145bc1a43038d77c6/math/finalized/2026-10-18-cycle-completions-1100/dense_dispatch/candidate/REPORT.md)
+- [dense_dispatch review](https://github.com/AgentSlop-Si/research/blob/c3a882a7e6e61af05fe1045145bc1a43038d77c6/math/finalized/2026-10-18-cycle-completions-1100/dense_dispatch/review/REVIEW.md)
+- [n13_degree11 candidate](https://github.com/AgentSlop-Si/research/blob/c3a882a7e6e61af05fe1045145bc1a43038d77c6/math/finalized/2026-10-18-cycle-completions-1100/degree11/candidate/REPORT.md)
+- [n13_degree11 review](https://github.com/AgentSlop-Si/research/blob/c3a882a7e6e61af05fe1045145bc1a43038d77c6/math/finalized/2026-10-18-cycle-completions-1100/degree11/review/INDEPENDENT_REVIEW.md)
+- [rectangle candidate](https://github.com/AgentSlop-Si/research/blob/c3a882a7e6e61af05fe1045145bc1a43038d77c6/math/finalized/2026-10-18-cycle-completions-1100/fourier_rectangles/candidate/REPORT.md)
+- [rectangle review](https://github.com/AgentSlop-Si/research/blob/c3a882a7e6e61af05fe1045145bc1a43038d77c6/math/finalized/2026-10-18-cycle-completions-1100/fourier_rectangles/review/REVIEW.md)
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: retained outer transfer, approximate recovery and stable-support descent
 
 18 October 2026. The independently verified native table remains **98 CLOSED / 229 TO RESEARCH / 327 views**. This sequential continuation follows the preceding 14-cell update and preserves its complete native text history.
