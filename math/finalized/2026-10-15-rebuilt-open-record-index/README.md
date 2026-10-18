@@ -1,3 +1,180 @@
+# Current OPEN index: sixth-cycle scoped results
+
+This derivative projects an independently verified 58-cell native update into seven existing open records across six scientific results. The overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. All IDs, statuses, priorities, novelty classifications and record ordering are unchanged.
+
+## ALG-036
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Independently accepted: for fixed C>0 and 0<delta<=1, every independently seeded, measurable transcript-only adaptive complex-linear measurement scheme with terminal pathwise complex rank deficit d>=delta N has Gaussian success probability at alpha=1/2 at most exp[-(delta/2)exp(-8C^2/delta)N]+exp[-(3-log 4)N], capped at one. The bound is uniform in residual orientation, decoder translation and allowed stopping. It settles the constant-fraction endpoint and the stated fixed-s, M=Theta(log N) block-local application.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/gaussian_endpoint/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/gaussian_endpoint/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+The selected constant-fraction alpha=1/2 endpoint is complete. Preserve the fixed transcript-only information model and charged rank budget. Thin deficits such as d~N/log N, other information models and the broader source-specific attribution questions remain separate open scopes; do not redispatch the completed endpoint proof or infer a runtime lower bound.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/gaussian_endpoint/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/gaussian_endpoint/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+The displayed bound is on success, not failure, and requires a fixed positive pathwise rank fraction, independent seeds and no uncounted raw-input side channel. Expected deficit or mere nonzero rank deficiency is insufficient. The alpha<1/2 positive theorem and random-one-coordinate-omission countercontrol remain intact. No full-input algorithm exclusion, arithmetic/bit lower bound, implementation, novelty or owner closure; ALG-036 stays TO RESEARCH at priority 34.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/gaussian_endpoint/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/gaussian_endpoint/review/REVIEW.md
+
+## M-SPARSE-DEFECT
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Independently accepted: an exact binary Fourier-phase mask at (N,d)=(8,4), and its CRT family (8m,4m) for every odd positive m, has both unnormalized Grams dI and connected bipartite support. This refutes the proposed decomposition into full d-by-d blocks. The base original simultaneous inverse-row witness has squared spectral error 1/2. Every example still satisfies d dividing N; no uniform divisibility conclusion is proved.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sparse_divisibility/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sparse_divisibility/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Uniform complementary divisibility remains OPEN: prove that every binary Fourier equality mask has d dividing N, or supply one exact nondivisor mask. The full-square-block structural route is false beyond the accepted small-codimension cases. A different structural argument must retain every Fourier phase and all simultaneous inverse-row constraints; no next isolated weight census substitutes for the uniform gate.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sparse_divisibility/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sparse_divisibility/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Acceptance rejects only the full-block premise. The connected examples do not refute divisibility, improve the known half-density optimum, or classify all equality masks. Numerical/MILP infeasibility without an exact certificate and the retained (12,5) time limits are not exclusions. Preserve normalized complex Fourier target, spectral norm, invertibility and arbitrary original minimizing coefficients/supports; equality masks remain binary. M-SPARSE-DEFECT stays TO RESEARCH at priority 42.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sparse_divisibility/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sparse_divisibility/review/REVIEW.md
+
+## M-MULTISCALE-CHIRP
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Independently accepted: the complete original N=16 characteristic-zero minimization is encoded by legality-saturated grouped coefficient systems, with zero parameters, lost leading coefficients and other degeneracies retained. There are 105,435 literal patterns and 26,783 layered symmetry orbits for lengths 8 through 14; 26,776 layered orbits remain unresolved. Zero padding reduces the remaining feasibility decision to 12,921 unresolved length-fourteen systems. The minimum is still 8<=r*<=15.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Determine the original complex minimum by a legal attainment witness with all 256 entries verified and characteristic-zero certificates excluding every smaller pattern. The exact residual systems and symmetry/coverage ledger now identify the unfinished work. The benchmark F5B attempt hit its 180/185-second CPU budget without a basis; no completion budget or resumed computation is established. Do not move to N=32, another characteristic or a parity-only lower-bound cycle.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Only formulation, legality equivalence, full coverage, elementary controls and interpretation of the recorded CPU blocker are accepted. No legal attainment below fifteen, improved lower endpoint, emptiness/nonemptiness result or exact minimum follows. The saturated equation u*c_0=1 preserves all factorwise pole guards and coefficient degeneracies; the unsaturated zero-product component is invalid. All inherited field-specific bounds and cost/source qualifications remain. M-MULTISCALE-CHIRP stays TO RESEARCH at priority 42.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/review/REVIEW.md
+
+## Q2-DENSE-TORUS-20261013
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Independently accepted for every m>=4 and every primitive complex m-th root at the actual prescribed lambda: the ordered cyclic boundary F=I-T_(m-1)...T_0 and F inverse both have full rank-m displacement with each canonical same-generator Weyl equation U and Q. This refutes that uniformly bounded-rank representation. Exact cold O(N) inversion, N=m^2, remains open; the accepted paid inverse remains O(N^(3/2)) cold, O(N) warm and O(N) storage.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/torus_displacement/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/torus_displacement/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+The canonical same-generator bounded-displacement route is ruled out. An exact cold O(N) inverse still requires a different all-m boundary representation/solver or another fully charged construction, including coefficient/root setup, addressing and all N outputs. Arbitrary two-generator displacement equations and genuinely different representations remain undecided. Additional warm timings or approximate iteration do not settle this exact cold gate.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/torus_displacement/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/torus_displacement/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+The theorem concerns only the actual prescribed complex family and the canonical U and Q same-generator equations; it is not an obstruction to every representation or an arithmetic lower bound. The row executor guard 1-beta^m!=0 remains distinct from full inverse existence. Retain root/field guards, paid setup, exact-scalar versus bit costs, forward acceptance and historical-code/stability/novelty limits. Q2-DENSE-TORUS-20261013 stays TO RESEARCH at priority 39; no Fourier or broader owner closure.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/torus_displacement/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/torus_displacement/review/REVIEW.md
+
+## PHASE-DEFECT-RANK-20261011
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Independently accepted: the normalized negative-sign F8 rank-one external-error problem has an exact global upper witness delta_1<=sin(pi/16), with explicit phases, real B and complex rank-one E. The matching lower bound holds throughout the continuous squared-four-periodic phase sector, including every real-sign choice. A 78-real-variable, 36-equation semialgebraic system with strict inequalities is equivalent to a global counterexample. The unrestricted global minimum remains open.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/phase_minimax/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/phase_minimax/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+The remaining gate is an all-continuous-phase lower certificate at sin(pi/16), or a certified counterexample outside the accepted squared-four-periodic sector. The exact residual semialgebraic system preserves all phases and the strict threshold. No reduction of every minimizer to that sector is proved; rank-only positivity, finite phase grids and the known Frobenius minimum do not settle the spectral minimax.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/phase_minimax/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/phase_minimax/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+The attained upper value and sector optimum are exact; neither is a proved unrestricted optimum. Preserve arbitrary invertible monomial magnitude absorption into unrestricted real B and rank-only E, with external operator error. Do not restore a conditioning caveat, infer a jointly real Green realization, or promote finite controls to global infeasibility. The inherited zero-error C8 rank optimum remains accepted. PHASE-DEFECT-RANK-20261011 stays TO RESEARCH at priority 37.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/phase_minimax/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/phase_minimax/review/REVIEW.md
+
+## Q27
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Independently accepted: all 5,744 remaining original fixed-witness guarded unit-phase three-coordinate slices are excluded from external invertible-complex row/column monomial equivalence to F8. Together with the inherited 240 accepted labels, the union is all 5,984=choose(34,3). The complete review reconstructs all new labels and verifies 11,488 fixed nonzero determinant lifts, with characteristic-zero support/jet-space proofs and original-pole saturation. The inherited 240 proofs were not rerun.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/three_coordinate/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/three_coordinate/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+The selected fixed-witness three-coordinate classification is complete. Retire all 5,984 labels as accepted exclusions. The full 34-phase fiber and four-or-more simultaneous phase motions remain open; a successor must give a distinct exact multi-coordinate or full-fiber theorem under the original chart and all six guards. Preserve the accepted failure of literal multiplier transport between equal-holonomy slices; this result uses a new per-label coefficient-space argument, not that invalid transport.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/three_coordinate/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/three_coordinate/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Coverage is only the pinned N=8 witness with 34 multiplicative unit-phase coordinates, fourteen fixed tree gains, the six original cycles and inverse guards, unweighted three-Green stage sums and product S2*S1. Necessary modulus equations give exclusion, not feasibility. Nonzero modular determinants lift specified characteristic-zero minors; no finite-field rootlessness inference is used. No other witness, four-or-more moving phases, free interstage diagonal, nonunit internal gains, larger size, construction, runtime or novelty claim. Q27 stays TO RESEARCH at priority 50; the full 34-phase fiber remains open.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/three_coordinate/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/three_coordinate/review/REVIEW.md
+
+## Q24
+
+### Accepted evidence
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+The shared original N=16 complex gate receives the independently accepted complete legality-saturated residual formulation, symmetry/coverage ledger and recorded CPU-blocker interpretation. The exact minimum remains 8<=r*<=15; 26,776 layered orbits, equivalently 12,921 padded length-fourteen systems for the remaining feasibility decision, are unresolved. Q24 is a distinct priority-37 view, and its inherited finite-field minima and all other obligations are unchanged.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/review/REVIEW.md
+
+### Current gate
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Determine the original complex minimum by a legal attainment witness with all 256 entries verified and characteristic-zero certificates excluding every smaller pattern. The exact residual systems and symmetry/coverage ledger now identify the unfinished work. The benchmark F5B attempt hit its 180/185-second CPU budget without a basis; no completion budget or resumed computation is established. Do not move to N=32, another characteristic or a parity-only lower-bound cycle.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/review/REVIEW.md
+
+### Pass / stop boundary
+
+[2026-10-18; independently reviewed sixth-cycle scoped continuation]
+Acceptance covers only Q24's shared original N=16 complex residual formulation and resource-blocker interpretation. No improved minimum, legal shorter witness or complete exclusion follows. Keep the original scalar Weyl-monomial/resolvent grammar, every factorwise pole guard and every coefficient degeneracy. The inherited finite-field minima, field-sensitive constructions, discovery/bit costs, novelty limits and other obligations remain unchanged. Q24 stays TO RESEARCH at priority 37, distinct from M-MULTISCALE-CHIRP at priority 42.
+Report: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/sixteen_minimum/review/REVIEW.md
+
+Only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change for these seven records. Fourteen appended evidence entries use twelve distinct immutable URLs. All older URLs remain ordered; 222 unrelated raw JSON objects and CSV records stay byte-identical. The seven prior full owner objects, complete previous validation and README bytes are retained. Native review protects all 341 guarded cells outside 58 prefixes, including three formulas, ten rich-text runs/links and all forty-four notes. Q24 remains distinct; its historical closed N8/F17 theorem, executor and review cells are unchanged. Q27 practical-executor and all original status/proof classifications are preserved. No owner closure or novelty promotion follows. Native visual fit was not rendered; layout and formatting were preserved.
+
+Scientific source commit: `7769fb444edb0b63ebbce7e31dc52966ba08f4f0`. Base-index commit: `bfed68e0ba63a6029cda14b7127ecfdfcdd0a6b3`. Exact native payload SHA-256: `8cf176a0298a97a7cd58c8b657758e961c4ca2c8c1540bedd60a56aa1d268d1a`.
+
+All twelve linked reports/reviews and both publication ledgers have complete immutable remote-body readback. The wider scientific packet retains an explicitly reviewed limitation: two large residual-index aliases were verified by local full-byte hashes, server Git blob identity and immutable tree size/hash, without complete remote-body readback. This index does not use those two aliases as direct evidence links.
+
+[Scientific copy bindings](https://github.com/AgentSlop-Si/research/blob/7769fb444edb0b63ebbce7e31dc52966ba08f4f0/math/finalized/2026-10-18-sixth-cycle-six-results/COPY_BINDINGS.json).
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: fifth-cycle scoped results
 
 This derivative projects an independently verified 71-cell native update into seven existing open records across six scientific results. The overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. All IDs, statuses, priorities, novelty classifications and record ordering are unchanged.
