@@ -1,3 +1,87 @@
+# Current OPEN index: five-owner scoped research update
+
+The named global C8 rank-one minimax, F020 prime-power range through b=2p, Gaussian thin-deficit endpoint and prime-power Fourier-mask classification are accepted at their recorded scopes. The scan result blocks one specified elimination route while its original endpoint H_N and generic-dominance gates remain unresolved. All five broader owners remain TO RESEARCH at priorities 37, 58, 34, 42 and 34 respectively. Census: 102 CLOSED / 225 TO RESEARCH / 327 views. No new owner, novelty clearance or runtime claim is added.
+
+## F020
+
+[2026-10-19; boundary resolved, broader gates retained]
+The b=2p residual boundary is complete. Ordinary squarefreeness and bilinear-kernel nonisotropy remain open outside all accepted ranges, including b>2p with b<p^s except separately accepted subfamilies, and remaining odd-composite ranges. Retain complete d=9,25, older fixed-residual results, the all-odd fixed-node guard, guarded local/all-A formulas and metric-route obstructions. Separate OPEN58 all-m four-channel paired-support and OPEN53 endpoint obligations remain open with all original guards. No novelty clearance or new census.
+Boundary proof: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/f020/candidate/REPORT.md
+Boundary independent review: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/f020/review/INDEPENDENT_REVIEW.md
+Boundary acceptance: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/f020/review/VERDICT.json
+
+[2026-10-19; scoped boundary pass, parent remains open]
+Accept b=2p only at the bound independent scope and use guarded composition only where all inherited guards hold. Do not dispatch this boundary as still unresolved. Broader progress requires a genuinely new uniform ordinary-guard mechanism outside accepted ranges or an exact actual-family counterexample; failed reductions or repeated modular residuals do not prove characteristic-zero collisions. OPEN58/OPEN53 completion conditions remain separate. F020/F023 remains TO RESEARCH, priority 58; all attribution and previous accepted cases retained.
+Boundary proof: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/f020/candidate/REPORT.md
+Boundary independent review: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/f020/review/INDEPENDENT_REVIEW.md
+Boundary acceptance: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/f020/review/VERDICT.json
+
+## M-SPARSE-DEFECT
+
+[2026-10-19; prime-power necessity complete, mixed-prime gate open]
+Narrow uniform necessity to mixed-prime N: prove d divides N for every binary Fourier equality mask or exhibit an exact nondivisor mask with all Gram and original inverse-model checks. The connected (8,4) mask and CRT family remain valid; full-square-block reduction stays refuted. Preserve arbitrary original coefficients/supports, simultaneous inverse-row sparsity, spectral norm, all known exact cases and quantitative no-mask bounds. Remaining exact nonsharp optima, sharper/optimal gap rates, mixed-prime necessity, paid solve/output costs and broader owner obligations remain open.
+Prime-power mask proof: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/sparse/candidate/REPORT.md
+Mask independent review: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/sparse/review/REVIEW.md
+Mask acceptance: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/sparse/review/VERDICT.json
+Earlier accepted results preserved: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/ACCEPTED_RESULT_PRESERVATION.json
+
+[2026-10-19; prime-power subproblem pass, broader owner unchanged]
+The bound independent review completes prime-power mask necessity and floor-sharpness classification. Do not reopen that lemma or erase earlier exact/quantitative results. A mixed-prime completion needs a uniform necessity proof or an exact nondivisor witness satisfying the original Fourier and inverse-row model; numerical near-orthogonality, a one-row relaxation or the (12,5) MILP time limits do not qualify. No all-N divisibility, universal full-block structure, runtime or historical novelty claim follows. M-SPARSE-DEFECT remains TO RESEARCH, priority 42.
+Prime-power mask proof: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/sparse/candidate/REPORT.md
+Mask independent review: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/sparse/review/REVIEW.md
+Mask acceptance: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/sparse/review/VERDICT.json
+Earlier accepted results preserved: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-boundary-and-primepower-masks/ACCEPTED_RESULT_PRESERVATION.json
+
+## PHASE-DEFECT-RANK-20261011
+
+[2026-10-19; independently accepted exact global C8 rank-one minimax]
+The C8 all-continuous-phase lower bound at sin(pi/16) and the universal open-pi/4 at-most-five spectral lemma are proved and must not be reassigned as open work. Preserve the completed exact-rank, periodic-sector, local and coarse-bound results at their own scopes. Remaining separate obligations concern general finite-group exact optima and positive-error problems beyond this named C8 case, or a Green application with one compatible jointly real aggregate reference and nonsingular interfaces. Model-matched historical-priority clearance is still absent; a bounded comparison must remain separate from proof acceptance.
+Report: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-global-c8-phase-minimax/candidate/REPORT.md
+Global proof: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-global-c8-phase-minimax/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-global-c8-phase-minimax/review/REVIEW.md
+
+[2026-10-19; independently accepted exact global C8 rank-one minimax]
+The named unrestricted C8 rank-one global value is proved; uniqueness and complete minimizer classification are not needed for that closure and are not claimed. Preserve unrestricted real B, complex rank at most one, external operator error, arbitrary invertible monomial magnitude absorption, and the accepted zero-error C8 rank optimum. General finite-group/Green obligations and attribution remain separate. Do not restore a conditioning caveat or infer FFT/runtime or novelty claims. The broad PHASE-DEFECT-RANK-20261011 owner remains TO RESEARCH at priority 37; no new owner, priority or census change.
+Report: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-global-c8-phase-minimax/candidate/REPORT.md
+Global proof: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-global-c8-phase-minimax/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-global-c8-phase-minimax/review/REVIEW.md
+
+## ALG-036
+
+[2026-10-19; independently accepted sharp Gaussian thin-deficit endpoint]
+The selected sharp projector/leverage/translation theorem and thin-deficit Gaussian endpoint are complete; do not redispatch them or the earlier constant-fraction endpoint as open proof work. Preserve transcript-only information, independent seed, fixed target unitary and pathwise complex-rank accounting. Current broader source-specific historical-attribution and other information-model questions remain separate. Exact nondivisible extremality and arbitrary nonhomogeneous sphere-prior extensions are unproved; they are not gaps in this accepted selected theorem. The Brascamp–Lieb input is borrowed. The prior qualified HIKP comparison remains complete at its own scope. Keep ALG-036 TO RESEARCH, priority 34, with no new owner or census entry.
+Report: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-alg036-thin-deficit/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-alg036-thin-deficit/review/REVIEW.md
+
+[2026-10-19; independently accepted sharp Gaussian thin-deficit endpoint]
+The bound is on success and concerns proper-complex Gaussian transcript-only measurements. Queries, decoder and allowed stopping may use prior answers and independent coins only; no raw-input, uncharged norm or nonlinear-statistic side channel, and no replacement of pathwise deficit by expected or merely nonzero deficit. Norm cutoff is by unconditional event inclusion, never posterior norm conditioning. The sphere lower construction is homogeneous; a universal sphere transfer additionally requires query/stopping invariance under positive answer rescaling and a correspondingly scaling decoder. No arbitrary sphere-prior theorem, exact nondivisible extremum, every-fixed-input positive guarantee, matching positive original block-local implementation, Fourier arithmetic/bit/runtime bound, historical novelty or whole-owner closure follows. The critical Gumbel equality retains divisibility and integer-sequence qualifications; at first-order coefficient C^2 the actual w_N matters. Keep the alpha<1/2 positive result and random-one-coordinate-omission countercontrol intact.
+Report: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-alg036-thin-deficit/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-alg036-thin-deficit/review/REVIEW.md
+
+## M-SCAN-DIMENSION
+
+[2026-10-19; specified pivot route blocked, original endpoint lemma still open]
+The selected stagewise odd-sector elimination route requiring this particular dressed pivot to be invertible is ruled out. The original completion gate remains: prove rank_Q H_N=N^2 for every dyadic N>=8 at depth N/4+1, or supply an actual rational annihilator of that original endpoint Jacobian. Auxiliary-pivot singularity and finite-size samples do not pass this gate; endpoint-family failure would not itself refute generic dominance. Different coordinates, larger coupled temporal blocks, elimination orders, complementary minors and direct dual-observability arguments remain available. Preserve the accepted all-size upper bound, N=8/16/32 certificates, depth-two dimension 9N-12 and generic raw kernel N+12. Arbitrary-depth equality, intermediate-depth gauge completeness, Fourier membership/construction, paid coefficient synthesis, implementation and historical-priority obligations remain separate. M-SCAN-DIMENSION remains TO RESEARCH at priority 34.
+Report: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-scan-schur-pivot-obstruction/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-scan-schur-pivot-obstruction/review/REVIEW.md
+Owner scope: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-scan-schur-pivot-obstruction/OWNER_DISPOSITION.json
+
+[2026-10-19; scoped route obstruction accepted, owner gate unchanged]
+The exact local Schur/tangent and pivot-rank results close only the specified elimination-route question. They neither prove nor disprove the all-dyadic original endpoint H_N lemma or generic threshold dominance. A completion requires the actual rational H_N rank proof or an actual rational H_N annihilator, not an auxiliary pivot null vector. Retain the original separated-generator QS1 chart, fixed permutations, rational good-anchor nonzero-neighbor and leading/trailing-minor guards; degenerate raw representations do not inherit tangent transfer. Mod-five sparse-Jacobian ranks do not certify regularity of the original generator chart in characteristic five. Preserve all prior finite certificates and all-size depth-two scope, the distinction between generic matrices and a fixed Fourier target, charged coefficient/permutation work, and unresolved historical priority. No all-N equality, Fourier algorithm/runtime improvement, owner closure, priority or census change follows.
+Report: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-scan-schur-pivot-obstruction/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-scan-schur-pivot-obstruction/review/REVIEW.md
+Owner scope: https://github.com/AgentSlop-Si/research/blob/31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856/math/finalized/2026-10-19-scan-schur-pivot-obstruction/OWNER_DISPOSITION.json
+
+Exactly 220 unrelated raw JSON/CSV records remain byte-identical. In the five retained owner records, only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change; every other raw JSON value and CSV field is byte-identical. All five complete prior record representations are archived in VALIDATION.json, together with the entire preceding validation history. Existing source URLs stay in order, with 18 verified immutable links appended across the five records; current source-link entries total 840. The compact gate/stop fields retain the exact newest accepted native layer. All 97 synchronized additions, including the earlier strict prime-power layer beneath the b=2p update, and all old histories remain verbatim in the native source.
+
+The separately verified native update changed 76 existing prose cells, with 21 chronological overlaps, and preserved 22 notes and 2,249 protected CellData guards. Statuses, priorities, IDs, aliases, record order, formulas, formatting and validation are unchanged. Native verification used full cell metadata; no rendered visual fit is claimed. Later Gaussian equality, mixed-prime or cyclic-family candidates are outside this derivative.
+
+Scientific publication commit: 31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856. Verified preceding index commit: 484a00462cdaee13bfa00d44fa5ab2d0c0f37ee3. Native payload SHA-256: 8cf34b25f8dd768a96713dea8dd8d239e9898bef921ba0672173b9744c19d1ea.
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: two accepted partial results
 
 F020/F023 remains TO RESEARCH at priority 58: the positive-metric mechanisms are obstructed, while ordinary bilinear-kernel nonisotropy remains open. PHASE-DEFECT-RANK-20261011 remains TO RESEARCH at priority 37: the unrestricted quantitative lower bound and strict local optimality are accepted, while the sharp global minimax remains open. Census: 102 CLOSED / 225 TO RESEARCH / 327 views.
