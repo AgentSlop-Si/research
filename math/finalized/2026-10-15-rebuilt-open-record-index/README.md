@@ -1,3 +1,16 @@
+# Current OPEN index: three assigned scopes finalized complete
+
+[19 October 2026; native application and independent readback verified]
+ALG-006, M-SYMMETRY and M-WINDOW-GRAM are CLOSED with reason finalized complete at assigned scope. The actual census is 111 CLOSED / 216 TO RESEARCH / 327 existing native views. These are three completed-scope finalizations, distinct from the earlier six scoped redundancy/classical-support activity retirements. Their useful accepted theorem packages and deferred broader questions remain retained; no whole-package domination, global novelty or production-executor claim follows.
+
+ALG-006 retains the accepted guarded recognition/full-output results and selected single-channel comparison; its optional integration and unselected cross-channel attribution remain deferred. M-SYMMETRY retains its exact symmetry/edit/gauge statements and completed Mirsky/one-involution relaxation; legal Green realization and general construction are deferred. M-WINDOW-GRAM retains its window/tail/fixed-real-A classification and accepted connected-Gram/realification continuation; full coefficient compatibility and exact application priority remain deferred.
+
+Independent completion-scope review: https://github.com/AgentSlop-Si/research/blob/3ecb278b2a831780dc14cd82566abbd866c4e6c7/math/retirements/2026-10-19-three-completed-scopes/REVIEW.md
+
+All 216 retained raw JSON objects and CSV records are byte-identical. Three complete prior records and current completed-scope CLOSED records are in [the finalized-record archive](../../retirements/2026-10-19-three-completed-scopes/FINALIZED_RECORDS.json). The [complete preceding validation](../../retirements/2026-10-19-three-completed-scopes/PREVIOUS_INDEX_VALIDATION.json) is byte-identical. Current plus archived records reconstruct all 219 pre-batch objects and the complete previous CSV. The earlier README below and every other research file remain preserved.
+
+Earlier README (preserved verbatim):
+
 # Current OPEN index: two agenda scopes narrowed
 
 [19 October 2026; native agenda update and independent readback verified]
