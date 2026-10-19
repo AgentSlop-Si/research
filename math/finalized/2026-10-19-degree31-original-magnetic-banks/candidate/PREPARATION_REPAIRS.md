@@ -1,0 +1,1 @@
+Before discovery, the /usr/bin/time executable was absent. The wrapper stopped before launching any search, then was changed to Python resource.getrusage for child CPU and peak RSS. No trial was run or seed changed.
