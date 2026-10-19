@@ -1,3 +1,43 @@
+# Current OPEN index: three original-scope owner closures
+
+Exactly three existing owners have completed their independently accepted original scopes: M-FCUT, M-HARPER, and the finite supporting record ALG-FINITE-CHIRP-1001. Census: 101 CLOSED / 226 TO RESEARCH / 327 views. F015 remains open at 15, its completed bounded comparison inactive; F021 and Q14/STR-Q5 remain open.
+
+## M-FCUT
+
+[2026-10-18; independently accepted original-scope owner disposition]
+CLOSED at the full original accepted Fourier-cycle sparse-sandwich density theorem and completed named bounded-comparison scope. All 14 reconciled clauses are accounted for; no original-scope proof or assigned comparison obligation remains. Priority 42 is retained as inactive historical metadata. Worldwide priority is unverified.
+Disposition report: https://github.com/AgentSlop-Si/research/blob/4b1647a183a62d9fee00b7e4e5bc6e5d6cd0b746/math/finalized/2026-10-18-original-scope-dispositions/fcut/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/4b1647a183a62d9fee00b7e4e5bc6e5d6cd0b746/math/finalized/2026-10-18-original-scope-dispositions/independent_review/INDEPENDENT_REVIEW.md
+
+## M-HARPER
+
+[2026-10-18; independently accepted original-scope owner disposition]
+CLOSED at the full original complex single-Harper and fixed-stage gauge scope. All 19 reconciled clauses retain accepted direct proof or inherited finite-evidence bindings. The bounded primary-source comparison is complete with declared access limits. Priority 42 is retained as inactive historical metadata; worldwide priority remains unresolved.
+Disposition report: https://github.com/AgentSlop-Si/research/blob/4b1647a183a62d9fee00b7e4e5bc6e5d6cd0b746/math/finalized/2026-10-18-original-scope-dispositions/harper/candidate/DISPOSITION.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/4b1647a183a62d9fee00b7e4e5bc6e5d6cd0b746/math/finalized/2026-10-18-original-scope-dispositions/independent_review/INDEPENDENT_REVIEW.md
+
+## ALG-FINITE-CHIRP-1001
+
+[2026-10-18; independently accepted original-scope owner disposition]
+CLOSED as the completed scoped finite supporting owner: exactly all 500 odd N=3..1001, using 250 squarefreeness certificates for N=5,9,...,1001 plus the uniform N=3 mod4 obstruction. Its exact Padé/moment comparison is complete. Broader F021 remains TO RESEARCH. Priority 34 stays historical/inactive; supporting/refinement and unverified-priority classifications are preserved.
+Disposition report: https://github.com/AgentSlop-Si/research/blob/4b1647a183a62d9fee00b7e4e5bc6e5d6cd0b746/math/finalized/2026-10-18-original-scope-dispositions/finite_chirp/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/4b1647a183a62d9fee00b7e4e5bc6e5d6cd0b746/math/finalized/2026-10-18-original-scope-dispositions/independent_review/INDEPENDENT_REVIEW.md
+
+## F015 clarification
+
+[2026-10-18; independently accepted original-scope owner disposition]
+Independent disposition review confirms the existing bounded F015 comparison is already COMPLETE 15/inactive, while the whole F015 owner remains TO RESEARCH at 15. Original supplied-root cap/aggregate theorem acceptance and the separate conservative comparator are unchanged. Q14 and STR-Q5 retain their existing open gates and priority 37; no new successor or repeat of accepted milestones. The native later-comparison acceptance selector is verified, but its receipt/manifest and bound payload bytes were not located in this pass. This documentary limit is not new proof acceptance or a reversal of recorded acceptance.
+Disposition report: https://github.com/AgentSlop-Si/research/blob/4b1647a183a62d9fee00b7e4e5bc6e5d6cd0b746/math/finalized/2026-10-18-original-scope-dispositions/f015/candidate/DISPOSITION.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/4b1647a183a62d9fee00b7e4e5bc6e5d6cd0b746/math/finalized/2026-10-18-original-scope-dispositions/independent_review/INDEPENDENT_REVIEW.md
+
+All 226 retained raw JSON objects and quoted multiline CSV records are byte-identical to the prior index, with their URLs, scores, statuses and ordering untouched. The three removed objects and original CSV records are fully recoverable from raw UTF-8 archives and SHA-256 hashes in VALIDATION.json. Previous validation bytes and all earlier README bytes are retained. Current retained source-link entries: 813. No formula, score or proof/novelty classification changed. Native visual fit was not rendered; existing layout and formatting were preserved except the three established CLOSED status fills.
+
+Scientific publication commit: 4b1647a183a62d9fee00b7e4e5bc6e5d6cd0b746. Base index commit: e3099aa1657e9b9fe8e053282c0cdb658d50e7d3. Native payload SHA-256: 80872c63d98acb83a4033583e61a93bbfa488dc4e7cb082b117b536b1aeb3ebc.
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: sixth-cycle scoped results
 
 This derivative projects an independently verified 58-cell native update into seven existing open records across six scientific results. The overview remains 98 CLOSED / 229 TO RESEARCH / 327 views. All IDs, statuses, priorities, novelty classifications and record ordering are unchanged.
