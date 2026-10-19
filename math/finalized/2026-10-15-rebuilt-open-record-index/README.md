@@ -1,3 +1,14 @@
+# Current OPEN index: completed scopes and one duplicate dispatch consolidated
+
+[19 October 2026; native application and independent readback verified]
+The actual census is 123 CLOSED / 204 TO RESEARCH / 327 existing native views. Eight assigned scopes are finalized complete: PHASE43-GREEN-20261011, NEW-06, ALG-CONTENT-OBSTRUCTIONS, ALG-RS-RECIPROCAL-CONTENT, ALG-078, ALG-TWO-MASK-ELIMINATION, C09 and M-F8-ORBIT. Their exact finite/model/anchor scopes, accepted theorems and deferred broader questions remain. ALG-078 retains its specific unproved A^M raw-compression target; C09 historical attribution remains deferred. NEXT-RS-AUGMENTED is separately retired as a duplicate current dispatch redirected to open Q29 and the broader ALG-OPEN-UNIFORM-SQUAREFREE parent; actual uniform higher-layer transfer remains unresolved and CHAR2 is separate. M-OUTER-STABILITY remains TO RESEARCH at priority 34, preserving its exact hash-bound N256 four-stage full-feasibility target; only the already completed finite coefficient/stability gate stops being reassigned.
+
+Independent scope review: https://github.com/AgentSlop-Si/research/blob/ddccaa20236aad4f6d2e2218504c19189b790772/math/retirements/2026-10-19-consolidated-completed-scopes/REVIEW.md
+
+Nine closed activity records leave only the active index. M-OUTER-STABILITY stays active with its narrowed current gate. All other 203 raw JSON objects and CSV records are byte-identical. Ten complete prior and current records are in [the disposition archive](../../retirements/2026-10-19-consolidated-completed-scopes/DISPOSITION_RECORDS.json). The [complete preceding validation](../../retirements/2026-10-19-consolidated-completed-scopes/PREVIOUS_INDEX_VALIDATION.json) is byte-identical. Current plus archived records reconstruct all 213 pre-batch objects and the complete previous CSV. The earlier README and every other research file are preserved.
+
+Earlier README (preserved verbatim):
+
 # Current OPEN index: two completed scopes and one named-route retirement
 
 [19 October 2026; native application and independent readback verified]
