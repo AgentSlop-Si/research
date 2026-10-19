@@ -1,3 +1,44 @@
+# Current OPEN index: F020 accepted single successor b=3p+1
+
+[2026-10-19; independently accepted single successor b=3p+1]
+For every odd prime p and primitive p^s-th root q with 3p+1<p^s, the actual recurrence P_(3p+1) and Gaussian Rogers-Szego H_(3p+1) are squarefree in characteristic zero and the original ordinary-square bilinear Christoffel-Darboux kernel is nonzero at every P root. Adding only this degree to the accepted b<=3p AND b<p^s range gives 0<=b<=3p+1 AND b<p^s. The truncations remain b<p at s=1 and b<9 at p=3,s=2. For p>=5, root valuations (2p-1)/(2p), 1, (p+1)/4 have counts 2p, p-1, 2, and v(Disc_X P_(3p+1))=9p^2+(p-7)/2 with v(q-1)=1. Prime 3 uses a separate exact P10/Q5 certificate for s>=3; the generic local formulas are not asserted there. Preserve all complete earlier d=9/d=25 certificates, fixed-residual results, p-block/third-block/b=3p results at their stated ranges, all-odd fixed-node guards, signed coefficients, nonzero denominators and every independent local/all-A hypothesis. F020 remains TO RESEARCH at priority 58 with F023 its alias.
+Verified immutable scientific sources:
+Author report: https://github.com/AgentSlop-Si/research/blob/e29adf4775f04dfafc0bc481ce0d72674ed1b1e8/math/finalized/2026-10-19-f020-three-p-plus-one/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/e29adf4775f04dfafc0bc481ce0d72674ed1b1e8/math/finalized/2026-10-19-f020-three-p-plus-one/review/INDEPENDENT_REVIEW.md
+Independent verdict: https://github.com/AgentSlop-Si/research/blob/e29adf4775f04dfafc0bc481ce0d72674ed1b1e8/math/finalized/2026-10-19-f020-three-p-plus-one/review/VERDICT.json
+
+## Current gate
+
+[2026-10-19; independently accepted single successor b=3p+1]
+Continue only outside ALL accepted ranges: in particular b>=3p+2 below p^s where no separate certificate applies, and remaining odd-composite orders. The new result covers exactly b=3p+1, not a full fourth block. Separate OPEN58 paired-support and OPEN53 endpoint obligations remain open. Preserve all complete earlier d=9/d=25 certificates, fixed-residual results, p-block/third-block/b=3p results at their stated ranges, all-odd fixed-node guards, signed coefficients, nonzero denominators and every independent local/all-A hypothesis. F020 remains TO RESEARCH at priority 58 with F023 its alias.
+Verified immutable scientific sources:
+Author report: https://github.com/AgentSlop-Si/research/blob/e29adf4775f04dfafc0bc481ce0d72674ed1b1e8/math/finalized/2026-10-19-f020-three-p-plus-one/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/e29adf4775f04dfafc0bc481ce0d72674ed1b1e8/math/finalized/2026-10-19-f020-three-p-plus-one/review/INDEPENDENT_REVIEW.md
+Independent verdict: https://github.com/AgentSlop-Si/research/blob/e29adf4775f04dfafc0bc481ce0d72674ed1b1e8/math/finalized/2026-10-19-f020-three-p-plus-one/review/VERDICT.json
+
+## Pass / stop boundary
+
+[2026-10-19; independently accepted single successor b=3p+1]
+Do not redispatch the completed b<=3p+1 AND b<p^s guard range or separately accepted earlier finite-order certificates. Require a new actual-family ordinary-guard mechanism or exact actual-family counterexample outside those ranges. A repeated modular residual or failed reduction is not a characteristic-zero collision. No unrestricted owner/all-A closure, score change, cost improvement or novelty clearance follows. Preserve the completed bounded q-Hermite attribution and all classical/source-comparison qualifications. Preserve all complete earlier d=9/d=25 certificates, fixed-residual results, p-block/third-block/b=3p results at their stated ranges, all-odd fixed-node guards, signed coefficients, nonzero denominators and every independent local/all-A hypothesis. F020 remains TO RESEARCH at priority 58 with F023 its alias.
+Verified immutable scientific sources:
+Author report: https://github.com/AgentSlop-Si/research/blob/e29adf4775f04dfafc0bc481ce0d72674ed1b1e8/math/finalized/2026-10-19-f020-three-p-plus-one/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/e29adf4775f04dfafc0bc481ce0d72674ed1b1e8/math/finalized/2026-10-19-f020-three-p-plus-one/review/INDEPENDENT_REVIEW.md
+Independent verdict: https://github.com/AgentSlop-Si/research/blob/e29adf4775f04dfafc0bc481ce0d72674ed1b1e8/math/finalized/2026-10-19-f020-three-p-plus-one/review/VERDICT.json
+
+## Exact native and index scope
+
+The native update changed 24 existing F020 explanatory cells and one separately approved Progress summary. All old histories, 44 notes, two formulas, 302 non-target returned cells and all 67 historical Progress rich-text runs were preserved. The full prefix/source/joiner shift is 1,092 UTF-16 units, with 68 resulting runs. The API omitted default zero startIndex and empty format from only the new initial Progress reset run; raw strict mismatch receipts were retained and this normalization was independently verified without a second write. All other CellData fields were compared strictly; no rendered-layout or resizing claim is made. Census remains 102 CLOSED / 225 TO RESEARCH / 327 existing views.
+
+This index changes only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls in the one retained F020 record. The 224 unrelated raw JSON objects and CSV rows remain byte-identical. All unrelated F020 fields, status, score 58, F023 alias, order and earlier source references remain exact. Three new immutable scientific links bring the total source URL count to 918. Complete earlier d=9/d=25 results remain accepted. Classical tools retain their attribution. No score, novelty tier, cost improvement or whole-owner closure is added; separate prior-art documentation is outside this native/index update. V18 remains separate unaccepted intake.
+
+Science commit: e29adf4775f04dfafc0bc481ce0d72674ed1b1e8. Publication base: e29adf4775f04dfafc0bc481ce0d72674ed1b1e8. Native payload SHA-256: 90c736ca6c438b69cf27468db629faacb309d212295e0b1ee7135cbc03920830. Independent native postread SHA-256: a6cc8dad0ee5bbf7aa1d5916cf201da0a6ec07fb0cfbc56db390dea999b1a49b.
+
+## Lossless earlier evidence
+
+The entire preceding VALIDATION.json is stored as deterministic gzip+base64 in previous_validation_archive. Verify the encoded/compressed hashes, decompress, then verify decoded size and SHA-256; all earlier nested archives remain recoverable. The full prior F020 JSON object and CSV record are also retained. The entire earlier README follows verbatim.
+
+---
+
 # Current OPEN index: F020 accepted b=3p boundary
 
 [2026-10-19; independently accepted b=3p boundary]
