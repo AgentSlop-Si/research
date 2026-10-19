@@ -1,3 +1,14 @@
+# Current OPEN index: two agenda scopes narrowed
+
+[19 October 2026; native agenda update and independent readback verified]
+The census remains 108 CLOSED / 219 TO RESEARCH / 327 existing native views. ALG-068 stays TO RESEARCH at priority 48: its completed Theta(N log N) small-marker schedule and benchmark comparison should not be reassigned unchanged; the specified arbitrary dense-core-jet first inverse remains open. GENERIC-FUSION-GATE-20261012 stays TO RESEARCH at priority 33: the unspecified cheap-base/caller placeholder is no longer an active construction assignment; its precise complex generic adaptive ordered Weyl-family theorem and correctness guards remain retained. A concrete candidate requires a new explicit interface and fully charged contract. No whole-theorem dominance or cheap-base impossibility is asserted.
+
+Independent review: https://github.com/AgentSlop-Si/research/blob/09e449971b02aa80fa2274073a1e5645f3e6f4bf/math/retirements/2026-10-19-scoped-agenda-stops/REVIEW.md
+
+Only two records’ current gates, stopping conditions and public evidence links change. Their exact before/after records and raw JSON/CSV strings are in [the scope-update archive](../../retirements/2026-10-19-scoped-agenda-stops/UPDATED_RECORDS.json). All other 217 records remain byte-identical. This archive reconstructs all 219 previous JSON objects and the complete prior CSV. The [complete preceding validation](../../retirements/2026-10-19-scoped-agenda-stops/PREVIOUS_INDEX_VALIDATION.json) and the earlier README below are retained without modification. No rows, proofs, files, notes or histories are deleted.
+
+Earlier README (preserved verbatim):
+
 # Current OPEN index: two more scoped activities retired
 
 [19 October 2026; separate second batch, native application and independent readback verified]
