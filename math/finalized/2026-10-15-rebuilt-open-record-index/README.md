@@ -1,3 +1,14 @@
+# Current OPEN index: two completed scopes and one named-route retirement
+
+[19 October 2026; native application and independent readback verified]
+The actual census is 114 CLOSED / 213 TO RESEARCH / 327 existing native views. Q17 and FUS-07 are finalized complete at assigned scope. C03 attribution/general legal sparse reconstruction and Q14/general intermediate-fiber/production questions remain separately deferred. ALG-043 is retired only for its ordinary block and dominated explicit materialized-frontier routes; useful operator-rank/core/executor results remain, and unrestricted selected-transform complexity is unresolved. NEW-06, Q09, STR-Q4, Q14 and M-OUTER-STABILITY are unchanged by this batch.
+
+Independent scope review: https://github.com/AgentSlop-Si/research/blob/3932085d98b2544093a407bf2a1c30e91c6e78b0/math/retirements/2026-10-19-mixed-scope-finalization/REVIEW.md
+
+All 213 retained raw JSON objects and CSV records are byte-identical. Three full prior records and current CLOSED records are in [the disposition archive](../../retirements/2026-10-19-mixed-scope-finalization/FINALIZED_RECORDS.json). The [complete preceding validation](../../retirements/2026-10-19-mixed-scope-finalization/PREVIOUS_INDEX_VALIDATION.json) is byte-identical. Current plus archived records reconstruct all 216 pre-batch objects and the complete previous CSV. The earlier README and every other research file are preserved.
+
+Earlier README (preserved verbatim):
+
 # Current OPEN index: three assigned scopes finalized complete
 
 [19 October 2026; native application and independent readback verified]
