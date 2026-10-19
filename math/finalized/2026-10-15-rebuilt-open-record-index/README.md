@@ -1,3 +1,16 @@
+# Current OPEN index: four classical/supporting activities retired
+
+[19 October 2026; native application and independent readback verified]
+ALG-035, ALG-070, NEW-10 and TH-09 are CLOSED, retired as redundant/classical supporting work. The census is 106 CLOSED / 221 TO RESEARCH / 327 existing views. All 327 native rows remain. Accepted proofs, source files, historical benchmarks, qualifications, numeric priorities, formulas, notes and prior history are retained. These are four activity retirements, not four discoveries, falsity findings or solutions of excluded broader questions.
+
+All 221 retained raw JSON objects and CSV records are byte-identical. The four removed active-index entries remain in the native table and are losslessly preserved, with exact previous JSON/CSV records, current CLOSED records, reasons and source citations, in [the retired-record archive](../../retirements/2026-10-19-first-four/RETIRED_RECORDS.json). The [complete previous validation](../../retirements/2026-10-19-first-four/PREVIOUS_INDEX_VALIDATION.json) is preserved byte-for-byte. No accepted proof or research file is deleted. Historical extraction counters retain their earlier meaning.
+
+Independent public rationale: https://github.com/AgentSlop-Si/research/blob/bdb89adf74810754eef854a56faa445b797d8c02/math/retirements/2026-10-19-first-four/REVIEW.md
+
+The exact scope exclusions remain: ALG-035 does not retire Gaussian/measurement source-sharing owners; ALG-070 does not solve compressed/shared/state-dependent caching or retire ALG-071; NEW-10 retires a duplicate supporting Q25/P09 refinement, not every Fourier-specific gauge application; TH-09 does not complete or retire Q09/STR-Q4 engineering. The magnetic four-view group is unchanged by this batch.
+
+Earlier README (preserved verbatim):
+
 # Current OPEN index: isolated N=3757 rectangle gate accepted
 
 [2026-10-19; existing owner M-RECTANGLE-TILING, still TO RESEARCH at priority 42]
