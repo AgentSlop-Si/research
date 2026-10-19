@@ -1,3 +1,54 @@
+# Current OPEN index: final bounded-comparison dispositions
+
+ALG-RS-FAMILIES is CLOSED at its original eleven-family theorem and recorded bounded-comparison scope. C02, NEW-05, Q05 and TH-05 remain TO RESEARCH at priority 52; their bounded source comparison stops at the recorded direct-formula mismatch and access barriers. Census: 102 CLOSED / 225 TO RESEARCH / 327 views.
+
+## ALG-RS-FAMILIES
+
+[2026-10-19; independently accepted bounded comparison disposition]
+CLOSED at the original eleven-family theorem and recorded bounded-comparison scope. Independent disposition review accepts the moving-root ordinary-discriminant comparison, including the exact Sawa–Uchida quasi-Laguerre substitution for Disc J. Accepted correctness, priority 42 and the B/unverified historical-novelty classification are unchanged. Worldwide priority remains unresolved.
+Comparison report: https://github.com/AgentSlop-Si/research/blob/ecc2e01365c9be4bda79c2cc932b74f800a3f537/math/finalized/2026-10-19-final-comparison-dispositions/rs_families/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/ecc2e01365c9be4bda79c2cc932b74f800a3f537/math/finalized/2026-10-19-final-comparison-dispositions/rs_families/review/INDEPENDENT_REVIEW.md
+
+## Retained C02-related owners
+
+### C02
+
+[2026-10-19; independently accepted bounded comparison disposition]
+The current bounded named-source/footprint comparison stops with a qualified formula mismatch and specific access barriers. The universal attribution owner remains TO RESEARCH at 52: for every finite abelian 2-group of order 4L>=16 and every 2L+1 character selection, a predecessor implication must reach d_(L+1)>=2L+2, equivalently critical-rectangle rank>=L+1. Resume the named-source search only with a readable primary theorem body or a concrete new authorized access route; resume the footprint route only with an explicit parameter-complete arbitrary-character specialization. Do not repeat generic scalar uncertainty searches, accepted fixtures or finite-N checks. C02 retains its universal N>=16 lower/full-equality attribution gate and all separately recorded limitations.
+Comparison report: https://github.com/AgentSlop-Si/research/blob/ecc2e01365c9be4bda79c2cc932b74f800a3f537/math/finalized/2026-10-19-final-comparison-dispositions/c02/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/ecc2e01365c9be4bda79c2cc932b74f800a3f537/math/finalized/2026-10-19-final-comparison-dispositions/c02/review/INDEPENDENT_REVIEW.md
+
+### NEW-05
+
+[2026-10-19; independently accepted bounded comparison disposition]
+The current bounded named-source/footprint comparison stops with a qualified formula mismatch and specific access barriers. The universal attribution owner remains TO RESEARCH at 52: for every finite abelian 2-group of order 4L>=16 and every 2L+1 character selection, a predecessor implication must reach d_(L+1)>=2L+2, equivalently critical-rectangle rank>=L+1. Resume the named-source search only with a readable primary theorem body or a concrete new authorized access route; resume the footprint route only with an explicit parameter-complete arbitrary-character specialization. Do not repeat generic scalar uncertainty searches, accepted fixtures or finite-N checks. This is a C02 comparison dependency only. Preserve the distinct asymmetric arbitrary-abelian autocorrelation-deficit rank/gap theorem, p-group/legal-trimming corollaries and broader rank/concentration obligations; no theorem-equivalence or owner closure.
+Comparison report: https://github.com/AgentSlop-Si/research/blob/ecc2e01365c9be4bda79c2cc932b74f800a3f537/math/finalized/2026-10-19-final-comparison-dispositions/c02/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/ecc2e01365c9be4bda79c2cc932b74f800a3f537/math/finalized/2026-10-19-final-comparison-dispositions/c02/review/INDEPENDENT_REVIEW.md
+
+### Q05
+
+[2026-10-19; independently accepted bounded comparison disposition]
+The current bounded named-source/footprint comparison stops with a qualified formula mismatch and specific access barriers. The universal attribution owner remains TO RESEARCH at 52: for every finite abelian 2-group of order 4L>=16 and every 2L+1 character selection, a predecessor implication must reach d_(L+1)>=2L+2, equivalently critical-rectangle rank>=L+1. Resume the named-source search only with a readable primary theorem body or a concrete new authorized access route; resume the footprint route only with an explicit parameter-complete arbitrary-character specialization. Do not repeat generic scalar uncertainty searches, accepted fixtures or finite-N checks. The all-2-group mathematical minimax task remains complete; historical lower/equality attribution and separately recorded rank-sum, field, gap, group-extension and algorithmic limits remain open.
+Comparison report: https://github.com/AgentSlop-Si/research/blob/ecc2e01365c9be4bda79c2cc932b74f800a3f537/math/finalized/2026-10-19-final-comparison-dispositions/c02/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/ecc2e01365c9be4bda79c2cc932b74f800a3f537/math/finalized/2026-10-19-final-comparison-dispositions/c02/review/INDEPENDENT_REVIEW.md
+
+### TH-05
+
+[2026-10-19; independently accepted bounded comparison disposition]
+The current bounded named-source/footprint comparison stops with a qualified formula mismatch and specific access barriers. The universal attribution owner remains TO RESEARCH at 52: for every finite abelian 2-group of order 4L>=16 and every 2L+1 character selection, a predecessor implication must reach d_(L+1)>=2L+2, equivalently critical-rectangle rank>=L+1. Resume the named-source search only with a readable primary theorem body or a concrete new authorized access route; resume the footprint route only with an explicit parameter-complete arbitrary-character specialization. Do not repeat generic scalar uncertainty searches, accepted fixtures or finite-N checks. Preserve the recorded Fourier-moment/endpoint and wider deficit scopes. Shared comparison does not establish theorem identity or discharge broader obligations.
+Comparison report: https://github.com/AgentSlop-Si/research/blob/ecc2e01365c9be4bda79c2cc932b74f800a3f537/math/finalized/2026-10-19-final-comparison-dispositions/c02/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/ecc2e01365c9be4bda79c2cc932b74f800a3f537/math/finalized/2026-10-19-final-comparison-dispositions/c02/review/INDEPENDENT_REVIEW.md
+
+The 221 unrelated raw JSON/CSV records are byte-identical. In the four retained C02-related records, only recorded_current_gate and recorded_source_urls change; every other raw JSON value and CSV field stays byte-identical. The removed RS record and all four prior modified records are fully recoverable in VALIDATION.json. Existing source URLs remain in order, with two immutable comparison/review links appended to each C02-related record. Current source-link entries: 818. No retained priority, status, stop gate, formula, alias or proof/novelty classification changes.
+
+Native verification used full cell metadata; no rendered visual fit is claimed. Existing layout and native formatting are preserved except the established CLOSED fill in overview E41.
+
+Scientific publication commit: ecc2e01365c9be4bda79c2cc932b74f800a3f537. Base index commit: 435c181e984aa3389f99f01394a802d8165a74e1. Native payload SHA-256: 79edadb2b95d6086327f1bfc5d03dec5db2b1575dc4d19db373e1037ee8db129.
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: three original-scope owner closures
 
 Exactly three existing owners have completed their independently accepted original scopes: M-FCUT, M-HARPER, and the finite supporting record ALG-FINITE-CHIRP-1001. Census: 101 CLOSED / 226 TO RESEARCH / 327 views. F015 remains open at 15, its completed bounded comparison inactive; F021 and Q14/STR-Q5 remain open.
