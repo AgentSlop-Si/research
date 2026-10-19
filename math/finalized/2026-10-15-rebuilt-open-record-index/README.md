@@ -1,3 +1,56 @@
+# Current OPEN index: bounded attribution completed, original gates retained
+
+Eleven inspected-source comparisons for the accepted fixed-Fourier order-3q degree classification and q-Hermite ordinary-guard calculations are complete at bounded passage level. The phase-pencil classical mechanism mapping and recurring same-scope attribution task are also complete. Historical novelty remains unresolved, with unread sources and restricted-family matching gaps explicitly retained. No whole-owner closure, novelty promotion or new correctness replay is claimed.
+
+M-PHASE-PENCIL still requires a uniform all-length exact Green construction, one full-support gauge satisfying all covariance equations, O(N) coefficient/root/permutation/gauge generation and O(N) total sequential application under its arithmetic model; stability and bit cost remain separate. F020 and M-SPARSE-DEFECT current gates and pass-stop conditions are byte-identical to the preceding verified index. All three owner statuses and priorities are unchanged. Census: 102 CLOSED / 225 TO RESEARCH / 327 views.
+
+## F020
+
+[2026-10-19; bounded q-Hermite attribution complete]
+Bounded passage-level comparison COMPLETE for seven q-Hermite source cards (QH-AAK-2009, QH-SZ-AW-1997, QH-SZ-ULTRA-1996, QH-IW-2001, QH-GMN-2008, QH-DDMM-2023, QH-HENSEL-CONRAD). Terminal degree N=ord(q) and full-N-block identities do not establish all lower-degree simplicity; the cited Rogers–Szegő product is a q-discriminant, not an ordinary squarefreeness certificate. Newton-side irreducibility, Hensel lifting and root-distance discriminant bookkeeping are classical conditional tools. The family-specific residual/valuation calculation remains a potential narrow contribution with historical novelty UNRESOLVED. Zhedanov 1997 and Ismail 2003 full texts remain unread; prior reference-chain/arithmetic-priority gaps remain open. No directly subsuming result was found in the inspected statements, which is not a whole-paper or worldwide nonimplication claim. Correctness acceptance and broader ordinary-guard/all-composite, support and endpoint obligations remain unchanged; F020 stays TO RESEARCH at priority 58.
+Assessment sources: https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-source-comparison-clarifications/MANIFEST.json
+https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-source-comparison-clarifications/PUBLICATION_SAFE_COMPARISON.md
+https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-source-comparison-clarifications/SOURCE_COMPARISON_CARDS.json
+
+## M-SPARSE-DEFECT
+
+[2026-10-19; bounded fixed-Fourier-mask attribution complete]
+Bounded passage-level comparison COMPLETE for FOURIER-LL-1995, FOURIER-MK-2017, FOURIER-HW-2021 and FOURIER-EGAN-2023. Prime-cycle cancellation is classical. A spectral-set theorem on one common support and a Cartesian J×K Fourier submatrix theorem do not directly cover arbitrary pair-dependent binary entry masks; an additional structural reduction would be needed. Free-phase complex weighing matrices allow order 15/weight 4 and are a different class. Retain the accepted fixed-Fourier N=3q, q>3 prime, degree set {1,3,q,3q} only at its degree-existence scope. Historical novelty of the global compatibility argument remains UNRESOLVED. Original de Bruijn 1953, Berman 1978 and Bond–Glickfield–Herr 2019 texts were not independently read. The order-8 non-Cartesian witness does not exclude a special order-3q reduction. No directly subsuming result was found in the inspected statements; no whole-paper nonimplication or novelty clearance follows. M-SPARSE-DEFECT stays TO RESEARCH at priority 42; general mixed-prime/support-geometry, remaining nonsharp optima, sharper gap rates and cost gates remain open.
+Assessment sources: https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-source-comparison-clarifications/MANIFEST.json
+https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-source-comparison-clarifications/PUBLICATION_SAFE_COMPARISON.md
+https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-source-comparison-clarifications/SOURCE_COMPARISON_CARDS.json
+
+## M-PHASE-PENCIL
+
+[2026-10-19; bounded phase-pencil attribution complete]
+Bounded mechanism-attribution comparison COMPLETE. Complete full-support gauge recovery is classical diagonal similarity (Saunders–Schneider 1978, Theorem 2.1/Corollary 2.4; Engel–Schneider 1982, Corollary 3.11/Theorem 3.12). The two-column determinant is an elementary inverse-free necessary intertwining subtest; generic diagonal-interface rank is matroid intersection (Lovász 1989, section 3); rank strata and good reduction are classical. Retain the fixed-topology four-Green N=8 separation certificate as a supporting potential application contribution. Exact topology/size/gauge/field-matched publication novelty remains UNRESOLVED; no inspected source established that restricted-family predecessor. Original Edmonds 1970 full text was not obtained. No new correctness or certificate replay is claimed.
+Assessment sources: https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-phase-pencil-attribution/COMPARISON.md
+https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-phase-pencil-attribution/DISPOSITION.json
+
+[2026-10-19; bounded attribution complete, original gates open]
+The recurring bounded attribution task is COMPLETE; do not repeat the same mechanism comparison or finite-certificate correctness loop. Revisit narrow certificate attribution only for a concrete topology/size/gauge/field-matched predecessor or a reusable extension beyond the finite certificate. Original gates remain OPEN: a uniform all-length exact Green-stage construction, one full-support gauge satisfying every covariance equation, O(N) generation of coefficients/roots/permutations/gauges, and O(N) total sequential application under the stated arithmetic model; stability and bit cost remain separate. M-PHASE-PENCIL remains TO RESEARCH at priority 34, with supporting-certificate role and unresolved historical novelty.
+Assessment sources: https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-phase-pencil-attribution/COMPARISON.md
+https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-phase-pencil-attribution/DISPOSITION.json
+
+[2026-10-19; attribution stop condition]
+PASS at bounded attribution scope: record the classical mechanism mapping and qualified restricted-family nonmatch. STOP the recurring same-scope search and correctness replay. Reopen only on a concrete model-matched predecessor or reusable extension. This does not close the owner or the all-length construction/total-cost gates. K_0 singular is not acceptance; all gauge entries must be nonzero; fixed invertible stages and Fourier ordering remain required. The N=8 witness is separated by the exact Fourier rank-profile test (rows {0,4}, columns {0,2}); graph cost is only after X,Y exist and can be quadratic. No finite-field full-support genericity, linear-cost dense determinant, new novelty, score or status promotion.
+Assessment sources: https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-phase-pencil-attribution/COMPARISON.md
+https://github.com/AgentSlop-Si/research/blob/961a6996bada063eb2c9675514df4e550610b85a/math/finalized/2026-10-19-phase-pencil-attribution/DISPOSITION.json
+
+## Exact native and derivative scope
+
+The native batch changed 20 existing text values and appended three five-column Source comparisons records with stable markers. The service selected their locations; full postread found exactly one of each at rows 25, 26 and 27. All 112 previously returned Source comparisons cells and their note, all existing target histories and two notes, protected formulas, statuses, priorities and metadata were preserved. The preceding 73-cell checkpoint remains intact. Verification used full native CellData; no rendered-layout or new-row-formatting claim is made. The three exact source rows are retained in VALIDATION.json.
+
+The index changes exactly five fields across three retained records: only recorded_source_urls for F020 and M-SPARSE-DEFECT, and recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls for M-PHASE-PENCIL. Eight per-record immutable URL entries cover five actual published bodies; all prior URL order remains unchanged, with 909 total URL entries. All 222 unrelated raw JSON objects and CSV rows are byte-identical, and all other fields in the three changed records are preserved. No owner is added or removed. Complete prior changed records are archived.
+
+Source commit: 961a6996bada063eb2c9675514df4e550610b85a. Preceding index and publication-base guard: 1c517b744fe93a4ebdc986237acfcff4ae99a994. Native payload SHA-256: e21330689c818ac1d7254a834d13ccb03dd241a870420d8e747d8e94df4b2a33. Independent native receipt SHA-256: b6ec47e3fdd73549b604facff7be1d45cd65fb71c9aca062bd4e3a2a3827ae44.
+
+## Lossless preceding validation
+
+VALIDATION.json stores the complete preceding validation as deterministic gzip+base64 in previous_validation_archive. Decode its data, verify the base64 and gzip hashes, decompress, and verify decoded_bytes and decoded_sha256 before writing to a new file. The recovered bytes retain every earlier nested archive. The entire earlier README follows verbatim.
+
+---
+
 # Current OPEN index: four accepted subgates, broader owners retained
 
 The C8 quantitative lower gap and the declared fixed-test tuning are complete. The unique method ceiling bounds an open feasible interval; the endpoint limit is non-strict and does not establish the actual global optimum. F020 ordinary squarefreeness and bilinear-kernel nonisotropy are accepted for b<min(3p,p^s), with b=3p still outside that extension. ALG-076 has the scoped sharp absolute Gaussian probability bound and a necessary relative-fidelity rank proportion for input-independent complex-linear retention; this is not a universal circuit or adaptive-information lower bound. For every prime q>5, original square order-5q equality masks are excluded throughout q<d<2q, combining q>=11 with separately accepted N=35 degrees 8 through 13. The middle interval remains open, including N=35 degrees 14 through 28. The retained 7-by-35 degree-eleven rectangular control has an exact nonextension obstruction 6<11.
