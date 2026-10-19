@@ -1,3 +1,68 @@
+# Current OPEN index: order-3q degrees and a sharper C8 upper witness
+
+Two independently accepted scoped results are synchronized. At N=3q, prime q>3, the positive degree-existence set is exactly {1,3,q,3q}; this includes the new whole-interior exclusion q<d<2q and the preserved endpoint proof. It does not classify every support geometry or settle general mixed-prime necessity. In the original arbitrary-invertible-complex-monomial, unrestricted-real-core, external-operator-norm rank-zero C8 model, the exact legal upper witness gives delta(8,0)<=sqrt(1+sqrt(sqrt(2)-1))/2=0.641013699718185..., retaining the earlier strict lower sin(3pi/16)<delta(8,0). The exact global optimum and nonperiodic improvement remain open; four-periodicity is a witness property. The later quantitative C8 lower-bound and 5q packets are separate and are not folded into this historical checkpoint. M-SPARSE-DEFECT and PHASE-DEFECT-RANK-20261011 remain TO RESEARCH at priorities 42 and 37. Census: 102 CLOSED / 225 TO RESEARCH / 327 views.
+
+## M-SPARSE-DEFECT
+
+[2026-10-19; order-3q degrees complete, wider sparse owner open]
+The complete positive degree set {1,3,q,3q} at N=3q, q prime greater than 3, is accepted. Do not reopen q<d<2q, the d=2q endpoint, prime-power or N=2q classifications, the earlier proved pq ranges, exact half-density/Delta(3,1) cases, one-neighborhood comparison or quantitative no-mask gate. A classification of every allowed support geometry and general mixed-prime necessity beyond the accepted families remain open; so do remaining exact nonsharp optima and sharper or optimal gap rates. Preserve the connected (8,4) mask and odd CRT family, which refute universal full-square-block reduction. Broader sparse-inverse, sparse-column and fixed-common-frame commutator obligations, paid preparation/solve/output, stability, implementation and historical priority stay separate. M-SPARSE-DEFECT remains TO RESEARCH at priority 42.
+Proof: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/threeprime/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/threeprime/review/REVIEW.md
+Final verdict: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/threeprime/review/VERDICT.json
+Owner scope: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/OWNER_DISPOSITIONS.json
+
+[2026-10-19; scoped degree classification accepted, broader owner unchanged]
+Stop only at the accepted N=3q degree-existence classification for prime q>3; no all-support classification, all-N divisibility, general pq completion, exact remaining nonsharp optimum or optimal gap rate follows. Retain arbitrary original supports and coefficients, invertibility, simultaneous sparsity of every inverse row, spectral norm, fixed Fourier phases and both-Gram mask constraints. Preserve scalar inverse-defect s>=1, sparse-column 1<=s<N and architecture-specific fixed-common-frame restrictions; one-neighborhood sharpness is distinct from exact support-union/global uniform-row-sparsity sharpness. The full-mask boundary is not s=0 inverse attainment. No finite-field operator-norm transfer, free preparation/SVD/output, general condition-one construction, FFT runtime, owner closure, priority change, new discovery count or historical-novelty clearance is inferred.
+Proof: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/threeprime/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/threeprime/review/REVIEW.md
+Final verdict: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/threeprime/review/VERDICT.json
+Owner scope: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/OWNER_DISPOSITIONS.json
+
+## PHASE-DEFECT-RANK-20261011
+
+[2026-10-19; C8 upper endpoint improved, exact rank-zero optimum open]
+The exact C8 rank-zero global optimum and whether arbitrary nonperiodic phases improve this witness remain open. This accepted upper-bound packet supplies no explicit quantitative positive lower gap above sin(3pi/16); its strict lower bound is inherited. Four-periodicity of one witness gives no all-phase minimizer reduction. Rank-zero strictness or attainment for m>=3, remaining smaller positive correction ranks, full rank/error tradeoffs outside accepted families, general finite-group optima, compatible jointly real Green reference with nonsingular interfaces, implementation, operation-count, costing, integration and historical priority remain separate. Do not reopen the accepted C8 rank-one minimax, zero-error optimum or all-m boundary-rank family. PHASE-DEFECT-RANK-20261011 remains TO RESEARCH at priority 37.
+Proof: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/c8_upper/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/c8_upper/review/REVIEW.md
+Final verdict: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/c8_upper/review/VERDICT.json
+Owner scope: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/OWNER_DISPOSITIONS.json
+
+[2026-10-19; exact upper witness accepted, broader phase owner unchanged]
+Accept the legal attained upper witness and inherited strict lower bound only. Do not equate the new upper endpoint with the global minimum or infer a quantitative lower-gap size, a minimizer classification, all-phase periodicity reduction, other-dimension/rank theorem or FFT runtime result. The earlier threshold necessity at N=4m concerns period N/2 of squared phases A=P^2,B=Q^2, with four-periodicity only at N=8; it is not a global minimizer theorem or forced periodicity of P,Q themselves. Preserve the C4 boundary, arbitrary-magnitude absorption, all-m boundary-rank family, and finite-abelian qualifications including |G[2]|=o(N) for N/4 leading asymptotics and characteristic-two zero-rank cases. No owner closure, status, priority, census or historical-novelty change follows.
+Proof: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/c8_upper/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/c8_upper/review/REVIEW.md
+Final verdict: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/c8_upper/review/VERDICT.json
+Owner scope: https://github.com/AgentSlop-Si/research/blob/f4fdccfc95002720af70af14f927e23572a13cc0/math/finalized/2026-10-19-threeprime-degrees-c8-upper/OWNER_DISPOSITIONS.json
+
+Exactly 223 unrelated raw JSON/CSV records remain byte-identical. Only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change in the two retained owner records; unrelated raw field bytes are preserved. Full prior representations of both changed records and complete prior validation history are archived in VALIDATION.json. Earlier README bytes follow verbatim. Eight per-record immutable links (seven distinct bodies) are appended without changing existing URL order, for 883 source-link entries.
+
+The verified native update changed exactly 32 existing prose cells, retaining each complete old value as an exact suffix. Nine target notes, 2,770 protected full CellData guards, metadata, formulas, formatting, validation, aliases, IDs, statuses and priorities remain unchanged. Historical locator notes are retained verbatim; targets were resolved by stable ID. Native validation used full CellData; rendered visual fit was not verified.
+
+Scientific publication commit: f4fdccfc95002720af70af14f927e23572a13cc0. Verified preceding index commit: e0cf2f78f311d4e6f1a200a267c980013126a4fb. Native payload SHA-256: 9d5935c018cbd3c51e8d742b6c133bde0309fc225e49b1b211dc14de5f5fa972.
+
+## Restoring the complete preceding validation archive
+
+To keep remote readback bounded, the complete preceding VALIDATION.json is stored in the current VALIDATION.json's `previous_validation_archive` as deterministic gzip-compressed, base64-encoded UTF-8 bytes. The decoded length and SHA-256 are recorded explicitly, and `previous_validation_sha256` retains the same predecessor hash. Current-layer checks, both prior raw record archives and all source histories are retained. This changes the archive representation only; no historical validation content is dropped.
+
+From this directory, the following Python 3 standard-library code restores the exact prior file to a new filename and verifies its recorded length and hash before writing:
+
+```python
+import base64, gzip, hashlib, json
+from pathlib import Path
+v = json.loads(Path("VALIDATION.json").read_text(encoding="utf-8"))
+a = v["previous_validation_archive"]
+assert a["encoding"] == "gzip+base64"
+b = gzip.decompress(base64.b64decode(a["data"], validate=True))
+assert len(b) == a["decoded_bytes"]
+assert hashlib.sha256(b).hexdigest() == a["decoded_sha256"] == v["previous_validation_sha256"]
+with Path("RESTORED_PREVIOUS_VALIDATION.json").open("xb") as f:
+    f.write(b)
+```
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: effective positive chirp cutoff and rank-three rectangles
 
 Two independently accepted scoped continuations are synchronized. The explicit N0=2^(2^534) chirp cutoff is conditional on two retained certificates and applies only to positive epsilon, including both real Gauss signs. Accepted negative-epsilon and both-sign non-effective results remain preserved. The negative-epsilon effective cutoff and actual exception computation remain open. Negative-epsilon acceptance is retained from the recorded history; its proof/review bodies were not freshly recovered in this packet. The uniform rank-three p^2 q side theorem is separate from the arithmetic-only N=2873 closure. At 2873 the exact optimum is 534378 with the retained full rank-one/coset equality classification and valid nonsharp area penalty 5/5746. The next residual 3757 belongs only to the precisely retained accepted-domain union extended by isolated target 2873; no all-length or all-p^2 q optimum is asserted. M-CHIRP-LOWER and M-RECTANGLE-TILING remain TO RESEARCH at priorities 34 and 42. Census: 102 CLOSED / 225 TO RESEARCH / 327 views.
