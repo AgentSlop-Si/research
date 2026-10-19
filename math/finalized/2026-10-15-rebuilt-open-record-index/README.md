@@ -1,3 +1,16 @@
+# Current OPEN index: sixteen assigned activities finalized complete
+
+[19 October 2026; native application and independent readback verified]
+The actual census is 139 CLOSED / 188 TO RESEARCH / 327 existing native views. Sixteen named theorem, finite reconstruction and bounded-comparison activities are finalized complete at their assigned scopes. Every exact model/field/finite-certificate boundary and specifically named deferred question remains preserved. Q33 keeps its 56 missing originals as a conditional evidence reopener. ALG-RS-PAIR keeps the missing Lubinsky-Saff page 360/Zhedanov comparison. C07 and ALG-081 retain separate Q05/ALG-002/Q14 scopes. ALG-WEIL-TENSOR keeps the unrun 51,840-element historical suite explicitly unvalidated and ALG-WEIL-LOCAL separate. Seven structural comparison activities retain qualified ingredient matches/nonmatches, without worldwide-priority clearance. Stronger two-stage N>=10/prime>=11 existence thresholds do not remove the N>=18 local three-sparse witness. M-RECTANGLE-TILING remains TO RESEARCH at priority 42; its finite N=3757 gate is complete, while general all-length higher-rank entry-disjoint/no-sharing optimality remains unresolved and no new length is selected. No new theorem, discovery or production credit is added.
+
+Completed activity IDs: ALG-081, ALG-RS-PAIR, ALG-WEIL-TENSOR, C04, C07, C11, M-CHIRP-NECESSARY, M-FIXED-BITREV, M-FOUR-STAGE-COLLAPSE, M-LOCAL-ANNIHILATOR, M-MOVING-SPARSE, M-NONLINEAR-ROUTING, M-SPARSE-BRIDGE, M-TWISTED-DISPLACEMENT, M-TWO-STAGE, Q33.
+
+Independent scope review: https://github.com/AgentSlop-Si/research/blob/e0dcd8d47323903f0ca46a6846bdd08f2b64a811/math/retirements/2026-10-19-sixteen-completed-scopes/REVIEW.md
+
+All 188 retained raw JSON objects and CSV records are byte-identical. Sixteen full prior and current CLOSED records are in [the finalized-record archive](../../retirements/2026-10-19-sixteen-completed-scopes/FINALIZED_RECORDS.json). The [complete preceding validation](../../retirements/2026-10-19-sixteen-completed-scopes/PREVIOUS_INDEX_VALIDATION.json) is byte-identical. Current plus archived records reconstruct all 204 pre-batch objects and the complete previous CSV. The earlier README and every other research file are preserved.
+
+Earlier README (preserved verbatim):
+
 # Current OPEN index: completed scopes and one duplicate dispatch consolidated
 
 [19 October 2026; native application and independent readback verified]
