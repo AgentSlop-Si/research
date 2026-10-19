@@ -1,3 +1,47 @@
+# Current OPEN index: effective positive chirp cutoff and rank-three rectangles
+
+Two independently accepted scoped continuations are synchronized. The explicit N0=2^(2^534) chirp cutoff is conditional on two retained certificates and applies only to positive epsilon, including both real Gauss signs. Accepted negative-epsilon and both-sign non-effective results remain preserved. The negative-epsilon effective cutoff and actual exception computation remain open. Negative-epsilon acceptance is retained from the recorded history; its proof/review bodies were not freshly recovered in this packet. The uniform rank-three p^2 q side theorem is separate from the arithmetic-only N=2873 closure. At 2873 the exact optimum is 534378 with the retained full rank-one/coset equality classification and valid nonsharp area penalty 5/5746. The next residual 3757 belongs only to the precisely retained accepted-domain union extended by isolated target 2873; no all-length or all-p^2 q optimum is asserted. M-CHIRP-LOWER and M-RECTANGLE-TILING remain TO RESEARCH at priorities 34 and 42. Census: 102 CLOSED / 225 TO RESEARCH / 327 views.
+
+## M-CHIRP-LOWER
+
+[2026-10-19; positive-epsilon cutoff complete, remaining chirp obligations]
+Do not redispatch the accepted positive-epsilon explicit cutoff, conditional on its two retained certificates. The negative-epsilon effective cutoff and computation of actual exceptional sets remain open. Preserve the already accepted negative-epsilon infinite family, both-sign non-effective generic exclusions, positive square family, Q11/SP11/H01-H05 and dimension-five upper identities. Base-field-only three-term and growing-dimensional full-B upper-construction gaps, exact additive-length priority, production execution and numerical stability remain unresolved. M-CHIRP-LOWER remains TO RESEARCH at priority 34.
+Proof: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/chirp/candidate/EFFECTIVE_POSITIVE_CHIRP_CUTOFF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/chirp/review/INDEPENDENT_REVIEW.md
+Owner scope: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/OWNER_DISPOSITIONS.json
+
+[2026-10-19; effective cutoff scope and retained history]
+The new explicit cutoff is only for positive epsilon, although both real Gauss signs are covered; it neither retracts accepted negative-epsilon results nor supplies their effective cutoff. Keep the two certificate dependencies, fixed coordinates, legal denominators and arbitrary diagonal endpoint masks including retained boundary cases. No all-N exclusion, actual exceptional-list computation, other feedback target, unmatched endpoint permutation, product, three-or-more-branch exclusion, numerical-stability, production, unrestricted Fourier-algorithm lower bound or historical-priority conclusion follows. Q11/SP11/H01-H05 and remaining coefficient-field/upper-construction gaps stay separate; no owner closure or census change.
+Proof: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/chirp/candidate/EFFECTIVE_POSITIVE_CHIRP_CUTOFF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/chirp/review/INDEPENDENT_REVIEW.md
+Owner scope: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/OWNER_DISPOSITIONS.json
+
+## M-RECTANGLE-TILING
+
+[2026-10-19; N=2873 complete, precisely qualified next gate]
+N=2873 is closed at the stated disjoint-tile objective; integer stable rank already suffices, so the historical demand for new Fourier structure at that target is corrected. Adding only target 2873 to the precisely retained accepted-domain union covers every N from 2 through 3756. The next residual of that union is N=3757=13*17^2, D_N=238, at rank three. Establish a sufficient exact rank-three density or structural refinement there, or another fully specified theorem that resolves it. The scalar shape (102,110) demonstrates insufficiency of the available bound, not an actual Fourier counterexample. The uniform p^2 q side theorem is not all-length tiling closure. M-RECTANGLE-TILING remains TO RESEARCH at priority 42.
+Proof: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/rectangle/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/rectangle/review/REVIEW.md
+Owner scope: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/OWNER_DISPOSITIONS.json
+Final verdict: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/rectangle/review/VERDICT.json
+
+[2026-10-19; target closure and structural theorem kept distinct]
+Preserve actual complex ranks, arbitrary nonempty Cartesian subsets, entry-disjoint/no-sharing cost sum r(a+b), separate root/coefficient preparation, storage and I/O, and the inherited possible N extra additions for literal zero-initialized accumulation. The 5/5746 area penalty and uniform side bound are not claimed sharp. The 3757 residual is relative only to the precisely retained union extended by isolated target 2873. A scalar insufficiency witness is not a Fourier counterexample. No all-length or all-p^2 q tiling optimum, unrestricted circuit, overlap/cancellation, arbitrary basis-change, finite-field rigidity, performance or worldwide-priority claim follows. Preserve the dated old gate and all accepted predecessors without changing owner status, priority or census.
+Proof: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/rectangle/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/rectangle/review/REVIEW.md
+Owner scope: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/OWNER_DISPOSITIONS.json
+Final verdict: https://github.com/AgentSlop-Si/research/blob/32d3ca18b8327d69a9b9c9e9e37e22620d22c94b/math/finalized/2026-10-19-effective-chirp-rank-three-rectangles/rectangle/review/VERDICT.json
+
+Exactly 223 unrelated raw JSON/CSV records remain byte-identical. In the two retained owner records, only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change; all other raw JSON value and CSV field bytes remain unchanged. Full prior representations of the two changed records and the complete preceding validation history are archived in VALIDATION.json. Earlier README bytes follow verbatim. Existing URLs remain ordered, with seven per-record immutable links (six distinct bodies) appended; the source-link-entry total is 875.
+
+The separately verified native update changed exactly 40 existing prose cells, retaining each complete old value as an exact historical suffix. Eight target notes, 1,787 protected full CellData guards, metadata, formulas, formatting, validation, aliases, IDs, statuses and priorities remain unchanged. Historical locator notes are preserved verbatim; targets were freshly resolved by stable ID. Native validation used full CellData; no rendered visual-fit claim is made. No newer order-3q interior or exact C8 rank-zero result is included in this continuation.
+
+Scientific publication commit: 32d3ca18b8327d69a9b9c9e9e37e22620d22c94b. Verified preceding index commit: 50a3fd88bdc6b41c21c73e0340c4971195ffd128. Native payload SHA-256: dd0fd786a4ec40452cbcea91152437169cd3c916bfbb083beea53f1877acada4.
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: endpoint masks, rank-zero phase rigidity and polynomial pole preparation
 
 Three accepted scoped results are synchronized across four existing views. The order-3q endpoint d=2q is impossible for prime q>3, leaving q<d<2q open. The C8 rank-zero sandwich is strict, while its exact optimum and explicit gap remain open. The original large-t even-pole family now has fully charged theoretical O~((N^8+Np)^3) preparation; useful conditioning, implementation and practical execution remain open. The separate compact rational family and its paid Karatsuba query are preserved. M-SPARSE-DEFECT, PHASE-DEFECT-RANK-20261011, ALG-EVEN-PRONY-EXTRA-POLE and NF-03 remain TO RESEARCH at priorities 42, 37, 42 and 37. Both pole views remain separate and open. Census: 102 CLOSED / 225 TO RESEARCH / 327 views. No new owner, runtime theorem or novelty clearance is added.
