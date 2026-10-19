@@ -1,3 +1,32 @@
+# Current OPEN index: Q27 four-phase same-branch exclusion
+
+[2026-10-19; independently accepted four-phase same-branch exclusion]
+Exactly 280 original-chart slices, selecting four free edges in one fully free branch of either stage, are excluded from external invertible-complex monomial equivalence to F8 on their original six-guard unit-phase domains. The proposed quotient dimension 146 is a valid upper bound; a new opposite-two-cut lemma proves the sharp dimension 126, attained by every label. All 560 specified minors in two admissible Gaussian embeddings were independently reproduced and lift to characteristic-zero adjugate identities. Preserve all 5,984 accepted triples, the original chart, every previous source/history, TO RESEARCH status and priority 50. No full 34-phase fiber, other four-coordinate placement, five-or-more-coordinate motion, novelty or Fourier-runtime claim follows.
+Verified immutable scientific sources:
+Proof: https://github.com/AgentSlop-Si/research/blob/cb0d1ddee0b7dffc6bbaed13ea1523cb4f305b3f/math/finalized/2026-10-19-q27-four-phase-same-branch/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/cb0d1ddee0b7dffc6bbaed13ea1523cb4f305b3f/math/finalized/2026-10-19-q27-four-phase-same-branch/review/REVIEW.md
+Owner scope: https://github.com/AgentSlop-Si/research/blob/cb0d1ddee0b7dffc6bbaed13ea1523cb4f305b3f/math/finalized/2026-10-19-q27-four-phase-same-branch/OWNER_DISPOSITION.json
+
+## Current gate
+
+[2026-10-19; independently reviewed four-phase same-branch continuation]
+Retain all 5,984 accepted three-coordinate exclusions. The 280 four-moving-phase slices formed by either stage, either fully free branch, and any four of its eight original free edges are now also excluded on the original guarded unit-phase domain. The proposed quotient support bound 146 is valid but not sharp: a new opposite-two-cut lemma gives exact support dimension 126, and a separate characteristic-zero minor certificate covers every label. The full 34-phase fiber, other four-coordinate placements, and five-or-more simultaneous phase motions remain open. A successor must prove a distinct exact multi-coordinate or full-fiber result under the original chart and all six guards; do not repeat the accepted 5,984 triples or these 280 slices. Preserve the accepted failure of literal multiplier transport between equal-holonomy slices; neither result uses that invalid transport.
+Verified immutable scientific sources:
+Proof: https://github.com/AgentSlop-Si/research/blob/cb0d1ddee0b7dffc6bbaed13ea1523cb4f305b3f/math/finalized/2026-10-19-q27-four-phase-same-branch/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/cb0d1ddee0b7dffc6bbaed13ea1523cb4f305b3f/math/finalized/2026-10-19-q27-four-phase-same-branch/review/REVIEW.md
+Owner scope: https://github.com/AgentSlop-Si/research/blob/cb0d1ddee0b7dffc6bbaed13ea1523cb4f305b3f/math/finalized/2026-10-19-q27-four-phase-same-branch/OWNER_DISPOSITION.json
+
+## Pass / stop boundary
+
+[2026-10-19; scoped four-phase same-branch theorem accepted, owner remains open]
+The new coverage is exactly 2 stages × 2 fully free branches × C(8,4)=280 labels on the pinned original N=8 witness, preserving seeds 42420/42520, all six cycles, fourteen fixed tree gains, 34 witness phases, six inverse guards, unweighted three-Green stage sums, and M=S2*S1. The original 784 necessary modulus-window polynomials are divided by the original active guard F=1-hxyzw. The proved support dimension is 126; specified nonzero minors lift through checked coefficient-ring homomorphisms and give exact characteristic-zero identities placing F in the original ideal. Finite-field rootlessness and failed rank146 tests are not Fourier witnesses. No other four-coordinate placement, five-or-more-coordinate motion, full 34-phase fiber, other witness, free interstage diagonal, nonunit gains, larger dimension, construction, runtime or novelty claim follows. Q27 stays TO RESEARCH at priority 50; all 5,984 previously accepted triples remain accepted.
+Verified immutable scientific sources:
+Proof: https://github.com/AgentSlop-Si/research/blob/cb0d1ddee0b7dffc6bbaed13ea1523cb4f305b3f/math/finalized/2026-10-19-q27-four-phase-same-branch/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/cb0d1ddee0b7dffc6bbaed13ea1523cb4f305b3f/math/finalized/2026-10-19-q27-four-phase-same-branch/review/REVIEW.md
+Owner scope: https://github.com/AgentSlop-Si/research/blob/cb0d1ddee0b7dffc6bbaed13ea1523cb4f305b3f/math/finalized/2026-10-19-q27-four-phase-same-branch/OWNER_DISPOSITION.json
+
+## Earlier index history (preserved verbatim)
+
 # Current OPEN index: complete N=5q degree classification
 
 [2026-10-19; independently accepted complete order-5q degree classification]
