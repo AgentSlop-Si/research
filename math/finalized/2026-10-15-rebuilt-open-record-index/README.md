@@ -1,3 +1,30 @@
+# Current OPEN index: isolated N=3757 rectangle gate accepted
+
+[2026-10-19; existing owner M-RECTANGLE-TILING, still TO RESEARCH at priority 42]
+The exact original complex rank-three rectangle density at N=3757 is 16/221,
+strictly above 238/3757. The disjoint/no-sharing endpoint-incidence optimum is
+894166, and every optimizer has exactly 3757 full rank-one coset products with
+unordered sides {17,221}. Root/coefficient preparation, storage/I/O and the
+possible 3757 accumulation additions retain their prior separate accounting.
+The general owner remains open. No next target or general-length extension
+is selected, and all accepted N=2873 and earlier histories are preserved.
+
+Only this existing owner's current gate, pass/stop and source URLs change.
+The index retains 225 open records, 102 closed/327 total, unchanged priorities,
+and all 224 other raw JSON objects and CSV records byte-for-byte. Four verified
+immutable source URLs are appended in order; source URL count is 943.
+
+Proof: https://github.com/AgentSlop-Si/research/blob/adbb01d0a0bd9dce3eae94efe32e5218005d2c5a/math/finalized/2026-10-19-rectangle-3757-rank-three/rectangle/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/adbb01d0a0bd9dce3eae94efe32e5218005d2c5a/math/finalized/2026-10-19-rectangle-3757-rank-three/rectangle/review/REVIEW.md
+Acceptance: https://github.com/AgentSlop-Si/research/blob/adbb01d0a0bd9dce3eae94efe32e5218005d2c5a/math/finalized/2026-10-19-rectangle-3757-rank-three/rectangle/review/REVIEW_PINS.json
+Owner scope: https://github.com/AgentSlop-Si/research/blob/adbb01d0a0bd9dce3eae94efe32e5218005d2c5a/math/finalized/2026-10-19-rectangle-3757-rank-three/OWNER_DISPOSITIONS.json
+
+The native update changed exactly 20 existing owner text cells. All old native
+values remain exact suffixes, with notes, formulas, formatting, status, score,
+Progress and census unchanged. The independent native postread passed.
+
+## Earlier README history, retained verbatim
+
 # Current OPEN index: M-SCAN two-step defect and dual reductions
 
 [2026-10-19; independently accepted bounded structural result]
