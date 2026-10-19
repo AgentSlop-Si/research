@@ -1,3 +1,46 @@
+# Current OPEN index: M-SPARSE-DEFECT accepted degree endpoints
+
+[2026-10-19; independently accepted order-5q degree endpoints]
+For every prime q>5, no arbitrary binary (5q)-by-(5q) mask of the original Fourier phases has scalar degree-d Grams at d=2q,3q,4q. With D[r,c]=R[r,c] zeta^(rc), either positive square Gram dI implies both and exact row/column degree d. Coverage at kq>q+4 derives each support as a union of full CRT q-lines and five-fibers. The endpoint degree kq=ell*q+(5-ell)*f, with ell<=k<5 and f<q, forces f=0 and ell=k by coprimality. Thus every row is a union of exactly k q-lines, with arbitrary line sets depending on both row coordinates. For the five rows at one fixed second coordinate, prime-5 orthogonality forces pairwise-disjoint k-element line sets, impossible for k=2,3,4. The pure-line branch is explicitly proved, not discarded. At q=7, the newly excluded degrees are 14,21,28. Preserve every separately accepted earlier scope and its exact hypotheses, all original sources and full dated histories, aliases C11/F042, bounded fixed-Fourier attribution, all model and paid-cost qualifications, and all scores. M-SPARSE-DEFECT remains TO RESEARCH at priority 42.
+Verified immutable scientific sources:
+Proof: https://github.com/AgentSlop-Si/research/blob/9e372828c305d7cf84bab93d47f9aee35c337468/math/finalized/2026-10-19-fiveprime-degree-endpoints/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/9e372828c305d7cf84bab93d47f9aee35c337468/math/finalized/2026-10-19-fiveprime-degree-endpoints/review/REVIEW.md
+Independent verdict: https://github.com/AgentSlop-Si/research/blob/9e372828c305d7cf84bab93d47f9aee35c337468/math/finalized/2026-10-19-fiveprime-degree-endpoints/review/VERDICT.json
+
+## Current gate
+
+[2026-10-19; independently accepted order-5q degree endpoints]
+The separate endpoint gate d=2q,3q,4q is complete. Preserve all accepted open intervals and inherited lower/strict-upper ranges at their own scopes. A full N=35 or N=5q degree-existence classification remains a separate, unaccepted synthesis until every inherited degree range, endpoint and positive construction is explicitly checked and independently reviewed. Do not infer that classification merely by joining this theorem with earlier summaries. Other odd-semiprime and mixed-prime orders, every-support geometry, uniform divisibility necessity, exact nonsharp optima and sharper or optimal gap rates retain their own open obligations. Sparse-column and fixed-common-frame commutator obligations, paid preparation/solve/decomposition/output, stability, implementation and historical priority remain open. Preserve every separately accepted earlier scope and its exact hypotheses, all original sources and full dated histories, aliases C11/F042, bounded fixed-Fourier attribution, all model and paid-cost qualifications, and all scores. M-SPARSE-DEFECT remains TO RESEARCH at priority 42.
+Verified immutable scientific sources:
+Proof: https://github.com/AgentSlop-Si/research/blob/9e372828c305d7cf84bab93d47f9aee35c337468/math/finalized/2026-10-19-fiveprime-degree-endpoints/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/9e372828c305d7cf84bab93d47f9aee35c337468/math/finalized/2026-10-19-fiveprime-degree-endpoints/review/REVIEW.md
+Independent verdict: https://github.com/AgentSlop-Si/research/blob/9e372828c305d7cf84bab93d47f9aee35c337468/math/finalized/2026-10-19-fiveprime-degree-endpoints/review/VERDICT.json
+
+## Pass / stop boundary
+
+[2026-10-19; independently accepted order-5q degree endpoints]
+Stop this scoped gate at the three exclusions d=2q,3q,4q for prime q>5. Do not redispatch these accepted endpoints or any previously accepted open interval. This update supplies no complete order-5q/general-semiprime classification, universal full-block support theorem, sharp positive-error optimum, optimal gap rate, worldwide-priority clearance or Fourier/FFT improvement. Prime-cycle cancellation is classical content. Any complete degree-set synthesis must be separately bounded and reviewed. Preserve every separately accepted earlier scope and its exact hypotheses, all original sources and full dated histories, aliases C11/F042, bounded fixed-Fourier attribution, all model and paid-cost qualifications, and all scores. M-SPARSE-DEFECT remains TO RESEARCH at priority 42.
+Verified immutable scientific sources:
+Proof: https://github.com/AgentSlop-Si/research/blob/9e372828c305d7cf84bab93d47f9aee35c337468/math/finalized/2026-10-19-fiveprime-degree-endpoints/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/9e372828c305d7cf84bab93d47f9aee35c337468/math/finalized/2026-10-19-fiveprime-degree-endpoints/review/REVIEW.md
+Independent verdict: https://github.com/AgentSlop-Si/research/blob/9e372828c305d7cf84bab93d47f9aee35c337468/math/finalized/2026-10-19-fiveprime-degree-endpoints/review/VERDICT.json
+
+## Exact native and index scope
+
+The native update changed 19 existing M-SPARSE-DEFECT explanatory cells and one separately approved Progress summary. All old histories, 32 notes, two formulas, 296 non-target returned cells and all 70 historical Progress rich-text runs were preserved. The full prefix/source/joiner shift is 1,222 UTF-16 units, with 71 resulting runs. The API omitted default zero startIndex and empty format from only the new initial Progress reset run; strict mismatch receipts were retained and this narrow normalization was independently verified without a second write. All other CellData fields were compared strictly; no rendered-layout or resizing claim is made. The finalized upper-interval, middle-interval and F020 successor histories and four F020 owner rows are preserved. Census remains 102 CLOSED / 225 TO RESEARCH / 327 existing views.
+
+This index changes only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls in the one retained M-SPARSE-DEFECT record. The 224 unrelated raw JSON objects and CSV rows remain byte-identical. All unrelated owner fields, status, priority 42, C11/F042 source-family identifiers, order and previous source links remain exact. Three new immutable scientific links bring the total source URL count to 927. This checkpoint accepts only the three exclusions d=2q,3q,4q for prime q>5. Every earlier open-interval, strict-upper, lower-degree and positive-construction scope remains unchanged. A full order-5q degree classification is a separate unaccepted synthesis and does not follow administratively from this update. No historical-novelty promotion, FFT improvement, or whole-owner closure is added.
+
+All three scientific source bodies are exact original proof, independent review and independent verdict bytes. The independently accepted 89-file endpoint science package separately discloses seven administrative location-property projections and three provenance-file omissions elsewhere. Its public replay compares five candidate and five independent scientific control files byte-for-byte, while explicitly excluding the candidate frozen-source-hash count and reviewer elapsed_seconds from RESULTS/stdout comparison. This index derivative adds no new replay claim.
+
+Science commit: 9e372828c305d7cf84bab93d47f9aee35c337468. Publication base: 9e372828c305d7cf84bab93d47f9aee35c337468. Native payload SHA-256: 474137bf1be7c0f0931b68d1511498dbdfc2a1030019c47c8ad745496088bce5. Independent native postread SHA-256: c04f7d6cc7439172feaec812e68cc024b2c447416e16886b18bbba9560c49543.
+
+## Lossless earlier evidence
+
+The entire preceding VALIDATION.json is stored as deterministic gzip+base64 in previous_validation_archive. Verify the encoded/compressed hashes, decompress, then verify decoded size and SHA-256; all earlier nested archives remain recoverable. The full prior M-SPARSE-DEFECT JSON object and CSV record are also retained. The entire earlier README follows verbatim.
+
+---
+
 # Current OPEN index: M-SPARSE-DEFECT accepted upper open interval
 
 [2026-10-19; independently accepted order-5q upper open interval]
