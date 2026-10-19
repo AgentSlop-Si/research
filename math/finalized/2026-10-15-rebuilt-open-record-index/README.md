@@ -1,3 +1,46 @@
+# Current OPEN index: M-SPARSE-DEFECT accepted upper open interval
+
+[2026-10-19; independently accepted order-5q upper open interval]
+For every prime q>5 and integer 3q<d<4q, no binary (5q)-by-(5q) original fixed-phase Fourier equality mask exists. With D[r,c]=R[r,c] zeta_(5q)^(rc), either complete square Gram identity dI implies both and exact row/column degree d. Coverage at d>q+4 derives a union of complete CRT five-fibers and q-lines for every row. Same-group disjoint packing of nonempty fiber sets eliminates heterogeneous mixed counts and forces three q-lines plus one five-fiber in every row, hence d=3q+2. Column degree forces differing groupwise baseline triples; an eligible primitive cross-group overlap then contradicts binary cancellation. At q=7, the mixed degree-23 row shapes (ell,f)=(1,4),(2,3),(3,1) are explicitly retained before the packing argument; the entire new range d=22 through 27 is excluded. This is derived arbitrary-support geometry, not an imposed Cartesian/common-support/full-square-block model. Preserve the separate accepted intervals q<d<2q and 2q<d<3q with their exact hypotheses and independent proofs, including the q=7 first-interior boundary and rectangular nonextension certificate. Retain every prior endpoint, low-degree and strict-upper theorem at its original scope; the N=3q degree set {1,3,q,3q}, prime-power and N=2q classifications, divisor constructions, connected (8,4) obstruction, all sources, bounded attribution and paid-cost/model qualifications remain unchanged. M-SPARSE-DEFECT stays TO RESEARCH at priority 42.
+Verified immutable scientific sources:
+Proof: https://github.com/AgentSlop-Si/research/blob/8d0aa46f3679a62185f0a7c9e25bf732b3afaf36/math/finalized/2026-10-19-fiveprime-upper-interval/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/8d0aa46f3679a62185f0a7c9e25bf732b3afaf36/math/finalized/2026-10-19-fiveprime-upper-interval/review/REVIEW.md
+Independent verdict: https://github.com/AgentSlop-Si/research/blob/8d0aa46f3679a62185f0a7c9e25bf732b3afaf36/math/finalized/2026-10-19-fiveprime-upper-interval/review/VERDICT.json
+
+## Current gate
+
+[2026-10-19; independently accepted order-5q upper open interval]
+This new theorem completes only 3q<d<4q. Applied to the fresh preceding record, its remaining order-5q gate d=2q and 3q<=d<=4q narrows to the three separate endpoints d=2q, d=3q, d=4q; at N=35 these are d=14,21,28. Do not merge the three accepted open intervals across either unresolved endpoint. The previously accepted strict-upper scope is preserved independently; this theorem does not decide it anew. Other odd-semiprime and mixed-prime orders outside accepted families, every-support geometry, uniform divisibility necessity, exact nonsharp optima and sharper/optimal gap rates remain separate. Sparse-column and fixed-common-frame commutator obligations, paid preparation/solve/decomposition/output, stability, implementation and historical priority remain open. Preserve the separate accepted intervals q<d<2q and 2q<d<3q with their exact hypotheses and independent proofs, including the q=7 first-interior boundary and rectangular nonextension certificate. Retain every prior endpoint, low-degree and strict-upper theorem at its original scope; the N=3q degree set {1,3,q,3q}, prime-power and N=2q classifications, divisor constructions, connected (8,4) obstruction, all sources, bounded attribution and paid-cost/model qualifications remain unchanged. M-SPARSE-DEFECT stays TO RESEARCH at priority 42.
+Verified immutable scientific sources:
+Proof: https://github.com/AgentSlop-Si/research/blob/8d0aa46f3679a62185f0a7c9e25bf732b3afaf36/math/finalized/2026-10-19-fiveprime-upper-interval/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/8d0aa46f3679a62185f0a7c9e25bf732b3afaf36/math/finalized/2026-10-19-fiveprime-upper-interval/review/REVIEW.md
+Independent verdict: https://github.com/AgentSlop-Si/research/blob/8d0aa46f3679a62185f0a7c9e25bf732b3afaf36/math/finalized/2026-10-19-fiveprime-upper-interval/review/VERDICT.json
+
+## Pass / stop boundary
+
+[2026-10-19; independently accepted order-5q upper open interval]
+Stop this scoped gate at exclusion of 3q<d<4q for all primes q>5. Do not redispatch any of the separately accepted q<d<2q, 2q<d<3q or 3q<d<4q open intervals. Continue only outside the union of all accepted scopes. This result settles none of d=2q,3q,4q, and proves no complete N=35/N=5q/general-semiprime classification, universal full-block support theorem, exact positive-error optimum, optimal sharper gap, worldwide-priority clearance or FFT improvement. Prime-cycle cancellation remains classical content, with its exact binary argument supplied in the proof. Preserve the separate accepted intervals q<d<2q and 2q<d<3q with their exact hypotheses and independent proofs, including the q=7 first-interior boundary and rectangular nonextension certificate. Retain every prior endpoint, low-degree and strict-upper theorem at its original scope; the N=3q degree set {1,3,q,3q}, prime-power and N=2q classifications, divisor constructions, connected (8,4) obstruction, all sources, bounded attribution and paid-cost/model qualifications remain unchanged. M-SPARSE-DEFECT stays TO RESEARCH at priority 42.
+Verified immutable scientific sources:
+Proof: https://github.com/AgentSlop-Si/research/blob/8d0aa46f3679a62185f0a7c9e25bf732b3afaf36/math/finalized/2026-10-19-fiveprime-upper-interval/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/8d0aa46f3679a62185f0a7c9e25bf732b3afaf36/math/finalized/2026-10-19-fiveprime-upper-interval/review/REVIEW.md
+Independent verdict: https://github.com/AgentSlop-Si/research/blob/8d0aa46f3679a62185f0a7c9e25bf732b3afaf36/math/finalized/2026-10-19-fiveprime-upper-interval/review/VERDICT.json
+
+## Exact native and index scope
+
+The native update changed 19 existing M-SPARSE-DEFECT explanatory cells and one separately approved Progress summary. All old histories, 32 notes, two formulas, 296 non-target returned cells and all 69 historical Progress rich-text runs were preserved. The full prefix/source/joiner shift is 1,177 UTF-16 units, with 70 resulting runs. The API omitted default zero startIndex and empty format from only the new initial Progress reset run; strict mismatch receipts were retained and this narrow normalization was independently verified without a second write. All other CellData fields were compared strictly; no rendered-layout or resizing claim is made. The finalized middle-interval and F020 successor histories and four F020 owner rows are preserved. Census remains 102 CLOSED / 225 TO RESEARCH / 327 existing views.
+
+This index changes only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls in the one retained M-SPARSE-DEFECT record. The 224 unrelated raw JSON objects and CSV rows remain byte-identical. All unrelated owner fields, status, priority 42, C11/F042 source-family identifiers, order and previous source links remain exact. Three new immutable scientific links bring the total source URL count to 924. The new 3q<d<4q exclusion for prime q>5 remains separate from the accepted q<d<2q and 2q<d<3q intervals. Within the prior open order-5q gate, the remaining endpoints are d=2q,3q,4q; none is silently resolved. Every earlier strict-upper and other accepted scope remains unchanged. No historical-novelty promotion, FFT improvement, or whole-owner closure is added.
+
+The third scientific source is an administrative projection of the independent verdict: only the candidate_path location property was omitted, with the exact original digest retained in the publication projection ledger. All proof text, code, controls and scientific verdict fields are unchanged. Public replay scope remains as recorded in the independently accepted 70-file science package; this index derivative adds no new replay claim.
+
+Science commit: 8d0aa46f3679a62185f0a7c9e25bf732b3afaf36. Publication base: 8d0aa46f3679a62185f0a7c9e25bf732b3afaf36. Native payload SHA-256: 21fca08441567a395b4c8de2fce7394b9e668153a5a83b046abd7d591970bcb7. Independent native postread SHA-256: f5d75d14df0790a01eac100c3ac9cb8e830c2dd79f3cd6f92e54c22967da5a31.
+
+## Lossless earlier evidence
+
+The entire preceding VALIDATION.json is stored as deterministic gzip+base64 in previous_validation_archive. Verify the encoded/compressed hashes, decompress, then verify decoded size and SHA-256; all earlier nested archives remain recoverable. The full prior M-SPARSE-DEFECT JSON object and CSV record are also retained. The entire earlier README follows verbatim.
+
+---
+
 # Current OPEN index: M-SPARSE-DEFECT accepted middle interval
 
 [2026-10-19; independently accepted order-5q middle open interval]
