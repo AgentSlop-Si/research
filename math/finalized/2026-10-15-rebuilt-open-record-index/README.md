@@ -1,3 +1,65 @@
+# Current OPEN index: cyclic, mixed-prime and Gaussian scoped results
+
+Three accepted mathematical subproblems have been synchronized: the all-m cyclic minimax family; the order-2q and specified partial-pq equality-mask degrees; and Gaussian finite-positive-radius equality, fixed-parameter strict gap and rounded-block counterexamples. The exact nondivisible optimizer, general mixed-prime necessity and remaining rank/error tradeoffs are still open at their named scopes. PHASE-DEFECT-RANK-20261011, M-SPARSE-DEFECT and ALG-036 remain TO RESEARCH at priorities 37, 42 and 34. Census: 102 CLOSED / 225 TO RESEARCH / 327 views. No new owner, runtime theorem or novelty clearance is added.
+
+## PHASE-DEFECT-RANK-20261011
+
+[2026-10-19; cyclic family complete, remaining tradeoff narrowed]
+The all-m value delta_(4m,m-1)=sin(pi/(8m)), least zero-error rank m and stated even-order lower bound are accepted; do not reopen the C8 all-continuous-phase certificate or the completed infinite family. The next mathematical gates are matching smaller-rank cyclic attainment and the full rank/error tradeoff outside that family, and general finite-group exact/positive-error optima outside accepted scopes. Any Green application still needs one compatible jointly real aggregate reference and nonsingular interfaces. Production, implementation, operation-count, costing and integration obligations remain separate, as do historical priority and model-matched novelty clearance. PHASE-DEFECT-RANK-20261011 remains TO RESEARCH at priority 37.
+Proof: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/cyclic/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/cyclic/review/REVIEW.md
+Final verdict: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/cyclic/review/REVIEW_VERDICT.json
+Owner scope: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/OWNER_DISPOSITIONS.json
+
+[2026-10-19; accepted cyclic subproblem, broader owner unchanged]
+The exact all-m family and zero-error rank are complete in the original unrestricted-real-core, arbitrary-invertible-monomial-gauge, external-operator-norm model. No global minimizer classification, open-arc count attainment, smaller-rank matching theorem, odd-order attainment or FFT runtime theorem is inferred. Retain magnitude absorption without nonunitary residual multiplication; finite-abelian N/4 leading asymptotics require |G[2]|=o(N), and characteristic-two Walsh/symplectic cases may have zero correction rank. Preserve Gilbert-Rzeszotnik and Halko-Martinsson-Tropp antecedents and elementary/classical rank-pairing and truncated-SVD inputs. General finite-group/Green and implementation/cost gates and historical novelty remain open. No status, priority, census or owner-closure change follows.
+Proof: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/cyclic/candidate/PROOF.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/cyclic/review/REVIEW.md
+Final verdict: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/cyclic/review/REVIEW_VERDICT.json
+Owner scope: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/OWNER_DISPOSITIONS.json
+
+## M-SPARSE-DEFECT
+
+[2026-10-19; order-2q and partial-pq gates complete]
+Do not reopen the accepted prime-power classification, complete N=2q degree classification, or the proved pq ranges d<q and (p-1)q<d<pq. Remaining mask necessity includes the odd-p semiprime interior q<d<=(p-1)q, mixed-prime orders p^a q and beyond, and general mixed-prime cases outside accepted scopes. A general completion needs a valid necessity proof or an exact nondivisor mask checked in the original Fourier and invertible simultaneous inverse-row model. Exact remaining nonsharp optima and sharper or optimal gap rates, broader sparse-inverse/sparse-column/fixed-common-frame commutator obligations, preparation/output costs, stability, implementation and historical priority remain separate. Preserve all earlier exact and quantitative results. M-SPARSE-DEFECT remains TO RESEARCH at priority 42.
+Proof: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/mixedprime/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/mixedprime/review/REVIEW.md
+Final verdict: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/mixedprime/review/VERDICT.json
+Owner scope: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/OWNER_DISPOSITIONS.json
+
+[2026-10-19; mixed-prime subproblems accepted, broader owner unchanged]
+The order-2q and stated pq degree theorems close only their named ranges. They do not give all-N divisibility, all-support classification, s=0 inverse-row attainment, weighted-CRT coefficient matching, a full-mask counterexample from its obstruction, or an unrestricted Fourier runtime bound. Retain arbitrary original supports/coefficients, simultaneous inverse-row sparsity and spectral norm; the connected (8,4) and odd CRT family still refute universal full-square-block reduction. Scalar inverse-defect corollaries retain integer s>=1; s=0 forces full-rank defect and only a zero universal lower bound. Keep sparse-column 1<=s<N and architecture-specific fixed-common-frame commutator restrictions. The accepted one-neighborhood optimum and its Lang Lemma 3.3/Li-Lim qualified comparison remain separate from exact support-union and global uniform-row-sparsity sharpness. No finite-field operator-norm transfer or free preparation/SVD/output costs, owner closure, priority change or novelty clearance follows.
+Proof: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/mixedprime/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/mixedprime/review/REVIEW.md
+Final verdict: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/mixedprime/review/VERDICT.json
+Owner scope: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/OWNER_DISPOSITIONS.json
+
+## ALG-036
+
+[2026-10-19; Gaussian equality/gap complete, exact optimizer still open]
+The finite-positive-radius equality classifications, centering/attainment, fixed-parameter nondivisible strict gap, rounded-block counterexamples and N=3,d=2 integral reduction are accepted. The remaining extremal tasks are the exact nondivisible maximizer and maximum, already for N=3,d=2, and a computable strict-gap lower bound with changing-dimension critical-window refinements. Preserve the completed projector/leverage/translation theorem and transcript-only Gaussian endpoint. Arbitrary nonhomogeneous sphere-prior adaptive upper bounds, every-fixed-input positive guarantees, matching original block-local construction, other information models and cost qualifications remain separate. Historical attribution and model-matched novelty beyond the qualified HIKP comparison remain unresolved. ALG-036 remains TO RESEARCH at priority 34.
+Proof: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/gaussian/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/gaussian/review/REVIEW.md
+Final verdict: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/gaussian/review/VERDICT.json
+Owner scope: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/OWNER_DISPOSITIONS.json
+
+[2026-10-19; scoped Gaussian equality and counterexamples accepted]
+No exact nondivisible optimizer, computable gap, gap uniform as dimensions change or radius approaches zero/infinity, unrestricted sphere-prior adaptive theorem, every-fixed-input guarantee or Fourier arithmetic-complexity theorem is inferred. Keep the finite r>0 and proper-complex normalization of the equality theorem. Retain earlier alpha>1/2 and alpha=1/2 results, alpha<1/2 positive theorem and random-one-coordinate-omission countercontrol at original scopes. The adaptive theorem is transcript-only, with independent seed, terminal pathwise rank cap, allowed stopping and no raw-input side channel; Gaussian-average success is not every-input achievability. Exact homogeneous-construction sphere transfer and the separately restricted scale-equivariant algorithm transfer are not a universal sphere-prior adaptive theorem. Brascamp-Lieb/Valdimarsson/Brunn-Minkowski attribution and historical priority remain qualified. No owner closure, status, priority or census change follows.
+Proof: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/gaussian/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/gaussian/review/REVIEW.md
+Final verdict: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/gaussian/review/VERDICT.json
+Owner scope: https://github.com/AgentSlop-Si/research/blob/dc3fdc543c9688dfed3afb5c58797d8655c3db9d/math/finalized/2026-10-19-cyclic-mixedprime-gaussian-extrema/OWNER_DISPOSITIONS.json
+
+Exactly 222 unrelated raw JSON/CSV records remain byte-identical. In the three retained owner records, only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change; all other raw JSON value and CSV field bytes remain unchanged. Complete prior representations of the three changed records and the entire preceding validation history are archived in VALIDATION.json. Earlier README bytes follow verbatim. Existing URLs remain in order, with twelve per-record immutable links (ten distinct source bodies) appended; the source-link-entry total is 852.
+
+The separately verified native update changed exactly 42 existing prose cells and retained their complete old values as exact historical suffixes. All 76 prior synchronized values remain, with 42 extended and 34 untouched. Eleven target notes, 2,283 protected full CellData guards, metadata, formulas, formatting, validation, aliases, IDs, statuses and priorities are unchanged. Native validation used full CellData; no rendered visual-fit claim is made. Newer N3q and rank-zero candidate branches are not part of this update.
+
+Scientific publication commit: dc3fdc543c9688dfed3afb5c58797d8655c3db9d. Verified preceding index commit: cba4cb6caa908330d7a5e6e3a9d5faad5cf69d85. Native payload SHA-256: bb1f2a2630165311ac5ca57dadd2cce3a94f3df1c896af3a950a120dea8b3b2b.
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: five-owner scoped research update
 
 The named global C8 rank-one minimax, F020 prime-power range through b=2p, Gaussian thin-deficit endpoint and prime-power Fourier-mask classification are accepted at their recorded scopes. The scan result blocks one specified elimination route while its original endpoint H_N and generic-dominance gates remain unresolved. All five broader owners remain TO RESEARCH at priorities 37, 58, 34, 42 and 34 respectively. Census: 102 CLOSED / 225 TO RESEARCH / 327 views. No new owner, novelty clearance or runtime claim is added.
