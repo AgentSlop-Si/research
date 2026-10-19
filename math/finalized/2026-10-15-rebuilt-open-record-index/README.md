@@ -1,3 +1,52 @@
+# Current OPEN index: complete N=5q degree classification
+
+[2026-10-19; independently accepted complete order-5q degree classification]
+For every prime q>5, N=5q, every primitive complex Nth root zeta, and arbitrary binary N-by-N R with D[r,c]=R[r,c] zeta^(rc), either scalar Gram dI is possible exactly for d in {0,1,5,q,5q}. The positive degrees are exactly the divisors of 5q. The independently reviewed synthesis explicitly covers the inherited low/strict-high ranges, separate q=7 first-interior boundary, all open intervals and d=2q,3q,4q endpoints, and exact original-phase positive constructions. For the original normalized complex Fourier target and every-inverse-row sparsity, within 1<=s<=5q-1 the floor is sharp exactly at s in {5q-1,5q-5,4q}, with errors 1/sqrt(5q), 1/sqrt(q), 1/sqrt(5); all other proper budgets have strict infimum separation. The zero mask gives the direct vacuous s=N case, while the full mask does not give an s=0 invertible witness. Preserve every earlier accepted result at its exact hypotheses, complete dated history and source history, aliases C11/F042, user notes, formatting, formulas, scores, bounded attribution, model and paid-cost qualifications. M-SPARSE-DEFECT remains TO RESEARCH at priority 42.
+Verified immutable scientific sources:
+Consolidated theorem: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/THEOREM.md
+Accepted synthesis proof: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/candidate/REPORT.md
+Independent synthesis review: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/review/REVIEW.md
+Independent synthesis verdict: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/review/VERDICT.json
+Final acceptance binding: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/FINAL_ACCEPTANCE.json
+
+## Current gate
+
+[2026-10-19; independently accepted complete order-5q degree classification]
+The N=5q degree-existence classification subgate for prime q>5 is COMPLETE following separate synthesis acceptance; no degree gap remains at this scope. Preserve older statements that called this synthesis unaccepted verbatim as dated history, rather than leaving them as the current open task. Classification of every support pattern, arbitrary odd-semiprime and mixed-prime orders outside accepted families, general divisibility necessity, exact nonsharp optima and sharper/optimal gap rates remain separate. Broader sparse-inverse, sparse-column, fixed-common-frame commutator, paid preparation/solve/decomposition/output, stability, implementation and historical-priority obligations remain open. Preserve every earlier accepted result at its exact hypotheses, complete dated history and source history, aliases C11/F042, user notes, formatting, formulas, scores, bounded attribution, model and paid-cost qualifications. M-SPARSE-DEFECT remains TO RESEARCH at priority 42.
+Verified immutable scientific sources:
+Consolidated theorem: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/THEOREM.md
+Accepted synthesis proof: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/candidate/REPORT.md
+Independent synthesis review: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/review/REVIEW.md
+Independent synthesis verdict: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/review/VERDICT.json
+Final acceptance binding: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/FINAL_ACCEPTANCE.json
+
+## Pass / stop boundary
+
+[2026-10-19; independently accepted complete order-5q degree classification]
+Stop the N=5q degree-classification subgate after its separately accepted complete theorem and original inverse-row sharp-floor translation. Do not redispatch its accepted intervals, endpoints or completed synthesis, and do not promote this completion to full-owner closure. No full support-pattern classification, arbitrary-pq/general-order theorem, exact nonsharp optimum, sharp gap rate, worldwide-priority clearance or Fourier/FFT improvement is claimed. Classical binary two-prime cancellation retains its existing attribution. Preserve every earlier accepted result at its exact hypotheses, complete dated history and source history, aliases C11/F042, user notes, formatting, formulas, scores, bounded attribution, model and paid-cost qualifications. M-SPARSE-DEFECT remains TO RESEARCH at priority 42.
+Verified immutable scientific sources:
+Consolidated theorem: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/THEOREM.md
+Accepted synthesis proof: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/candidate/REPORT.md
+Independent synthesis review: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/review/REVIEW.md
+Independent synthesis verdict: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/review/VERDICT.json
+Final acceptance binding: https://github.com/AgentSlop-Si/research/blob/2af731c19cfa5409c358580e2ed07e7e5d7aae92/math/finalized/2026-10-19-fiveprime-degree-classification/FINAL_ACCEPTANCE.json
+
+## Exact native and index scope
+
+The native update changed 19 existing M-SPARSE-DEFECT explanatory cells and one separately approved Progress summary. All complete old histories, 32 notes, two formulas, 296 non-target returned cells and all 71 historical Progress rich-text runs were preserved. The full prefix/source/joiner shift is 1,615 UTF-16 units, with 72 resulting runs. The API omitted default zero startIndex and empty format from only the new initial Progress reset run; strict mismatch receipts were retained and this narrow normalization was independently verified without a second write. All other CellData fields were compared strictly; no rendered-layout or resizing claim is made. The independently finalized endpoint, upper-interval, middle-interval and F020 successor histories and four F020 owner rows are preserved. Census remains 102 CLOSED / 225 TO RESEARCH / 327 existing views.
+
+This index changes only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls in the one retained M-SPARSE-DEFECT record. The 224 unrelated raw JSON objects and CSV rows remain byte-identical. All unrelated owner fields, status, priority 42, C11/F042 source-family identifiers, order and previous source links remain exact. Five immutable scientific links bring the total source URL count to 932. The separately accepted theorem completes the degree-existence classification for N=5q and prime q>5, including positive constructions and the original inverse-row sharp-floor translation. Earlier pending-synthesis wording is preserved as dated history and is superseded only at this scope. Full support-pattern classification, arbitrary odd-semiprime/general-order necessity, exact nonsharp optima and the broader owner remain open. No historical-novelty promotion or FFT improvement is added.
+
+The five scientific links identify the consolidated theorem, exact accepted synthesis proof, independently accepted synthesis review, verdict and final acceptance binding. The public review removes only a private administrative workspace prefix; its mathematical content is unchanged and its original digest is retained in the science source ledger. The accepted 62-file compact science package explicitly inventories nine administrative projections, eleven omissions and deduplicated aliases. It includes complete reports and acceptances for all seven historical components, their original manifests and fresh synthesis controls, while omitting full historical checker archives and private owner provenance. Its portable replay changes only the original integrity hook and compares every scientific result field exactly; original private provenance and original stdout are not claimed reproduced. This index adds no new mathematical or replay claim.
+
+Science commit: 2af731c19cfa5409c358580e2ed07e7e5d7aae92. Publication base: 2af731c19cfa5409c358580e2ed07e7e5d7aae92. Native payload SHA-256: afe730c34019fba0e87ec4b8e9d1f1e6bfd54471c06c07522865817ebd994415. Independent native postread SHA-256: 8ea68cb7abe130eb7c9d6a43b81c8c5f62eaf7dc2ca0ef8e5d0a9e63d2a99409.
+
+## Lossless earlier evidence
+
+The entire preceding VALIDATION.json is stored as deterministic gzip+base64 in previous_validation_archive. Verify the encoded/compressed hashes, decompress, then verify decoded size and SHA-256; all earlier nested archives remain recoverable. The full prior M-SPARSE-DEFECT JSON object and CSV record are also retained. The entire earlier README follows verbatim.
+
+---
+
 # Current OPEN index: M-SPARSE-DEFECT accepted degree endpoints
 
 [2026-10-19; independently accepted order-5q degree endpoints]
