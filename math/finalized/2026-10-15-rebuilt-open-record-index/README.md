@@ -1,3 +1,16 @@
+# Current OPEN index: twenty-four scoped activity dispositions
+
+[19 October 2026; native application and independent readback verified]
+The actual census is 163 CLOSED / 164 TO RESEARCH / 327 existing native views. Nineteen named mathematical proof/certificate activities are finalized complete at their assigned scopes, and Q20 is consolidated as a completed construction-audit view under open NF-03. Three duplicate dispatches (N256-SOLVER-SATURATION, NF-02 and NF-09) are redirected to their explicitly named surviving owners. PR622 is separately retired as a dominated finite-profile research route; its full candidate admission remains UNPROVED and archived, without a semantic rejection or successful-production claim. Exact model, field, finite-certificate, inherited-acceptance, implementation and historical-comparison qualifications remain. In particular TH-03 stays the content-carry theorem with Implementation pending; NEW-14 keeps exact-hash attributed acceptance and the older R38 PENDING history; Phase44 interval acceptance is inherited without replay; the common-chirp bounded executable may return LIMIT. NF-03, Q01/PACK-01, N256-FULL-MODEL, NF-04, NF-06/Q34, Q29/ALG-OPEN-UNIFORM-SQUAREFREE and all other specifically protected owners are unchanged. No new theorem, discovery, proof reacceptance, worldwide-priority clearance or production execution is credited.
+
+Scoped closed activity IDs: CHIRP-PHASE43-44-20261011, FUS-03, FUS-04, FUS-05, FUS-08, FUS-10, N256-SOLVER-SATURATION-20261011, NEW-07, NEW-08, NEW-13, NEW-14, NF-01, NF-02, NF-08, NF-09, PHASE44-FULL-F8-20261011, PR622-REPACKING-CANDIDATE-20261013, Q02, Q03, Q08, Q20, TH-01, TH-02, TH-03.
+
+Independent scope review: https://github.com/AgentSlop-Si/research/blob/51f2b1e6452d108c542d2bac1b788a4ca8bc32e6/math/retirements/2026-10-19-twenty-four-finalized-scopes/REVIEW.md
+
+All 164 retained raw JSON objects and CSV records are byte-identical. Twenty-four full prior and current CLOSED records are in [the disposition-record archive](../../retirements/2026-10-19-twenty-four-finalized-scopes/DISPOSITION_RECORDS.json). The [complete preceding validation](../../retirements/2026-10-19-twenty-four-finalized-scopes/PREVIOUS_INDEX_VALIDATION.json) is byte-identical. Current plus archived records reconstruct all 188 pre-batch objects and the complete previous CSV. The earlier README and every other research file are preserved.
+
+Earlier README (preserved verbatim):
+
 # Current OPEN index: sixteen assigned activities finalized complete
 
 [19 October 2026; native application and independent readback verified]
