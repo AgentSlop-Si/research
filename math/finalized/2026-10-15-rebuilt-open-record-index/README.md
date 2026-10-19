@@ -1,3 +1,34 @@
+# Current OPEN index: M-SCAN two-step defect and dual reductions
+
+[2026-10-19; independently accepted bounded structural result]
+For N=2^m>=8 with T=3I+L+L^T+E00 and actual binary reversal P, K=[T,PTP]=(TP)^2-((TP)^2)^T is supported on exactly 4m-4 coordinates and has rank 4m-6 for even m or 4m-8 for odd m over every field, including characteristic two. The separate determinant-one correction/core identities hold over Q, or another field where T is invertible. Symmetric/skew splitting additionally requires characteristic not two. The exact two-channel dual reduction leaves uniform original H_N injectivity unresolved. The prior odd-sector pivot obstruction remains accepted, together with all earlier upper, finite and depth-two results. M-SCAN-DIMENSION stays TO RESEARCH at priority 34.
+
+Verified immutable scientific sources:
+https://github.com/AgentSlop-Si/research/blob/9e1facf825a94305e7951d0f6b77bce7ba9b89b4/math/finalized/2026-10-19-scan-two-step-defect/candidate/REPORT.md
+https://github.com/AgentSlop-Si/research/blob/9e1facf825a94305e7951d0f6b77bce7ba9b89b4/math/finalized/2026-10-19-scan-two-step-defect/review/REVIEW.md
+https://github.com/AgentSlop-Si/research/blob/9e1facf825a94305e7951d0f6b77bce7ba9b89b4/math/finalized/2026-10-19-scan-two-step-defect/OWNER_DISPOSITION.json
+https://github.com/AgentSlop-Si/research/blob/9e1facf825a94305e7951d0f6b77bce7ba9b89b4/math/finalized/2026-10-19-scan-two-step-defect/README.md
+
+## Current gate
+
+[2026-10-19; structural reduction accepted, original endpoint gate open]
+Complete the two-channel half-length observability argument by proving its uniform injectivity, equivalently rank_Q H_N=N^2 for every dyadic N>=8 at depth N/4+1, or give an actual rational annihilator of that original H_N. The all-field sparse K support/rank theorem and rational determinant-one correction are proved, but do not supply this missing implication. Retain the correction and both channels; K-null vectors, auxiliary-pivot null vectors, invertible correction cores and finite samples do not pass the gate. The prior singular odd-sector pivot still blocks only its named elimination route. Preserve the original separated-generator QS1 model, actual binary reversal, both adjacency couplings, rational good-anchor nonzero-neighbor and leading/trailing-minor guards. Preserve the accepted all-size upper bound, N=8/16/32 certificates, depth-two dimension 9N-12 and generic raw kernel N+12. Endpoint-family failure would not by itself refute generic dominance. M-SCAN-DIMENSION remains TO RESEARCH at priority 34.
+Package and scope: https://github.com/AgentSlop-Si/research/blob/9e1facf825a94305e7951d0f6b77bce7ba9b89b4/math/finalized/2026-10-19-scan-two-step-defect/README.md
+
+## Pass / stop boundary
+
+[2026-10-19; bounded structural reductions accepted, completion test unchanged]
+Accept only the all-field K support/rank theorem and the exact rational inverse/core and dual reformulations. A completion still requires the actual all-dyadic rational H_N rank proof or an actual rational H_N annihilator. Require T invertible for inverse formulas and characteristic not two for symmetric/skew splitting. Keep the actual interleaver, both adjacency couplings, full two-channel observations, exact correction and original good-anchor tangent guards. Retain all prior accepted finite/upper/depth-two gates and the earlier odd-sector pivot obstruction. No all-N equality, generic-dominance conclusion, Fourier algorithm/runtime improvement, owner closure, priority/census change or novelty claim follows.
+Package and scope: https://github.com/AgentSlop-Si/research/blob/9e1facf825a94305e7951d0f6b77bce7ba9b89b4/math/finalized/2026-10-19-scan-two-step-defect/README.md
+
+## Exact derivative scope
+
+Exactly three fields of the M-SCAN-DIMENSION record change. All 224 other raw JSON objects and CSV records, including the latest Q27 update, remain byte-identical. Every previous source URL retains its order, and four actually recorded immutable URLs are appended. The census remains 102 CLOSED / 225 TO RESEARCH / 327 total. All 17 native explanatory/activity cell changes passed independent full readback; notes, formulas, formats, shared rules and all historical text remain intact. Progress retains all 73 prior runs and adds one neutral run. No endpoint H_N rank theorem or actual H_N annihilator, generic-dominance conclusion, owner closure, score change, novelty claim or Fourier/runtime result follows.
+
+The prior compact owner record and previous validation bytes are reversibly archived in VALIDATION.json. Private native snapshots and administrative paths are excluded.
+
+## Earlier index README, preserved verbatim
+
 # Current OPEN index: Q27 four-phase same-branch exclusion
 
 [2026-10-19; independently accepted four-phase same-branch exclusion]
