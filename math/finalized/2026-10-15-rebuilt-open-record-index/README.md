@@ -1,3 +1,39 @@
+# Current OPEN index: two accepted partial results
+
+F020/F023 remains TO RESEARCH at priority 58: the positive-metric mechanisms are obstructed, while ordinary bilinear-kernel nonisotropy remains open. PHASE-DEFECT-RANK-20261011 remains TO RESEARCH at priority 37: the unrestricted quantitative lower bound and strict local optimality are accepted, while the sharp global minimax remains open. Census: 102 CLOSED / 225 TO RESEARCH / 327 views.
+
+## F020
+
+[2026-10-19; independently accepted partial results; original gates remain open]
+The metric-mechanism probe stops at three exact obstructions. The remaining ordinary-squarefreeness gate is still bilinear Christoffel-Darboux kernel nonisotropy (L), or another independently justified actual-family nonvanishing mechanism. Do not assume a diagonal phase/amplitude normalization or a decoupled compression of a full-order positive metric; no new root-order census is assigned. Retain the completed fixed-node guard and all accepted ordinary-squarefree ranges, signed local normalizations, OPEN58 paired-support and OPEN53 endpoint obligations.
+Report: https://github.com/AgentSlop-Si/research/blob/118150d8087cff595add7a52572e91b6fade16d6/math/finalized/2026-10-19-remaining-gate-partial-results/f020/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/118150d8087cff595add7a52572e91b6fade16d6/math/finalized/2026-10-19-remaining-gate-partial-results/f020/review/INDEPENDENT_REVIEW.md
+
+[2026-10-19; independently accepted partial results; original gates remain open]
+Mechanisms ruled out; the ordinary guard remains open. No characteristic-zero collision, unrestricted ordinary-squarefreeness proof, all-A extension beyond accepted ranges, arithmetic-gate closure, historical-priority clearance or new census is claimed. F020/F023 remains TO RESEARCH at priority 58. Reopen the failed metric route only with a materially different, independently justified construction; preserve the separate paired-support and endpoint owners.
+Report: https://github.com/AgentSlop-Si/research/blob/118150d8087cff595add7a52572e91b6fade16d6/math/finalized/2026-10-19-remaining-gate-partial-results/f020/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/118150d8087cff595add7a52572e91b6fade16d6/math/finalized/2026-10-19-remaining-gate-partial-results/f020/review/INDEPENDENT_REVIEW.md
+
+## PHASE-DEFECT-RANK-20261011
+
+[2026-10-19; independently accepted partial results; original gates remain open]
+The remaining sharp global gate is equivalent to proving that every open arc of angular width pi/4 contains at most five eigenvalues of F8 A F8 B for arbitrary diagonal unitary A,B, or finding a certified counterexample in the original unrestricted model. The exact cyclic-Hankel formulation is sigma_3(C-D)>=2sin(pi/16) for every unitary cyclic Hankel C and diagonal unitary D. Strict local optimality and the new positive lower bound do not establish this global lemma; no repeat of a finite phase grid or the completed periodic-sector proof is assigned.
+Report: https://github.com/AgentSlop-Si/research/blob/118150d8087cff595add7a52572e91b6fade16d6/math/finalized/2026-10-19-remaining-gate-partial-results/phase/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/118150d8087cff595add7a52572e91b6fade16d6/math/finalized/2026-10-19-remaining-gate-partial-results/phase/candidate/REVIEW.md
+
+[2026-10-19; independently accepted partial results; original gates remain open]
+The original sharp positive-error owner remains open: strict local optimality does not classify global minimizers, and no explicit neighborhood radius or global counterexample is claimed. Preserve unrestricted real B, complex rank-one E, external operator error, arbitrary invertible monomial magnitude absorption, the accepted zero-error C8 rank optimum, and separate broader finite-group/Green obligations. No conditioning restriction, runtime, historical-novelty or status promotion. PHASE-DEFECT-RANK-20261011 remains TO RESEARCH at priority 37.
+Report: https://github.com/AgentSlop-Si/research/blob/118150d8087cff595add7a52572e91b6fade16d6/math/finalized/2026-10-19-remaining-gate-partial-results/phase/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/118150d8087cff595add7a52572e91b6fade16d6/math/finalized/2026-10-19-remaining-gate-partial-results/phase/candidate/REVIEW.md
+
+Exactly 223 unrelated raw JSON/CSV records remain byte-identical. In the two retained owner records, only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change; every other raw JSON value and CSV field is byte-identical. Both prior records are fully archived in VALIDATION.json. Existing source URLs remain in order, with two immutable report/review links appended to each record. Current source-link entries: 822. No status, score, ID, proof/novelty classification, record order, native formula, note, formatting or conditional-format change. Native historical suffixes are preserved verbatim. Native verification used cell metadata; no rendered visual fit is claimed.
+
+Scientific publication commit: 118150d8087cff595add7a52572e91b6fade16d6. Base index commit: 91354fa579f1d463e355abfc056cd20576637f82. Native payload SHA-256: 8b21239f260d189c4f7483a98d0356c734a5434a1d72cc64a88154ea6ace7c81.
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: final bounded-comparison dispositions
 
 ALG-RS-FAMILIES is CLOSED at its original eleven-family theorem and recorded bounded-comparison scope. C02, NEW-05, Q05 and TH-05 remain TO RESEARCH at priority 52; their bounded source comparison stops at the recorded direct-formula mismatch and access barriers. Census: 102 CLOSED / 225 TO RESEARCH / 327 views.
