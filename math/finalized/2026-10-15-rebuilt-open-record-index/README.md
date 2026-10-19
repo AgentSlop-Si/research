@@ -1,3 +1,17 @@
+# Current OPEN index: two more scoped activities retired
+
+[19 October 2026; separate second batch, native application and independent readback verified]
+ALG-019 and NEW-03 are CLOSED only at their named activity scopes. The census is 108 CLOSED / 219 TO RESEARCH / 327 existing native views. All 327 rows, accepted proofs, source files, old bounds, scores, formulas, notes and histories remain.
+
+ALG-019 retires the slower complete decimation evaluator against a fully charged exact-field O(N log N) comparator; sparse grading/orbit reuse, finite-corner identities and recursion remain retained supporting mathematics. NEW-03 retires ONLY the weaker all-length blocked-Karatsuba complexity-bound activity. Its full P03 recognizer, nonzero phase eliminant and already stronger DYADIC O(N r^3 log(r+2)+r^(2+3 log_2 3)) bound are retained. The new general-length log-log bound does not dominate that dyadic result. Q13, STR-Q2 and TH-03 remain unchanged, including their separate engineering and historical-priority questions. This is no new discovery, falsity finding, measured speedup or full-recognizer prior-art claim.
+
+ALG-019 review: https://github.com/AgentSlop-Si/research/blob/839c80c394c9cfe54212590cb06e4acbf1c0547c/math/retirements/2026-10-19-second-two/ALG019_PUBLIC_REVIEW.md
+NEW-03 revised review: https://github.com/AgentSlop-Si/research/blob/839c80c394c9cfe54212590cb06e4acbf1c0547c/math/retirements/2026-10-19-second-two/NEW03_PUBLIC_REVIEW.md
+
+All 219 retained raw JSON objects and CSV records are byte-identical. Both previous full records and their current scoped CLOSED dispositions are losslessly retained in [the second retired-record archive](../../retirements/2026-10-19-second-two/RETIRED_RECORDS.json). The [complete preceding validation](../../retirements/2026-10-19-second-two/PREVIOUS_INDEX_VALIDATION.json) is byte-identical. Active plus retired records reconstruct all 221 pre-batch JSON objects and the entire pre-batch CSV. The first four-retirement archive and all other research files remain unchanged.
+
+Earlier README (preserved verbatim):
+
 # Current OPEN index: four classical/supporting activities retired
 
 [19 October 2026; native application and independent readback verified]
