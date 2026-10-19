@@ -1,3 +1,40 @@
+# Current OPEN index: F020 accepted b=3p boundary
+
+[2026-10-19; independently accepted b=3p boundary]
+For every odd prime p, integer s>=1 and primitive p^s-th root q, the polynomial P_b defined by the actual recurrence P_0=1, P_1=X, P_(n+1)=X P_n-(1-q^n)P_(n-1) and Gaussian Rogers-Szego H_b(z;q)=sum_(k=0)^b [b choose k]_q z^k are squarefree in characteristic zero for integer degrees 0<=b<=3p AND b<p^s. For every root xi of P_b, the original ordinary-square bilinear sum_(k=0)^(b-1) P_k(xi;q)^2/product_(j=1)^k(1-q^j) is nonzero (ordinary algebraic squares, not absolute-value squares; empty product 1). The only added degree is b=3p when 3p<p^s. Thus s=1 retains b<p; p=3,s=2 retains b<9; p>=5,s>=2 permits b<=3p; p=3,s>=3 permits b<=9.
+For p>=5 at b=3p, with v(q-1)=1 over Q_p(q), the degree-2p factor is irreducible, 2p roots have valuation (2p-1)/(2p), p-1 roots have valuation 1, and 0 is simple; v(P'_(3p)(xi))=3p-2 and v(Disc_X P_(3p))=3p(3p-2). At p=3 the separate exact P_9=X Q_4(X^2) certificate proves the squarefreeness/kernel statement uniformly for s>=3; those p>=5 local valuation formulas are not asserted for p=3.
+All separately accepted earlier ranges, complete root-order d=9 and d=25 results, fixed-residual certificates and guarded local/all-A implications remain intact. F020/F023 remains TO RESEARCH at priority 58; no cost or novelty conclusion is added.
+Proof/result: https://github.com/AgentSlop-Si/research/blob/0dd712091c24aa0710cb9ed369065b44fa063351/math/finalized/2026-10-19-f020-three-p-boundary/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/0dd712091c24aa0710cb9ed369065b44fa063351/math/finalized/2026-10-19-f020-three-p-boundary/review/INDEPENDENT_REVIEW.md
+
+## Current gate
+
+[2026-10-19; independently accepted b=3p boundary]
+Ordinary squarefreeness and original ordinary-square bilinear nonisotropy are now accepted for every odd prime p, integer s>=1, primitive p^s-th root q and integer degree 0<=b<=3p AND b<p^s, using the actual P recurrence and Gaussian H normalization. The b=3p addition requires 3p<p^s: s=1 retains b<p and p=3,s=2 retains b<9. Continue only outside ALL accepted ranges, including later 3p<b<p^s degrees where not separately certified and remaining odd-composite orders. Retain complete root-order d=9 and d=25 results, fixed-residual certificates, all-odd fixed-node guards and every independent hypothesis of the local/all-A formulas. Separate OPEN58 paired-support and OPEN53 endpoint obligations, signed coefficients, nonzero denominators and ordinary-versus-q-discriminant distinctions remain. F020/F023 stays TO RESEARCH at priority 58; no broad closure, cost improvement or novelty clearance follows.
+Proof/result: https://github.com/AgentSlop-Si/research/blob/0dd712091c24aa0710cb9ed369065b44fa063351/math/finalized/2026-10-19-f020-three-p-boundary/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/0dd712091c24aa0710cb9ed369065b44fa063351/math/finalized/2026-10-19-f020-three-p-boundary/review/INDEPENDENT_REVIEW.md
+
+## Pass / stop boundary
+
+[2026-10-19; independently accepted b=3p boundary]
+Do not redispatch the accepted b=3p boundary or strict third block. Their combined range is integer 0<=b<=3p AND b<p^s for odd prime p, integer s>=1 and primitive p^s-th root q, with the actual P recurrence, Gaussian H normalization and original ordinary-square bilinear kernel. In particular p=3,s=2 still excludes b=9 and s=1 retains b<p. Continue only outside all accepted ranges, preserving complete d=9/d=25 and other prior certificates. Require the original ordinary discriminant and all independent inherited local/all-A guards. The p>=5 local derivative and discriminant valuation formulas are not assertions at p=3. Repeated residuals or failed reductions alone are not characteristic-zero collisions. No unrestricted F020/all-A closure, new root-order census, cost improvement, score change or novelty clearance is supplied.
+Proof/result: https://github.com/AgentSlop-Si/research/blob/0dd712091c24aa0710cb9ed369065b44fa063351/math/finalized/2026-10-19-f020-three-p-boundary/candidate/REPORT.md
+Independent review: https://github.com/AgentSlop-Si/research/blob/0dd712091c24aa0710cb9ed369065b44fa063351/math/finalized/2026-10-19-f020-three-p-boundary/review/INDEPENDENT_REVIEW.md
+
+## Exact native and index scope
+
+The native update changed 24 existing F020 explanatory cells and one separately approved Progress summary. All old histories, 354 notes, two formulas, 1,875 returned protected cells, 300 omitted positions and all 66 historical Progress rich-text runs were preserved. The full prefix/source/joiner shift is 916 UTF-16 units, with 67 resulting runs. CellData was verified; no rendered-layout or resizing claim is made. Census remains 102 CLOSED / 225 TO RESEARCH / 327 existing views.
+
+This index changes only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls in the one retained F020 record. The 224 unrelated raw JSON objects and CSV rows remain byte-identical. All unrelated F020 fields, status, score 58, F023 alias, order and earlier source references remain exact. Two new immutable scientific links bring the total source URL count to 915. Complete earlier d=9/d=25 results remain accepted. Classical tools retain their attribution. No score, novelty tier, cost improvement or whole-owner closure is added; separate prior-art documentation is outside this native/index update. V18 remains separate unaccepted intake.
+
+Science commit: 0dd712091c24aa0710cb9ed369065b44fa063351. Publication base: 5e13c259814962d50b4614afe49edeb9a8d0967c. Native payload SHA-256: 21e79b276ffe5be9b95c4e4d551d47ba97d76b87983ed2bab9d89e91c506f60f. Independent native postread SHA-256: 0ef060ae10360f3d5e38d3c497e652cec7fab64bf803ad6caf7c4f881012bce1.
+
+## Lossless earlier evidence
+
+The entire preceding VALIDATION.json is stored as deterministic gzip+base64 in previous_validation_archive. Verify the encoded/compressed hashes, decompress, then verify decoded size and SHA-256; all earlier nested archives remain recoverable. The full prior F020 JSON object and CSV record are also retained. The entire earlier README follows verbatim.
+
+---
+
 # Current OPEN index: centered-support and entry-oracle contract boundaries
 
 The accepted ALG-034 centered explicit-support obstruction and the C13 classical unstructured-entry costing/Hamiltonian adapter are recorded below at their exact published scopes. Both broad owners remain open at priorities 48 and 34. Prior accepted components remain completed; no proof is reopened, and no owner, score, novelty tier or census changes. Classical comb/Parseval and elementary query-adversary reasoning are credited. Neither result establishes a general Fourier lower bound.
