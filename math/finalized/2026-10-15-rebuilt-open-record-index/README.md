@@ -1,3 +1,114 @@
+# Current OPEN index: four accepted subgates, broader owners retained
+
+The C8 quantitative lower gap and the declared fixed-test tuning are complete. The unique method ceiling bounds an open feasible interval; the endpoint limit is non-strict and does not establish the actual global optimum. F020 ordinary squarefreeness and bilinear-kernel nonisotropy are accepted for b<min(3p,p^s), with b=3p still outside that extension. ALG-076 has the scoped sharp absolute Gaussian probability bound and a necessary relative-fidelity rank proportion for input-independent complex-linear retention; this is not a universal circuit or adaptive-information lower bound. For every prime q>5, original square order-5q equality masks are excluded throughout q<d<2q, combining q>=11 with separately accepted N=35 degrees 8 through 13. The middle interval remains open, including N=35 degrees 14 through 28. The retained 7-by-35 degree-eleven rectangular control has an exact nonextension obstruction 6<11.
+
+All four owners remain TO RESEARCH at unchanged priorities. Earlier order-3q, C8 upper-witness and all other accepted results remain preserved. Only explicit subgates are completed; historical novelty, implementation and broader obligations remain qualified and separate. Census: 102 CLOSED / 225 TO RESEARCH / 327 views.
+
+## PHASE-DEFECT-RANK-20261011
+
+[2026-10-19; C8 quantitative lower gap and fixed-test tuning complete]
+Declared fixed-chain numerical sufficient-condition tuning is COMPLETE; do not propose more parameter iterations of this same test. Determine the exact global C8 rank-zero optimum and its minimizers, including whether nonperiodic phases improve the accepted upper witness. Separate open work remains for rank-zero strictness/attainment at N=4m with m>=3, smaller positive correction ranks and rank/error tradeoffs outside the accepted boundary family, general finite-group optima, and compatible jointly real Green references with nonsingular interfaces. Implementation, costing, integration and historical priority remain separate.
+PHASE-DEFECT-RANK-20261011 remains TO RESEARCH at priority 37; all broader obligations and historical-priority qualifications remain open.
+original author: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/c8_lower/candidate/PROOF.md
+original independent review: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/c8_lower/review/REVIEW.md
+original independent verdict: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/c8_lower/review/VERDICT.json
+fixed_chain_ceiling author: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/c8_method/candidate/PROOF.md
+fixed_chain_ceiling independent review: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/c8_method/review/REVIEW.md
+fixed_chain_ceiling independent verdict: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/c8_method/review/VERDICT.json
+
+[2026-10-19; C8 quantitative lower gap and fixed-test tuning complete]
+The root is a supremum of an open feasible interval, not a largest admissible strict parameter; retain the half-angle epsilon/2 and the non-strict limiting inequality. This method ceiling does not establish the actual global optimum, and no theorem that it differs from the actual optimum is asserted. Changed estimates or a different proof constitute new work beyond this completed tuning. Treat the explicit lower gap and legal upper witness as accepted bounds, not a matching optimum. Advance the exact-optimum gate only with an all-phase matching lower proof or a certified improved legal witness; a witness alone still does not classify minimizers. No finite phase grid, periodicity assumption, surrogate compression, new dimension/rank conclusion, FFT-runtime claim, novelty promotion or owner closure follows.
+PHASE-DEFECT-RANK-20261011 remains TO RESEARCH at priority 37; all broader obligations and historical-priority qualifications remain open.
+original author: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/c8_lower/candidate/PROOF.md
+original independent review: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/c8_lower/review/REVIEW.md
+original independent verdict: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/c8_lower/review/VERDICT.json
+fixed_chain_ceiling author: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/c8_method/candidate/PROOF.md
+fixed_chain_ceiling independent review: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/c8_method/review/REVIEW.md
+fixed_chain_ceiling independent verdict: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/c8_method/review/VERDICT.json
+
+## F020
+
+[2026-10-19; ordinary guards complete for b<min(3p,p^s)]
+Ordinary squarefreeness and bilinear nonisotropy outside all accepted ranges, beginning with the unproved b=3p boundary when b<p^s (thus s>=3 for p=3, s>=2 for p>=5), later prime-power degrees and remaining odd-composite ranges. Existing local/all-A formulas may be composed only where all independent inherited guards hold. Separate OPEN58 all-m four-channel paired-support and OPEN53 endpoint obligations remain open.
+F020 remains TO RESEARCH at priority 58; all broader obligations and historical-priority qualifications remain open.
+original author: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/f020_third_block/candidate/REPORT.md
+original independent review: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/f020_third_block/review/INDEPENDENT_REVIEW.md
+original independent verdict: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/f020_third_block/review/VERDICT.json
+
+[2026-10-19; ordinary guards complete for b<min(3p,p^s)]
+Do not redispatch the resolved b<min(3p,p^s) range. Broader progress requires a new uniform actual-family ordinary-guard mechanism or an exact actual-family counterexample. The tail p-unit used for r<p fails at r=p; neither the residual nor squarefreeness extends automatically to b=3p. Repeated modular residuals, failed reductions and metric-route obstructions do not prove characteristic-zero collisions. No unrestricted all-A/F020 closure, new root-order census or novelty clearance.
+F020 remains TO RESEARCH at priority 58; all broader obligations and historical-priority qualifications remain open.
+original author: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/f020_third_block/candidate/REPORT.md
+original independent review: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/f020_third_block/review/INDEPENDENT_REVIEW.md
+original independent verdict: https://github.com/AgentSlop-Si/research/blob/23555f61b4ec403e4c1dd37b3f9901277e4eecd8/math/finalized/2026-10-19-c8-quantitative-lower-f020-third-block/f020_third_block/review/VERDICT.json
+
+## ALG-076
+
+[2026-10-19; quantitative fixed-linear Gaussian rank bound accepted]
+Sharper median covariance/higher-moment/vector-robust or norm-adapted aggregation; changed/adaptive information models with all side information counted; exact source and broader primary-literature comparison; finite-word rounding, numerical stability and implementation costs; historical priority. The measurable almost-everywhere exact-recovery result is already proved in original FUSION_THEOREMS.md B2 and must not be treated as an unfinished or new gate.
+ALG-076 remains TO RESEARCH at priority 42; all broader obligations and historical-priority qualifications remain open.
+original author: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/alg076/candidate/REPORT.md
+original independent review: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/alg076/review/REVIEW.md
+original independent verdict: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/alg076/review/VERDICT.json
+
+[2026-10-19; quantitative fixed-linear Gaussian rank bound accepted]
+Close only the quantitative fixed-linear-retention/relative-fidelity subgate. Absolute Gaussian sharpness does not make the finite relative bound sharp or sufficient. No adaptive/finite-domain impossibility, universal Fourier-circuit lower bound, free pseudoinverse/U application, or production guarantee follows. Any later comparison must map exact norm, scale, quantifiers and charged evaluator rather than infer meaningful relative accuracy from a loose per-bin energy scale.
+ALG-076 remains TO RESEARCH at priority 42; all broader obligations and historical-priority qualifications remain open.
+original author: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/alg076/candidate/REPORT.md
+original independent review: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/alg076/review/REVIEW.md
+original independent verdict: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/alg076/review/VERDICT.json
+
+## M-SPARSE-DEFECT
+
+[2026-10-19; order-5q first interior complete for every prime q>5]
+For prime q>5 the order-5q middle interval 2q<=d<=4q remains open, including degrees 14 through 28 at N=35. Other odd-semiprime and mixed-prime orders outside accepted families, every-support geometry classifications, general divisibility necessity, remaining exact nonsharp optima and sharper/optimal gap rates remain separate. Broader sparse-inverse, sparse-column and fixed-common-frame commutator obligations, paid preparation/solve/decomposition/output, stability, implementation and historical priority stay open. Do not redispatch the now resolved q=7 square first interior.
+M-SPARSE-DEFECT remains TO RESEARCH at priority 42; all broader obligations and historical-priority qualifications remain open.
+original author: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/fiveprime/candidate/REPORT.md
+original independent review: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/fiveprime/review/REVIEW.md
+original independent verdict: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/fiveprime/review/VERDICT.json
+q7_first_interior author: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/q7_boundary/candidate/REPORT.md
+q7_first_interior independent review: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/q7_boundary/review/REVIEW.md
+q7_first_interior independent verdict: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/q7_boundary/review/VERDICT.json
+
+[2026-10-19; order-5q first interior complete for every prime q>5]
+Stop the first-interior gate at the composed exclusion for every prime q>5; retain separate proof identities for q=7 and q>=11. The original 7-by-35 degree-eleven control still has row Gram 11I_7, and the new exact extension certificate proves it cannot extend to a square degree-eleven mask: original row 0 contains column 5, that column has two current incidences, and at most one row from each of four other groups can contribute, so its completed degree is at most 2+4=6<11. This is a rigorous obstruction, not a failed search. No complete N=35/N=5q/general-semiprime theorem, all-support/full-block classification, new optimal gap rate or exact positive-error optimum follows. Preserve the prerequisite N=3q degree set {1,3,q,3q}, original inverse-model feasibility and all paid-cost constraints.
+M-SPARSE-DEFECT remains TO RESEARCH at priority 42; all broader obligations and historical-priority qualifications remain open.
+original author: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/fiveprime/candidate/REPORT.md
+original independent review: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/fiveprime/review/REVIEW.md
+original independent verdict: https://github.com/AgentSlop-Si/research/blob/6e401048dea59a1cf995ae06763f37d0ee826256/math/finalized/2026-10-19-quantitative-sketch-fiveprime-interior/fiveprime/review/VERDICT.json
+q7_first_interior author: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/q7_boundary/candidate/REPORT.md
+q7_first_interior independent review: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/q7_boundary/review/REVIEW.md
+q7_first_interior independent verdict: https://github.com/AgentSlop-Si/research/blob/adb2e25674004954159d7007fc8e61730b56a8ed/math/finalized/2026-10-19-c8-method-ceiling-q7-boundary/q7_boundary/review/VERDICT.json
+
+Exactly 221 unrelated raw JSON/CSV records remain byte-identical. Only recorded_current_gate, recorded_pass_stop_condition and recorded_source_urls change in the four retained records, for 12 field changes. Eighteen immutable URLs are appended without reordering any previous URL; there are 901 total source-link entries. Complete raw prior representations of all four changed records are archived in VALIDATION.json. All earlier README bytes follow verbatim.
+
+The native update changed exactly 73 existing text cells in one verified batch. Each full old value remains an exact suffix. Twenty-two target notes, three protected formulas, 2,358 protected returned CellData positions and 561 separately tracked native trailing omissions remain unchanged. Native metadata, styles, priorities, aliases and statuses are preserved. No missing target or transport response was inferred empty. Verification used complete native CellData; rendered visual fit was not claimed.
+
+Scientific source commits: 23555f61b4ec403e4c1dd37b3f9901277e4eecd8, 6e401048dea59a1cf995ae06763f37d0ee826256 and adb2e25674004954159d7007fc8e61730b56a8ed. Previous verified index: 4818c78f0505fdb02bb3c796241b5c9924db6cf2. Publication-base guard: 961a6996bada063eb2c9675514df4e550610b85a. Native payload SHA-256: 85f936221f76c7506f71db2bc7f89a509c3500ccd96faa32082fb73c9900e917.
+
+## Lossless preceding validation
+
+VALIDATION.json stores the entire preceding validation file as deterministic gzip+base64 in previous_validation_archive. Decode data, verify base64_ascii_sha256, gzip_sha256, decoded_bytes and decoded_sha256, and write only to a new file. The recovered preceding validation retains every older nested archive. This avoids repeatedly expanding escaped JSON. A restoration example, run from the index directory, is:
+
+```python
+import base64, gzip, hashlib, json
+from pathlib import Path
+v = json.loads(Path("VALIDATION.json").read_text())
+a = v["previous_validation_archive"]
+s = a["data"].encode("ascii")
+assert hashlib.sha256(s).hexdigest() == a["base64_ascii_sha256"]
+z = base64.b64decode(s, validate=True)
+assert len(z) == a["gzip_bytes"] and hashlib.sha256(z).hexdigest() == a["gzip_sha256"]
+b = gzip.decompress(z)
+assert len(b) == a["decoded_bytes"] and hashlib.sha256(b).hexdigest() == a["decoded_sha256"]
+with open("PRIOR_VALIDATION_4818c78.json", "xb") as f:
+    f.write(b)
+```
+
+Earlier index documentation follows verbatim.
+
+---
+
 # Current OPEN index: order-3q degrees and a sharper C8 upper witness
 
 Two independently accepted scoped results are synchronized. At N=3q, prime q>3, the positive degree-existence set is exactly {1,3,q,3q}; this includes the new whole-interior exclusion q<d<2q and the preserved endpoint proof. It does not classify every support geometry or settle general mixed-prime necessity. In the original arbitrary-invertible-complex-monomial, unrestricted-real-core, external-operator-norm rank-zero C8 model, the exact legal upper witness gives delta(8,0)<=sqrt(1+sqrt(sqrt(2)-1))/2=0.641013699718185..., retaining the earlier strict lower sin(3pi/16)<delta(8,0). The exact global optimum and nonperiodic improvement remain open; four-periodicity is a witness property. The later quantitative C8 lower-bound and 5q packets are separate and are not folded into this historical checkpoint. M-SPARSE-DEFECT and PHASE-DEFECT-RANK-20261011 remain TO RESEARCH at priorities 42 and 37. Census: 102 CLOSED / 225 TO RESEARCH / 327 views.
