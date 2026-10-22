@@ -1,0 +1,18 @@
+# Accepted middle exponent and bounded obligation research
+This collection keeps separately accepted research packages and their exact detached public-package audits together without changing their bytes. It provides selected readable documents as a convenience, not replacement research packages. Assembly adds no theorem or historical novelty credit.
+## Read the bounded results
+- F020 first intermediate digit: n=2p^3+p.
+- F020 second intermediate digit: n=2p^3+2p.
+- F020 full r=3 middle-digit family: n=2p^3+cp, 1<=c<p. The even and odd accepted source pairs remain separate. c=1 and c=2 are inherited.
+- F020 uniform middle exponent: n=2p^r+cp, r>=3, 1<=c<p. The entire r=3 family is inherited; only r>=4 is added relative to the inspected accepted-source chain.
+- C10 prime-field root, representation and bit-cost obligation: accepted only within its named bounded scope. The C10 owner remains open.
+- ALG-031 shared-a concentration: accepted only with the exact guards, harmonic penalty, charged full computation and ordered-real median comparison costs. ALG-031 remains open.
+
+SCOPE_CREDIT_INDEX.json separates every result owner, exact scope, inherited credit, source authority and remaining limit. ARCHIVE_INDEX.json pins the complete main/audit pairs. SOURCE_MEMBER_INDEX.json maps every readable selection to its exact archive member and byte identity. READING_INDEX.json lists the selections.
+## Authoritative archives and selected reading copies
+The files in each archives directory are exact original ZIP copies. No ZIP is repacked or repaired and no detached audit is inserted into its main ZIP. The readable directories are intentionally incomplete selections of Markdown and JSON from these accepted public archives. Their bytes and archive-relative paths are unchanged; the original source context is the complete ZIP, not the selected directory. Relative source links and inventory statements may refer to members available only in the complete archive. Do not run an original manifest verifier against a readable subset.
+Root manifests and seals inside each complete archive inventory that archive alone. Retained historical source manifests refer to historical source trees and do not claim complete reconstruction. Source, credit, projection, omission and historical mismatch qualifications remain in the exact archives and selected provenance records. Source hashes identify original bytes even when an explicitly documented public administrative projection has different bytes.
+Historical candidate, proposal and pending-review wording is unchanged. The corresponding later acceptance and detached audit establish the stated bounded status. The first and second detached audits contain optional public read-only byte-verifier source; it is preserved only inside their exact ZIPs and was not executed. No supplied research program was executed in preparing this collection.
+## Limits
+There is no global F020/F023 closure, assembly credit, historical novelty/priority claim, FFT/cost improvement or sub-FFT total-runtime claim. The F020 assertions use original P, Gaussian H, original characteristic-zero ordinary derivatives and the original algebraic-square kernel. Finite reductions need not all be simple. The historical b=2p original-byte mismatch remains unresolved, and no missing original author bytes are claimed recovered or accepted. C10 and ALG-031, when included, remain distinct open owners rather than additional F020 results.
+This collection is content, not evidence of a repository publication, native-table update, current branch state, or fresh scientific replay. Hashes bind exact bytes; they are not signatures, authorship or priority certificates.
