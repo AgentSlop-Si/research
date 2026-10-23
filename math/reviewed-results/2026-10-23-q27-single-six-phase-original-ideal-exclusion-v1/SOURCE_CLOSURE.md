@@ -1,0 +1,19 @@
+# Source closure and exact inherited dependency
+
+The current six-phase author and reviewer directories contain 42 files. All 37 non-cache current files are preserved byte-exact, including all eight scientific programs, both original manifests, full stored matrices, certificates, metadata, proof, independent review, verdict, source bindings and recorded controls. The only current-source exclusions are 5 interpreter bytecode caches, individually listed with original hashes and sizes. No current scientific source or manifested evidence is omitted or projected.
+
+The exact original N=8 chart is retained as author/sources/CHART.json, SHA-256 5528afbbd5b4008a5e0f79043870e72a613e0fd421288d2ce1e5dbffee1c9e98. Its frozen source binding names repository commit 3834be7716370cfddf84ab1200da62b7887feb05 and math/finalized/2026-10-19-q27-four-phase-same-branch/candidate/sources/CHART.json. No new remote retrieval was performed.
+
+## Published four/five-phase artifact retained, not reconstructed
+
+Under dependency/q27_four_five_public/, the outer archive retains all 14 exact files of the published four/five-phase public tree. Its seven raw parts reassemble to 2,147,334 bytes, SHA-256 f152fef06a9e2f378ef79ef804f0453c7a022c986e5a42b5063eac1acfd1ae33, with 68 ZIP members. Its public manifest, README, original verifier and four direct proof/review copies are preserved unchanged. The published source reference is https://github.com/AgentSlop-Si/research/tree/3ec3492eade7b8400741b85fb90cb627e7d56883/math/reviewed-results/2026-10-23-q27-guard-strata-31-32-v1 . This packaging pass checked retained local bytes and local readback, not current remote state.
+
+The six-phase embedded five-phase proof, review, verdict, author manifest, reviewer manifest and chart match the corresponding inherited archive members byte-for-byte. The copied original_model.py also matches. These seven cross-bindings are explicit in PUBLIC_MANIFEST.json and checked by the new data-only verifier. The dependency includes the scientific four/five-phase programs, full stored certificates, original inventories, proofs and reviews, including the earlier Cauchy–Binet proof source. These are actual scientific bodies, not merely repository locators.
+
+The dependency retains its existing 61-source-entry projection inventory: 53 exact entries and eight administrative projections, plus four exact original manifests. Two prior program default paths were projected there. We have not altered or silently reconstructed those originals. Its declared omissions include unmanifested exploratory pilots, caches and private coordination/native records. Its inherited older source references are not a complete recursive historical corpus, and no additional closure is guessed. Original inventories continue to bind original bytes; current public bytes are governed by their own public manifest.
+
+## Current inventory and execution boundary
+
+The outer public manifest and PUBLIC_PROJECTION.json give complete original/public mappings for the current source files and exact inherited public files. The nested public manifest gives its internal original/projected correspondence and complete member inventory. Current six-phase source bindings and all seven current Python programs plus the C++ source remain unchanged. Stored author and independent results keep their original attribution and are not treated as newly executed controls.
+
+Private acceptance, coordination, release records, native worksheet captures and packaging audits are not exported. No private root record was bundled. Administrative exclusion is not used to remove a mathematical dependency or weaken a scientific program's hash checks. No scientific execution or source change occurred in this preparation. All dependency bodies needed by the current program imports/data reads are preserved, but paths, compiled selector and external runtime versions still prevent a blanket turnkey replay claim; see REPRODUCE.md.
