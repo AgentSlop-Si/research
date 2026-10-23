@@ -1,0 +1,33 @@
+# Independent finite-cost comparison review
+
+23 October 2026. Verdict: **SCOPED PASS** for a finite implementation/ledger comparison, not a new asymptotic theorem or speed advantage.
+
+## Exact binding and inherited correctness
+
+Reviewed candidate: `signed_bank_finite_cost_comparison_20261023_v1/REPORT.md`, SHA-256 `84ea411e863d185c6db75325d7322b5e187147f5da41aa15c12effdd33e59177`; manifest `f9019fac63d7b6f4d0ad844173e48b340174edc3b25a88adc6a1afdba76809d8`.
+
+The complete N=19, d=4, m=15, 32-bank realization, field construction and all-entry identity are inherited from the separate independent finite-fixture acceptance, verdict `dff226d5161c682b70418e41318e57ad5c2883a79701db79d7fff453bbe026dd`, review `9d115bf5d4048d5dd16e7badbbc9fed0e4166ccd9c538fe2c5ba1a9872549b9b`, manifest `f61616c3b004c5d8139030361a35d6afee4314769639e5f824b0b6bdeb3e8a49`. This review does not reaward that result or reconstruct its full certificate.
+
+The candidate source, report, result records, input data and cited acceptance were read. All candidate manifest members and all 11 source-binding records were hash-checked. The entire frozen input-data projection was independently compared with accepted BANK_DATA and APPLICATION data.
+
+## Mathematical ledger and baseline
+
+1. The zero diagonal in each original branch is exactly i=-epsilon*j. Starting from its forced neighbor, the reverse recurrence visits every unknown once; the other 18 rows have nonzero diagonal. The stated schedule therefore solves the actual branch, not a precomputed Fourier matrix. Per bank it performs N input products, N(N-1) recurrence products and N² weight products: 2BN²=23,104 multiplications. The optimized addition count is BN(N-1)+(BN-1)N=22,477. Adding 608 input negations and 19 initial zero accumulations gives 23,104 executed-style additions/subtractions. Cached negative inverses cost 32 setup negations.
+2. Direct evaluation computes the same negative unnormalized transform over the same field: 361 products and 342 additions under the disclosed no-unit-elision convention. Its coefficients are base scalars, unlike most bank operands. A count of field-operation calls is not a time comparison.
+3. Independently calculated in the quadratic subfield: the second searched candidate yields omega=50+42B, omega^64=1 and omega^32=-1. The exact chirp identity with e=10 holds for all 361 (k,n) pairs. The support -18..18 fits injectively modulo 64. Forward and inverse radix-2 transforms compute cyclic convolution after division by 64, here 64 inverse=3. Cached final chirps include that division. Thus this is a valid exact FFT baseline, with no new extension beyond the already supplied field. Its 19+192+64+192+19=486 products and 768 additions are correct. Bank weight normalization by 19 is a different internal operation and does not normalize the target.
+4. The written generic kernel has 4*11²+2*21+2*10*11=746 base multiplications and corresponding accumulation/reduction additions. Base-scalar scaling uses 22 products. Reported base-operation totals agree arithmetically with recorded scalar/generic splits. Those input-dependent splits and sanitizer execution are author records, not independently replayed benchmark observations. The report correctly discloses cheaper unimplemented quadratic/subfield kernels.
+5. Shared q preparation, bank cache preparation, FFT root/twiddle/kernel/normalization setup, upstream root/weight construction, inversion expansion, dense validation, storage, input/output traffic and warm execution are separated. The claimed theorem setup complexity is not substituted for the author's actual validation schedule. No end-to-end cold speed comparison is inferred.
+
+## Evidence and timing limits
+
+Reviewer-owned `fresh_checks.py` independently regenerated all seven pseudorandom test inputs, compared all eight input vectors, and recomputed every one of the 3,344 direct-output coordinates using only scalar F191 arithmetic. It also checked original-branch index traversal, root/chirp identities, data projection, formal arithmetic/storage formulas, recorded sanitizer count equality, medians, ratios and expected checksum totals. The final run has 19,673 active checks. No author or historical program was imported, compiled or executed, and no timing was rerun.
+
+The benchmark source consumes all output coordinates, uses the same eight cached inputs and scalar/generic arithmetic kernel, compiles counters out of timed calls, and excludes preparation/validation/file writes from warm timing. There are eight untimed validation calls per method, seven retained timing batches and fixed method order. The recorded volatile checksum was not saved; independently reconstructed expected sums are not misrepresented as observed timed sums.
+
+Recomputed medians from the author's retained final batches are 29.982016 microseconds direct, 11.3429919375 milliseconds executed-style banks, 12.7331371875 milliseconds optimized-ledger banks, and 177.586699219 microseconds Bluestein. Their bank/Bluestein ratio is 63.8729814079. The first retained run gives 69.0335219166. These are descriptive measurements on a shared, non-isolated machine with unequal batch sizes and no randomized method order or confidence interval. They suffice for the expressly limited observation that this particular literal-bank implementation was about 64 times slower than this exact FFT implementation in the final recorded run. They do not support a universal runtime ratio, an optimized-library comparison, or a physical/parallel-network latency conclusion. The numerical timing records remain author execution evidence, not independently reproduced timings.
+
+## Storage clarification and publication boundary
+
+The original archived inverse file is uint8: 4,828,736 coordinates really occupy 4,828,736 bytes. The same coordinates represented as 32-bit benchmark integers would occupy 19,314,944 bytes before container overhead. The reviewer initially conflated these representations, then checked the actual archive size and upstream format description. The author made only an explicit two-representation wording clarification and preserved the preceding report/manifest. This was not a mathematical or timing repair. The warm evaluator does not load the archived matrices.
+
+Accept the exact ledger, valid same-field FFT baseline, source/data consistency and narrowly described finite timing comparison. No bank speedup, optimality, asymptotic gain, hardware advantage, novelty determination, new bank-count result or parent-owner closure is established. Preserve both timing runs and the scalar-versus-generic distinction in any publication.

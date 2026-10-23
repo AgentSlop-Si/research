@@ -1,0 +1,23 @@
+# Scientific source closure and preservation
+
+This package examined 80 source files and includes 78 scientific source entries in the evidence archive. 76 are byte-exact; two source-binding documents have one documentary original-locator field projected each. Two copies of a non-scientific task-selection record are excluded. Original manifests are preserved unchanged, including their historical inventory rows for those excluded records. PUBLIC_MANIFEST.json is the authority for current public bytes and contains explicit original/public hash correspondence.
+
+## Actual evidence retained
+
+The complete new mixed-prime author and independent-review packets are included. The inherited weighted prime-power candidate and independent review were retrieved read-only from pinned repository commit 31ccd8d6f5bb6afaffa9d86b9e9e2fd27332d856. Every retrieved file was checked against its tree Git blob SHA and byte size before packaging, and all historical manifest members were checked against original SHA-256 and size. This includes the full multi-megabyte author certificates, the full independent certificates, candidate-frozen copies, historical candidate replay outputs, independent original-model data, programs, logs, manifests, seals, scientific source reports and scope-qualification sources. The two non-scientific exclusions are explicitly accounted for rather than silently removed from historical inventories.
+
+The proof's logical dependencies are present as actual bodies: original Fourier phases and the short-overlap erasure proof; the weighted matching, unitary descent, square-child and terminal-exponent proof and review; the complementary-mask equality and compactness proof/review; the divisor construction; and the earlier mixed-prime report/review delimiting inherited scope and the weighted cancellation obstruction. The weighted independent evidence contains 2,060 recorded descent matrices, including the three weighted/repeated-label top-level stress cases and their descendants. It is not represented merely by a retrieval claim.
+
+## Exact projection policy
+
+Only the original locator for the excluded task-selection record is replaced in weighted_candidate/SOURCE_BINDINGS.json and weighted_review/candidate_frozen/SOURCE_BINDINGS.json. The replacement identifies its non-scientific role. Original hashes, all other binding fields, and every scientific program, proof, review, control output and certificate remain unchanged. Both original and public whole-file hashes and sizes, plus the changed field and original-value digest, are declared. No scientific provenance check is removed or weakened.
+
+The current mixed-prime reviewer retains original candidate SHA-256 and Git-blob verification code and its absolute original candidate path. Original inventories and source hashes continue to refer to original bytes, not projected copies. Data verification accounts for this distinction; it does not assert that every original script can run on a clean extraction.
+
+## External and historical boundary
+
+The supplied new report/read ledger records Lam and Leung, On vanishing sums of roots of unity, Theorems 3.1 and 3.3 and Corollary 3.4, at https://arxiv.org/pdf/math/9511209. It records Malikiosis and Kolountzakis, Fuglede's conjecture on cyclic groups of order p^n q, Theorems 1.2 and 2.1 and the spectral-set definition, at https://arxiv.org/pdf/1612.01328. The latter uses one fixed support set and is not directly an arbitrary-entry-mask theorem. The Bond, Glickfield and Herr paper was only inspected through an indexed primary excerpt; full-PDF retrieval failed in the source work. Its primary locator is https://par.nsf.gov/servlets/purl/10088774. No new literature search or full-text retrieval was performed in this packaging pass, and no historical novelty is certified.
+
+Older entire ancestor packets, their external full-text literature, and the original standalone connected_mask.json referenced by the historical integrity note are not recursively bundled or newly checked. The literal connected control, its scientific report/review, and exact witness/descent evidence are retained in the weighted packet. The inverse-row and earlier mixed-prime dependencies are included at the proof/review level; their earlier complete execution packets are not claimed as newly exported. Scientific proof dependency closure and retention of the actual weighted evidence do not imply universal historical artifact closure.
+
+Private adoption, release coordination and native source-row bodies are not public evidence and are excluded. No scientific program was executed, frozen input modified, external state changed, or turnkey replay certified.
